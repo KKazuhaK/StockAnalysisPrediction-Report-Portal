@@ -243,3 +243,12 @@ a:hover{text-decoration:underline}
 [data-eff="dark"] .utable select,[data-eff="dark"] .utable input,[data-eff="dark"] .add-user select,[data-eff="dark"] .add-user input{background:#1b2333;border-color:#2e3a55;color:#dde5f0}
 [data-eff="dark"] .utable th,[data-eff="dark"] .utable td{border-color:#26314a}
 [data-eff="dark"] .me-tag{background:#1c3a2a;color:#6fd69c}
+
+/* 类型管理分组 */
+.type-row{grid-template-columns:1fr 80px 84px 1.4fr 42px}
+.type-kind{margin-bottom:16px}
+.type-kind-h{font-size:14px;font-weight:600;color:var(--brand-d);margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--line)}
+.type-kind-n{color:var(--muted);font-weight:400;font-size:12px;margin-left:4px}
+.btn-primary{padding:9px 20px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer;font-size:14px}
+.btn-ghost.icon-only{padding:6px 9px}
+[data-eff="dark"] .type-kind-h{color:#9cc0f5;border-color:#26314a}

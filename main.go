@@ -154,6 +154,7 @@ func main() {
 	mux.HandleFunc("GET /manage/types", s.requireAdmin(s.manageTypes))
 	mux.HandleFunc("POST /manage/types", s.requireAdmin(s.manageTypesSave))
 	mux.HandleFunc("POST /manage/types/add", s.requireAdmin(s.manageTypesAdd))
+	mux.HandleFunc("POST /manage/types/{name}/delete", s.requireAdmin(s.manageTypesDelete))
 	mux.HandleFunc("GET /manage/users", s.requireAdmin(s.manageUsers))
 	mux.HandleFunc("POST /manage/users/add", s.requireAdmin(s.userAdd))
 	mux.HandleFunc("POST /manage/users/{name}/save", s.requireAdmin(s.userSave))
@@ -559,6 +560,16 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) 
 		return
 	}
 	pdf, err := htmlToPDF(buf.String())
+	if err == ErrNoWkhtmltopdf {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(503)
+		fmt.Fprint(w, `<div style="font-family:sans-serif;max-width:520px;margin:12vh auto;text-align:center;color:#334">`+
+			`<h2 style="color:#0c447c">PDF 暂不可用</h2>`+
+			`<p>本机未安装 <code>wkhtmltopdf</code>，无法在本地生成 PDF。</p>`+
+			`<p><b>Docker 部署已内置</b>，线上正常。想本地用可装：<br><code>brew install --cask wkhtmltopdf</code></p>`+
+			`<p>也可先用 <b>⬇ MD</b> 导出。<br><a href="javascript:history.back()">← 返回</a></p></div>`)
+		return
+	}
 	if err != nil {
 		http.Error(w, "PDF 生成失败: "+err.Error(), 500)
 		return
@@ -611,20 +622,46 @@ type typeRow struct {
 	Label     string
 }
 
+type typeGroup struct {
+	Kind string
+	Rows []typeRow
+}
+
+var kindOrder = []string{"并购重组", "投资决策", "深度研究", "技术分析", "事件监测", "其他"}
+
 func (s *Server) manageTypes(w http.ResponseWriter, r *http.Request, user string) {
 	cfg := s.st.TypeConfigs()
-	var rows []typeRow
+	known := map[string]bool{"并购重组": true, "投资决策": true, "深度研究": true, "技术分析": true, "事件监测": true}
+	byKind := map[string][]typeRow{}
 	for _, name := range s.st.DiscoveredTypes() {
 		c := cfg[name]
-		rows = append(rows, typeRow{Name: name, Ord: c.Ord, IsSummary: c.IsSummary, Label: c.Label})
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].Ord != rows[j].Ord {
-			return rows[i].Ord < rows[j].Ord
+		row := typeRow{Name: name, Ord: c.Ord, IsSummary: c.IsSummary, Label: c.Label}
+		k := runKind([]string{name})
+		if !known[k] {
+			k = "其他"
 		}
-		return rows[i].Name < rows[j].Name
-	})
-	s.render(w, "manage_types", map[string]any{"User": user, "Admin": true, "Rows": rows})
+		byKind[k] = append(byKind[k], row)
+	}
+	var groups []typeGroup
+	for _, k := range kindOrder {
+		rows := byKind[k]
+		if len(rows) == 0 {
+			continue
+		}
+		sort.SliceStable(rows, func(i, j int) bool {
+			if rows[i].Ord != rows[j].Ord {
+				return rows[i].Ord < rows[j].Ord
+			}
+			return rows[i].Name < rows[j].Name
+		})
+		groups = append(groups, typeGroup{Kind: k, Rows: rows})
+	}
+	s.render(w, "manage_types", map[string]any{"User": user, "Admin": true, "Groups": groups})
+}
+
+func (s *Server) manageTypesDelete(w http.ResponseWriter, r *http.Request, user string) {
+	s.st.DeleteTypeConfig(r.PathValue("name"))
+	http.Redirect(w, r, "/manage/types", http.StatusSeeOther)
 }
 
 func (s *Server) manageTypesSave(w http.ResponseWriter, r *http.Request, user string) {
