@@ -9,10 +9,34 @@ import (
 // Group 一次 run（同 标的+日期）收成一张卡。
 type Group struct {
 	Key, Symbol, Date string
+	Name              string // 公司名（代码→名映射）
+	Kind              string // 这次 run 的类别（并购重组/综合分析/…）
 	Source, Src       string
 	Members           []Rep
 	N                 int
 	Types             []string
+}
+
+// runKind 从报告类型推断"这次跑的是什么"。
+func runKind(types []string) string {
+	j := strings.Join(types, "")
+	switch {
+	case strings.Contains(j, "重组"):
+		return "并购重组"
+	case strings.Contains(j, "深度研究") || strings.Contains(j, "DeepResearch"):
+		return "深度研究"
+	case strings.Contains(j, "技术分析"):
+		return "技术分析"
+	case strings.Contains(j, "事件监测"):
+		return "事件监测"
+	case strings.Contains(j, "投资决策") || strings.Contains(j, "估值") ||
+		strings.Contains(j, "财务") || strings.Contains(j, "行业") || strings.Contains(j, "研报"):
+		return "综合分析"
+	}
+	if len(types) > 0 {
+		return types[0]
+	}
+	return "研报"
 }
 
 var (
@@ -59,8 +83,8 @@ func label(r Rep) string {
 	return t
 }
 
-// buildGroups 把报告按 run 分组，按日期倒序。
-func buildGroups(reps []Rep) []Group {
+// buildGroups 把报告按 run 分组，按日期倒序。nameOf: 代码→公司名。
+func buildGroups(reps []Rep, nameOf func(string) string) []Group {
 	m := map[string]*Group{}
 	var order []string
 	for _, r := range reps {
@@ -85,6 +109,10 @@ func buildGroups(reps []Rep) []Group {
 			if mm.RType != "" {
 				g.Types = append(g.Types, mm.RType)
 			}
+		}
+		g.Kind = runKind(g.Types)
+		if nameOf != nil {
+			g.Name = nameOf(g.Symbol)
 		}
 		out = append(out, *g)
 	}

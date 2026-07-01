@@ -10,9 +10,10 @@
 <div class="run-head">
   <div class="card-top">
     {{if .Symbol}}<span class="tag sym">{{.Symbol}}</span>{{end}}
+    {{if .Kind}}<span class="tag kind">{{.Kind}}</span>{{end}}
     <span class="tag run">📑 {{len .Members}} 篇 · 同一次生成</span>
   </div>
-  <h1 class="report-title">{{if .Symbol}}{{.Symbol}} 研报 · {{.Date}}{{else}}{{.Rep.Title}}{{end}}</h1>
+  <h1 class="report-title">{{if .Symbol}}{{.Symbol}}{{if .Name}} {{.Name}}{{end}} · {{.Kind}} · {{.Date}}{{else}}{{.Rep.Title}}{{end}}</h1>
   {{if .Source}}<div class="report-sub">{{.Source}}</div>{{end}}
 </div>
 
