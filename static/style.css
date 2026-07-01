@@ -129,7 +129,7 @@ a:hover{text-decoration:underline}
 .link-row.add{margin-top:6px}
 .link-row.link-head{color:var(--muted);font-size:12px}
 .link-row input{padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;background:#fff;color:var(--ink)}
-.link-row button{padding:8px 14px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
+.link-row.add button{padding:8px 14px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
 .link-acts{display:flex;gap:6px}
 .btn-ghost.danger{color:#b3261e;border-color:#f0c5c2}
 .btn-ghost.danger:hover{background:#fdecec;border-color:#e24b4a;color:#a32d2d}
