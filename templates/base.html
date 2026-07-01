@@ -48,7 +48,7 @@
   <script src="/static/vendor/flatpickr.min.js"></script>
   <script src="/static/vendor/flatpickr-zh.js"></script>
   <script>
-    if (window.flatpickr) flatpickr(".datep", { locale: "zh", dateFormat: "Y-m-d", allowInput: true });
+    if (window.flatpickr) flatpickr(".datep", { locale: "{{.Lang}}" === "zh" ? "zh" : "default", dateFormat: "Y-m-d", allowInput: true });
   </script>
 </body>
 </html>
