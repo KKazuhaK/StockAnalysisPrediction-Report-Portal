@@ -21,3 +21,6 @@ config.yaml
 
 # 本地测试沙盒
 /local-build/
+
+# 前端依赖(绝不进 git)
+web/node_modules/
