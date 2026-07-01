@@ -96,11 +96,14 @@ func main() {
 			log.Fatal(err)
 		}
 		h, _ := bcrypt.GenerateFromPassword([]byte(os.Args[3]), 12)
-		admin := len(os.Args) > 4 && os.Args[4] == "admin"
-		if err := st.UpsertUser(User{Username: os.Args[2], PasswordHash: string(h), IsAdmin: admin}); err != nil {
+		role := "user"
+		if len(os.Args) > 4 && os.Args[4] == "admin" {
+			role = "admin"
+		}
+		if err := st.UpsertUser(User{Username: os.Args[2], PasswordHash: string(h), Role: role}); err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("已写入账号 %s (admin=%v)\n", os.Args[2], admin)
+		fmt.Printf("已写入账号 %s (role=%s)\n", os.Args[2], role)
 		return
 	}
 
@@ -253,7 +256,7 @@ func (s *Server) currentUser(r *http.Request) string {
 
 func (s *Server) isAdmin(user string) bool {
 	u := s.st.GetUser(user)
-	return u != nil && u.IsAdmin
+	return u != nil && u.IsAdmin()
 }
 
 type handler func(http.ResponseWriter, *http.Request, string)
@@ -711,7 +714,7 @@ func (s *Server) userAdd(w http.ResponseWriter, r *http.Request, user string) {
 	pw := r.FormValue("password")
 	if name != "" && pw != "" {
 		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
-		s.st.UpsertUser(User{Username: name, PasswordHash: string(h), IsAdmin: r.FormValue("role") == "admin"})
+		s.st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: r.FormValue("role")})
 	}
 	http.Redirect(w, r, "/manage/users", http.StatusSeeOther)
 }
@@ -724,11 +727,11 @@ func (s *Server) userSave(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	r.ParseForm()
-	wantAdmin := r.FormValue("role") == "admin"
-	if u.IsAdmin && !wantAdmin && s.st.CountAdmins() <= 1 { // 不许降级最后一个管理员
-		wantAdmin = true
+	newRole := r.FormValue("role")
+	if newRole != "admin" && u.IsAdmin() && s.st.CountAdmins() <= 1 { // 不许降级最后一个管理员
+		newRole = "admin"
 	}
-	s.st.SetUserAdmin(name, wantAdmin)
+	s.st.SetUserRole(name, newRole)
 	if pw := strings.TrimSpace(r.FormValue("password")); pw != "" {
 		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
 		s.st.SetUserPassword(name, string(h))
@@ -740,7 +743,7 @@ func (s *Server) userDelete(w http.ResponseWriter, r *http.Request, user string)
 	name := r.PathValue("name")
 	u := s.st.GetUser(name)
 	// 不许删自己、不许删最后一个管理员
-	if u != nil && name != user && !(u.IsAdmin && s.st.CountAdmins() <= 1) {
+	if u != nil && name != user && !(u.IsAdmin() && s.st.CountAdmins() <= 1) {
 		s.st.DeleteUser(name)
 	}
 	http.Redirect(w, r, "/manage/users", http.StatusSeeOther)

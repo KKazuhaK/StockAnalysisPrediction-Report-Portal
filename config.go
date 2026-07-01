@@ -9,8 +9,23 @@ import (
 type User struct {
 	Username     string `yaml:"username"`
 	PasswordHash string `yaml:"password_hash"`
-	IsAdmin      bool   `yaml:"is_admin"`
+	Role         string `yaml:"role"`     // "admin" | "user"（可扩展更多角色）
+	Admin        bool   `yaml:"is_admin"` // 兼容旧配置，等价于 role: admin
 }
+
+// EffRole 解析出有效角色（role 优先，其次旧的 is_admin，默认 user）。
+func (u User) EffRole() string {
+	if u.Role != "" {
+		return u.Role
+	}
+	if u.Admin {
+		return "admin"
+	}
+	return "user"
+}
+
+// IsAdmin 供模板/鉴权判断（{{if .IsAdmin}}）。
+func (u User) IsAdmin() bool { return u.EffRole() == "admin" }
 
 type Config struct {
 	Listen    string `yaml:"listen"`
