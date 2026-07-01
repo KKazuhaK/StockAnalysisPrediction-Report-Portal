@@ -39,6 +39,7 @@ type Server struct {
 	cfg   *Config
 	st    *Store
 	old   *OldClient
+	names *Names
 	pages map[string]*template.Template
 	pdf   *template.Template
 }
@@ -58,6 +59,24 @@ func main() {
 		return
 	}
 
+	// 子命令：report-portal fetchnames —— 抓全量 A 股名称写 data/names.json
+	if len(os.Args) > 1 && os.Args[1] == "fetchnames" {
+		cfgP := os.Getenv("RP_CONFIG")
+		if cfgP == "" {
+			cfgP = "config.yaml"
+		}
+		dir := "data"
+		if c, err := LoadConfig(cfgP); err == nil {
+			dir = dirOf(c.DBPath)
+		}
+		n, err := FetchNamesToFile(dir)
+		if err != nil {
+			log.Fatalf("抓取失败: %v", err)
+		}
+		fmt.Printf("已写 %s/names.json: %d 条\n", dir, n)
+		return
+	}
+
 	cfgPath := os.Getenv("RP_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "config.yaml"
@@ -74,6 +93,8 @@ func main() {
 		log.Fatalf("数据库: %v", err)
 	}
 	s := &Server{cfg: cfg, st: st, old: NewOldClient(cfg.OldPortal.BaseURL, cfg.OldPortal.Username, cfg.OldPortal.Password)}
+	s.names = LoadNames(dirOf(cfg.DBPath))
+	s.names.ensureFull() // 无全量表时后台 best-effort 抓一次
 	s.parseTemplates()
 
 	go s.syncLoop() // 后台同步旧元数据
@@ -290,7 +311,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, user string) {
 		oldTotal = len(oo)
 		reps = append(reps, oo...)
 	}
-	groups := buildGroups(reps)
+	groups := buildGroups(reps, s.names.Get)
 	totalRuns := len(groups)
 	pages := int(math.Max(1, math.Ceil(float64(totalRuns)/float64(size))))
 	lo := (page - 1) * size
@@ -430,10 +451,17 @@ func (s *Server) runView(w http.ResponseWriter, r *http.Request, user string) {
 	if back == "" {
 		back = "/"
 	}
+	var mtypes []string
+	for _, m := range members {
+		if m.RType != "" {
+			mtypes = append(mtypes, m.RType)
+		}
+	}
 	s.render(w, "run", map[string]any{
 		"User": user, "Admin": s.isAdmin(user), "Key": key, "Back": back,
 		"Members": members, "Sel": sel, "Rep": rep,
-		"Symbol": members[0].Symbol, "Date": members[0].Date, "Source": members[0].Source,
+		"Symbol": members[0].Symbol, "Name": s.names.Get(members[0].Symbol),
+		"Kind": runKind(mtypes), "Date": members[0].Date, "Source": members[0].Source,
 	})
 }
 

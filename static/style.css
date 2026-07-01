@@ -197,3 +197,7 @@ a:hover{text-decoration:underline}
   padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;background:#fff;color:var(--ink)}
 .type-row button,form>div>button[type=submit]{padding:9px 18px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
 [data-eff="dark"] .type-row input{background:#1b2333;border-color:#2e3a55;color:#dde5f0}
+
+/* run 类别徽标 */
+.tag.kind{background:#efe9fb;color:#6a45c0;font-weight:600}
+[data-eff="dark"] .tag.kind{background:#2c2350;color:#b9a6f0}

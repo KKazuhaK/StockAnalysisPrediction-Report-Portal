@@ -48,9 +48,10 @@
     <div class="card-top">
       <span class="tag {{if eq .Src "new"}}new{{else}}old{{end}}">{{if eq .Src "new"}}新{{else}}旧{{end}}</span>
       {{if .Symbol}}<span class="tag sym">{{.Symbol}}</span>{{end}}
+      {{if .Kind}}<span class="tag kind">{{.Kind}}</span>{{end}}
       {{if gt .N 1}}<span class="tag run">📑 {{.N}} 篇</span>{{end}}
     </div>
-    <div class="card-title">{{if .Symbol}}{{.Symbol}} 研报{{else}}{{(index .Members 0).Title}}{{end}}</div>
+    <div class="card-title">{{if .Symbol}}{{.Symbol}}{{if .Name}} {{.Name}}{{end}}{{else}}{{(index .Members 0).Title}}{{end}}</div>
     {{if .Types}}<div class="run-types">{{join .Types " · "}}</div>{{end}}
     <div class="card-foot">
       <span class="card-date">{{.Date}}</span>
