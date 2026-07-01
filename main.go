@@ -91,7 +91,7 @@ func main() {
 			log.Fatalf("配置: %v", err)
 		}
 		os.MkdirAll(dirOf(c.DBPath), 0o755)
-		st, err := OpenStore(c.DBPath)
+		st, err := OpenStore(c.DBDriver, c.dbSource())
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -115,7 +115,7 @@ func main() {
 	if err := os.MkdirAll(dirOf(cfg.DBPath), 0o755); err != nil {
 		log.Fatal(err)
 	}
-	st, err := OpenStore(cfg.DBPath)
+	st, err := OpenStore(cfg.DBDriver, cfg.dbSource())
 	if err != nil {
 		log.Fatalf("数据库: %v", err)
 	}
@@ -674,7 +674,7 @@ func (s *Server) userAdd(w http.ResponseWriter, r *http.Request, user string) {
 	pw := r.FormValue("password")
 	if name != "" && pw != "" {
 		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
-		s.st.UpsertUser(User{Username: name, PasswordHash: string(h), IsAdmin: r.FormValue("is_admin") != ""})
+		s.st.UpsertUser(User{Username: name, PasswordHash: string(h), IsAdmin: r.FormValue("role") == "admin"})
 	}
 	http.Redirect(w, r, "/manage/users", http.StatusSeeOther)
 }
@@ -687,7 +687,7 @@ func (s *Server) userSave(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	r.ParseForm()
-	wantAdmin := r.FormValue("is_admin") != ""
+	wantAdmin := r.FormValue("role") == "admin"
 	if u.IsAdmin && !wantAdmin && s.st.CountAdmins() <= 1 { // 不许降级最后一个管理员
 		wantAdmin = true
 	}

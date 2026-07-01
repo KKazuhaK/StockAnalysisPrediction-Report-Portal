@@ -20,9 +20,19 @@ type Config struct {
 		Username string `yaml:"username"`
 		Password string `yaml:"password"`
 	} `yaml:"old_portal"`
-	Users   []User `yaml:"users"`
-	DBPath  string `yaml:"db_path"`
-	SyncMin int    `yaml:"sync_interval_minutes"` // 旧元数据自动同步间隔(0=只启动时同步一次)
+	Users    []User `yaml:"users"`
+	DBDriver string `yaml:"db_driver"`            // "sqlite"(默认) | "postgres"
+	DBPath   string `yaml:"db_path"`              // sqlite 文件路径
+	DBDSN    string `yaml:"db_dsn"`               // postgres DSN: postgres://user:pass@host:5432/reports?sslmode=disable
+	SyncMin  int    `yaml:"sync_interval_minutes"` // 旧元数据自动同步间隔(0=只启动时同步一次)
+}
+
+// dbSource 返回给 OpenStore 的连接源（sqlite=文件路径，postgres=DSN）。
+func (c *Config) dbSource() string {
+	if c.DBDriver == "postgres" {
+		return c.DBDSN
+	}
+	return c.DBPath
 }
 
 func LoadConfig(path string) (*Config, error) {

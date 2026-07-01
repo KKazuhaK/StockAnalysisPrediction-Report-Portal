@@ -222,3 +222,24 @@ a:hover{text-decoration:underline}
 .topbar .theme-sel{height:32px;box-sizing:border-box;padding:0 10px;vertical-align:middle}
 /* 手动新增类型表单用 flex，避免撑破网格 */
 .type-row.add{display:flex;flex-wrap:wrap;align-items:center}
+
+/* 账号管理（表格版，易扩展） */
+.card-box{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow-x:auto}
+.utable{width:100%;border-collapse:collapse;font-size:14px}
+.utable th{text-align:left;color:var(--muted);font-size:12px;font-weight:600;padding:11px 14px;border-bottom:1px solid var(--line)}
+.utable td{padding:9px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+.utable tr:last-child td{border-bottom:0}
+.utable .ta-r{text-align:right}
+.utable .u-name{font-weight:600}
+.utable select,.utable input,.add-user select,.add-user input{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff;color:var(--ink)}
+.utable input[type=password]{width:100%;max-width:220px}
+.u-acts{white-space:nowrap}
+.inline{display:inline;margin:0}
+.u-acts .inline+.inline{margin-left:6px}
+.me-tag{background:#eafaf1;color:#1f8a5b;font-size:11px;padding:1px 7px;border-radius:20px;margin-left:4px}
+.add-user{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:6px}
+.add-user input{min-width:160px}
+.add-user button{padding:9px 18px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
+[data-eff="dark"] .utable select,[data-eff="dark"] .utable input,[data-eff="dark"] .add-user select,[data-eff="dark"] .add-user input{background:#1b2333;border-color:#2e3a55;color:#dde5f0}
+[data-eff="dark"] .utable th,[data-eff="dark"] .utable td{border-color:#26314a}
+[data-eff="dark"] .me-tag{background:#1c3a2a;color:#6fd69c}
