@@ -216,3 +216,9 @@ a:hover{text-decoration:underline}
 .user-row.add button{padding:9px 18px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
 .me-tag{color:var(--accent);font-size:12px}
 [data-eff="dark"] .user-row input{background:#1b2333;border-color:#2e3a55;color:#dde5f0}
+
+/* 顶栏:主题下拉与按钮等高对齐 */
+.topbar nav .btn-ghost{height:32px;box-sizing:border-box;display:inline-flex;align-items:center;padding-top:0;padding-bottom:0}
+.topbar .theme-sel{height:32px;box-sizing:border-box;padding:0 10px;vertical-align:middle}
+/* 手动新增类型表单用 flex，避免撑破网格 */
+.type-row.add{display:flex;flex-wrap:wrap;align-items:center}

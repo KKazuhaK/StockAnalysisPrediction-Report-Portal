@@ -19,4 +19,14 @@
   </div>
   <div style="margin-top:14px"><button type="submit">保存全部</button></div>
 </form>
+
+<h3 class="page-h">手动新增类型</h3>
+<p class="hint-line">工作流以后要产出的新类型，可先在这里注册好顺序/默认/显示名；等报告到了就自动套用。</p>
+<form class="type-row add" method="post" action="/manage/types/add">
+  <input name="name" placeholder="类型名，如 ESG分析" required>
+  <input name="ord" type="number" value="0" style="width:70px" title="排序">
+  <label class="type-chk"><input type="checkbox" name="summary"> 默认页</label>
+  <input name="label" placeholder="显示名(可选)">
+  <button type="submit">新增</button>
+</form>
 {{end}}

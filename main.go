@@ -153,6 +153,7 @@ func main() {
 	mux.HandleFunc("POST /manage/links/{id}/delete", s.requireAdmin(s.linkDelete))
 	mux.HandleFunc("GET /manage/types", s.requireAdmin(s.manageTypes))
 	mux.HandleFunc("POST /manage/types", s.requireAdmin(s.manageTypesSave))
+	mux.HandleFunc("POST /manage/types/add", s.requireAdmin(s.manageTypesAdd))
 	mux.HandleFunc("GET /manage/users", s.requireAdmin(s.manageUsers))
 	mux.HandleFunc("POST /manage/users/add", s.requireAdmin(s.userAdd))
 	mux.HandleFunc("POST /manage/users/{name}/save", s.requireAdmin(s.userSave))
@@ -645,6 +646,17 @@ func (s *Server) manageTypesSave(w http.ResponseWriter, r *http.Request, user st
 			label = strings.TrimSpace(labels[i])
 		}
 		s.st.UpsertTypeConfig(name, ord, sum[name], label)
+	}
+	http.Redirect(w, r, "/manage/types", http.StatusSeeOther)
+}
+
+// manageTypesAdd 手动预注册一个类型（工作流还没产出该类型时先配好顺序/默认/改名）。
+func (s *Server) manageTypesAdd(w http.ResponseWriter, r *http.Request, user string) {
+	r.ParseForm()
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name != "" {
+		ord, _ := strconv.Atoi(r.FormValue("ord"))
+		s.st.UpsertTypeConfig(name, ord, r.FormValue("summary") != "", strings.TrimSpace(r.FormValue("label")))
 	}
 	http.Redirect(w, r, "/manage/types", http.StatusSeeOther)
 }
