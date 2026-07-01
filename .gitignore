@@ -18,3 +18,6 @@ config.yaml
 
 # go build 默认输出(名=目录名)
 /StockAnalysisPrediction-Dify-Report-Portal
+
+# 本地测试沙盒
+/local-build/

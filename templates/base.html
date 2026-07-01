@@ -23,7 +23,8 @@
   <header class="topbar">
     <a class="brand" href="/">📊 研报门户</a>
     <nav>
-      {{if .Admin}}<a href="/manage/links" class="btn-ghost">⚙ 入口管理</a>{{end}}
+      {{if .Admin}}<a href="/manage/links" class="btn-ghost">⚙ 入口管理</a>
+      <a href="/manage/types" class="btn-ghost">🏷 类型管理</a>{{end}}
       <select id="theme-sel" class="theme-sel" title="主题" onchange="rpApplyTheme(this.value)">
         <option value="auto">🖥 跟随系统</option>
         <option value="light">☀ 浅色</option>

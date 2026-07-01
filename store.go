@@ -57,8 +57,74 @@ func (s *Store) init() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT, url TEXT, ord INTEGER DEFAULT 0
 	);
 	CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
+	-- 报告类型显示配置（管理员网页可改：tab 顺序 + 哪个是"汇总/默认页" + 改名）。
+	-- 为工作流变更留后路：新类型自动出现，管理员排序/指定默认，无需改代码。
+	CREATE TABLE IF NOT EXISTS type_config(
+		name TEXT PRIMARY KEY, ord INTEGER DEFAULT 0, is_summary INTEGER DEFAULT 0, label TEXT
+	);
 	`)
 	return err
+}
+
+// ---------- 报告类型配置（管理员可改） ----------
+
+type TypeConfig struct {
+	Name      string
+	Ord       int
+	IsSummary bool
+	Label     string
+}
+
+func (s *Store) TypeConfigs() map[string]TypeConfig {
+	m := map[string]TypeConfig{}
+	rows, err := s.db.Query("SELECT name,ord,is_summary,label FROM type_config")
+	if err != nil {
+		return m
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t TypeConfig
+		var isum int
+		var label sql.NullString
+		rows.Scan(&t.Name, &t.Ord, &isum, &label)
+		t.IsSummary = isum == 1
+		t.Label = label.String
+		m[t.Name] = t
+	}
+	return m
+}
+
+func (s *Store) UpsertTypeConfig(name string, ord int, isSummary bool, label string) error {
+	is := 0
+	if isSummary {
+		is = 1
+	}
+	_, err := s.db.Exec(`INSERT INTO type_config(name,ord,is_summary,label) VALUES(?,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET ord=excluded.ord,is_summary=excluded.is_summary,label=excluded.label`,
+		name, ord, is, label)
+	return err
+}
+
+// DiscoveredTypes 数据里出现过的所有类型（新+旧）并入已配置的。
+func (s *Store) DiscoveredTypes() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(v string) {
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	for _, v := range s.distinct("SELECT DISTINCT rtype FROM reports WHERE rtype<>''") {
+		add(v)
+	}
+	for _, v := range s.distinct("SELECT DISTINCT category FROM old_meta WHERE category<>''") {
+		add(v)
+	}
+	for k := range s.TypeConfigs() {
+		add(k)
+	}
+	return out
 }
 
 // Filters 列表/分组的筛选条件。
