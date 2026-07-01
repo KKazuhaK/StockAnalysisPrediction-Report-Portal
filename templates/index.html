@@ -65,9 +65,22 @@
 
 {{if gt .Pages 1}}
 <div class="pager">
-  {{if gt .Page 1}}<a class="btn-ghost" href="{{.PrevURL}}">{{icon "arrow-left"}} 上一页</a>{{end}}
-  <span class="pager-now">第 {{.Page}} / {{.Pages}} 页</span>
-  {{if lt .Page .Pages}}<a class="btn-ghost" href="{{.NextURL}}">下一页 {{icon "arrow-right"}}</a>{{end}}
+  {{if gt .Page 1}}<a class="btn-ghost pg-arrow" href="{{.PrevURL}}" title="上一页">{{icon "arrow-left"}}</a>{{end}}
+  {{range .Pager}}
+    {{if .Ellipsis}}<span class="pg-gap">…</span>
+    {{else if .Cur}}<span class="pg-num pg-cur">{{.Num}}</span>
+    {{else}}<a class="pg-num" href="{{.URL}}">{{.Num}}</a>{{end}}
+  {{end}}
+  {{if lt .Page .Pages}}<a class="btn-ghost pg-arrow" href="{{.NextURL}}" title="下一页">{{icon "arrow-right"}}</a>{{end}}
+  <form class="pg-jump" method="get" action="/">
+    <input type="hidden" name="symbol" value="{{.F.Symbol}}"><input type="hidden" name="rtype" value="{{.F.RType}}">
+    <input type="hidden" name="date_from" value="{{.F.DateFrom}}"><input type="hidden" name="date_to" value="{{.F.DateTo}}">
+    <input type="hidden" name="q" value="{{.F.Q}}"><input type="hidden" name="scope" value="{{.F.Scope}}">
+    <input type="hidden" name="sort" value="{{.F.Sort}}"><input type="hidden" name="src" value="{{.F.Src}}">
+    <input type="hidden" name="size" value="{{.F.Size}}">
+    <input type="number" name="page" min="1" max="{{.Pages}}" value="{{.Page}}" title="跳转到页">
+    <button type="submit">跳转</button>
+  </form>
 </div>
 {{end}}
 {{end}}
