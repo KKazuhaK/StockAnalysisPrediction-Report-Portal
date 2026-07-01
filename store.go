@@ -110,9 +110,9 @@ func (s *Store) init() error {
 		// 报告类型显示配置（管理员网页可改：tab 顺序/默认页/改名），为工作流变更留后路。
 		`CREATE TABLE IF NOT EXISTS type_config(
 			name TEXT PRIMARY KEY, ord INTEGER DEFAULT 0, is_summary INTEGER DEFAULT 0, label TEXT)`,
-		// 登录账号（config.yaml 仅首启种子，之后网页管理）。
+		// 登录账号（config.yaml 仅首启种子，之后网页管理）。role 可扩展更多角色。
 		`CREATE TABLE IF NOT EXISTS users(
-			username TEXT PRIMARY KEY, password_hash TEXT, is_admin INTEGER DEFAULT 0)`,
+			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user')`,
 	}
 	for _, st := range stmts {
 		if _, err := s.exec(st); err != nil {
@@ -125,7 +125,7 @@ func (s *Store) init() error {
 // ---------- 账号 ----------
 
 func (s *Store) Users() []User {
-	rows, err := s.query("SELECT username,password_hash,is_admin FROM users ORDER BY is_admin DESC, username")
+	rows, err := s.query("SELECT username,password_hash,role FROM users ORDER BY role, username")
 	if err != nil {
 		return nil
 	}
@@ -133,9 +133,9 @@ func (s *Store) Users() []User {
 	var out []User
 	for rows.Next() {
 		var u User
-		var adm int
-		rows.Scan(&u.Username, &u.PasswordHash, &adm)
-		u.IsAdmin = adm == 1
+		var role sql.NullString
+		rows.Scan(&u.Username, &u.PasswordHash, &role)
+		u.Role = role.String
 		out = append(out, u)
 	}
 	return out
@@ -143,24 +143,20 @@ func (s *Store) Users() []User {
 
 func (s *Store) GetUser(name string) *User {
 	var u User
-	var adm int
-	err := s.queryRow("SELECT username,password_hash,is_admin FROM users WHERE username=?", name).
-		Scan(&u.Username, &u.PasswordHash, &adm)
+	var role sql.NullString
+	err := s.queryRow("SELECT username,password_hash,role FROM users WHERE username=?", name).
+		Scan(&u.Username, &u.PasswordHash, &role)
 	if err != nil {
 		return nil
 	}
-	u.IsAdmin = adm == 1
+	u.Role = role.String
 	return &u
 }
 
 func (s *Store) UpsertUser(u User) error {
-	adm := 0
-	if u.IsAdmin {
-		adm = 1
-	}
-	_, err := s.exec(`INSERT INTO users(username,password_hash,is_admin) VALUES(?,?,?)
-		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,is_admin=excluded.is_admin`,
-		u.Username, u.PasswordHash, adm)
+	_, err := s.exec(`INSERT INTO users(username,password_hash,role) VALUES(?,?,?)
+		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,role=excluded.role`,
+		u.Username, u.PasswordHash, u.EffRole())
 	return err
 }
 
@@ -169,12 +165,11 @@ func (s *Store) SetUserPassword(name, hash string) error {
 	return err
 }
 
-func (s *Store) SetUserAdmin(name string, admin bool) error {
-	adm := 0
-	if admin {
-		adm = 1
+func (s *Store) SetUserRole(name, role string) error {
+	if role != "admin" {
+		role = "user"
 	}
-	_, err := s.exec("UPDATE users SET is_admin=? WHERE username=?", adm, name)
+	_, err := s.exec("UPDATE users SET role=? WHERE username=?", role, name)
 	return err
 }
 
@@ -189,7 +184,7 @@ func (s *Store) CountUsers() (n int) {
 }
 
 func (s *Store) CountAdmins() (n int) {
-	s.queryRow("SELECT COUNT(*) FROM users WHERE is_admin=1").Scan(&n)
+	s.queryRow("SELECT COUNT(*) FROM users WHERE role='admin'").Scan(&n)
 	return
 }
 

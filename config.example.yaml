@@ -25,4 +25,4 @@ sync_interval_minutes: 60
 users:
   - username: "admin"
     password_hash: "$2a$12$REPLACE_WITH_BCRYPT_HASH"
-    is_admin: true
+    role: "admin"        # admin | user（可扩展更多角色）
