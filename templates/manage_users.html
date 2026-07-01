@@ -1,0 +1,28 @@
+{{define "content"}}
+<div class="report-head"><a href="/" class="btn-ghost">{{icon "arrow-left"}} 返回列表</a></div>
+<h2 class="page-h">账号管理</h2>
+<p class="hint-line">config.yaml 里的账号仅首次启动时种入，之后在这里管理。不能删自己，也不能删/降级最后一个管理员。</p>
+
+<div class="user-table">
+  <div class="user-row user-head"><span>用户名</span><span>管理员</span><span>重置密码(留空不改)</span><span></span></div>
+  {{range .Users}}
+  <form class="user-row" method="post" action="/manage/users/{{.Username}}/save">
+    <span class="type-name">{{.Username}}{{if eq .Username $.Me}} <span class="me-tag">(你)</span>{{end}}</span>
+    <label class="type-chk"><input type="checkbox" name="is_admin" {{if .IsAdmin}}checked{{end}}> 管理员</label>
+    <input name="password" type="password" placeholder="新密码" autocomplete="new-password">
+    <span class="link-acts">
+      <button type="submit" class="btn-ghost">保存</button>
+      {{if ne .Username $.Me}}<button type="submit" class="btn-ghost danger" formaction="/manage/users/{{.Username}}/delete">{{icon "trash"}} 删除</button>{{end}}
+    </span>
+  </form>
+  {{end}}
+</div>
+
+<h3 class="page-h">添加账号</h3>
+<form class="user-row add" method="post" action="/manage/users/add">
+  <input name="username" placeholder="用户名" required autocomplete="off">
+  <label class="type-chk"><input type="checkbox" name="is_admin"> 管理员</label>
+  <input name="password" type="password" placeholder="密码" required autocomplete="new-password">
+  <button type="submit">添加</button>
+</form>
+{{end}}

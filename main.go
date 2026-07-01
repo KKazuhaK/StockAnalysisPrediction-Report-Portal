@@ -77,6 +77,33 @@ func main() {
 		return
 	}
 
+	// 子命令：report-portal adduser <用户名> <密码> [admin] —— 兜底防锁死
+	if len(os.Args) > 1 && os.Args[1] == "adduser" {
+		if len(os.Args) < 4 {
+			log.Fatal("用法: report-portal adduser <用户名> <密码> [admin]")
+		}
+		cfgP := os.Getenv("RP_CONFIG")
+		if cfgP == "" {
+			cfgP = "config.yaml"
+		}
+		c, err := LoadConfig(cfgP)
+		if err != nil {
+			log.Fatalf("配置: %v", err)
+		}
+		os.MkdirAll(dirOf(c.DBPath), 0o755)
+		st, err := OpenStore(c.DBPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		h, _ := bcrypt.GenerateFromPassword([]byte(os.Args[3]), 12)
+		admin := len(os.Args) > 4 && os.Args[4] == "admin"
+		if err := st.UpsertUser(User{Username: os.Args[2], PasswordHash: string(h), IsAdmin: admin}); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("已写入账号 %s (admin=%v)\n", os.Args[2], admin)
+		return
+	}
+
 	cfgPath := os.Getenv("RP_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "config.yaml"
@@ -91,6 +118,14 @@ func main() {
 	st, err := OpenStore(cfg.DBPath)
 	if err != nil {
 		log.Fatalf("数据库: %v", err)
+	}
+	if st.CountUsers() == 0 { // 首启：从 config 种入初始账号
+		for _, u := range cfg.Users {
+			if u.Username != "" && u.PasswordHash != "" {
+				st.UpsertUser(u)
+			}
+		}
+		log.Printf("已从 config 种入 %d 个账号", st.CountUsers())
 	}
 	s := &Server{cfg: cfg, st: st, old: NewOldClient(cfg.OldPortal.BaseURL, cfg.OldPortal.Username, cfg.OldPortal.Password)}
 	s.names = LoadNames(dirOf(cfg.DBPath))
@@ -118,6 +153,10 @@ func main() {
 	mux.HandleFunc("POST /manage/links/{id}/delete", s.requireAdmin(s.linkDelete))
 	mux.HandleFunc("GET /manage/types", s.requireAdmin(s.manageTypes))
 	mux.HandleFunc("POST /manage/types", s.requireAdmin(s.manageTypesSave))
+	mux.HandleFunc("GET /manage/users", s.requireAdmin(s.manageUsers))
+	mux.HandleFunc("POST /manage/users/add", s.requireAdmin(s.userAdd))
+	mux.HandleFunc("POST /manage/users/{name}/save", s.requireAdmin(s.userSave))
+	mux.HandleFunc("POST /manage/users/{name}/delete", s.requireAdmin(s.userDelete))
 
 	log.Printf("研报门户 %s 启动于 %s (新:%d 旧:%d)", version, cfg.Listen, st.CountNew(), st.CountOld())
 	if err := http.ListenAndServe(cfg.Listen, mux); err != nil {
@@ -149,7 +188,7 @@ func (s *Server) parseTemplates() {
 		},
 	}
 	s.pages = map[string]*template.Template{}
-	for _, name := range []string{"login", "index", "run", "manage_links", "manage_types"} {
+	for _, name := range []string{"login", "index", "run", "manage_links", "manage_types", "manage_users"} {
 		s.pages[name] = template.Must(template.New("base.html").Funcs(funcs).
 			ParseFS(tplFS, "templates/base.html", "templates/"+name+".html"))
 	}
@@ -211,7 +250,7 @@ func (s *Server) currentUser(r *http.Request) string {
 }
 
 func (s *Server) isAdmin(user string) bool {
-	u := s.cfg.user(user)
+	u := s.st.GetUser(user)
 	return u != nil && u.IsAdmin
 }
 
@@ -255,7 +294,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-	u := s.cfg.user(r.FormValue("username"))
+	u := s.st.GetUser(r.FormValue("username"))
 	pw := r.FormValue("password")
 	if u == nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(pw)) != nil {
 		w.WriteHeader(401)
@@ -608,6 +647,54 @@ func (s *Server) manageTypesSave(w http.ResponseWriter, r *http.Request, user st
 		s.st.UpsertTypeConfig(name, ord, sum[name], label)
 	}
 	http.Redirect(w, r, "/manage/types", http.StatusSeeOther)
+}
+
+// ---------- 账号管理 ----------
+
+func (s *Server) manageUsers(w http.ResponseWriter, r *http.Request, user string) {
+	s.render(w, "manage_users", map[string]any{
+		"User": user, "Admin": true, "Users": s.st.Users(), "Me": user})
+}
+
+func (s *Server) userAdd(w http.ResponseWriter, r *http.Request, user string) {
+	r.ParseForm()
+	name := strings.TrimSpace(r.FormValue("username"))
+	pw := r.FormValue("password")
+	if name != "" && pw != "" {
+		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
+		s.st.UpsertUser(User{Username: name, PasswordHash: string(h), IsAdmin: r.FormValue("is_admin") != ""})
+	}
+	http.Redirect(w, r, "/manage/users", http.StatusSeeOther)
+}
+
+func (s *Server) userSave(w http.ResponseWriter, r *http.Request, user string) {
+	name := r.PathValue("name")
+	u := s.st.GetUser(name)
+	if u == nil {
+		http.Redirect(w, r, "/manage/users", http.StatusSeeOther)
+		return
+	}
+	r.ParseForm()
+	wantAdmin := r.FormValue("is_admin") != ""
+	if u.IsAdmin && !wantAdmin && s.st.CountAdmins() <= 1 { // 不许降级最后一个管理员
+		wantAdmin = true
+	}
+	s.st.SetUserAdmin(name, wantAdmin)
+	if pw := strings.TrimSpace(r.FormValue("password")); pw != "" {
+		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
+		s.st.SetUserPassword(name, string(h))
+	}
+	http.Redirect(w, r, "/manage/users", http.StatusSeeOther)
+}
+
+func (s *Server) userDelete(w http.ResponseWriter, r *http.Request, user string) {
+	name := r.PathValue("name")
+	u := s.st.GetUser(name)
+	// 不许删自己、不许删最后一个管理员
+	if u != nil && name != user && !(u.IsAdmin && s.st.CountAdmins() <= 1) {
+		s.st.DeleteUser(name)
+	}
+	http.Redirect(w, r, "/manage/users", http.StatusSeeOther)
 }
 
 // ---------- 后台同步 ----------

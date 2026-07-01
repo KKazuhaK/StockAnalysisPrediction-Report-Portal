@@ -24,7 +24,8 @@
     <a class="brand" href="/">{{icon "report-analytics"}} 研报门户</a>
     <nav>
       {{if .Admin}}<a href="/manage/links" class="btn-ghost">{{icon "settings"}} 入口管理</a>
-      <a href="/manage/types" class="btn-ghost">{{icon "tag"}} 类型管理</a>{{end}}
+      <a href="/manage/types" class="btn-ghost">{{icon "tag"}} 类型管理</a>
+      <a href="/manage/users" class="btn-ghost">{{icon "users"}} 账号管理</a>{{end}}
       <select id="theme-sel" class="theme-sel" title="主题" onchange="rpApplyTheme(this.value)">
         <option value="auto">跟随系统</option>
         <option value="light">浅色</option>

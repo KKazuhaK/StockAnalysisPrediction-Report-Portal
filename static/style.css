@@ -207,3 +207,12 @@ a:hover{text-decoration:underline}
 .brand .ti{width:1.15em;height:1.15em;vertical-align:-0.2em;margin-right:2px}
 .btn-ghost .ti,.gen-btn .ti{margin-right:3px}
 .tag .ti{margin-right:2px}
+
+/* 账号管理 */
+.user-table{display:flex;flex-direction:column;gap:8px}
+.user-row{display:grid;grid-template-columns:1.3fr 110px 1.4fr auto;gap:10px;align-items:center}
+.user-row.user-head{color:var(--muted);font-size:12px}
+.user-row input:not([type=checkbox]){padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;background:#fff;color:var(--ink)}
+.user-row.add button{padding:9px 18px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
+.me-tag{color:var(--accent);font-size:12px}
+[data-eff="dark"] .user-row input{background:#1b2333;border-color:#2e3a55;color:#dde5f0}

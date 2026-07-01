@@ -62,8 +62,83 @@ func (s *Store) init() error {
 	CREATE TABLE IF NOT EXISTS type_config(
 		name TEXT PRIMARY KEY, ord INTEGER DEFAULT 0, is_summary INTEGER DEFAULT 0, label TEXT
 	);
+	-- 登录账号（config.yaml 仅首启种子，之后网页管理）。
+	CREATE TABLE IF NOT EXISTS users(
+		username TEXT PRIMARY KEY, password_hash TEXT, is_admin INTEGER DEFAULT 0
+	);
 	`)
 	return err
+}
+
+// ---------- 账号 ----------
+
+func (s *Store) Users() []User {
+	rows, err := s.db.Query("SELECT username,password_hash,is_admin FROM users ORDER BY is_admin DESC, username")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		var adm int
+		rows.Scan(&u.Username, &u.PasswordHash, &adm)
+		u.IsAdmin = adm == 1
+		out = append(out, u)
+	}
+	return out
+}
+
+func (s *Store) GetUser(name string) *User {
+	var u User
+	var adm int
+	err := s.db.QueryRow("SELECT username,password_hash,is_admin FROM users WHERE username=?", name).
+		Scan(&u.Username, &u.PasswordHash, &adm)
+	if err != nil {
+		return nil
+	}
+	u.IsAdmin = adm == 1
+	return &u
+}
+
+func (s *Store) UpsertUser(u User) error {
+	adm := 0
+	if u.IsAdmin {
+		adm = 1
+	}
+	_, err := s.db.Exec(`INSERT INTO users(username,password_hash,is_admin) VALUES(?,?,?)
+		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,is_admin=excluded.is_admin`,
+		u.Username, u.PasswordHash, adm)
+	return err
+}
+
+func (s *Store) SetUserPassword(name, hash string) error {
+	_, err := s.db.Exec("UPDATE users SET password_hash=? WHERE username=?", hash, name)
+	return err
+}
+
+func (s *Store) SetUserAdmin(name string, admin bool) error {
+	adm := 0
+	if admin {
+		adm = 1
+	}
+	_, err := s.db.Exec("UPDATE users SET is_admin=? WHERE username=?", adm, name)
+	return err
+}
+
+func (s *Store) DeleteUser(name string) error {
+	_, err := s.db.Exec("DELETE FROM users WHERE username=?", name)
+	return err
+}
+
+func (s *Store) CountUsers() (n int) {
+	s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&n)
+	return
+}
+
+func (s *Store) CountAdmins() (n int) {
+	s.db.QueryRow("SELECT COUNT(*) FROM users WHERE is_admin=1").Scan(&n)
+	return
 }
 
 // ---------- 报告类型配置（管理员可改） ----------
