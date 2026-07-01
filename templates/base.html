@@ -22,19 +22,22 @@
 <body>
   {{if .User}}
   <header class="topbar">
-    <a class="brand" href="/">{{icon "report-analytics"}} 研报门户</a>
+    <a class="brand" href="/">{{icon "report-analytics"}} {{t .Lang "brand"}}</a>
     <nav>
-      {{if .Admin}}<a href="/manage/links" class="btn-ghost">{{icon "settings"}} 入口管理</a>
-      <a href="/manage/types" class="btn-ghost">{{icon "tag"}} 类型管理</a>
-      <a href="/manage/users" class="btn-ghost">{{icon "users"}} 账号管理</a>
-      <a href="/manage/settings" class="btn-ghost">{{icon "adjustments"}} 系统设置</a>{{end}}
+      {{if .Admin}}<a href="/manage/links" class="btn-ghost">{{icon "settings"}} {{t .Lang "nav.links"}}</a>
+      <a href="/manage/types" class="btn-ghost">{{icon "tag"}} {{t .Lang "nav.types"}}</a>
+      <a href="/manage/users" class="btn-ghost">{{icon "users"}} {{t .Lang "nav.users"}}</a>
+      <a href="/manage/settings" class="btn-ghost">{{icon "adjustments"}} {{t .Lang "nav.settings"}}</a>{{end}}
       <select id="theme-sel" class="theme-sel" title="主题" onchange="rpApplyTheme(this.value)">
-        <option value="auto">跟随系统</option>
-        <option value="light">浅色</option>
-        <option value="dark">深色</option>
+        <option value="auto">{{t .Lang "theme.auto"}}</option>
+        <option value="light">{{t .Lang "theme.light"}}</option>
+        <option value="dark">{{t .Lang "theme.dark"}}</option>
+      </select>
+      <select class="theme-sel" title="语言 / Language" onchange="document.cookie='rp_lang='+this.value+';path=/;max-age=31536000';location.reload()">
+        {{range .Langs}}<option value="{{.Code}}" {{if eq .Code $.Lang}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
       <span class="who">{{.User}}</span>
-      <a href="/logout" class="btn-ghost">退出</a>
+      <a href="/logout" class="btn-ghost">{{t .Lang "nav.logout"}}</a>
     </nav>
   </header>
   <script>document.getElementById('theme-sel').value=localStorage.getItem('rp-theme')||'auto';</script>

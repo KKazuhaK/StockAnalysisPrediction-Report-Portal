@@ -199,6 +199,7 @@ func (s *Server) parseTemplates() {
 		"add":  func(a, b int) int { return a + b },
 		"safe": func(s string) template.HTML { return template.HTML(s) },
 		"icon": icon,
+		"t":    T,
 		"trunc10": func(s string) string {
 			if len(s) >= 10 {
 				return s[:10]
@@ -214,7 +215,12 @@ func (s *Server) parseTemplates() {
 	s.pdf = template.Must(template.New("pdf.html").Funcs(funcs).ParseFS(tplFS, "templates/pdf.html"))
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
+func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["Lang"] = langOf(r)      // 当前语言
+	data["Langs"] = langs         // 可选语言（下拉）
 	if err := s.pages[name].ExecuteTemplate(w, "base.html", data); err != nil {
 		log.Printf("render %s: %v", name, err)
 		http.Error(w, "render error", 500)
@@ -308,7 +314,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, "login", map[string]any{"Err": ""})
+	s.render(w, r, "login", map[string]any{"Err": ""})
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
@@ -317,7 +323,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	pw := r.FormValue("password")
 	if u == nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(pw)) != nil {
 		w.WriteHeader(401)
-		s.render(w, "login", map[string]any{"Err": "用户名或密码错误"})
+		s.render(w, r, "login", map[string]any{"Err": "用户名或密码错误"})
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -401,7 +407,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, user string) {
 		v.Set("page", strconv.Itoa(p))
 		return template.URL("/?" + v.Encode())
 	}
-	s.render(w, "index", map[string]any{
+	s.render(w, r, "index", map[string]any{
 		"User": user, "Admin": s.isAdmin(user),
 		"Groups": pageGroups, "NewTotal": newTotal, "OldTotal": oldTotal, "TotalRuns": totalRuns,
 		"Types": types, "Links": s.st.Links(),
@@ -516,7 +522,7 @@ func (s *Server) runView(w http.ResponseWriter, r *http.Request, user string) {
 			mtypes = append(mtypes, m.RType)
 		}
 	}
-	s.render(w, "run", map[string]any{
+	s.render(w, r, "run", map[string]any{
 		"User": user, "Admin": s.isAdmin(user), "Key": key, "Back": back,
 		"Members": members, "Sel": sel, "Rep": rep,
 		"Symbol": members[0].Symbol, "Name": s.names.Get(members[0].Symbol),
@@ -609,7 +615,7 @@ func safeFile(title, fallback string) string {
 // ---------- 入口按钮管理 ----------
 
 func (s *Server) manageLinks(w http.ResponseWriter, r *http.Request, user string) {
-	s.render(w, "manage_links", map[string]any{"User": user, "Admin": true, "Links": s.st.Links()})
+	s.render(w, r, "manage_links", map[string]any{"User": user, "Admin": true, "Links": s.st.Links()})
 }
 func (s *Server) linkAdd(w http.ResponseWriter, r *http.Request, user string) {
 	r.ParseForm()
@@ -673,7 +679,7 @@ func (s *Server) manageTypes(w http.ResponseWriter, r *http.Request, user string
 		})
 		groups = append(groups, typeGroup{Kind: k, Rows: rows})
 	}
-	s.render(w, "manage_types", map[string]any{"User": user, "Admin": true, "Groups": groups})
+	s.render(w, r, "manage_types", map[string]any{"User": user, "Admin": true, "Groups": groups})
 }
 
 func (s *Server) manageTypesDelete(w http.ResponseWriter, r *http.Request, user string) {
@@ -718,7 +724,7 @@ func (s *Server) manageTypesAdd(w http.ResponseWriter, r *http.Request, user str
 // ---------- 账号管理 ----------
 
 func (s *Server) manageUsers(w http.ResponseWriter, r *http.Request, user string) {
-	s.render(w, "manage_users", map[string]any{
+	s.render(w, r, "manage_users", map[string]any{
 		"User": user, "Admin": true, "Users": s.st.Users(), "Me": user})
 }
 
@@ -768,7 +774,7 @@ func (s *Server) userDelete(w http.ResponseWriter, r *http.Request, user string)
 // ---------- 系统设置（旧门户凭据 / 同步间隔，存 DB） ----------
 
 func (s *Server) manageSettings(w http.ResponseWriter, r *http.Request, user string) {
-	s.render(w, "manage_settings", map[string]any{"User": user, "Admin": true,
+	s.render(w, r, "manage_settings", map[string]any{"User": user, "Admin": true,
 		"OldBase":  s.st.GetSetting("old_base", ""),
 		"OldUser":  s.st.GetSetting("old_user", ""),
 		"HasPass":  s.st.GetSetting("old_pass", "") != "",
