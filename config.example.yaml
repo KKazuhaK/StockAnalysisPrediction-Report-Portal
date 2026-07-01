@@ -1,0 +1,21 @@
+# 复制为 config.yaml 后填写。config.yaml 不进 git。
+listen: ":8790"
+db_path: "data/portal.db"
+
+# 会话签名密钥：openssl rand -hex 32
+secret_key: "换成长随机串"
+
+# 旧门户读透（共存期用；最终淘汰旧门户后可删）
+old_portal:
+  base_url: "http://47.237.204.217:8888"
+  username: "填旧门户账号"
+  password: "填旧门户密码"
+
+# 旧元数据自动同步间隔（分钟；0=仅启动时同步一次）
+sync_interval_minutes: 60
+
+# 登录账号（bcrypt 哈希：见 README，或 htpasswd -bnBC 12 "" 'pw' | tr -d ':\n' | sed 's/^\$2y/\$2a/'）
+users:
+  - username: "admin"
+    password_hash: "$2a$12$REPLACE_WITH_BCRYPT_HASH"
+    is_admin: true

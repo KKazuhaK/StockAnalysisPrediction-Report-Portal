@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>研报门户</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    window.rpApplyTheme=function(t){
+      localStorage.setItem('rp-theme',t);
+      document.documentElement.setAttribute('data-theme',t);
+      var eff = t==='auto' ? (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light') : t;
+      document.documentElement.setAttribute('data-eff', eff);
+    };
+    rpApplyTheme(localStorage.getItem('rp-theme')||'auto');
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+      if((localStorage.getItem('rp-theme')||'auto')==='auto') rpApplyTheme('auto');
+    });
+  </script>
+</head>
+<body>
+  {{if .User}}
+  <header class="topbar">
+    <a class="brand" href="/">📊 研报门户</a>
+    <nav>
+      {{if .Admin}}<a href="/manage/links" class="btn-ghost">⚙ 入口管理</a>{{end}}
+      <select id="theme-sel" class="theme-sel" title="主题" onchange="rpApplyTheme(this.value)">
+        <option value="auto">🖥 跟随系统</option>
+        <option value="light">☀ 浅色</option>
+        <option value="dark">🌙 深色</option>
+      </select>
+      <span class="who">{{.User}}</span>
+      <a href="/logout" class="btn-ghost">退出</a>
+    </nav>
+  </header>
+  <script>document.getElementById('theme-sel').value=localStorage.getItem('rp-theme')||'auto';</script>
+  {{end}}
+  <main class="wrap">
+    {{template "content" .}}
+  </main>
+</body>
+</html>

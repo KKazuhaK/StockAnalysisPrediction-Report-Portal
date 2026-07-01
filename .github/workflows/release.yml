@@ -1,0 +1,148 @@
+name: Release
+
+# 打 v* tag（或手动 dispatch）→ 跨平台编译单二进制 → 发 GitHub Release +
+# 推 ghcr.io 多架构镜像（镜像只 COPY 预编译二进制，无需 QEMU）。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.t.outputs.tag }}
+      owner_lc: ${{ steps.t.outputs.owner_lc }}
+      repo_lc: ${{ steps.t.outputs.repo_lc }}
+    steps:
+      - id: t
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "owner_lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "repo_lc=$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64, ext: ""     }
+          - { goos: linux,   goarch: arm64, ext: ""     }
+          - { goos: darwin,  goarch: amd64, ext: ""     }
+          - { goos: darwin,  goarch: arm64, ext: ""     }
+          - { goos: windows, goarch: amd64, ext: ".exe" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: go.sum
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VERSION: ${{ needs.setup.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+            -o "out/report-portal${{ matrix.ext }}" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-portal-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/report-portal${{ matrix.ext }}
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [setup, build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: report-portal-*
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ needs.setup.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist build
+          for dir in artifacts/report-portal-*; do
+            np="${dir#artifacts/report-portal-}"   # e.g. linux-amd64
+            goos="${np%-*}"; goarch="${np##*-}"
+            ext=""; [ "$goos" = "windows" ] && ext=".exe"
+            pkg="report-portal_${VERSION}_${goos}_${goarch}"
+            mkdir -p "build/${pkg}"
+            cp "${dir}/report-portal${ext}" "build/${pkg}/"
+            cp README.md config.example.yaml LICENSE "build/${pkg}/"
+            if [ "$goos" = "windows" ]; then
+              (cd build && zip -qr "../dist/${pkg}.zip" "${pkg}")
+            else
+              tar -C build -czf "dist/${pkg}.tar.gz" "${pkg}"
+            fi
+          done
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.setup.outputs.tag }}
+          name: ${{ needs.setup.outputs.tag }}
+          prerelease: ${{ contains(needs.setup.outputs.tag, '-') }}
+          generate_release_notes: true
+          files: dist/*
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [setup, build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: report-portal-linux-amd64, path: bin/linux-amd64 }
+      - uses: actions/download-artifact@v4
+        with: { name: report-portal-linux-arm64, path: bin/linux-arm64 }
+      - run: chmod +x bin/linux-amd64/report-portal bin/linux-arm64/report-portal
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}
+          tags: |
+            type=raw,value=${{ needs.setup.outputs.tag }}
+            type=raw,value=latest,enable=${{ startsWith(needs.setup.outputs.tag, 'v') && !contains(needs.setup.outputs.tag, '-') }}
+            type=raw,value=beta,enable=${{ startsWith(needs.setup.outputs.tag, 'v') }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false

@@ -1,0 +1,72 @@
+{{define "content"}}
+
+{{if .Links}}
+<div class="gen-entry">
+  <span class="gen-label">生成研报入口</span>
+  {{range .Links}}<a class="gen-btn" href="{{.URL}}" target="_blank" rel="noopener">{{.Label}}</a>{{end}}
+</div>
+{{end}}
+
+<form class="filters" method="get" action="/">
+  <input name="symbol" value="{{.F.Symbol}}" placeholder="股票代码">
+  <select name="rtype">
+    <option value="">全部类型</option>
+    {{range .Types}}<option value="{{.}}" {{if eq $.F.RType .}}selected{{end}}>{{.}}</option>{{end}}
+  </select>
+  <input name="date_from" type="date" value="{{.F.DateFrom}}" title="日期起">
+  <input name="date_to" type="date" value="{{.F.DateTo}}" title="日期止">
+  <input name="q" value="{{.F.Q}}" placeholder="关键字">
+  <select name="scope">
+    <option value="title" {{if eq .F.Scope "title"}}selected{{end}}>搜标题</option>
+    <option value="fulltext" {{if eq .F.Scope "fulltext"}}selected{{end}}>搜全文</option>
+  </select>
+  <select name="sort">
+    <option value="date_desc" {{if eq .F.Sort "date_desc"}}selected{{end}}>日期降序</option>
+    <option value="date_asc" {{if eq .F.Sort "date_asc"}}selected{{end}}>日期升序</option>
+  </select>
+  <select name="src">
+    <option value="all" {{if eq .F.Src "all"}}selected{{end}}>新+旧</option>
+    <option value="new" {{if eq .F.Src "new"}}selected{{end}}>仅新</option>
+    <option value="old" {{if eq .F.Src "old"}}selected{{end}}>仅旧</option>
+  </select>
+  <select name="size">
+    {{range .PageSizes}}<option value="{{.}}" {{if eq $.F.Size .}}selected{{end}}>{{.}}/页</option>{{end}}
+  </select>
+  <button type="submit">搜索</button>
+  <a href="/" class="btn-ghost">清空</a>
+</form>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-num">{{.TotalRuns}}</div><div class="stat-lab">共 run 数</div></div>
+  <div class="stat"><div class="stat-num">{{.NewTotal}}</div><div class="stat-lab">新报告(本地)</div></div>
+  <div class="stat"><div class="stat-num">{{.OldTotal}}</div><div class="stat-lab">旧报告(读透)</div></div>
+</div>
+
+<div class="cards">
+  {{range .Groups}}
+  <a class="card" href="/run/{{.Key | urlq}}?back={{$.ListURL | urlq}}">
+    <div class="card-top">
+      <span class="tag {{if eq .Src "new"}}new{{else}}old{{end}}">{{if eq .Src "new"}}新{{else}}旧{{end}}</span>
+      {{if .Symbol}}<span class="tag sym">{{.Symbol}}</span>{{end}}
+      {{if gt .N 1}}<span class="tag run">📑 {{.N}} 篇</span>{{end}}
+    </div>
+    <div class="card-title">{{if .Symbol}}{{.Symbol}} 研报{{else}}{{(index .Members 0).Title}}{{end}}</div>
+    {{if .Types}}<div class="run-types">{{join .Types " · "}}</div>{{end}}
+    <div class="card-foot">
+      <span class="card-date">{{.Date}}</span>
+      {{if .Source}}<span class="card-src">{{.Source}}</span>{{end}}
+    </div>
+  </a>
+  {{else}}
+  <div class="empty">没有匹配的报告</div>
+  {{end}}
+</div>
+
+{{if gt .Pages 1}}
+<div class="pager">
+  {{if gt .Page 1}}<a class="btn-ghost" href="/?page={{add .Page -1}}&{{.QS}}">← 上一页</a>{{end}}
+  <span class="pager-now">第 {{.Page}} / {{.Pages}} 页</span>
+  {{if lt .Page .Pages}}<a class="btn-ghost" href="/?page={{add .Page 1}}&{{.QS}}">下一页 →</a>{{end}}
+</div>
+{{end}}
+{{end}}
