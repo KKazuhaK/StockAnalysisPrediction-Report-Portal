@@ -3,9 +3,11 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib" // postgres 驱动，注册为 "pgx"
+	_ "modernc.org/sqlite"             // sqlite 驱动(纯 Go)，注册为 "sqlite"
 )
 
 // Rep 是新旧统一的报告表示（列表/分组/阅读都用它）。
@@ -26,54 +28,104 @@ type Link struct {
 	Ord        int
 }
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db     *sql.DB
+	driver string // "sqlite" | "postgres"
+}
 
-func OpenStore(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+// OpenStore 按驱动打开数据库。driver: "sqlite"(默认) 或 "postgres"；
+// source: sqlite=文件路径，postgres=DSN(postgres://user:pass@host/db?sslmode=disable)。
+func OpenStore(driver, source string) (*Store, error) {
+	if driver == "" {
+		driver = "sqlite"
+	}
+	sqlDriver := "sqlite"
+	if driver == "postgres" {
+		sqlDriver = "pgx"
+	}
+	db, err := sql.Open(sqlDriver, source)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1) // SQLite：单写者，避免锁竞争
-	s := &Store{db: db}
+	if driver == "sqlite" {
+		db.SetMaxOpenConns(1) // SQLite：单写者，避免锁竞争
+	} else {
+		db.SetMaxOpenConns(10)
+	}
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("连接数据库(%s)失败: %w", driver, err)
+	}
+	s := &Store{db: db, driver: driver}
 	return s, s.init()
 }
 
+// bind 把 ? 占位符按驱动改写（postgres 用 $1,$2…）。
+func (s *Store) bind(q string) string {
+	if s.driver != "postgres" {
+		return q
+	}
+	var b strings.Builder
+	n := 0
+	for i := 0; i < len(q); i++ {
+		if q[i] == '?' {
+			n++
+			b.WriteString("$")
+			b.WriteString(strconv.Itoa(n))
+		} else {
+			b.WriteByte(q[i])
+		}
+	}
+	return b.String()
+}
+
+func (s *Store) exec(q string, args ...any) (sql.Result, error) { return s.db.Exec(s.bind(q), args...) }
+func (s *Store) query(q string, args ...any) (*sql.Rows, error) { return s.db.Query(s.bind(q), args...) }
+func (s *Store) queryRow(q string, args ...any) *sql.Row        { return s.db.QueryRow(s.bind(q), args...) }
+
+// pkAuto 自增主键定义（两种数据库方言不同）。
+func (s *Store) pkAuto() string {
+	if s.driver == "postgres" {
+		return "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
+	}
+	return "INTEGER PRIMARY KEY AUTOINCREMENT"
+}
+
 func (s *Store) init() error {
-	_, err := s.db.Exec(`
-	CREATE TABLE IF NOT EXISTS reports(
-		rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-		uid TEXT UNIQUE, title TEXT, symbol TEXT, rtype TEXT, rdate TEXT,
-		source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT
-	);
-	CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(rdate);
-	CREATE INDEX IF NOT EXISTS idx_reports_sym  ON reports(symbol);
-	CREATE TABLE IF NOT EXISTS old_meta(
-		id INTEGER PRIMARY KEY, title TEXT, category TEXT, author TEXT,
-		time TEXT, report_date TEXT, stock_code TEXT
-	);
-	CREATE INDEX IF NOT EXISTS idx_old_date ON old_meta(report_date);
-	CREATE INDEX IF NOT EXISTS idx_old_sym  ON old_meta(stock_code);
-	CREATE TABLE IF NOT EXISTS links(
-		id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT, url TEXT, ord INTEGER DEFAULT 0
-	);
-	CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
-	-- 报告类型显示配置（管理员网页可改：tab 顺序 + 哪个是"汇总/默认页" + 改名）。
-	-- 为工作流变更留后路：新类型自动出现，管理员排序/指定默认，无需改代码。
-	CREATE TABLE IF NOT EXISTS type_config(
-		name TEXT PRIMARY KEY, ord INTEGER DEFAULT 0, is_summary INTEGER DEFAULT 0, label TEXT
-	);
-	-- 登录账号（config.yaml 仅首启种子，之后网页管理）。
-	CREATE TABLE IF NOT EXISTS users(
-		username TEXT PRIMARY KEY, password_hash TEXT, is_admin INTEGER DEFAULT 0
-	);
-	`)
-	return err
+	pk := s.pkAuto()
+	stmts := []string{
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS reports(
+			rowid %s,
+			uid TEXT UNIQUE, title TEXT, symbol TEXT, rtype TEXT, rdate TEXT,
+			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT)`, pk),
+		`CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(rdate)`,
+		`CREATE INDEX IF NOT EXISTS idx_reports_sym  ON reports(symbol)`,
+		`CREATE TABLE IF NOT EXISTS old_meta(
+			id BIGINT PRIMARY KEY, title TEXT, category TEXT, author TEXT,
+			time TEXT, report_date TEXT, stock_code TEXT)`,
+		`CREATE INDEX IF NOT EXISTS idx_old_date ON old_meta(report_date)`,
+		`CREATE INDEX IF NOT EXISTS idx_old_sym  ON old_meta(stock_code)`,
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
+			id %s, label TEXT, url TEXT, ord INTEGER DEFAULT 0)`, pk),
+		`CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)`,
+		// 报告类型显示配置（管理员网页可改：tab 顺序/默认页/改名），为工作流变更留后路。
+		`CREATE TABLE IF NOT EXISTS type_config(
+			name TEXT PRIMARY KEY, ord INTEGER DEFAULT 0, is_summary INTEGER DEFAULT 0, label TEXT)`,
+		// 登录账号（config.yaml 仅首启种子，之后网页管理）。
+		`CREATE TABLE IF NOT EXISTS users(
+			username TEXT PRIMARY KEY, password_hash TEXT, is_admin INTEGER DEFAULT 0)`,
+	}
+	for _, st := range stmts {
+		if _, err := s.exec(st); err != nil {
+			return fmt.Errorf("建表失败: %w\nSQL: %s", err, st)
+		}
+	}
+	return nil
 }
 
 // ---------- 账号 ----------
 
 func (s *Store) Users() []User {
-	rows, err := s.db.Query("SELECT username,password_hash,is_admin FROM users ORDER BY is_admin DESC, username")
+	rows, err := s.query("SELECT username,password_hash,is_admin FROM users ORDER BY is_admin DESC, username")
 	if err != nil {
 		return nil
 	}
@@ -92,7 +144,7 @@ func (s *Store) Users() []User {
 func (s *Store) GetUser(name string) *User {
 	var u User
 	var adm int
-	err := s.db.QueryRow("SELECT username,password_hash,is_admin FROM users WHERE username=?", name).
+	err := s.queryRow("SELECT username,password_hash,is_admin FROM users WHERE username=?", name).
 		Scan(&u.Username, &u.PasswordHash, &adm)
 	if err != nil {
 		return nil
@@ -106,14 +158,14 @@ func (s *Store) UpsertUser(u User) error {
 	if u.IsAdmin {
 		adm = 1
 	}
-	_, err := s.db.Exec(`INSERT INTO users(username,password_hash,is_admin) VALUES(?,?,?)
+	_, err := s.exec(`INSERT INTO users(username,password_hash,is_admin) VALUES(?,?,?)
 		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,is_admin=excluded.is_admin`,
 		u.Username, u.PasswordHash, adm)
 	return err
 }
 
 func (s *Store) SetUserPassword(name, hash string) error {
-	_, err := s.db.Exec("UPDATE users SET password_hash=? WHERE username=?", hash, name)
+	_, err := s.exec("UPDATE users SET password_hash=? WHERE username=?", hash, name)
 	return err
 }
 
@@ -122,22 +174,22 @@ func (s *Store) SetUserAdmin(name string, admin bool) error {
 	if admin {
 		adm = 1
 	}
-	_, err := s.db.Exec("UPDATE users SET is_admin=? WHERE username=?", adm, name)
+	_, err := s.exec("UPDATE users SET is_admin=? WHERE username=?", adm, name)
 	return err
 }
 
 func (s *Store) DeleteUser(name string) error {
-	_, err := s.db.Exec("DELETE FROM users WHERE username=?", name)
+	_, err := s.exec("DELETE FROM users WHERE username=?", name)
 	return err
 }
 
 func (s *Store) CountUsers() (n int) {
-	s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&n)
+	s.queryRow("SELECT COUNT(*) FROM users").Scan(&n)
 	return
 }
 
 func (s *Store) CountAdmins() (n int) {
-	s.db.QueryRow("SELECT COUNT(*) FROM users WHERE is_admin=1").Scan(&n)
+	s.queryRow("SELECT COUNT(*) FROM users WHERE is_admin=1").Scan(&n)
 	return
 }
 
@@ -152,7 +204,7 @@ type TypeConfig struct {
 
 func (s *Store) TypeConfigs() map[string]TypeConfig {
 	m := map[string]TypeConfig{}
-	rows, err := s.db.Query("SELECT name,ord,is_summary,label FROM type_config")
+	rows, err := s.query("SELECT name,ord,is_summary,label FROM type_config")
 	if err != nil {
 		return m
 	}
@@ -174,7 +226,7 @@ func (s *Store) UpsertTypeConfig(name string, ord int, isSummary bool, label str
 	if isSummary {
 		is = 1
 	}
-	_, err := s.db.Exec(`INSERT INTO type_config(name,ord,is_summary,label) VALUES(?,?,?,?)
+	_, err := s.exec(`INSERT INTO type_config(name,ord,is_summary,label) VALUES(?,?,?,?)
 		ON CONFLICT(name) DO UPDATE SET ord=excluded.ord,is_summary=excluded.is_summary,label=excluded.label`,
 		name, ord, is, label)
 	return err
@@ -251,7 +303,7 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
 	q += fmt.Sprintf(" ORDER BY rdate %s, sent_at %s", dir(f.Sort), dir(f.Sort))
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +325,7 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 
 func (s *Store) GetNew(rowid int64) (*Rep, error) {
 	var title, sym, rt, rd, src, sent, md, html sql.NullString
-	err := s.db.QueryRow(
+	err := s.queryRow(
 		"SELECT title,symbol,rtype,rdate,source,sent_at,body_md,body_html FROM reports WHERE rowid=?", rowid).
 		Scan(&title, &sym, &rt, &rd, &src, &sent, &md, &html)
 	if err == sql.ErrNoRows {
@@ -290,7 +342,7 @@ func (s *Store) GetNew(rowid int64) (*Rep, error) {
 }
 
 func (s *Store) UpsertReport(r Rep) error {
-	_, err := s.db.Exec(`
+	_, err := s.exec(`
 		INSERT INTO reports(uid,title,symbol,rtype,rdate,source,sent_at,body_md,body_html)
 		VALUES(?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(uid) DO UPDATE SET title=excluded.title,symbol=excluded.symbol,
@@ -301,7 +353,7 @@ func (s *Store) UpsertReport(r Rep) error {
 }
 
 func (s *Store) CountNew() (n int) {
-	s.db.QueryRow("SELECT COUNT(*) FROM reports").Scan(&n)
+	s.queryRow("SELECT COUNT(*) FROM reports").Scan(&n)
 	return
 }
 
@@ -327,9 +379,9 @@ func (s *Store) UpsertOldMeta(rows []OldRaw) error {
 	if err != nil {
 		return err
 	}
-	st, err := tx.Prepare(`INSERT INTO old_meta(id,title,category,author,time,report_date,stock_code)
+	st, err := tx.Prepare(s.bind(`INSERT INTO old_meta(id,title,category,author,time,report_date,stock_code)
 		VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,category=excluded.category,
-		author=excluded.author,time=excluded.time,report_date=excluded.report_date,stock_code=excluded.stock_code`)
+		author=excluded.author,time=excluded.time,report_date=excluded.report_date,stock_code=excluded.stock_code`))
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -345,7 +397,7 @@ func (s *Store) UpsertOldMeta(rows []OldRaw) error {
 }
 
 func (s *Store) CountOld() (n int) {
-	s.db.QueryRow("SELECT COUNT(*) FROM old_meta").Scan(&n)
+	s.queryRow("SELECT COUNT(*) FROM old_meta").Scan(&n)
 	return
 }
 
@@ -382,7 +434,7 @@ func (s *Store) SearchOldMeta(f Filters) ([]Rep, error) {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
 	q += fmt.Sprintf(" ORDER BY report_date %s, time %s", dir(f.Sort), dir(f.Sort))
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +457,7 @@ func (s *Store) SearchOldMeta(f Filters) ([]Rep, error) {
 // ---------- 入口按钮 ----------
 
 func (s *Store) Links() []Link {
-	rows, err := s.db.Query("SELECT id,label,url,ord FROM links ORDER BY ord,id")
+	rows, err := s.query("SELECT id,label,url,ord FROM links ORDER BY ord,id")
 	if err != nil {
 		return nil
 	}
@@ -420,20 +472,20 @@ func (s *Store) Links() []Link {
 }
 
 func (s *Store) AddLink(label, url string, ord int) error {
-	_, err := s.db.Exec("INSERT INTO links(label,url,ord) VALUES(?,?,?)", label, url, ord)
+	_, err := s.exec("INSERT INTO links(label,url,ord) VALUES(?,?,?)", label, url, ord)
 	return err
 }
 func (s *Store) UpdateLink(id int64, label, url string, ord int) error {
-	_, err := s.db.Exec("UPDATE links SET label=?,url=?,ord=? WHERE id=?", label, url, ord, id)
+	_, err := s.exec("UPDATE links SET label=?,url=?,ord=? WHERE id=?", label, url, ord, id)
 	return err
 }
 func (s *Store) DeleteLink(id int64) error {
-	_, err := s.db.Exec("DELETE FROM links WHERE id=?", id)
+	_, err := s.exec("DELETE FROM links WHERE id=?", id)
 	return err
 }
 
 func (s *Store) distinct(q string) []string {
-	rows, err := s.db.Query(q)
+	rows, err := s.query(q)
 	if err != nil {
 		return nil
 	}

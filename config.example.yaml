@@ -1,6 +1,11 @@
 # 复制为 config.yaml 后填写。config.yaml 不进 git。
 listen: ":8790"
-db_path: "data/portal.db"
+
+# 数据库：sqlite(默认，单文件零依赖) 或 postgres
+db_driver: "sqlite"
+db_path: "data/portal.db"          # sqlite 用
+# db_driver: "postgres"
+# db_dsn: "postgres://user:pass@127.0.0.1:5432/reports?sslmode=disable"   # postgres 用
 
 # 会话签名密钥：openssl rand -hex 32
 secret_key: "换成长随机串"
