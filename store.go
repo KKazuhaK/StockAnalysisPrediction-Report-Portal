@@ -232,6 +232,13 @@ func (s *Store) UpsertTypeConfig(name string, ord int, isSummary bool, label str
 	return err
 }
 
+// DeleteTypeConfig 删除类型配置。若该类型仍有报告，则只是回到"未配置"(数据里还会出现)；
+// 若是手动预注册、无对应报告，删完就彻底消失。
+func (s *Store) DeleteTypeConfig(name string) error {
+	_, err := s.exec("DELETE FROM type_config WHERE name=?", name)
+	return err
+}
+
 // DiscoveredTypes 数据里出现过的所有类型（新+旧）并入已配置的。
 func (s *Store) DiscoveredTypes() []string {
 	seen := map[string]bool{}
