@@ -140,6 +140,7 @@ func (s *Server) parseTemplates() {
 		"join": strings.Join,
 		"add":  func(a, b int) int { return a + b },
 		"safe": func(s string) template.HTML { return template.HTML(s) },
+		"icon": icon,
 		"trunc10": func(s string) string {
 			if len(s) >= 10 {
 				return s[:10]

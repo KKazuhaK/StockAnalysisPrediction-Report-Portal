@@ -1,9 +1,9 @@
 {{define "content"}}
 <div class="report-head">
-  <a href="{{.Back}}" class="btn-ghost">← 返回列表</a>
+  <a href="{{.Back}}" class="btn-ghost">{{icon "arrow-left"}} 返回列表</a>
   <span class="dl-group">
-    <a href="/report/{{.Sel}}/md" class="btn-ghost">⬇ MD</a>
-    <a href="/report/{{.Sel}}/pdf" class="btn-ghost">⬇ PDF</a>
+    <a href="/report/{{.Sel}}/md" class="btn-ghost">{{icon "download"}} MD</a>
+    <a href="/report/{{.Sel}}/pdf" class="btn-ghost">{{icon "download"}} PDF</a>
   </span>
 </div>
 
@@ -11,7 +11,7 @@
   <div class="card-top">
     {{if .Symbol}}<span class="tag sym">{{.Symbol}}</span>{{end}}
     {{if .Kind}}<span class="tag kind">{{.Kind}}</span>{{end}}
-    <span class="tag run">📑 {{len .Members}} 篇 · 同一次生成</span>
+    <span class="tag run">{{icon "files"}} {{len .Members}} 篇 · 同一次生成</span>
   </div>
   <h1 class="report-title">{{if .Symbol}}{{.Symbol}}{{if .Name}} {{.Name}}{{end}} · {{.Kind}} · {{.Date}}{{else}}{{.Rep.Title}}{{end}}</h1>
   {{if .Source}}<div class="report-sub">{{.Source}}</div>{{end}}

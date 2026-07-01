@@ -1,5 +1,5 @@
 {{define "content"}}
-<div class="report-head"><a href="/" class="btn-ghost">← 返回列表</a></div>
+<div class="report-head"><a href="/" class="btn-ghost">{{icon "arrow-left"}} 返回列表</a></div>
 <h2 class="page-h">生成研报入口 · 按钮管理</h2>
 
 <div class="link-table">
@@ -11,7 +11,7 @@
     <input name="ord" type="number" value="{{.Ord}}" style="width:64px">
     <span class="link-acts">
       <button type="submit" class="btn-ghost">保存</button>
-      <button type="submit" class="btn-ghost danger" formaction="/manage/links/{{.ID}}/delete">删除</button>
+      <button type="submit" class="btn-ghost danger" formaction="/manage/links/{{.ID}}/delete">{{icon "trash"}} 删除</button>
     </span>
   </form>
   {{end}}

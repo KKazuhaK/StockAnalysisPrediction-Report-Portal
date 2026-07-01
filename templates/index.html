@@ -49,7 +49,7 @@
       <span class="tag {{if eq .Src "new"}}new{{else}}old{{end}}">{{if eq .Src "new"}}新{{else}}旧{{end}}</span>
       {{if .Symbol}}<span class="tag sym">{{.Symbol}}</span>{{end}}
       {{if .Kind}}<span class="tag kind">{{.Kind}}</span>{{end}}
-      {{if gt .N 1}}<span class="tag run">📑 {{.N}} 篇</span>{{end}}
+      {{if gt .N 1}}<span class="tag run">{{icon "files"}} {{.N}} 篇</span>{{end}}
     </div>
     <div class="card-title">{{if .Symbol}}{{.Symbol}}{{if .Name}} {{.Name}}{{end}}{{else}}{{(index .Members 0).Title}}{{end}}</div>
     {{if .Types}}<div class="run-types">{{join .Types " · "}}</div>{{end}}
@@ -65,9 +65,9 @@
 
 {{if gt .Pages 1}}
 <div class="pager">
-  {{if gt .Page 1}}<a class="btn-ghost" href="{{.PrevURL}}">← 上一页</a>{{end}}
+  {{if gt .Page 1}}<a class="btn-ghost" href="{{.PrevURL}}">{{icon "arrow-left"}} 上一页</a>{{end}}
   <span class="pager-now">第 {{.Page}} / {{.Pages}} 页</span>
-  {{if lt .Page .Pages}}<a class="btn-ghost" href="{{.NextURL}}">下一页 →</a>{{end}}
+  {{if lt .Page .Pages}}<a class="btn-ghost" href="{{.NextURL}}">下一页 {{icon "arrow-right"}}</a>{{end}}
 </div>
 {{end}}
 {{end}}
