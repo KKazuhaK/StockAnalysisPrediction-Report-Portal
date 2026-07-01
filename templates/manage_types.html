@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="report-head"><a href="/" class="btn-ghost">← 返回列表</a></div>
+<h2 class="page-h">报告类型管理</h2>
+<p class="hint-line">类型自动从数据里发现。这里设 <b>排序</b>(run 内 tab 顺序)、勾选哪个是 <b>默认页</b>(点进 run 先显示的那篇，通常是"汇总/综合决策")、可选 <b>改显示名</b>。工作流以后加新类型也会自动出现在这里。</p>
+
+<form method="post" action="/manage/types">
+  <div class="type-table">
+    <div class="type-row type-head"><span>类型</span><span>排序</span><span>默认页</span><span>显示名(可选)</span></div>
+    {{range .Rows}}
+    <div class="type-row">
+      <span class="type-name">{{.Name}}<input type="hidden" name="name" value="{{.Name}}"></span>
+      <input name="ord" type="number" value="{{.Ord}}" style="width:70px">
+      <label class="type-chk"><input type="checkbox" name="summary" value="{{.Name}}" {{if .IsSummary}}checked{{end}}> 默认</label>
+      <input name="label" value="{{.Label}}" placeholder="不填则用原名">
+    </div>
+    {{else}}
+    <div class="empty">暂无类型(等报告数据同步后出现)</div>
+    {{end}}
+  </div>
+  <div style="margin-top:14px"><button type="submit">保存全部</button></div>
+</form>
+{{end}}

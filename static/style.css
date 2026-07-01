@@ -185,3 +185,15 @@ a:hover{text-decoration:underline}
 [data-eff="dark"] .tab.active{background:#185fa5;border-color:#185fa5;color:#fff}
 [data-eff="dark"] .cur-type{color:#9cc0f5}
 [data-eff="dark"] .report-tabbed .report-cur{border-color:#26314a}
+
+/* 类型管理 */
+.hint-line{color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.6}
+.type-table{display:flex;flex-direction:column;gap:8px}
+.type-row{display:grid;grid-template-columns:1fr 90px 90px 1.4fr;gap:10px;align-items:center}
+.type-row.type-head{color:var(--muted);font-size:12px}
+.type-name{font-weight:600}
+.type-chk{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:5px}
+.type-row input[type=number],.type-row input:not([type]),.type-row input[type=text]{
+  padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;background:#fff;color:var(--ink)}
+.type-row button,form>div>button[type=submit]{padding:9px 18px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
+[data-eff="dark"] .type-row input{background:#1b2333;border-color:#2e3a55;color:#dde5f0}

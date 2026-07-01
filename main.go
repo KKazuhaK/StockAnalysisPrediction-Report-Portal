@@ -95,6 +95,8 @@ func main() {
 	mux.HandleFunc("POST /manage/links/add", s.requireAdmin(s.linkAdd))
 	mux.HandleFunc("POST /manage/links/{id}/edit", s.requireAdmin(s.linkEdit))
 	mux.HandleFunc("POST /manage/links/{id}/delete", s.requireAdmin(s.linkDelete))
+	mux.HandleFunc("GET /manage/types", s.requireAdmin(s.manageTypes))
+	mux.HandleFunc("POST /manage/types", s.requireAdmin(s.manageTypesSave))
 
 	log.Printf("研报门户 %s 启动于 %s (新:%d 旧:%d)", version, cfg.Listen, st.CountNew(), st.CountOld())
 	if err := http.ListenAndServe(cfg.Listen, mux); err != nil {
@@ -125,7 +127,7 @@ func (s *Server) parseTemplates() {
 		},
 	}
 	s.pages = map[string]*template.Template{}
-	for _, name := range []string{"login", "index", "run", "manage_links"} {
+	for _, name := range []string{"login", "index", "run", "manage_links", "manage_types"} {
 		s.pages[name] = template.Must(template.New("base.html").Funcs(funcs).
 			ParseFS(tplFS, "templates/base.html", "templates/"+name+".html"))
 	}
@@ -355,6 +357,49 @@ func (s *Server) runMembers(key string) []Rep {
 	return members
 }
 
+// orderAndDefault 按类型配置(管理员可改)给成员排序、选默认页(标"汇总"的类型)。
+// 未配置时回退：关键字判定汇总 → 否则最后一篇。tab 标签支持配置改名。
+func (s *Server) orderAndDefault(members []Rep) ([]Rep, string) {
+	cfg := s.st.TypeConfigs()
+	ord := func(r Rep) int {
+		if c, ok := cfg[r.RType]; ok {
+			return c.Ord
+		}
+		return 1000
+	}
+	out := make([]Rep, len(members))
+	copy(out, members)
+	for i := range out {
+		if c, ok := cfg[out[i].RType]; ok && c.Label != "" {
+			out[i].Label = c.Label
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if oi, oj := ord(out[i]), ord(out[j]); oi != oj {
+			return oi < oj
+		}
+		return out[i].Time < out[j].Time
+	})
+	def, bestOrd := "", 1<<30
+	for _, m := range out {
+		if c, ok := cfg[m.RType]; ok && c.IsSummary && c.Ord < bestOrd {
+			bestOrd, def = c.Ord, m.RID
+		}
+	}
+	if def == "" {
+		for _, m := range out {
+			if isSummary(m) {
+				def = m.RID
+				break
+			}
+		}
+	}
+	if def == "" && len(out) > 0 {
+		def = out[len(out)-1].RID
+	}
+	return out, def
+}
+
 func (s *Server) runView(w http.ResponseWriter, r *http.Request, user string) {
 	key := r.PathValue("key")
 	members := s.runMembers(key)
@@ -362,15 +407,11 @@ func (s *Server) runView(w http.ResponseWriter, r *http.Request, user string) {
 		http.Error(w, "未找到该 run", 404)
 		return
 	}
+	var defRID string
+	members, defRID = s.orderAndDefault(members)
 	sel := r.URL.Query().Get("r")
 	if sel == "" {
-		sel = members[len(members)-1].RID
-		for _, m := range members {
-			if isSummary(m) {
-				sel = m.RID
-				break
-			}
-		}
+		sel = defRID
 	}
 	rep := s.loadRep(sel)
 	if rep == nil {
@@ -482,6 +523,54 @@ func (s *Server) linkDelete(w http.ResponseWriter, r *http.Request, user string)
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	s.st.DeleteLink(id)
 	http.Redirect(w, r, "/manage/links", http.StatusSeeOther)
+}
+
+// ---------- 报告类型管理 ----------
+
+type typeRow struct {
+	Name      string
+	Ord       int
+	IsSummary bool
+	Label     string
+}
+
+func (s *Server) manageTypes(w http.ResponseWriter, r *http.Request, user string) {
+	cfg := s.st.TypeConfigs()
+	var rows []typeRow
+	for _, name := range s.st.DiscoveredTypes() {
+		c := cfg[name]
+		rows = append(rows, typeRow{Name: name, Ord: c.Ord, IsSummary: c.IsSummary, Label: c.Label})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Ord != rows[j].Ord {
+			return rows[i].Ord < rows[j].Ord
+		}
+		return rows[i].Name < rows[j].Name
+	})
+	s.render(w, "manage_types", map[string]any{"User": user, "Admin": true, "Rows": rows})
+}
+
+func (s *Server) manageTypesSave(w http.ResponseWriter, r *http.Request, user string) {
+	r.ParseForm()
+	names := r.Form["name"]
+	ords := r.Form["ord"]
+	labels := r.Form["label"]
+	sum := map[string]bool{}
+	for _, v := range r.Form["summary"] {
+		sum[v] = true
+	}
+	for i, name := range names {
+		ord := 0
+		if i < len(ords) {
+			ord, _ = strconv.Atoi(ords[i])
+		}
+		label := ""
+		if i < len(labels) {
+			label = strings.TrimSpace(labels[i])
+		}
+		s.st.UpsertTypeConfig(name, ord, sum[name], label)
+	}
+	http.Redirect(w, r, "/manage/types", http.StatusSeeOther)
 }
 
 // ---------- 后台同步 ----------
