@@ -158,7 +158,7 @@ func main() {
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
 	s := &Server{cfg: cfg, st: st, old: NewOldClient("", "", "")}
-	s.names = LoadNames(dirOf(cfg.DBPath))
+	s.names = LoadNames(dirOf(cfg.DBPath), st)
 	s.names.ensureFull() // 无全量表时后台 best-effort 抓一次
 	s.parseTemplates()
 
@@ -856,7 +856,11 @@ func (s *Server) apiSymbols(w http.ResponseWriter, r *http.Request) {
 	list := s.st.ListSymbols(strings.TrimSpace(q.Get("q")), limit)
 	out := make([]map[string]any, 0, len(list))
 	for _, si := range list {
-		out = append(out, map[string]any{"symbol": si.Symbol, "name": s.names.Get(si.Symbol), "count": si.Count, "latest": si.Latest})
+		name := si.Name // DB(stocks) 里的名字；没有则退回内存 map
+		if name == "" {
+			name = s.names.Get(si.Symbol)
+		}
+		out = append(out, map[string]any{"symbol": si.Symbol, "name": name, "count": si.Count, "latest": si.Latest})
 	}
 	writeJSON(w, map[string]any{"count": len(out), "symbols": out})
 }

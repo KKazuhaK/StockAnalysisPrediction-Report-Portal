@@ -130,6 +130,9 @@ func (s *Store) init() error {
 			status TEXT DEFAULT 'pending', review_point TEXT, created_at TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_track_sym ON tracking_items(symbol, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_track_uid ON tracking_items(report_uid)`,
+		// 股票代码→名字（入库后可按名字搜索；来源 eastmoney，启动/fetchnames 时同步）。
+		`CREATE TABLE IF NOT EXISTS stocks(code TEXT PRIMARY KEY, name TEXT, updated_at TEXT)`,
+		`CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name)`,
 	}
 	for _, st := range stmts {
 		if _, err := s.exec(st); err != nil {
@@ -624,22 +627,54 @@ func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
 
 // SymbolInfo 有报告的股票概览。
 type SymbolInfo struct {
-	Symbol, Latest string
-	Count          int
+	Symbol, Name, Latest string
+	Count                int
 }
 
-// ListSymbols 列出有新报告的股票（代码模糊匹配 q，按报告数倒序）。
+// SyncStocks 批量 upsert 股票代码→名字（供按名字搜索；来源 eastmoney）。
+func (s *Store) SyncStocks(m map[string]string) {
+	if len(m) == 0 {
+		return
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return
+	}
+	stmt, err := tx.Prepare(s.bind("INSERT INTO stocks(code,name,updated_at) VALUES(?,?,?) " +
+		"ON CONFLICT(code) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at"))
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	now := nowStr()
+	for code, name := range m {
+		stmt.Exec(code, name, now)
+	}
+	stmt.Close()
+	tx.Commit()
+}
+
+// StockName 查单只股票名字（DB 里没有则空）。
+func (s *Store) StockName(code string) string {
+	var name sql.NullString
+	s.queryRow("SELECT name FROM stocks WHERE code=?", code).Scan(&name)
+	return name.String
+}
+
+// ListSymbols 列出有报告的股票（q 匹配代码或名字，为空则全部），按报告数倒序。
 func (s *Store) ListSymbols(q string, limit int) []SymbolInfo {
-	where, args := "", []any{}
+	var where string
+	var args []any
 	if q != "" {
-		where = "WHERE symbol LIKE ?"
-		args = append(args, "%"+q+"%")
+		where = "WHERE r.symbol LIKE ? OR s.name LIKE ?"
+		args = append(args, "%"+q+"%", "%"+q+"%")
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	rows, err := s.query(fmt.Sprintf(`SELECT symbol, COUNT(*), MAX(rdate) FROM reports %s
-		GROUP BY symbol ORDER BY COUNT(*) DESC, symbol LIMIT %d`, where, limit), args...)
+	rows, err := s.query(fmt.Sprintf(`SELECT r.symbol, s.name, COUNT(*), MAX(r.rdate)
+		FROM reports r LEFT JOIN stocks s ON s.code = r.symbol %s
+		GROUP BY r.symbol ORDER BY COUNT(*) DESC, r.symbol LIMIT %d`, where, limit), args...)
 	if err != nil {
 		return nil
 	}
@@ -647,9 +682,9 @@ func (s *Store) ListSymbols(q string, limit int) []SymbolInfo {
 	var out []SymbolInfo
 	for rows.Next() {
 		var si SymbolInfo
-		var latest sql.NullString
-		rows.Scan(&si.Symbol, &si.Count, &latest)
-		si.Latest = latest.String
+		var name, latest sql.NullString
+		rows.Scan(&si.Symbol, &name, &si.Count, &latest)
+		si.Name, si.Latest = name.String, latest.String
 		out = append(out, si)
 	}
 	return out

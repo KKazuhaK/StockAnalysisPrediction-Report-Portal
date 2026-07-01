@@ -21,10 +21,11 @@ type Names struct {
 	mu  sync.RWMutex
 	m   map[string]string
 	dir string
+	st  *Store // 同步名字到 stocks 表（按名字搜索用）
 }
 
-func LoadNames(dataDir string) *Names {
-	n := &Names{m: map[string]string{}, dir: dataDir}
+func LoadNames(dataDir string, st *Store) *Names {
+	n := &Names{m: map[string]string{}, dir: dataDir, st: st}
 	var seed map[string]string
 	_ = json.Unmarshal(embeddedNames, &seed)
 	for k, v := range seed {
@@ -38,7 +39,21 @@ func LoadNames(dataDir string) *Names {
 			}
 		}
 	}
+	if st != nil {
+		go st.SyncStocks(n.All()) // 载入的名字同步进 stocks 表（后台，不阻塞启动）
+	}
 	return n
+}
+
+// All 返回名字表的副本。
+func (n *Names) All() map[string]string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	cp := make(map[string]string, len(n.m))
+	for k, v := range n.m {
+		cp[k] = v
+	}
+	return cp
 }
 
 func (n *Names) Get(code string) string {
@@ -74,6 +89,9 @@ func (n *Names) ensureFull() {
 		}
 		n.merge(m)
 		_ = n.save(m)
+		if n.st != nil {
+			n.st.SyncStocks(m) // 同步进 stocks 表，供按名字搜索
+		}
 		log.Printf("stock names fetched: %d", n.count())
 	}()
 }
