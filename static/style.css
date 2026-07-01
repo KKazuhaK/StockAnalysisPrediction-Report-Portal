@@ -201,3 +201,9 @@ a:hover{text-decoration:underline}
 /* run 类别徽标 */
 .tag.kind{background:#efe9fb;color:#6a45c0;font-weight:600}
 [data-eff="dark"] .tag.kind{background:#2c2350;color:#b9a6f0}
+
+/* Tabler 图标：随字号缩放、随文字颜色、垂直居中 */
+.ti{width:1em;height:1em;vertical-align:-0.14em;flex:none}
+.brand .ti{width:1.15em;height:1.15em;vertical-align:-0.2em;margin-right:2px}
+.btn-ghost .ti,.gen-btn .ti{margin-right:3px}
+.tag .ti{margin-right:2px}
