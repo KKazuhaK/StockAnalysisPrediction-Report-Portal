@@ -185,6 +185,9 @@ func main() {
 	mux.HandleFunc("GET /api/reports", s.apiQueryReports)         // Dify 查/搜历史报告
 	mux.HandleFunc("GET /api/reports/manifest", s.apiManifest)   // Dify 探清单：某票有哪些报告
 	mux.HandleFunc("GET /api/report", s.apiGetReport)            // Dify 取单篇正文(uid)
+	mux.HandleFunc("GET /api/runs", s.apiRuns)                   // Dify 报告组视图(标的+日期+大类)
+	mux.HandleFunc("GET /api/symbols", s.apiSymbols)            // Dify 有报告的股票清单/补全
+	mux.HandleFunc("GET /api/tracking", s.apiTracking)          // Dify 结构化假设/跟踪项(重跑复核)
 	mux.HandleFunc("GET /{$}", s.requireUser(s.index))
 	mux.HandleFunc("GET /run/{key}", s.requireUser(s.runView))
 	mux.HandleFunc("GET /stock/{symbol}", s.requireUser(s.stockView)) // 个股 timeline 详情（新报告）
@@ -677,21 +680,33 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 		Time     string `json:"time"`
 		BodyMD   string `json:"body_md"`
 		BodyHTML string `json:"body_html"`
+		Tracking []struct {
+			IType       string `json:"itype"`
+			Content     string `json:"content"`
+			Status      string `json:"status"`
+			ReviewPoint string `json:"review_point"`
+		} `json:"tracking"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&in); err != nil {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if in.Symbol == "" || in.Date == "" {
-		http.Error(w, "symbol 和 date 必填", http.StatusBadRequest)
+		http.Error(w, "symbol and date required", http.StatusBadRequest)
 		return
 	}
 	rtype := firstNonEmpty(in.Subtype, in.RType)
-	kind := firstNonEmpty(in.Kind, runKind([]string{rtype}))
-	uid := in.UID
-	if uid == "" {
-		uid = firstNonEmpty(in.RunID, in.Symbol+"|"+in.Date+"|"+kind) + "|" + rtype
+	// 大类：Dify 显式 > 注册表已登记 > runKind 兜底；并自动登记该小文档→大类。
+	kind := in.Kind
+	if kind == "" {
+		kind = s.st.TypeKind(rtype)
 	}
+	if kind == "" {
+		kind = runKind([]string{rtype})
+	}
+	s.st.RegisterType(rtype, kind)
+	// 身份键 = 标的|日期|大类|小文档：同一天同类型再进来即覆盖更新（run_id 只当批次标签，不参与身份）。
+	uid := firstNonEmpty(in.UID, in.Symbol+"|"+in.Date+"|"+kind+"|"+rtype)
 	html := in.BodyHTML
 	if html == "" && in.BodyMD != "" {
 		html = mdToHTML(in.BodyMD)
@@ -705,9 +720,15 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("ingest %s %s %s/%s", in.Symbol, in.Date, kind, rtype)
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"uid":%q}`, uid)
+	if len(in.Tracking) > 0 { // 有跟踪项才更新（覆盖旧的，与最新正文一致）
+		items := make([]TrackingItem, 0, len(in.Tracking))
+		for _, t := range in.Tracking {
+			items = append(items, TrackingItem{IType: t.IType, Content: t.Content, Status: t.Status, ReviewPoint: t.ReviewPoint})
+		}
+		s.st.SetTracking(uid, in.Symbol, items)
+	}
+	log.Printf("ingest %s %s", in.Symbol, in.Date)
+	writeJSON(w, map[string]any{"ok": true, "uid": uid})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -732,22 +753,30 @@ func (s *Server) apiQueryReports(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	withBody := q.Get("with_body") == "1" || q.Get("with_body") == "true"
+	since, until := q.Get("since"), q.Get("until")
+	if d := strings.TrimSpace(q.Get("date")); d != "" { // date（精确某日；today 别名）
+		if d == "today" {
+			d = time.Now().Format("2006-01-02")
+		}
+		since, until = d, d
+	}
 	reps, err := s.st.QueryReports(symbol, kw, q.Get("kind"), firstNonEmpty(q.Get("subtype"), q.Get("rtype")),
-		q.Get("since"), q.Get("until"), limit, withBody)
+		since, until, limit, withBody)
 	if err != nil {
 		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"symbol": symbol, "q": kw, "count": len(reps), "reports": repsJSON(reps, withBody)})
-	log.Printf("query symbol=%q q=%q -> %d reports", symbol, kw, len(reps))
+	writeJSON(w, map[string]any{"symbol": symbol, "q": kw, "has": len(reps) > 0,
+		"count": len(reps), "reports": s.repsJSON(reps, withBody)})
+	log.Printf("query symbol=%s -> %d reports", symbol, len(reps))
 }
 
-// repsJSON 把 []Rep 转成对 Dify 友好的 JSON（含名字；withBody 时带 body_md）。
-func repsJSON(reps []Rep, withBody bool) []map[string]any {
+// repsJSON 把 []Rep 转成对 Dify 友好的 JSON（含公司名；withBody 时带 body_md）。
+func (s *Server) repsJSON(reps []Rep, withBody bool) []map[string]any {
 	out := make([]map[string]any, 0, len(reps))
 	for _, r := range reps {
-		m := map[string]any{"uid": r.UID, "run_id": r.RunID, "symbol": r.Symbol, "date": r.Date,
-			"kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source}
+		m := map[string]any{"uid": r.UID, "run_id": r.RunID, "symbol": r.Symbol, "name": s.names.Get(r.Symbol),
+			"date": r.Date, "kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source}
 		if withBody {
 			m["body_md"] = r.MD
 		}
@@ -794,6 +823,64 @@ func (s *Server) apiGetReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"uid": rep.UID, "run_id": rep.RunID, "symbol": rep.Symbol, "date": rep.Date,
 		"kind": rep.Kind, "subtype": rep.RType, "title": rep.Title, "source": rep.Source,
 		"body_md": rep.MD, "body_html": rep.HTML})
+}
+
+// apiRuns 报告组视图（一次生成 = 同 标的+日期+大类）。GET /api/runs?symbol=300750&date=（可选）
+func (s *Server) apiRuns(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r, "query") {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	symbol := strings.TrimSpace(r.URL.Query().Get("symbol"))
+	if symbol == "" {
+		http.Error(w, "symbol required", http.StatusBadRequest)
+		return
+	}
+	runs := s.st.ListRuns(symbol, strings.TrimSpace(r.URL.Query().Get("date")))
+	out := make([]map[string]any, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, map[string]any{"symbol": r.Symbol, "date": r.Date, "kind": r.Kind,
+			"run_id": r.RunID, "subtypes": r.Subtypes, "count": r.Count})
+	}
+	writeJSON(w, map[string]any{"symbol": symbol, "name": s.names.Get(symbol), "has": len(out) > 0, "count": len(out), "runs": out})
+}
+
+// apiSymbols 有报告的股票清单/自动补全。GET /api/symbols?q=300&limit=50
+func (s *Server) apiSymbols(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r, "query") {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	list := s.st.ListSymbols(strings.TrimSpace(q.Get("q")), limit)
+	out := make([]map[string]any, 0, len(list))
+	for _, si := range list {
+		out = append(out, map[string]any{"symbol": si.Symbol, "name": s.names.Get(si.Symbol), "count": si.Count, "latest": si.Latest})
+	}
+	writeJSON(w, map[string]any{"count": len(out), "symbols": out})
+}
+
+// apiTracking 结构化假设/跟踪项（重跑复核）。GET /api/tracking?symbol=300750&status=pending&limit=100
+func (s *Server) apiTracking(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r, "query") {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	q := r.URL.Query()
+	symbol := strings.TrimSpace(q.Get("symbol"))
+	if symbol == "" {
+		http.Error(w, "symbol required", http.StatusBadRequest)
+		return
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	items := s.st.QueryTracking(symbol, strings.TrimSpace(q.Get("status")), limit)
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, map[string]any{"report_uid": it.ReportUID, "itype": it.IType, "content": it.Content,
+			"status": it.Status, "review_point": it.ReviewPoint, "created_at": it.Created})
+	}
+	writeJSON(w, map[string]any{"symbol": symbol, "has": len(out) > 0, "count": len(out), "items": out})
 }
 
 // tokenCreate 生成一枚新令牌。tokenDelete 删除。
@@ -1089,6 +1176,7 @@ func (s *Server) linkReorder(w http.ResponseWriter, r *http.Request, user string
 
 type typeRow struct {
 	Name      string
+	Kind      string
 	Ord       int
 	IsSummary bool
 	Label     string
@@ -1107,12 +1195,15 @@ func (s *Server) manageTypes(w http.ResponseWriter, r *http.Request, user string
 	byKind := map[string][]typeRow{}
 	for _, name := range s.st.DiscoveredTypes() {
 		c := cfg[name]
-		row := typeRow{Name: name, Ord: c.Ord, IsSummary: c.IsSummary, Label: c.Label}
-		k := runKind([]string{name})
-		if !known[k] {
-			k = "其他"
+		k := c.Kind
+		if k == "" {
+			k = runKind([]string{name}) // 未登记的用兜底默认
 		}
-		byKind[k] = append(byKind[k], row)
+		grp := k
+		if !known[grp] {
+			grp = "其他"
+		}
+		byKind[grp] = append(byKind[grp], typeRow{Name: name, Kind: k, Ord: c.Ord, IsSummary: c.IsSummary, Label: c.Label})
 	}
 	var groups []typeGroup
 	for _, k := range kindOrder {
@@ -1128,7 +1219,7 @@ func (s *Server) manageTypes(w http.ResponseWriter, r *http.Request, user string
 		})
 		groups = append(groups, typeGroup{Kind: k, Rows: rows})
 	}
-	s.render(w, r, "manage_types", map[string]any{"User": user, "Admin": true, "Groups": groups})
+	s.render(w, r, "manage_types", map[string]any{"User": user, "Admin": true, "Groups": groups, "Kinds": kindOrder})
 }
 
 func (s *Server) manageTypesDelete(w http.ResponseWriter, r *http.Request, user string) {
@@ -1140,22 +1231,29 @@ func (s *Server) manageTypesSave(w http.ResponseWriter, r *http.Request, user st
 	r.ParseForm()
 	names := r.Form["name"]
 	labels := r.Form["label"]
+	kinds := r.Form["kind"]
 	sum := map[string]bool{}
 	for _, v := range r.Form["summary"] {
 		sum[v] = true
 	}
 	cfg := s.st.TypeConfigs() // 保留既有排序位（ord 只由拖拽改）
 	for i, name := range names {
-		label := ""
+		label, kind := "", ""
 		if i < len(labels) {
 			label = strings.TrimSpace(labels[i])
 		}
-		s.st.UpsertTypeConfig(name, cfg[name].Ord, sum[name], label)
+		if i < len(kinds) {
+			kind = strings.TrimSpace(kinds[i])
+		}
+		s.st.UpsertTypeConfig(name, kind, label, cfg[name].Ord, sum[name])
+		if kind != "" && kind != cfg[name].Kind {
+			s.st.SetReportsKind(name, kind) // 大类变更传播到已入库报告(快照与注册表一致)
+		}
 	}
 	http.Redirect(w, r, "/manage/types", http.StatusSeeOther)
 }
 
-// manageTypesAdd 手动预注册一个类型（工作流还没产出该类型时先配好默认/改名）。排到末尾，顺序靠拖拽。
+// manageTypesAdd 手动预注册一个类型（工作流还没产出该类型时先配好大类/默认/改名）。排到末尾，顺序靠拖拽。
 func (s *Server) manageTypesAdd(w http.ResponseWriter, r *http.Request, user string) {
 	r.ParseForm()
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -1166,7 +1264,11 @@ func (s *Server) manageTypesAdd(w http.ResponseWriter, r *http.Request, user str
 				ord = c.Ord + 1
 			}
 		}
-		s.st.UpsertTypeConfig(name, ord, r.FormValue("summary") != "", strings.TrimSpace(r.FormValue("label")))
+		kind := strings.TrimSpace(r.FormValue("kind"))
+		if kind == "" {
+			kind = runKind([]string{name})
+		}
+		s.st.UpsertTypeConfig(name, kind, strings.TrimSpace(r.FormValue("label")), ord, r.FormValue("summary") != "")
 	}
 	http.Redirect(w, r, "/manage/types", http.StatusSeeOther)
 }

@@ -113,9 +113,10 @@ func (s *Store) init() error {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
 			id %s, label TEXT, url TEXT, ord INTEGER DEFAULT 0)`, pk),
 		`CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)`,
-		// 报告类型显示配置（管理员网页可改：tab 顺序/默认页/改名），为工作流变更留后路。
+		// 报告类型注册表：小文档(name,唯一) → 显式大类(kind) + 显示名/排序/默认页。
+		// 入库自动登记、后台可改；替代 runKind 猜测（runKind 仅作新类型的兜底默认）。
 		`CREATE TABLE IF NOT EXISTS type_config(
-			name TEXT PRIMARY KEY, ord INTEGER DEFAULT 0, is_summary INTEGER DEFAULT 0, label TEXT)`,
+			name TEXT PRIMARY KEY, kind TEXT, ord INTEGER DEFAULT 0, is_summary INTEGER DEFAULT 0, label TEXT)`,
 		// 登录账号（config.yaml 仅首启种子，之后网页管理）。role 可扩展更多角色。
 		`CREATE TABLE IF NOT EXISTS users(
 			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user')`,
@@ -123,6 +124,12 @@ func (s *Store) init() error {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS api_tokens(
 			id %s, token TEXT UNIQUE, name TEXT, scope TEXT DEFAULT 'all',
 			created_at TEXT, expires_at TEXT, last_used_at TEXT)`, pk),
+		// 结构化“假设/跟踪项”，供重跑复核（跨报告类型通用）。itype: assumption|tracking。
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS tracking_items(
+			id %s, report_uid TEXT, symbol TEXT, itype TEXT, content TEXT,
+			status TEXT DEFAULT 'pending', review_point TEXT, created_at TEXT)`, pk),
+		`CREATE INDEX IF NOT EXISTS idx_track_sym ON tracking_items(symbol, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_track_uid ON tracking_items(report_uid)`,
 	}
 	for _, st := range stmts {
 		if _, err := s.exec(st); err != nil {
@@ -213,7 +220,8 @@ func (s *Store) SetSetting(k, v string) error {
 // ---------- 报告类型配置（管理员可改） ----------
 
 type TypeConfig struct {
-	Name      string
+	Name      string // 小文档名（唯一）
+	Kind      string // 所属大类（显式登记）
 	Ord       int
 	IsSummary bool
 	Label     string
@@ -221,7 +229,7 @@ type TypeConfig struct {
 
 func (s *Store) TypeConfigs() map[string]TypeConfig {
 	m := map[string]TypeConfig{}
-	rows, err := s.query("SELECT name,ord,is_summary,label FROM type_config")
+	rows, err := s.query("SELECT name,kind,ord,is_summary,label FROM type_config")
 	if err != nil {
 		return m
 	}
@@ -229,29 +237,48 @@ func (s *Store) TypeConfigs() map[string]TypeConfig {
 	for rows.Next() {
 		var t TypeConfig
 		var isum int
-		var label sql.NullString
-		rows.Scan(&t.Name, &t.Ord, &isum, &label)
-		t.IsSummary = isum == 1
-		t.Label = label.String
+		var kind, label sql.NullString
+		rows.Scan(&t.Name, &kind, &t.Ord, &isum, &label)
+		t.Kind, t.IsSummary, t.Label = kind.String, isum == 1, label.String
 		m[t.Name] = t
 	}
 	return m
 }
 
-func (s *Store) UpsertTypeConfig(name string, ord int, isSummary bool, label string) error {
+// TypeKind 查小文档所属大类（注册表里没有则空，调用方用 runKind 兜底）。
+func (s *Store) TypeKind(name string) string {
+	var kind sql.NullString
+	s.queryRow("SELECT kind FROM type_config WHERE name=?", name).Scan(&kind)
+	return kind.String
+}
+
+// RegisterType 入库时自动登记新小文档（已存在则不动，保留后台设置）。
+func (s *Store) RegisterType(name, kind string) {
+	s.exec(`INSERT INTO type_config(name,kind,ord,is_summary,label) VALUES(?,?,0,0,'')
+		ON CONFLICT(name) DO UPDATE SET kind=CASE WHEN type_config.kind='' OR type_config.kind IS NULL
+			THEN excluded.kind ELSE type_config.kind END`, name, kind)
+}
+
+func (s *Store) UpsertTypeConfig(name, kind, label string, ord int, isSummary bool) error {
 	is := 0
 	if isSummary {
 		is = 1
 	}
-	_, err := s.exec(`INSERT INTO type_config(name,ord,is_summary,label) VALUES(?,?,?,?)
-		ON CONFLICT(name) DO UPDATE SET ord=excluded.ord,is_summary=excluded.is_summary,label=excluded.label`,
-		name, ord, is, label)
+	_, err := s.exec(`INSERT INTO type_config(name,kind,ord,is_summary,label) VALUES(?,?,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET kind=excluded.kind,ord=excluded.ord,is_summary=excluded.is_summary,label=excluded.label`,
+		name, kind, ord, is, label)
 	return err
 }
 
-// SetTypeOrder 只更新排序位（拖拽落库），保留 is_summary/label；未配置的类型自动建行。
+// SetReportsKind 把某小文档的大类变更传播到已入库的报告（保持快照与注册表一致）。
+func (s *Store) SetReportsKind(name, kind string) error {
+	_, err := s.exec("UPDATE reports SET kind=? WHERE rtype=?", kind, name)
+	return err
+}
+
+// SetTypeOrder 只更新排序位（拖拽落库），保留 kind/is_summary/label；未配置的类型自动建行。
 func (s *Store) SetTypeOrder(name string, ord int) error {
-	_, err := s.exec(`INSERT INTO type_config(name,ord,is_summary,label) VALUES(?,?,0,'')
+	_, err := s.exec(`INSERT INTO type_config(name,kind,ord,is_summary,label) VALUES(?,'',?,0,'')
 		ON CONFLICT(name) DO UPDATE SET ord=excluded.ord`, name, ord)
 	return err
 }
@@ -539,6 +566,129 @@ func (s *Store) GetByUID(uid string) *Rep {
 	return &Rep{RID: fmt.Sprintf("n%d", id), Src: "new", UID: uid, Title: title.String, Symbol: sym.String,
 		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
 		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String}
+}
+
+// TrackingItem 结构化的假设/跟踪项。
+type TrackingItem struct {
+	ID                                           int64
+	ReportUID, Symbol, IType, Content, Status, ReviewPoint, Created string
+}
+
+// SetTracking 覆盖某报告的跟踪项（重跑时先清后写，保持与最新正文一致）。
+func (s *Store) SetTracking(reportUID, symbol string, items []TrackingItem) error {
+	if _, err := s.exec("DELETE FROM tracking_items WHERE report_uid=?", reportUID); err != nil {
+		return err
+	}
+	now := nowStr()
+	for _, it := range items {
+		status := it.Status
+		if status == "" {
+			status = "pending"
+		}
+		if _, err := s.exec(`INSERT INTO tracking_items(report_uid,symbol,itype,content,status,review_point,created_at)
+			VALUES(?,?,?,?,?,?,?)`, reportUID, symbol, it.IType, it.Content, status, it.ReviewPoint, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// QueryTracking 查某标的的假设/跟踪项（可按状态筛，默认按新到旧）。
+func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
+	where := []string{"symbol=?"}
+	args := []any{symbol}
+	if status != "" {
+		where = append(where, "status=?")
+		args = append(args, status)
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.query(fmt.Sprintf(`SELECT id,report_uid,symbol,itype,content,status,review_point,created_at
+		FROM tracking_items WHERE %s ORDER BY created_at DESC, id DESC LIMIT %d`, strings.Join(where, " AND "), limit), args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []TrackingItem
+	for rows.Next() {
+		var t TrackingItem
+		var uid, sym, it, c, st, rp, cr sql.NullString
+		rows.Scan(&t.ID, &uid, &sym, &it, &c, &st, &rp, &cr)
+		t.ReportUID, t.Symbol, t.IType, t.Content, t.Status, t.ReviewPoint, t.Created =
+			uid.String, sym.String, it.String, c.String, st.String, rp.String, cr.String
+		out = append(out, t)
+	}
+	return out
+}
+
+// SymbolInfo 有报告的股票概览。
+type SymbolInfo struct {
+	Symbol, Latest string
+	Count          int
+}
+
+// ListSymbols 列出有新报告的股票（代码模糊匹配 q，按报告数倒序）。
+func (s *Store) ListSymbols(q string, limit int) []SymbolInfo {
+	where, args := "", []any{}
+	if q != "" {
+		where = "WHERE symbol LIKE ?"
+		args = append(args, "%"+q+"%")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.query(fmt.Sprintf(`SELECT symbol, COUNT(*), MAX(rdate) FROM reports %s
+		GROUP BY symbol ORDER BY COUNT(*) DESC, symbol LIMIT %d`, where, limit), args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []SymbolInfo
+	for rows.Next() {
+		var si SymbolInfo
+		var latest sql.NullString
+		rows.Scan(&si.Symbol, &si.Count, &latest)
+		si.Latest = latest.String
+		out = append(out, si)
+	}
+	return out
+}
+
+// RunInfo 报告组（一次生成 = 同 symbol+date+kind）概览。
+type RunInfo struct {
+	Symbol, Date, Kind, RunID string
+	Subtypes                  []string
+	Count                     int
+}
+
+// ListRuns 列出某标的的报告组（可选某日），按日期倒序。
+func (s *Store) ListRuns(symbol, date string) []RunInfo {
+	where := []string{"symbol=?"}
+	args := []any{symbol}
+	if date != "" {
+		where = append(where, "rdate=?")
+		args = append(args, date)
+	}
+	rows, err := s.query(fmt.Sprintf(`SELECT symbol,rdate,kind,MAX(run_id),
+		GROUP_CONCAT(DISTINCT rtype), COUNT(*) FROM reports WHERE %s
+		GROUP BY symbol,rdate,kind ORDER BY rdate DESC, kind`, strings.Join(where, " AND ")), args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []RunInfo
+	for rows.Next() {
+		var ri RunInfo
+		var kind, runID, subs sql.NullString
+		rows.Scan(&ri.Symbol, &ri.Date, &kind, &runID, &subs, &ri.Count)
+		ri.Kind, ri.RunID = kind.String, runID.String
+		if subs.String != "" {
+			ri.Subtypes = strings.Split(subs.String, ",")
+		}
+		out = append(out, ri)
+	}
+	return out
 }
 
 // NewBySymbol 取某标的的全部新报告（不含正文，按日期倒序），供个股 timeline 详情用。

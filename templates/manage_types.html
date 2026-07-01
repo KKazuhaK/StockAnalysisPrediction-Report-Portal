@@ -8,12 +8,16 @@
 {{range .Groups}}
 <div class="type-kind">
   <div class="type-kind-h">{{.Kind}} <span class="type-kind-n">{{len .Rows}}</span></div>
-  <div class="type-row type-head"><span></span><span>类型</span><span>默认页</span><span>显示名(可选)</span><span></span></div>
+  <div class="type-row type-head"><span></span><span>类型(小文档)</span><span>大类</span><span>默认页</span><span>显示名(可选)</span><span></span></div>
   <div class="type-table type-sort">
+    {{$kinds := $.Kinds}}
     {{range .Rows}}
     <div class="type-row drag" data-name="{{.Name}}">
       <span class="drag-handle" title="拖拽排序">{{icon "grip-vertical"}}</span>
       <span class="type-name">{{.Name}}<input type="hidden" name="name" value="{{.Name}}" form="types-save"></span>
+      <select name="kind" form="types-save" title="所属大类">
+        {{$k := .Kind}}{{range $kinds}}<option value="{{.}}" {{if eq . $k}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
       <label class="type-chk"><input type="checkbox" name="summary" value="{{.Name}}" {{if .IsSummary}}checked{{end}} form="types-save"> 默认</label>
       <input name="label" value="{{.Label}}" placeholder="不填则用原名" form="types-save">
       <form method="post" action="/manage/types/{{.Name}}/delete" class="inline"><button type="submit" class="btn-ghost danger icon-only" title="删除配置">{{icon "trash"}}</button></form>
@@ -28,7 +32,8 @@
 <h3 class="page-h">手动新增类型</h3>
 <p class="hint-line">工作流以后要产出的新类型，可先在这里注册好默认/显示名；新增的排在末尾，顺序拖拽调整。</p>
 <form class="type-row add" method="post" action="/manage/types/add">
-  <input name="name" placeholder="类型名，如 ESG分析" required>
+  <input name="name" placeholder="小文档名，如 ESG分析" required>
+  <select name="kind" title="所属大类">{{range .Kinds}}<option value="{{.}}">{{.}}</option>{{end}}</select>
   <label class="type-chk"><input type="checkbox" name="summary"> 默认页</label>
   <input name="label" placeholder="显示名(可选)">
   <button type="submit">新增</button>

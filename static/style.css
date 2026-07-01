@@ -135,6 +135,9 @@ a:hover{text-decoration:underline}
 .btn-ghost.danger:hover{background:#fdecec;border-color:#e24b4a;color:#a32d2d}
 
 /* ============ 深色模式 ============ */
+/* 重定义表面/描边变量：凡是 background:var(--card) / border:var(--line) 的元素一次性变暗，
+   新增元素不再逐个漏配（.card-box 等历史遗漏也一并修好）。 */
+[data-eff="dark"]{--card:#151b29;--line:#26314a}
 [data-eff="dark"] body{background:#0e1320;color:#dde5f0}
 [data-eff="dark"] .topbar{background:#151b29;border-bottom-color:#26314a}
 [data-eff="dark"] .brand{color:#7fb0f0}
@@ -248,7 +251,9 @@ a:hover{text-decoration:underline}
 [data-eff="dark"] .me-tag{background:#1c3a2a;color:#6fd69c}
 
 /* 类型管理分组 */
-.type-row{grid-template-columns:28px 1fr 84px 1.4fr 40px}
+.type-row{grid-template-columns:28px 1fr 104px 84px 1.4fr 40px}
+.type-row select[name=kind]{padding:7px 8px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--card);color:var(--ink)}
+[data-eff="dark"] .type-row select[name=kind]{background:#1b2333;border-color:#2e3a55;color:#dde5f0}
 .type-kind{margin-bottom:16px}
 .type-kind-h{font-size:14px;font-weight:600;color:var(--brand-d);margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--line)}
 .type-kind-n{color:var(--muted);font-weight:400;font-size:12px;margin-left:4px}
@@ -315,8 +320,9 @@ a:hover{text-decoration:underline}
   .type-row.drag .drag-handle{order:0}
   .type-row.drag .type-name{order:1;flex:1 1 auto}
   .type-row.drag .inline{order:2;margin-left:auto}
-  .type-row.drag .type-chk{order:3}
-  .type-row.drag input[name=label]{order:4;flex:1 1 100%}
+  .type-row.drag select[name=kind]{order:3;flex:1 1 100%}
+  .type-row.drag .type-chk{order:4}
+  .type-row.drag input[name=label]{order:5;flex:1 1 100%}
   .link-row.drag .drag-handle{order:0}
   .link-row.drag input[name=label]{order:1;flex:1 1 auto}
   .link-row.drag input[name=url]{order:2;flex:1 1 100%}
@@ -373,3 +379,6 @@ a:hover{text-decoration:underline}
 [data-eff="dark"] .tok{background:#243049;color:#cdd6e4}
 [data-eff="dark"] .tok:hover{background:#2c3850}
 [data-eff="dark"] .tok.copied{background:#1c3a2a;color:#6fd69c}
+/* 行内代码片段（提示/接口文档），浅深都清晰 */
+.hint-line code,.set-form code,.set-row code{background:#eef1f5;color:#33415a;padding:1px 6px;border-radius:5px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:.9em;word-break:break-word}
+[data-eff="dark"] .hint-line code,[data-eff="dark"] .set-form code,[data-eff="dark"] .set-row code{background:#243049;color:#cdd6e4}

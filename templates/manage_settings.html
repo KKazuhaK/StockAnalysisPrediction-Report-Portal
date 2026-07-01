@@ -64,17 +64,21 @@
     <div class="set-sec">入库（Dify 工作流末尾 HTTP 节点）</div>
     <p class="hint-line" style="padding:2px 20px 12px">
       <code>POST /api/reports</code> · Header <code>Authorization: Bearer &lt;令牌&gt;</code> · JSON：<br>
-      <code>{"run_id","symbol","date","kind","subtype","title","body_md"}</code>
-      （<code>kind</code> 大类不填按 <code>subtype</code> 推断；<code>run_id</code> 归组一次生成的多篇）。
+      <code>{"symbol","date","kind","subtype","title","body_md","run_id"}</code>
+      （<code>kind</code> 不填按 <code>subtype</code> 推断；<b>同 标的+日期+大类+小文档 再入库即覆盖更新</b>，<code>run_id</code> 只当批次标签）。<br>
+      可选带结构化跟踪项：<code>"tracking":[{"itype":"assumption|tracking","content":"…","status":"pending","review_point":"…"}]</code>
     </p>
-    <div class="set-sec">查 / 搜（Dify 复核历史假设与跟踪事项）</div>
-    <p class="hint-line" style="padding:2px 20px 14px;line-height:1.9">
-      <b>先探清单（有哪些、多久前、是否有）</b>：<br>
-      <code>GET /api/reports/manifest?symbol=300750</code> → <code>{name,total,dates:[{date,count,kinds}],kinds,subtypes}</code><br>
-      <b>再查 / 搜</b>（<code>symbol</code> 或 <code>q</code> 至少给一个，<code>q</code> 搜标题+正文）：<br>
-      <code>GET /api/reports?symbol=300750&q=关键字&kind=&subtype=&since=&until=&limit=20&with_body=1</code><br>
-      <b>取单篇正文</b>：<code>GET /api/report?uid=...</code> → 含 <code>body_md / body_html</code><br>
-      全部走同一 <code>Bearer</code> 令牌（作用域含 query）。
+    <div class="set-sec">查 / 搜（Dify 复核历史假设与跟踪事项）· 全部走 query 作用域令牌</div>
+    <p class="hint-line" style="padding:2px 20px 14px;line-height:1.95">
+      <b>是否存在 / 是否过时</b>（返回 <code>has</code>=true/false + 每篇信息）：<br>
+      <code>GET /api/reports?symbol=300750&date=today</code>　或按天数：<code>&since=2026-06-28</code><br>
+      <b>关键词查 / 搜</b>（和网页一致，<code>symbol</code> 或 <code>q</code> 至少一个）：<br>
+      <code>GET /api/reports?symbol=&q=重组&kind=&subtype=&since=&until=&limit=20&with_body=1</code><br>
+      <b>探清单</b>（某票有哪些日期/大类）：<code>GET /api/reports/manifest?symbol=300750</code><br>
+      <b>报告组</b>（一次生成收一组）：<code>GET /api/runs?symbol=300750&date=</code><br>
+      <b>股票清单/补全</b>（库里有哪些票）：<code>GET /api/symbols?q=300&limit=50</code><br>
+      <b>结构化假设/跟踪项</b>（重跑复核）：<code>GET /api/tracking?symbol=300750&status=pending</code><br>
+      <b>取单篇正文</b>：<code>GET /api/report?uid=...</code> → 含 <code>body_md / body_html</code>
     </p>
   </div>
 </section>
