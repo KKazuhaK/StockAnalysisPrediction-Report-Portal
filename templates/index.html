@@ -13,8 +13,8 @@
     <option value="">全部类型</option>
     {{range .Types}}<option value="{{.}}" {{if eq $.F.RType .}}selected{{end}}>{{.}}</option>{{end}}
   </select>
-  <input name="date_from" type="date" value="{{.F.DateFrom}}" title="日期起">
-  <input name="date_to" type="date" value="{{.F.DateTo}}" title="日期止">
+  <input name="date_from" type="text" class="datep" value="{{.F.DateFrom}}" placeholder="日期起" autocomplete="off">
+  <input name="date_to" type="text" class="datep" value="{{.F.DateTo}}" placeholder="日期止" autocomplete="off">
   <input name="q" value="{{.F.Q}}" placeholder="关键字">
   <select name="scope">
     <option value="title" {{if eq .F.Scope "title"}}selected{{end}}>搜标题</option>

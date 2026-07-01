@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>研报门户</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/vendor/flatpickr.min.css">
   <script>
     window.rpApplyTheme=function(t){
       localStorage.setItem('rp-theme',t);
@@ -41,5 +42,10 @@
   <main class="wrap">
     {{template "content" .}}
   </main>
+  <script src="/static/vendor/flatpickr.min.js"></script>
+  <script src="/static/vendor/flatpickr-zh.js"></script>
+  <script>
+    if (window.flatpickr) flatpickr(".datep", { locale: "zh", dateFormat: "Y-m-d", allowInput: true });
+  </script>
 </body>
 </html>
