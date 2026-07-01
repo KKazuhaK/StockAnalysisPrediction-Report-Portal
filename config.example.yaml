@@ -15,11 +15,12 @@ secret_key: "换成长随机串"
 
 # ↓↓↓ 以下都是【首次启动种子】(数据库为空时才用)，之后一律在网页里改 ↓↓↓
 
-# 初始管理员账号(bcrypt：report-portal hashpw '密码')。之后在「账号管理」增删改。
-users:
-  - username: "admin"
-    password_hash: "$2a$12$REPLACE_WITH_BCRYPT_HASH"
-    role: "admin"        # admin | user（可扩展更多角色）
+# 账号：留空即可 —— 首次启动会自动创建 admin 并把随机密码打印在终端。
+# 也可在这里预置(bcrypt：report-portal hashpw '密码')；之后都在网页「账号管理」增删改。
+# users:
+#   - username: "admin"
+#     password_hash: "$2a$12$REPLACE_WITH_BCRYPT_HASH"
+#     role: "admin"      # admin | user（可扩展更多角色）
 
 # 旧门户读透(共存期)——可留空，启动后在网页「系统设置」里填。
 old_portal:

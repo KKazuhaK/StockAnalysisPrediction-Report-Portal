@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"embed"
 	"encoding/base64"
@@ -122,13 +123,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("数据库: %v", err)
 	}
-	if st.CountUsers() == 0 { // 首启：从 config 种入初始账号
+	if st.CountUsers() == 0 { // 首启：从 config 种入初始账号（可选）
 		for _, u := range cfg.Users {
 			if u.Username != "" && u.PasswordHash != "" {
 				st.UpsertUser(u)
 			}
 		}
-		log.Printf("已从 config 种入 %d 个账号", st.CountUsers())
+	}
+	if st.CountUsers() == 0 { // 仍无账号 → 生成随机管理员并打印到终端
+		pw := randPassword(14)
+		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
+		if err := st.UpsertUser(User{Username: "admin", PasswordHash: string(h), Role: "admin"}); err != nil {
+			log.Fatalf("创建初始管理员失败: %v", err)
+		}
+		bar := strings.Repeat("=", 52)
+		log.Printf("\n%s\n  首次启动：已创建管理员账号\n    用户名: admin\n    密码:   %s\n  登录后请在「账号管理」尽快修改密码。\n%s", bar, pw, bar)
 	}
 	s := &Server{cfg: cfg, st: st, old: NewOldClient(cfg.OldPortal.BaseURL, cfg.OldPortal.Username, cfg.OldPortal.Password)}
 	s.names = LoadNames(dirOf(cfg.DBPath))
@@ -181,6 +190,22 @@ func main() {
 	if err := http.ListenAndServe(cfg.Listen, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// randPassword 生成随机密码（去掉易混字符 0/O/1/l/I）。
+func randPassword(n int) string {
+	const cs = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		for i := range b {
+			b[i] = cs[i%len(cs)]
+		}
+		return string(b)
+	}
+	for i := range b {
+		b[i] = cs[int(b[i])%len(cs)]
+	}
+	return string(b)
 }
 
 func dirOf(p string) string {
@@ -804,6 +829,9 @@ func (s *Server) settingsSyncNow(w http.ResponseWriter, r *http.Request, user st
 
 func (s *Server) syncLoop() {
 	do := func() {
+		if s.st.GetSetting("old_base", "") == "" {
+			return // 未配置旧门户，跳过同步
+		}
 		n, err := s.old.SyncAllMeta(s.st)
 		if err != nil {
 			log.Printf("旧元数据同步出错(已同步%d): %v", n, err)

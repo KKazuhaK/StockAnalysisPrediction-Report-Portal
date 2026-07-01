@@ -1,8 +1,10 @@
 # 零克隆部署：
-#   mkdir -p /opt/report-portal && cd /opt/report-portal
+#   mkdir -p /opt/StockAnalysisPrediction-Dify-Report-Portal
+#   cd /opt/StockAnalysisPrediction-Dify-Report-Portal
 #   curl -O https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Dify-Report-Portal/main/docker-compose.yml
 #   docker compose up -d
-#   # 首启后编辑 ./config/config.yaml（secret_key/账号/旧门户），再 docker compose restart
+#   docker compose logs           # 首启会打印随机管理员密码
+#   # 需要旧门户读透/改设置：登录后在网页「系统设置」里配
 #
 # 更新：docker compose pull && docker compose up -d
 
