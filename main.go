@@ -208,6 +208,41 @@ func randPassword(n int) string {
 	return string(b)
 }
 
+// pageList 生成页码序列（-1 表示省略号）：首页、当前±2、末页。
+func pageList(cur, total int) []int {
+	if total <= 9 {
+		out := make([]int, 0, total)
+		for i := 1; i <= total; i++ {
+			out = append(out, i)
+		}
+		return out
+	}
+	keep := map[int]bool{1: true, total: true, cur: true}
+	for d := 1; d <= 2; d++ {
+		if cur-d >= 1 {
+			keep[cur-d] = true
+		}
+		if cur+d <= total {
+			keep[cur+d] = true
+		}
+	}
+	var ks []int
+	for k := range keep {
+		ks = append(ks, k)
+	}
+	sort.Ints(ks)
+	var out []int
+	prev := 0
+	for _, k := range ks {
+		if prev > 0 && k-prev > 1 {
+			out = append(out, -1)
+		}
+		out = append(out, k)
+		prev = k
+	}
+	return out
+}
+
 func dirOf(p string) string {
 	if i := strings.LastIndex(p, "/"); i >= 0 {
 		return p[:i]
@@ -432,11 +467,20 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, user string) {
 		v.Set("page", strconv.Itoa(p))
 		return template.URL("/?" + v.Encode())
 	}
+	// 页码列表（1 2 3 … 49 50 + 省略号），并配好各自 URL
+	var pager []map[string]any
+	for _, p := range pageList(page, pages) {
+		if p < 0 {
+			pager = append(pager, map[string]any{"Ellipsis": true})
+		} else {
+			pager = append(pager, map[string]any{"Num": p, "URL": mkURL(p), "Cur": p == page})
+		}
+	}
 	s.render(w, r, "index", map[string]any{
 		"User": user, "Admin": s.isAdmin(user),
 		"Groups": pageGroups, "NewTotal": newTotal, "OldTotal": oldTotal, "TotalRuns": totalRuns,
 		"Types": types, "Links": s.st.Links(),
-		"Page": page, "Pages": pages, "PageSizes": pageSizes,
+		"Page": page, "Pages": pages, "PageSizes": pageSizes, "Pager": pager,
 		"PrevURL": mkURL(page - 1), "NextURL": mkURL(page + 1), "ListURL": "/?" + r.URL.RawQuery,
 		"F": map[string]any{
 			"Q": f.Q, "Scope": f.Scope, "Symbol": f.Symbol, "RType": f.RType,

@@ -265,3 +265,18 @@ a:hover{text-decoration:underline}
 .set-acts button{padding:9px 22px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
 [data-eff="dark"] .set-form input{background:#1b2333;border-color:#2e3a55;color:#dde5f0}
 [data-eff="dark"] .set-sec{color:#9cc0f5;border-color:#26314a}
+
+/* 翻页:页码 + 跳转 */
+.pager{flex-wrap:wrap;gap:6px}
+.pg-num{min-width:34px;height:34px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:13px;font-variant-numeric:tabular-nums}
+.pg-num:hover{border-color:var(--brand);color:var(--brand);text-decoration:none}
+.pg-num.pg-cur{background:var(--brand);color:#fff;border-color:var(--brand)}
+.pg-gap{color:var(--muted);padding:0 2px}
+.pg-arrow{padding:0 10px;height:34px;display:inline-flex;align-items:center}
+.pg-jump{display:inline-flex;align-items:center;gap:6px;margin-left:10px}
+.pg-jump input[type=number]{width:56px;height:34px;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);font-size:13px}
+.pg-jump button{height:34px;padding:0 14px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);cursor:pointer;font-size:13px}
+.pg-jump button:hover{border-color:var(--brand);color:var(--brand)}
+[data-eff="dark"] .pg-num,[data-eff="dark"] .pg-jump input,[data-eff="dark"] .pg-jump button{background:#151b29;border-color:#2c3850;color:#cdd6e4}
+[data-eff="dark"] .pg-num.pg-cur{background:#185fa5;color:#fff}
