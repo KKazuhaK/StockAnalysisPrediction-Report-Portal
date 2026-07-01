@@ -1,0 +1,27 @@
+{{define "content"}}
+<div class="report-head"><a href="/" class="btn-ghost">← 返回列表</a></div>
+<h2 class="page-h">生成研报入口 · 按钮管理</h2>
+
+<div class="link-table">
+  <div class="link-row link-head"><span>名称</span><span>链接 URL</span><span>排序</span><span></span></div>
+  {{range .Links}}
+  <form class="link-row" method="post" action="/manage/links/{{.ID}}/edit">
+    <input name="label" value="{{.Label}}" required>
+    <input name="url" value="{{.URL}}" required>
+    <input name="ord" type="number" value="{{.Ord}}" style="width:64px">
+    <span class="link-acts">
+      <button type="submit" class="btn-ghost">保存</button>
+      <button type="submit" class="btn-ghost danger" formaction="/manage/links/{{.ID}}/delete">删除</button>
+    </span>
+  </form>
+  {{end}}
+</div>
+
+<h3 class="page-h">添加新按钮</h3>
+<form class="link-row add" method="post" action="/manage/links/add">
+  <input name="label" placeholder="按钮名称，如 技术分析" required>
+  <input name="url" placeholder="https://… 或 http://dify…/workflow/xxx" required>
+  <input name="ord" type="number" value="0" style="width:64px">
+  <button type="submit">添加</button>
+</form>
+{{end}}

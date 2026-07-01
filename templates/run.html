@@ -1,0 +1,34 @@
+{{define "content"}}
+<div class="report-head">
+  <a href="{{.Back}}" class="btn-ghost">← 返回列表</a>
+  <span class="dl-group">
+    <a href="/report/{{.Sel}}/md" class="btn-ghost">⬇ MD</a>
+    <a href="/report/{{.Sel}}/pdf" class="btn-ghost">⬇ PDF</a>
+  </span>
+</div>
+
+<div class="run-head">
+  <div class="card-top">
+    {{if .Symbol}}<span class="tag sym">{{.Symbol}}</span>{{end}}
+    <span class="tag run">📑 {{len .Members}} 篇 · 同一次生成</span>
+  </div>
+  <h1 class="report-title">{{if .Symbol}}{{.Symbol}} 研报 · {{.Date}}{{else}}{{.Rep.Title}}{{end}}</h1>
+  {{if .Source}}<div class="report-sub">{{.Source}}</div>{{end}}
+</div>
+
+{{if gt (len .Members) 1}}
+<div class="tabs">
+  {{range .Members}}
+  <a class="tab {{if eq .RID $.Sel}}active{{end}}" href="/run/{{$.Key | urlq}}?r={{.RID}}&back={{$.Back | urlq}}">{{.Label}}</a>
+  {{end}}
+</div>
+{{end}}
+
+<article class="report report-tabbed">
+  <div class="report-cur">
+    <span class="cur-type">{{if .Rep.RType}}{{.Rep.RType}}{{else}}报告{{end}}</span>
+    <span class="cur-time">{{if .Rep.Date}}{{.Rep.Date}}{{else}}{{trunc10 .Rep.Time}}{{end}}</span>
+  </div>
+  <div class="report-body">{{safe .Rep.HTML}}</div>
+</article>
+{{end}}

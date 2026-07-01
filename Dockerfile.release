@@ -1,0 +1,23 @@
+# 运行时镜像：Release 工作流构建。二进制在 CI 里按平台编译好后作为
+# artifact 下载进来（COPY，不在容器内编译），buildx 靠 TARGETARCH 选对架构。
+# wkhtmltopdf 用官方 patched-Qt .deb（headless，无需 X），用于自给自足生成 PDF。
+FROM debian:bookworm-slim
+ARG TARGETARCH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates tzdata fonts-noto-cjk gosu wget \
+ && wget -qO /tmp/wkhtmltox.deb \
+      "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_${TARGETARCH}.deb" \
+ && apt-get install -y --no-install-recommends /tmp/wkhtmltox.deb \
+ && rm -rf /tmp/wkhtmltox.deb /var/lib/apt/lists/*
+
+ENV TZ=UTC RP_CONFIG=/app/config/config.yaml
+WORKDIR /app
+COPY bin/linux-${TARGETARCH}/report-portal /app/report-portal
+COPY config.example.yaml /app/config.example.yaml
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /app/report-portal /usr/local/bin/docker-entrypoint.sh \
+ && mkdir -p /app/config /app/data
+EXPOSE 8790
+# 以 root 起（entrypoint 修正挂载属主），再 gosu 降到 PUID/PGID(默认 10001) 运行。
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

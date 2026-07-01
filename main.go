@@ -1,0 +1,518 @@
+package main
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"embed"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"html/template"
+	"io/fs"
+	"log"
+	"math"
+	"net/http"
+	"net/url"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+//go:embed templates/*.html
+var tplFS embed.FS
+
+//go:embed static/*
+var staticFS embed.FS
+
+const cookieName = "rp_session"
+
+// 由 CI 通过 -ldflags "-X main.version=..." 注入。
+var version = "dev"
+
+var pageSizes = []int{15, 30, 50}
+
+type Server struct {
+	cfg   *Config
+	st    *Store
+	old   *OldClient
+	pages map[string]*template.Template
+	pdf   *template.Template
+}
+
+func main() {
+	// 子命令：report-portal hashpw <password> —— 生成 bcrypt 哈希贴进 config.yaml
+	if len(os.Args) > 1 && os.Args[1] == "hashpw" {
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "用法: report-portal hashpw <password>")
+			os.Exit(1)
+		}
+		h, err := bcrypt.GenerateFromPassword([]byte(os.Args[2]), 12)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(string(h))
+		return
+	}
+
+	cfgPath := os.Getenv("RP_CONFIG")
+	if cfgPath == "" {
+		cfgPath = "config.yaml"
+	}
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		log.Fatalf("配置读取失败 %s: %v", cfgPath, err)
+	}
+	if err := os.MkdirAll(dirOf(cfg.DBPath), 0o755); err != nil {
+		log.Fatal(err)
+	}
+	st, err := OpenStore(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("数据库: %v", err)
+	}
+	s := &Server{cfg: cfg, st: st, old: NewOldClient(cfg.OldPortal.BaseURL, cfg.OldPortal.Username, cfg.OldPortal.Password)}
+	s.parseTemplates()
+
+	go s.syncLoop() // 后台同步旧元数据
+
+	mux := http.NewServeMux()
+	static, _ := fs.Sub(staticFS, "static")
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"ok":true,"new":%d,"old":%d}`, st.CountNew(), st.CountOld())
+	})
+	mux.HandleFunc("GET /login", s.loginPage)
+	mux.HandleFunc("POST /login", s.loginPost)
+	mux.HandleFunc("GET /logout", s.logout)
+	mux.HandleFunc("GET /{$}", s.requireUser(s.index))
+	mux.HandleFunc("GET /run/{key}", s.requireUser(s.runView))
+	mux.HandleFunc("GET /report/{rid}/md", s.requireUser(s.reportMD))
+	mux.HandleFunc("GET /report/{rid}/pdf", s.requireUser(s.reportPDF))
+	mux.HandleFunc("GET /manage/links", s.requireAdmin(s.manageLinks))
+	mux.HandleFunc("POST /manage/links/add", s.requireAdmin(s.linkAdd))
+	mux.HandleFunc("POST /manage/links/{id}/edit", s.requireAdmin(s.linkEdit))
+	mux.HandleFunc("POST /manage/links/{id}/delete", s.requireAdmin(s.linkDelete))
+
+	log.Printf("研报门户 %s 启动于 %s (新:%d 旧:%d)", version, cfg.Listen, st.CountNew(), st.CountOld())
+	if err := http.ListenAndServe(cfg.Listen, mux); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func dirOf(p string) string {
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[:i]
+	}
+	return "."
+}
+
+// ---------- 模板 ----------
+
+func (s *Server) parseTemplates() {
+	funcs := template.FuncMap{
+		"urlq": url.QueryEscape,
+		"join": strings.Join,
+		"add":  func(a, b int) int { return a + b },
+		"safe": func(s string) template.HTML { return template.HTML(s) },
+		"trunc10": func(s string) string {
+			if len(s) >= 10 {
+				return s[:10]
+			}
+			return s
+		},
+	}
+	s.pages = map[string]*template.Template{}
+	for _, name := range []string{"login", "index", "run", "manage_links"} {
+		s.pages[name] = template.Must(template.New("base.html").Funcs(funcs).
+			ParseFS(tplFS, "templates/base.html", "templates/"+name+".html"))
+	}
+	s.pdf = template.Must(template.New("pdf.html").Funcs(funcs).ParseFS(tplFS, "templates/pdf.html"))
+}
+
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
+	if err := s.pages[name].ExecuteTemplate(w, "base.html", data); err != nil {
+		log.Printf("render %s: %v", name, err)
+		http.Error(w, "render error", 500)
+	}
+}
+
+// ---------- 会话/鉴权 ----------
+
+func (s *Server) sign(user string) string {
+	exp := time.Now().Add(7 * 24 * time.Hour).Unix()
+	msg := fmt.Sprintf("%s|%d", user, exp)
+	sig := s.hmac(msg)
+	return base64.RawURLEncoding.EncodeToString([]byte(msg)) + "." + sig
+}
+
+func (s *Server) hmac(msg string) string {
+	m := hmac.New(sha256.New, []byte(s.cfg.SecretKey))
+	m.Write([]byte(msg))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+func (s *Server) verify(cookie string) string {
+	parts := strings.SplitN(cookie, ".", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return ""
+	}
+	msg := string(raw)
+	if !hmac.Equal([]byte(s.hmac(msg)), []byte(parts[1])) {
+		return ""
+	}
+	i := strings.LastIndex(msg, "|")
+	if i < 0 {
+		return ""
+	}
+	exp, err := strconv.ParseInt(msg[i+1:], 10, 64)
+	if err != nil || time.Now().Unix() > exp {
+		return ""
+	}
+	return msg[:i]
+}
+
+func (s *Server) currentUser(r *http.Request) string {
+	c, err := r.Cookie(cookieName)
+	if err != nil {
+		return ""
+	}
+	return s.verify(c.Value)
+}
+
+func (s *Server) isAdmin(user string) bool {
+	u := s.cfg.user(user)
+	return u != nil && u.IsAdmin
+}
+
+type handler func(http.ResponseWriter, *http.Request, string)
+
+func (s *Server) requireUser(h handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u := s.currentUser(r)
+		if u == "" {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		h(w, r, u)
+	}
+}
+
+func (s *Server) requireAdmin(h handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u := s.currentUser(r)
+		if u == "" {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if !s.isAdmin(u) {
+			http.Error(w, "需要管理员权限", 403)
+			return
+		}
+		h(w, r, u)
+	}
+}
+
+// ---------- 登录 ----------
+
+func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
+	if s.currentUser(r) != "" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	s.render(w, "login", map[string]any{"Err": ""})
+}
+
+func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	u := s.cfg.user(r.FormValue("username"))
+	pw := r.FormValue("password")
+	if u == nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(pw)) != nil {
+		w.WriteHeader(401)
+		s.render(w, "login", map[string]any{"Err": "用户名或密码错误"})
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: cookieName, Value: s.sign(u.Username), Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
+	})
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// ---------- 列表 ----------
+
+func (s *Server) filtersFrom(r *http.Request) (Filters, string, int, int) {
+	q := r.URL.Query()
+	f := Filters{
+		Q: strings.TrimSpace(q.Get("q")), Scope: q.Get("scope"), Symbol: q.Get("symbol"),
+		RType: q.Get("rtype"), DateFrom: q.Get("date_from"), DateTo: q.Get("date_to"),
+		Sort: q.Get("sort"),
+	}
+	src := q.Get("src")
+	if src == "" {
+		src = "all"
+	}
+	size, _ := strconv.Atoi(q.Get("size"))
+	if size != 15 && size != 30 && size != 50 {
+		size = 30
+	}
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	return f, src, size, page
+}
+
+func (s *Server) index(w http.ResponseWriter, r *http.Request, user string) {
+	f, src, size, page := s.filtersFrom(r)
+	var reps []Rep
+	var newTotal, oldTotal int
+	if src == "all" || src == "new" {
+		nn, _ := s.st.SearchNew(f)
+		newTotal = len(nn)
+		reps = append(reps, nn...)
+	}
+	if src == "all" || src == "old" {
+		oo, _ := s.st.SearchOldMeta(f)
+		oldTotal = len(oo)
+		reps = append(reps, oo...)
+	}
+	groups := buildGroups(reps)
+	totalRuns := len(groups)
+	pages := int(math.Max(1, math.Ceil(float64(totalRuns)/float64(size))))
+	lo := (page - 1) * size
+	hi := lo + size
+	if lo > len(groups) {
+		lo = len(groups)
+	}
+	if hi > len(groups) {
+		hi = len(groups)
+	}
+	pageGroups := groups[lo:hi]
+
+	types := append(s.st.NewTypes(), s.st.OldCategories()...)
+	types = uniqSorted(types)
+
+	// pager 用的 query（除 page 外）
+	qs := url.Values{}
+	for _, k := range []string{"symbol", "rtype", "date_from", "date_to", "q", "scope", "sort", "src", "size"} {
+		if v := r.URL.Query().Get(k); v != "" {
+			qs.Set(k, v)
+		}
+	}
+	s.render(w, "index", map[string]any{
+		"User": user, "Admin": s.isAdmin(user),
+		"Groups": pageGroups, "NewTotal": newTotal, "OldTotal": oldTotal, "TotalRuns": totalRuns,
+		"Types": types, "Links": s.st.Links(),
+		"Page": page, "Pages": pages, "PageSizes": pageSizes,
+		"QS": qs.Encode(), "ListURL": "/?" + r.URL.RawQuery,
+		"F": map[string]any{
+			"Q": f.Q, "Scope": f.Scope, "Symbol": f.Symbol, "RType": f.RType,
+			"DateFrom": f.DateFrom, "DateTo": f.DateTo, "Sort": f.Sort, "Src": src, "Size": size,
+		},
+	})
+}
+
+// ---------- run 详情 ----------
+
+func (s *Server) runMembers(key string) []Rep {
+	var members []Rep
+	if !strings.Contains(key, "|") {
+		if rep := s.loadRep(key); rep != nil {
+			members = []Rep{*rep}
+		}
+	} else {
+		parts := strings.SplitN(key, "|", 2)
+		symbol, date := parts[0], parts[1]
+		nn, _ := s.st.SearchNew(Filters{DateFrom: date, DateTo: date, Sort: "date_asc"})
+		for _, m := range nn {
+			if m.Symbol == symbol {
+				members = append(members, m)
+			}
+		}
+		oo, _ := s.st.SearchOldMeta(Filters{Symbol: symbol})
+		for _, m := range oo {
+			if m.Symbol == symbol && m.Date == date {
+				members = append(members, m)
+			}
+		}
+		sort.SliceStable(members, func(i, j int) bool { return members[i].Time < members[j].Time })
+	}
+	for i := range members {
+		members[i].Label = label(members[i])
+	}
+	return members
+}
+
+func (s *Server) runView(w http.ResponseWriter, r *http.Request, user string) {
+	key := r.PathValue("key")
+	members := s.runMembers(key)
+	if len(members) == 0 {
+		http.Error(w, "未找到该 run", 404)
+		return
+	}
+	sel := r.URL.Query().Get("r")
+	if sel == "" {
+		sel = members[len(members)-1].RID
+		for _, m := range members {
+			if isSummary(m) {
+				sel = m.RID
+				break
+			}
+		}
+	}
+	rep := s.loadRep(sel)
+	if rep == nil {
+		http.Error(w, "报告不存在", 404)
+		return
+	}
+	back := r.URL.Query().Get("back")
+	if back == "" {
+		back = "/"
+	}
+	s.render(w, "run", map[string]any{
+		"User": user, "Admin": s.isAdmin(user), "Key": key, "Back": back,
+		"Members": members, "Sel": sel, "Rep": rep,
+		"Symbol": members[0].Symbol, "Date": members[0].Date, "Source": members[0].Source,
+	})
+}
+
+// loadRep 按 rid 取含正文的报告。
+func (s *Server) loadRep(rid string) *Rep {
+	if strings.HasPrefix(rid, "n") {
+		id, err := strconv.ParseInt(rid[1:], 10, 64)
+		if err != nil {
+			return nil
+		}
+		rep, _ := s.st.GetNew(id)
+		return rep
+	}
+	if strings.HasPrefix(rid, "o") {
+		id, err := strconv.ParseInt(rid[1:], 10, 64)
+		if err != nil {
+			return nil
+		}
+		d, err := s.old.Detail(id)
+		if err != nil {
+			return nil
+		}
+		return &Rep{
+			RID: rid, Src: "old", Title: d.Title, Symbol: d.StockCode, RType: d.Category,
+			Date: d.ReportDate, Source: d.Author, Time: d.Time, HTML: d.ContentHTML, MD: d.Content,
+		}
+	}
+	return nil
+}
+
+// ---------- 导出 ----------
+
+func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
+	rep := s.loadRep(r.PathValue("rid"))
+	if rep == nil {
+		http.Error(w, "报告不存在", 404)
+		return
+	}
+	fn := safeFile(rep.Title, rid(r)) + ".md"
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(fn))
+	w.Write([]byte(rep.MD))
+}
+
+func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) {
+	rep := s.loadRep(r.PathValue("rid"))
+	if rep == nil {
+		http.Error(w, "报告不存在", 404)
+		return
+	}
+	var buf strings.Builder
+	if err := s.pdf.ExecuteTemplate(&buf, "pdf.html", rep); err != nil {
+		http.Error(w, "render", 500)
+		return
+	}
+	pdf, err := htmlToPDF(buf.String())
+	if err != nil {
+		http.Error(w, "PDF 生成失败: "+err.Error(), 500)
+		return
+	}
+	fn := safeFile(rep.Title, rid(r)) + ".pdf"
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(fn))
+	w.Write(pdf)
+}
+
+func rid(r *http.Request) string { return r.PathValue("rid") }
+
+func safeFile(title, fallback string) string {
+	if strings.TrimSpace(title) == "" {
+		return fallback
+	}
+	return title
+}
+
+// ---------- 入口按钮管理 ----------
+
+func (s *Server) manageLinks(w http.ResponseWriter, r *http.Request, user string) {
+	s.render(w, "manage_links", map[string]any{"User": user, "Admin": true, "Links": s.st.Links()})
+}
+func (s *Server) linkAdd(w http.ResponseWriter, r *http.Request, user string) {
+	r.ParseForm()
+	ord, _ := strconv.Atoi(r.FormValue("ord"))
+	s.st.AddLink(strings.TrimSpace(r.FormValue("label")), strings.TrimSpace(r.FormValue("url")), ord)
+	http.Redirect(w, r, "/manage/links", http.StatusSeeOther)
+}
+func (s *Server) linkEdit(w http.ResponseWriter, r *http.Request, user string) {
+	r.ParseForm()
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	ord, _ := strconv.Atoi(r.FormValue("ord"))
+	s.st.UpdateLink(id, strings.TrimSpace(r.FormValue("label")), strings.TrimSpace(r.FormValue("url")), ord)
+	http.Redirect(w, r, "/manage/links", http.StatusSeeOther)
+}
+func (s *Server) linkDelete(w http.ResponseWriter, r *http.Request, user string) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	s.st.DeleteLink(id)
+	http.Redirect(w, r, "/manage/links", http.StatusSeeOther)
+}
+
+// ---------- 后台同步 ----------
+
+func (s *Server) syncLoop() {
+	do := func() {
+		n, err := s.old.SyncAllMeta(s.st)
+		if err != nil {
+			log.Printf("旧元数据同步出错(已同步%d): %v", n, err)
+			return
+		}
+		log.Printf("旧元数据同步完成: %d 条", s.st.CountOld())
+	}
+	do()
+	if s.cfg.SyncMin > 0 {
+		t := time.NewTicker(time.Duration(s.cfg.SyncMin) * time.Minute)
+		for range t.C {
+			do()
+		}
+	}
+}
+
+func uniqSorted(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range in {
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}

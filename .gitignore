@@ -1,32 +1,20 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# 密钥/运行时数据 —— 绝不进 git
+config.yaml
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Go 构建产物
+/report-portal
+/psp
 *.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+/dist/
+/out/
 
-# Test binary, built with `go test -c`
-*.test
-
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
-*.coverprofile
-profile.cov
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
-go.work
-go.work.sum
-
-# env file
+# 杂项
+.DS_Store
 .env
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# go build 默认输出(名=目录名)
+/StockAnalysisPrediction-Dify-Report-Portal

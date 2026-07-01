@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<style>
+body { font-family: "Noto Sans CJK SC","WenQuanYi Zen Hei","Microsoft YaHei",sans-serif; font-size: 12px; line-height: 1.7; color:#1a1a1a; }
+h1 { font-size: 21px; color:#0c447c; border-bottom:2px solid #185fa5; padding-bottom:6px; }
+h2 { font-size: 16px; color:#185fa5; border-bottom:1px solid #d3d1c7; padding-bottom:4px; margin-top:18px; }
+h3 { font-size: 14px; }
+table { border-collapse: collapse; width:100%; margin:8px 0; font-size:11px; }
+th,td { border:1px solid #c9c7bd; padding:5px 8px; text-align:left; }
+th { background:#eef1f5; }
+blockquote { border-left:3px solid #ba7517; background:#faeeda; margin:8px 0; padding:5px 12px; }
+pre { background:#f7f6f1; border:1px solid #e1e0d9; padding:9px; font-size:11px; white-space:pre-wrap; }
+img { max-width:100%; }
+.callout { background:#f1efe8; border-radius:6px; padding:8px 12px; }
+</style></head>
+<body>
+<h1>{{.Title}}</h1>
+<div style="color:#888;font-size:11px;margin-bottom:10px">{{if .Date}}{{.Date}}{{else}}{{trunc10 .Time}}{{end}}{{if .Source}} · {{.Source}}{{end}}</div>
+{{safe .HTML}}
+</body></html>
