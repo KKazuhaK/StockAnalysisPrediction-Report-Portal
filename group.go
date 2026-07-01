@@ -31,7 +31,7 @@ func runKind(types []string) string {
 		return "事件监测"
 	case strings.Contains(j, "投资决策") || strings.Contains(j, "估值") ||
 		strings.Contains(j, "财务") || strings.Contains(j, "行业") || strings.Contains(j, "研报"):
-		return "综合分析"
+		return "投资决策"
 	}
 	if len(types) > 0 {
 		return types[0]
