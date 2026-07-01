@@ -1,30 +1,20 @@
-# 复制为 config.yaml 后填写。config.yaml 不进 git。
-# 本文件只放【基础设施】(端口/数据库/密钥/首启种子)；
-# 其余设置(旧门户凭据、同步间隔、账号、入口按钮、类型…)都在网页里管理、存数据库。
+# 复制为 config.yaml 后按需修改。config.yaml 不进 git。
+# 程序首次运行时若没有 config.yaml，会【自动生成】一份（含随机 secret_key），一般无需手动建。
+#
+# config 只放【基础设施】：监听端口 / 会话密钥 / 数据库连接。
+# 其余全部在网页里管、存数据库：
+#   旧门户凭据、同步间隔 → 「系统设置」
+#   账号（角色）        → 「账号管理」（首次启动自动创建 admin，密码打印在终端）
+#   入口按钮、报告类型   → 对应管理页
 
 listen: ":8790"
 
-# 数据库：sqlite(默认，单文件零依赖) 或 postgres
-db_driver: "sqlite"
-db_path: "data/portal.db"          # sqlite 用
-# db_driver: "postgres"
-# db_dsn: "postgres://user:pass@127.0.0.1:5432/reports?sslmode=disable"   # postgres 用
-
-# 会话签名密钥(部署密钥，非应用设置)：openssl rand -hex 32
+# 会话签名密钥（部署密钥，非应用设置）：openssl rand -hex 32
+# 自动生成的配置里已随机填好，通常无需改动。
 secret_key: "换成长随机串"
 
-# ↓↓↓ 以下都是【首次启动种子】(数据库为空时才用)，之后一律在网页里改 ↓↓↓
-
-# 账号：留空即可 —— 首次启动会自动创建 admin 并把随机密码打印在终端。
-# 也可在这里预置(bcrypt：report-portal hashpw '密码')；之后都在网页「账号管理」增删改。
-# users:
-#   - username: "admin"
-#     password_hash: "$2a$12$REPLACE_WITH_BCRYPT_HASH"
-#     role: "admin"      # admin | user（可扩展更多角色）
-
-# 旧门户读透(共存期)——可留空，启动后在网页「系统设置」里填。
-old_portal:
-  base_url: ""
-  username: ""
-  password: ""
-sync_interval_minutes: 0   # 0=只启动同步一次；也可在「系统设置」里改
+# 数据库：sqlite(默认，单文件零依赖) 或 postgres
+db_driver: "sqlite"
+db_path: "data/portal.db"
+# db_driver: "postgres"
+# db_dsn: "postgres://user:pass@127.0.0.1:5432/reports?sslmode=disable"

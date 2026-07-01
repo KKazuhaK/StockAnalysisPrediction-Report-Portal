@@ -44,11 +44,11 @@
 
 <div class="cards">
   {{range .Groups}}
-  <a class="card" href="/run/{{.Key}}?back={{$.ListURL}}">
+  <a class="card" href="{{if eq .Src "new"}}/stock/{{.Symbol}}?date={{.Date}}{{else}}/run/{{.Key}}?back={{$.ListURL}}{{end}}">
     <div class="card-top">
       <span class="tag {{if eq .Src "new"}}new{{else}}old{{end}}">{{if eq .Src "new"}}新{{else}}旧{{end}}</span>
       {{if .Symbol}}<span class="tag sym">{{.Symbol}}</span>{{end}}
-      {{if .Kind}}<span class="tag kind">{{.Kind}}</span>{{end}}
+      {{if eq .Src "new"}}{{range .Kinds}}<span class="tag kind">{{.}}</span>{{end}}{{else}}{{if .Kind}}<span class="tag kind">{{.Kind}}</span>{{end}}{{end}}
       {{if gt .N 1}}<span class="tag run">{{icon "files"}} {{.N}} 篇</span>{{end}}
     </div>
     <div class="card-title">{{if .Symbol}}{{.Symbol}}{{if .Name}} {{.Name}}{{end}}{{else}}{{(index .Members 0).Title}}{{end}}</div>

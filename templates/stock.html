@@ -1,0 +1,67 @@
+{{define "content"}}
+<div class="report-head">
+  <a href="/" class="btn-ghost">{{icon "arrow-left"}} 返回列表</a>
+  <span class="dl-group">
+    <a href="/report/{{.Rep.RID}}/md" class="btn-ghost">{{icon "download"}} MD</a>
+    <a href="/report/{{.Rep.RID}}/pdf" class="btn-ghost">{{icon "download"}} PDF</a>
+  </span>
+</div>
+
+<div class="run-head">
+  <div class="card-top">
+    <span class="tag sym">{{.Symbol}}</span>
+    {{if .Name}}<span class="tag">{{.Name}}</span>{{end}}
+    <span class="tag new">新</span>
+  </div>
+  <h1 class="report-title">{{.Symbol}}{{if .Name}} {{.Name}}{{end}} · {{.SelDate}}</h1>
+</div>
+
+<div class="tl-wrap">
+  <div class="tl-label">{{icon "timeline"}} 时间线 · 默认最新</div>
+  <div class="tl-scroll" id="tl-scroll">
+    <div class="tl">
+      {{range .Timeline}}
+      <a class="tl-node {{if .Active}}on{{end}}" href="{{.URL}}">
+        <span class="tl-dot"></span>
+        <span class="tl-date">{{.Date}}</span>
+        <span class="tl-n">{{.N}} 篇</span>
+      </a>
+      {{end}}
+    </div>
+  </div>
+</div>
+
+{{if gt .NKinds 1}}
+<div class="kind-tabs">
+  {{range .KindTabs}}<a class="ktab {{if .Active}}on{{end}}" href="{{.URL}}">{{.Text}}</a>{{end}}
+</div>
+{{end}}
+
+{{if gt .NSubs 1}}
+<div class="tabs">
+  {{range .SubTabs}}<a class="tab {{if .Active}}active{{end}}" href="{{.URL}}">{{.Text}}</a>{{end}}
+</div>
+{{end}}
+
+<article class="report report-tabbed">
+  <div class="report-cur">
+    <span class="cur-type">{{if .Rep.RType}}{{.Rep.RType}}{{else}}报告{{end}}</span>
+    <span class="cur-time">{{if .Rep.Date}}{{.Rep.Date}}{{else}}{{trunc10 .Rep.Time}}{{end}}</span>
+  </div>
+  <div class="report-body">{{if .Rep.HTML}}{{safe .Rep.HTML}}{{else}}<p class="empty">该子报告暂无正文。</p>{{end}}</div>
+</article>
+
+<script>
+  (function(){
+    var s = document.getElementById('tl-scroll');
+    if (!s) return;
+    var on = s.querySelector('.tl-node.on');
+    if (on) s.scrollLeft = on.offsetLeft - s.clientWidth / 2 + on.offsetWidth / 2;
+    else s.scrollLeft = s.scrollWidth;
+    var down = false, sx = 0, sl = 0;
+    s.addEventListener('pointerdown', function(e){ down = true; sx = e.clientX; sl = s.scrollLeft; s.classList.add('drag'); });
+    addEventListener('pointerup', function(){ down = false; s.classList.remove('drag'); });
+    addEventListener('pointermove', function(e){ if (down) s.scrollLeft = sl - (e.clientX - sx); });
+  })();
+</script>
+{{end}}

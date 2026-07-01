@@ -3,12 +3,16 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // postgres 驱动，注册为 "pgx"
 	_ "modernc.org/sqlite"             // sqlite 驱动(纯 Go)，注册为 "sqlite"
 )
+
+func nowStr() string { return time.Now().Format("2006-01-02 15:04:05") }
 
 // Rep 是新旧统一的报告表示（列表/分组/阅读都用它）。
 type Rep struct {
@@ -16,6 +20,7 @@ type Rep struct {
 	UID           string // 新报告的稳定外部 id（upsert 用）
 	Title, Symbol string
 	RType, Date   string
+	Kind, RunID   string // Kind: 大类(并购重组/投资决策…，新报告用)；RunID: 一次生成分组
 	Source, Time  string
 	HTML, MD      string // 正文（阅读时才填）
 	Label         string // run 内 tab 短标签
@@ -96,6 +101,7 @@ func (s *Store) init() error {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS reports(
 			rowid %s,
 			uid TEXT UNIQUE, title TEXT, symbol TEXT, rtype TEXT, rdate TEXT,
+			kind TEXT, run_id TEXT,
 			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(rdate)`,
 		`CREATE INDEX IF NOT EXISTS idx_reports_sym  ON reports(symbol)`,
@@ -113,6 +119,10 @@ func (s *Store) init() error {
 		// 登录账号（config.yaml 仅首启种子，之后网页管理）。role 可扩展更多角色。
 		`CREATE TABLE IF NOT EXISTS users(
 			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user')`,
+		// API 令牌（多枚，带备注/作用域/有效期/最近使用）。scope: all|ingest|query。
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS api_tokens(
+			id %s, token TEXT UNIQUE, name TEXT, scope TEXT DEFAULT 'all',
+			created_at TEXT, expires_at TEXT, last_used_at TEXT)`, pk),
 	}
 	for _, st := range stmts {
 		if _, err := s.exec(st); err != nil {
@@ -239,6 +249,13 @@ func (s *Store) UpsertTypeConfig(name string, ord int, isSummary bool, label str
 	return err
 }
 
+// SetTypeOrder 只更新排序位（拖拽落库），保留 is_summary/label；未配置的类型自动建行。
+func (s *Store) SetTypeOrder(name string, ord int) error {
+	_, err := s.exec(`INSERT INTO type_config(name,ord,is_summary,label) VALUES(?,?,0,'')
+		ON CONFLICT(name) DO UPDATE SET ord=excluded.ord`, name, ord)
+	return err
+}
+
 // DeleteTypeConfig 删除类型配置。若该类型仍有报告，则只是回到"未配置"(数据里还会出现)；
 // 若是手动预注册、无对应报告，删完就彻底消失。
 func (s *Store) DeleteTypeConfig(name string) error {
@@ -312,7 +329,7 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 		where = append(where, "rdate <= ?")
 		args = append(args, f.DateTo)
 	}
-	q := "SELECT rowid,title,symbol,rtype,rdate,source,sent_at FROM reports"
+	q := "SELECT rowid,title,symbol,rtype,rdate,kind,run_id,source,sent_at FROM reports"
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -324,24 +341,226 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 	defer rows.Close()
 	var out []Rep
 	for rows.Next() {
-		var id int64
-		var title, sym, rt, rd, src, sent sql.NullString
-		if err := rows.Scan(&id, &title, &sym, &rt, &rd, &src, &sent); err != nil {
-			return nil, err
+		out = append(out, scanNewRow(rows))
+	}
+	return out, rows.Err()
+}
+
+// scanNewRow 扫一行新报告（不含正文）。列序固定：rowid,title,symbol,rtype,rdate,kind,run_id,source,sent_at。
+func scanNewRow(rows *sql.Rows) Rep {
+	var id int64
+	var title, sym, rt, rd, kind, runID, src, sent sql.NullString
+	rows.Scan(&id, &title, &sym, &rt, &rd, &kind, &runID, &src, &sent)
+	return Rep{
+		RID: fmt.Sprintf("n%d", id), Src: "new", Title: title.String, Symbol: sym.String,
+		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
+		Source: src.String, Time: sent.String,
+	}
+}
+
+// ApiToken 一枚 API 令牌（多枚共存，带备注/作用域/有效期）。
+type ApiToken struct {
+	ID                                           int64
+	Token, Name, Scope, Created, Expires, LastUsed string
+}
+
+func (s *Store) CreateToken(token, name, scope, expires string) error {
+	if scope == "" {
+		scope = "all"
+	}
+	_, err := s.exec(`INSERT INTO api_tokens(token,name,scope,created_at,expires_at) VALUES(?,?,?,?,?)`,
+		token, name, scope, nowStr(), expires)
+	return err
+}
+
+func (s *Store) ListTokens() []ApiToken {
+	rows, err := s.query(`SELECT id,token,name,scope,created_at,expires_at,last_used_at FROM api_tokens ORDER BY id DESC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []ApiToken
+	for rows.Next() {
+		var t ApiToken
+		var name, scope, created, expires, last sql.NullString
+		rows.Scan(&t.ID, &t.Token, &name, &scope, &created, &expires, &last)
+		t.Name, t.Scope, t.Created, t.Expires, t.LastUsed = name.String, scope.String, created.String, expires.String, last.String
+		out = append(out, t)
+	}
+	return out
+}
+
+func (s *Store) DeleteToken(id int64) error {
+	_, err := s.exec("DELETE FROM api_tokens WHERE id=?", id)
+	return err
+}
+
+func (s *Store) CountTokens() (n int) {
+	s.queryRow("SELECT COUNT(*) FROM api_tokens").Scan(&n)
+	return
+}
+
+// TokenValid 校验令牌：存在、未过期、作用域匹配（all 或等于 need）。通过则刷新 last_used。
+func (s *Store) TokenValid(token, need string) bool {
+	if token == "" {
+		return false
+	}
+	var scope, expires sql.NullString
+	err := s.queryRow("SELECT scope,expires_at FROM api_tokens WHERE token=?", token).Scan(&scope, &expires)
+	if err != nil {
+		return false
+	}
+	if expires.String != "" && expires.String < nowStr() {
+		return false // 已过期
+	}
+	if need != "" && scope.String != "all" && scope.String != need {
+		return false // 作用域不含该操作
+	}
+	s.exec("UPDATE api_tokens SET last_used_at=? WHERE token=?", nowStr(), token)
+	return true
+}
+
+// Manifest 某标的“有哪些报告”的清单（供 Dify 先探再取）：总数、各日期(含大类)、全部大类/小文档。
+func (s *Store) Manifest(symbol string) map[string]any {
+	reps, _ := s.NewBySymbol(symbol)
+	type dateInfo struct {
+		Date  string   `json:"date"`
+		Count int      `json:"count"`
+		Kinds []string `json:"kinds"`
+	}
+	var dates []dateInfo
+	dseen := map[string]int{}
+	kindSet, subSet := map[string]bool{}, map[string]bool{}
+	kseenByDate := map[string]map[string]bool{}
+	for _, r := range reps {
+		k := r.Kind
+		if k == "" {
+			k = runKind([]string{r.RType})
 		}
-		out = append(out, Rep{
-			RID: fmt.Sprintf("n%d", id), Src: "new", Title: title.String, Symbol: sym.String,
-			RType: rt.String, Date: rd.String, Source: src.String, Time: sent.String,
-		})
+		kindSet[k] = true
+		if r.RType != "" {
+			subSet[r.RType] = true
+		}
+		i, ok := dseen[r.Date]
+		if !ok {
+			i = len(dates)
+			dseen[r.Date] = i
+			dates = append(dates, dateInfo{Date: r.Date})
+			kseenByDate[r.Date] = map[string]bool{}
+		}
+		dates[i].Count++
+		if !kseenByDate[r.Date][k] {
+			kseenByDate[r.Date][k] = true
+			dates[i].Kinds = append(dates[i].Kinds, k)
+		}
+	}
+	return map[string]any{
+		"symbol": symbol, "total": len(reps),
+		"dates": dates, "kinds": keysOf(kindSet), "subtypes": keysOf(subSet),
+	}
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// QueryReports 供 Dify 按代码/关键字/大类/小文档/日期区间查历史新报告（日期倒序）。symbol 可空（全库搜索）。withBody 带 body_md。
+func (s *Store) QueryReports(symbol, q, kind, rtype, since, until string, limit int, withBody bool) ([]Rep, error) {
+	var where []string
+	var args []any
+	if symbol != "" {
+		where = append(where, "symbol=?")
+		args = append(args, symbol)
+	}
+	if q != "" {
+		where = append(where, "(title LIKE ? OR body_md LIKE ?)")
+		args = append(args, "%"+q+"%", "%"+q+"%")
+	}
+	if kind != "" {
+		where = append(where, "kind=?")
+		args = append(args, kind)
+	}
+	if rtype != "" {
+		where = append(where, "rtype=?")
+		args = append(args, rtype)
+	}
+	if since != "" {
+		where = append(where, "rdate>=?")
+		args = append(args, since)
+	}
+	if until != "" {
+		where = append(where, "rdate<=?")
+		args = append(args, until)
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	whereClause := "1=1"
+	if len(where) > 0 {
+		whereClause = strings.Join(where, " AND ")
+	}
+	sqlStr := fmt.Sprintf(`SELECT rowid,uid,title,symbol,rtype,rdate,kind,run_id,source,sent_at,body_md
+		FROM reports WHERE %s ORDER BY rdate DESC, sent_at DESC LIMIT %d`, whereClause, limit)
+	rows, err := s.query(sqlStr, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Rep
+	for rows.Next() {
+		var id int64
+		var uid, title, sym, rt, rd, kind, runID, src, sent, md sql.NullString
+		rows.Scan(&id, &uid, &title, &sym, &rt, &rd, &kind, &runID, &src, &sent, &md)
+		r := Rep{RID: fmt.Sprintf("n%d", id), Src: "new", UID: uid.String, Title: title.String,
+			Symbol: sym.String, RType: rt.String, Date: rd.String, Kind: kind.String,
+			RunID: runID.String, Source: src.String, Time: sent.String}
+		if withBody {
+			r.MD = md.String
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetByUID 按 uid 取单篇新报告（含正文）。
+func (s *Store) GetByUID(uid string) *Rep {
+	var id int64
+	var title, sym, rt, rd, kind, runID, src, sent, md, html sql.NullString
+	err := s.queryRow(`SELECT rowid,title,symbol,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html
+		FROM reports WHERE uid=?`, uid).Scan(&id, &title, &sym, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
+	if err != nil {
+		return nil
+	}
+	return &Rep{RID: fmt.Sprintf("n%d", id), Src: "new", UID: uid, Title: title.String, Symbol: sym.String,
+		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
+		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String}
+}
+
+// NewBySymbol 取某标的的全部新报告（不含正文，按日期倒序），供个股 timeline 详情用。
+func (s *Store) NewBySymbol(symbol string) ([]Rep, error) {
+	rows, err := s.query(`SELECT rowid,title,symbol,rtype,rdate,kind,run_id,source,sent_at
+		FROM reports WHERE symbol=? ORDER BY rdate DESC, sent_at ASC`, symbol)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Rep
+	for rows.Next() {
+		out = append(out, scanNewRow(rows))
 	}
 	return out, rows.Err()
 }
 
 func (s *Store) GetNew(rowid int64) (*Rep, error) {
-	var title, sym, rt, rd, src, sent, md, html sql.NullString
+	var title, sym, rt, rd, kind, runID, src, sent, md, html sql.NullString
 	err := s.queryRow(
-		"SELECT title,symbol,rtype,rdate,source,sent_at,body_md,body_html FROM reports WHERE rowid=?", rowid).
-		Scan(&title, &sym, &rt, &rd, &src, &sent, &md, &html)
+		"SELECT title,symbol,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE rowid=?", rowid).
+		Scan(&title, &sym, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -350,19 +569,19 @@ func (s *Store) GetNew(rowid int64) (*Rep, error) {
 	}
 	return &Rep{
 		RID: fmt.Sprintf("n%d", rowid), Src: "new", Title: title.String, Symbol: sym.String,
-		RType: rt.String, Date: rd.String, Source: src.String, Time: sent.String,
-		MD: md.String, HTML: html.String,
+		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
+		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String,
 	}, nil
 }
 
 func (s *Store) UpsertReport(r Rep) error {
 	_, err := s.exec(`
-		INSERT INTO reports(uid,title,symbol,rtype,rdate,source,sent_at,body_md,body_html)
-		VALUES(?,?,?,?,?,?,?,?,?)
+		INSERT INTO reports(uid,title,symbol,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(uid) DO UPDATE SET title=excluded.title,symbol=excluded.symbol,
-		  rtype=excluded.rtype,rdate=excluded.rdate,source=excluded.source,
-		  sent_at=excluded.sent_at,body_md=excluded.body_md,body_html=excluded.body_html`,
-		r.UID, r.Title, r.Symbol, r.RType, r.Date, r.Source, r.Time, r.MD, r.HTML)
+		  rtype=excluded.rtype,rdate=excluded.rdate,kind=excluded.kind,run_id=excluded.run_id,
+		  source=excluded.source,sent_at=excluded.sent_at,body_md=excluded.body_md,body_html=excluded.body_html`,
+		r.UID, r.Title, r.Symbol, r.RType, r.Date, r.Kind, r.RunID, r.Source, r.Time, r.MD, r.HTML)
 	return err
 }
 
@@ -491,6 +710,18 @@ func (s *Store) AddLink(label, url string, ord int) error {
 }
 func (s *Store) UpdateLink(id int64, label, url string, ord int) error {
 	_, err := s.exec("UPDATE links SET label=?,url=?,ord=? WHERE id=?", label, url, ord, id)
+	return err
+}
+
+// UpdateLinkFields 只改名称/URL，保留排序位（排序由拖拽管）。
+func (s *Store) UpdateLinkFields(id int64, label, url string) error {
+	_, err := s.exec("UPDATE links SET label=?,url=? WHERE id=?", label, url, id)
+	return err
+}
+
+// SetLinkOrder 拖拽落库排序位。
+func (s *Store) SetLinkOrder(id int64, ord int) error {
+	_, err := s.exec("UPDATE links SET ord=? WHERE id=?", ord, id)
 	return err
 }
 func (s *Store) DeleteLink(id int64) error {

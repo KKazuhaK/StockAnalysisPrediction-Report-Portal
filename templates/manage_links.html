@@ -1,14 +1,15 @@
 {{define "content"}}
 <div class="report-head"><a href="/" class="btn-ghost">{{icon "arrow-left"}} 返回列表</a></div>
 <h2 class="page-h">生成研报入口 · 按钮管理</h2>
+<p class="hint-line">拖拽左侧手柄可调整按钮顺序，松手即保存。</p>
 
-<div class="link-table">
-  <div class="link-row link-head"><span>名称</span><span>链接 URL</span><span>排序</span><span></span></div>
+<div class="link-row link-head"><span></span><span>名称</span><span>链接 URL</span><span></span></div>
+<div class="link-table" id="link-sort">
   {{range .Links}}
-  <form class="link-row" method="post" action="/manage/links/{{.ID}}/edit">
+  <form class="link-row drag" method="post" action="/manage/links/{{.ID}}/edit" data-id="{{.ID}}">
+    <span class="drag-handle" title="拖拽排序">{{icon "grip-vertical"}}</span>
     <input name="label" value="{{.Label}}" required>
     <input name="url" value="{{.URL}}" required>
-    <input name="ord" type="number" value="{{.Ord}}" style="width:64px">
     <span class="link-acts">
       <button type="submit" class="btn-ghost">保存</button>
       <button type="submit" class="btn-ghost danger" formaction="/manage/links/{{.ID}}/delete">{{icon "trash"}} 删除</button>
@@ -21,7 +22,22 @@
 <form class="link-row add" method="post" action="/manage/links/add">
   <input name="label" placeholder="按钮名称，如 技术分析" required>
   <input name="url" placeholder="https://… 或 http://dify…/workflow/xxx" required>
-  <input name="ord" type="number" value="0" style="width:64px">
   <button type="submit">添加</button>
 </form>
+
+<script src="/static/vendor/Sortable.min.js"></script>
+<script>
+(function(){
+  var el = document.getElementById('link-sort');
+  if (el && window.Sortable) new Sortable(el, {
+    handle: '.drag-handle', draggable: 'form.link-row', animation: 150,
+    onEnd: function(){
+      var body = Array.prototype.map.call(el.querySelectorAll('form.link-row'), function(r){
+        return 'id=' + encodeURIComponent(r.dataset.id);
+      }).join('&');
+      fetch('/manage/links/reorder', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: body});
+    }
+  });
+})();
+</script>
 {{end}}

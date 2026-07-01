@@ -1,43 +1,10 @@
 package main
 
-import (
-	"embed"
-	"html/template"
-	"regexp"
-	"sync"
-)
+import "html/template"
 
-// 图标 = icons/ 下的 Tabler(MIT) SVG 文件。加图标只需丢一个 <name>.svg 进去，零改代码。
-// 模板里用 {{icon "name"}} 调用；随字号缩放、随文字颜色变。
-//
-//go:embed icons/*.svg
-var iconFS embed.FS
-
-var (
-	iconMu    sync.RWMutex
-	iconCache = map[string]template.HTML{}
-	reSvgBody = regexp.MustCompile(`(?s)<svg[^>]*>(.*)</svg>`)
-	rePlace   = regexp.MustCompile(`<path stroke="none"[^/]*/>`)
-)
-
+// 图标 = Tabler(MIT) 官方 webfont（整套 5800+，static/vendor/tabler-icons.min.css）。
+// 任意图标名直接可用：{{icon "报告名"}} 或模板里直接写 <i class="ti ti-xxx"></i>。
+// 名字见 https://tabler.io/icons（去掉 ti- 前缀）。.ti 样式在 style.css 里统一对齐。
 func icon(name string) template.HTML {
-	iconMu.RLock()
-	c, ok := iconCache[name]
-	iconMu.RUnlock()
-	if ok {
-		return c
-	}
-	out := template.HTML("")
-	if b, err := iconFS.ReadFile("icons/" + name + ".svg"); err == nil {
-		if m := reSvgBody.FindSubmatch(b); m != nil {
-			inner := rePlace.ReplaceAll(m[1], nil) // 去掉占位的透明底 path
-			out = template.HTML(`<svg class="ti" width="1em" height="1em" viewBox="0 0 24 24" ` +
-				`fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ` +
-				`stroke-linejoin="round" aria-hidden="true">` + string(inner) + `</svg>`)
-		}
-	}
-	iconMu.Lock()
-	iconCache[name] = out
-	iconMu.Unlock()
-	return out
+	return template.HTML(`<i class="ti ti-` + template.HTMLEscapeString(name) + `" aria-hidden="true"></i>`)
 }

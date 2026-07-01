@@ -1,19 +1,19 @@
 {{define "content"}}
 <div class="report-head"><a href="/" class="btn-ghost">{{icon "arrow-left"}} 返回列表</a></div>
 <h2 class="page-h">报告类型管理</h2>
-<p class="hint-line">类型自动从数据发现，并按<b>大类分组</b>。设 <b>排序</b>(run 内 tab 顺序)、勾 <b>默认页</b>、改 <b>显示名</b>。删除=清除该类型配置（有报告的会回到"未配置"，手动预注册的会消失）。<b>未匹配的类型系统自动兜底</b>，不会报错。</p>
+<p class="hint-line">类型自动从数据发现，并按<b>大类分组</b>。<b>拖拽</b>左侧手柄调 run 内 tab 顺序(松手即存)、勾 <b>默认页</b>、改 <b>显示名</b>后点"保存全部"。删除=清除该类型配置（有报告的会回到"未配置"，手动预注册的会消失）。<b>未匹配的类型系统自动兜底</b>，不会报错。</p>
 
 <form id="types-save" method="post" action="/manage/types"></form>
 
 {{range .Groups}}
 <div class="type-kind">
   <div class="type-kind-h">{{.Kind}} <span class="type-kind-n">{{len .Rows}}</span></div>
-  <div class="type-table">
-    <div class="type-row type-head"><span>类型</span><span>排序</span><span>默认页</span><span>显示名(可选)</span><span></span></div>
+  <div class="type-row type-head"><span></span><span>类型</span><span>默认页</span><span>显示名(可选)</span><span></span></div>
+  <div class="type-table type-sort">
     {{range .Rows}}
-    <div class="type-row">
+    <div class="type-row drag" data-name="{{.Name}}">
+      <span class="drag-handle" title="拖拽排序">{{icon "grip-vertical"}}</span>
       <span class="type-name">{{.Name}}<input type="hidden" name="name" value="{{.Name}}" form="types-save"></span>
-      <input name="ord" type="number" value="{{.Ord}}" form="types-save">
       <label class="type-chk"><input type="checkbox" name="summary" value="{{.Name}}" {{if .IsSummary}}checked{{end}} form="types-save"> 默认</label>
       <input name="label" value="{{.Label}}" placeholder="不填则用原名" form="types-save">
       <form method="post" action="/manage/types/{{.Name}}/delete" class="inline"><button type="submit" class="btn-ghost danger icon-only" title="删除配置">{{icon "trash"}}</button></form>
@@ -26,12 +26,29 @@
 <div style="margin-top:16px"><button type="submit" form="types-save" class="btn-primary">保存全部</button></div>
 
 <h3 class="page-h">手动新增类型</h3>
-<p class="hint-line">工作流以后要产出的新类型，可先在这里注册好顺序/默认/显示名。</p>
+<p class="hint-line">工作流以后要产出的新类型，可先在这里注册好默认/显示名；新增的排在末尾，顺序拖拽调整。</p>
 <form class="type-row add" method="post" action="/manage/types/add">
   <input name="name" placeholder="类型名，如 ESG分析" required>
-  <input name="ord" type="number" value="0" style="width:70px" title="排序">
   <label class="type-chk"><input type="checkbox" name="summary"> 默认页</label>
   <input name="label" placeholder="显示名(可选)">
   <button type="submit">新增</button>
 </form>
+
+<script src="/static/vendor/Sortable.min.js"></script>
+<script>
+(function(){
+  if (!window.Sortable) return;
+  document.querySelectorAll('.type-sort').forEach(function(el){
+    new Sortable(el, {
+      handle: '.drag-handle', draggable: '.type-row.drag', animation: 150,
+      onEnd: function(){
+        var body = Array.prototype.map.call(el.querySelectorAll('.type-row.drag'), function(r){
+          return 'name=' + encodeURIComponent(r.dataset.name);
+        }).join('&');
+        fetch('/manage/types/reorder', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: body});
+      }
+    });
+  });
+})();
+</script>
 {{end}}

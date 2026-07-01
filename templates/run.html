@@ -30,6 +30,6 @@
     <span class="cur-type">{{if .Rep.RType}}{{.Rep.RType}}{{else}}报告{{end}}</span>
     <span class="cur-time">{{if .Rep.Date}}{{.Rep.Date}}{{else}}{{trunc10 .Rep.Time}}{{end}}</span>
   </div>
-  <div class="report-body">{{safe .Rep.HTML}}</div>
+  <div class="report-body">{{if .Rep.HTML}}{{safe .Rep.HTML}}{{else}}<p class="empty">该子报告暂无正文（旧门户未返回内容）。</p>{{end}}</div>
 </article>
 {{end}}

@@ -1,21 +1,100 @@
 {{define "content"}}
 <div class="report-head"><a href="/" class="btn-ghost">{{icon "arrow-left"}} 返回列表</a></div>
 <h2 class="page-h">系统设置</h2>
-<p class="hint-line">这些设置存在数据库、网页可改；<code>config.yaml</code> 只管数据库/端口。旧门户用于共存期读透历史报告，最终淘汰后可清空。</p>
 
-<form class="set-form card-box" method="post" action="/manage/settings">
-  <div class="set-sec">旧门户（读透历史报告）· 已同步 <b>{{.OldCount}}</b> 篇</div>
-  <label class="set-row"><span>地址</span><input name="old_base" value="{{.OldBase}}" placeholder="http://47.237.204.217:8888"></label>
-  <label class="set-row"><span>账号</span><input name="old_user" value="{{.OldUser}}" autocomplete="off"></label>
-  <label class="set-row"><span>密码</span><input name="old_pass" type="password" placeholder="{{if .HasPass}}已设置，留空不改{{else}}未设置{{end}}" autocomplete="new-password"></label>
-  <div class="set-sec">同步</div>
-  <label class="set-row"><span>自动同步间隔(分钟)</span><input name="sync_min" type="number" min="0" value="{{.SyncMin}}" style="max-width:120px"> <span class="set-hint">0 = 只启动时同步一次</span></label>
-  <div class="set-acts">
-    <button type="submit">保存</button>
+<div class="tabs set-tabs">
+  <a class="tab" href="#old" data-tab="old">{{icon "database"}} 旧门户与同步</a>
+  <a class="tab" href="#tokens" data-tab="tokens">{{icon "key"}} API 令牌</a>
+  <a class="tab" href="#api" data-tab="api">{{icon "plug"}} 接口文档</a>
+</div>
+
+<section class="set-panel" id="panel-old">
+  <p class="hint-line">旧门户用于共存期读透历史报告，最终淘汰后可清空。<code>config.yaml</code> 只管数据库/端口。</p>
+  <form class="set-form card-box" method="post" action="/manage/settings">
+    <div class="set-sec">旧门户（读透历史报告）· 已同步 <b>{{.OldCount}}</b> 篇</div>
+    <label class="set-row"><span>地址</span><input name="old_base" value="{{.OldBase}}" placeholder="http://旧门户地址:端口"></label>
+    <label class="set-row"><span>账号</span><input name="old_user" value="{{.OldUser}}" autocomplete="off"></label>
+    <label class="set-row"><span>密码</span><input name="old_pass" type="password" placeholder="{{if .HasPass}}已设置，留空不改{{else}}未设置{{end}}" autocomplete="new-password"></label>
+    <div class="set-sec">同步</div>
+    <label class="set-row"><span>自动同步间隔(分钟)</span><input name="sync_min" type="number" min="0" value="{{.SyncMin}}" style="max-width:120px"> <span class="set-hint">0 = 只启动时同步一次</span></label>
+    <div class="set-acts"><button type="submit">保存</button></div>
+  </form>
+  <form method="post" action="/manage/settings/sync" style="margin-top:12px">
+    <button type="submit" class="btn-ghost">{{icon "refresh"}} 立即同步一次</button>
+  </form>
+</section>
+
+<section class="set-panel" id="panel-tokens" style="display:none">
+  <p class="hint-line">Dify 入库/查询用的令牌，可建多枚、加备注、设作用域与有效期；泄露或轮换时删除即可。本地库已存 <b>{{.NewCount}}</b> 篇新报告。</p>
+  <div class="card-box">
+    <table class="utable">
+      <thead><tr><th>备注</th><th>作用域</th><th>令牌</th><th>创建</th><th>到期</th><th>最近使用</th><th class="ta-r">操作</th></tr></thead>
+      <tbody>
+      {{range .Tokens}}
+        <tr>
+          <td class="u-name">{{if .Name}}{{.Name}}{{else}}—{{end}}</td>
+          <td>{{.Scope}}</td>
+          <td><code class="tok" data-tok="{{.Token}}" title="点击复制">{{.Token}}</code></td>
+          <td>{{if .Created}}{{.Created}}{{else}}—{{end}}</td>
+          <td>{{if .Expires}}{{.Expires}}{{else}}永久{{end}}</td>
+          <td>{{if .LastUsed}}{{.LastUsed}}{{else}}未用过{{end}}</td>
+          <td class="ta-r"><form method="post" action="/manage/tokens/{{.ID}}/delete" class="inline"><button class="btn-ghost danger" type="submit">{{icon "trash"}} 删除</button></form></td>
+        </tr>
+      {{else}}
+        <tr><td colspan="7" style="color:var(--muted)">还没有令牌，下面新建一枚。</td></tr>
+      {{end}}
+      </tbody>
+    </table>
   </div>
-</form>
+  <h3 class="page-h">新建令牌</h3>
+  <form class="add-user" method="post" action="/manage/tokens/add">
+    <input name="name" placeholder="备注，如 Dify生产" autocomplete="off">
+    <select name="scope">
+      <option value="all">全部(入库+查询)</option>
+      <option value="ingest">仅入库</option>
+      <option value="query">仅查询</option>
+    </select>
+    <input name="expires" type="text" class="datep" placeholder="到期日(留空=永久)" autocomplete="off" style="min-width:160px">
+    <button type="submit">生成</button>
+  </form>
+</section>
 
-<form method="post" action="/manage/settings/sync" style="margin-top:12px">
-  <button type="submit" class="btn-ghost">{{icon "refresh"}} 立即同步一次</button>
-</form>
+<section class="set-panel" id="panel-api" style="display:none">
+  <div class="card-box set-form">
+    <div class="set-sec">入库（Dify 工作流末尾 HTTP 节点）</div>
+    <p class="hint-line" style="padding:2px 20px 12px">
+      <code>POST /api/reports</code> · Header <code>Authorization: Bearer &lt;令牌&gt;</code> · JSON：<br>
+      <code>{"run_id","symbol","date","kind","subtype","title","body_md"}</code>
+      （<code>kind</code> 大类不填按 <code>subtype</code> 推断；<code>run_id</code> 归组一次生成的多篇）。
+    </p>
+    <div class="set-sec">查 / 搜（Dify 复核历史假设与跟踪事项）</div>
+    <p class="hint-line" style="padding:2px 20px 14px;line-height:1.9">
+      <b>先探清单（有哪些、多久前、是否有）</b>：<br>
+      <code>GET /api/reports/manifest?symbol=300750</code> → <code>{name,total,dates:[{date,count,kinds}],kinds,subtypes}</code><br>
+      <b>再查 / 搜</b>（<code>symbol</code> 或 <code>q</code> 至少给一个，<code>q</code> 搜标题+正文）：<br>
+      <code>GET /api/reports?symbol=300750&q=关键字&kind=&subtype=&since=&until=&limit=20&with_body=1</code><br>
+      <b>取单篇正文</b>：<code>GET /api/report?uid=...</code> → 含 <code>body_md / body_html</code><br>
+      全部走同一 <code>Bearer</code> 令牌（作用域含 query）。
+    </p>
+  </div>
+</section>
+
+<script>
+  (function(){
+    var tabs = document.querySelectorAll('.set-tabs .tab');
+    var panels = {old:'panel-old', tokens:'panel-tokens', api:'panel-api'};
+    function show(name){
+      if(!panels[name]) name='old';
+      tabs.forEach(function(t){ t.classList.toggle('active', t.dataset.tab===name); });
+      Object.keys(panels).forEach(function(k){ document.getElementById(panels[k]).style.display = (k===name?'block':'none'); });
+    }
+    tabs.forEach(function(t){ t.addEventListener('click', function(){ setTimeout(function(){ show(t.dataset.tab); },0); }); });
+    document.querySelectorAll('.tok').forEach(function(c){
+      c.addEventListener('click', function(){
+        if(navigator.clipboard){ navigator.clipboard.writeText(c.dataset.tok); c.classList.add('copied'); setTimeout(function(){c.classList.remove('copied');},900); }
+      });
+    });
+    show((location.hash||'#old').slice(1));
+  })();
+</script>
 {{end}}

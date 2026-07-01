@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>研报门户</title>
+  <link rel="stylesheet" href="/static/vendor/tabler-icons.min.css">
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/vendor/flatpickr.min.css">
   <script>
@@ -49,6 +50,20 @@
   <script src="/static/vendor/flatpickr-zh.js"></script>
   <script>
     if (window.flatpickr) flatpickr(".datep", { locale: "{{.Lang}}" === "zh" ? "zh" : "default", dateFormat: "Y-m-d", allowInput: true });
+  </script>
+  <script>
+    // 阅读页（存在 .report 时）：向下滚隐藏顶栏、向上滚显示，腾出阅读空间。
+    (function(){
+      var bar = document.querySelector('.topbar');
+      if (!bar || !document.querySelector('.report')) return;
+      var last = 0;
+      addEventListener('scroll', function(){
+        var y = window.scrollY || document.documentElement.scrollTop;
+        if (y > 90 && y > last) bar.classList.add('bar-hidden');
+        else bar.classList.remove('bar-hidden');
+        last = y;
+      }, {passive:true});
+    })();
   </script>
 </body>
 </html>

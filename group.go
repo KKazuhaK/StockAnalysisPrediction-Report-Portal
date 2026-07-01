@@ -9,8 +9,9 @@ import (
 // Group 一次 run（同 标的+日期）收成一张卡。
 type Group struct {
 	Key, Symbol, Date string
-	Name              string // 公司名（代码→名映射）
-	Kind              string // 这次 run 的类别（并购重组/综合分析/…）
+	Name              string   // 公司名（代码→名映射）
+	Kind              string   // 这次 run 的类别（并购重组/综合分析/…）
+	Kinds             []string // 新报告：该票该日包含的多个大类
 	Source, Src       string
 	Members           []Rep
 	N                 int
@@ -111,6 +112,23 @@ func buildGroups(reps []Rep, nameOf func(string) string) []Group {
 			}
 		}
 		g.Kind = runKind(g.Types)
+		if g.Src == "new" { // 新报告：该票该日的多个大类
+			ks := map[string]bool{}
+			for _, m := range g.Members {
+				ks[repKind(m)] = true
+			}
+			for _, k := range kindOrder {
+				if ks[k] {
+					g.Kinds = append(g.Kinds, k)
+					delete(ks, k)
+				}
+			}
+			for k := range ks {
+				g.Kinds = append(g.Kinds, k)
+			}
+		} else {
+			g.Kinds = []string{g.Kind}
+		}
 		if nameOf != nil {
 			g.Name = nameOf(g.Symbol)
 		}

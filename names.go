@@ -69,12 +69,12 @@ func (n *Names) ensureFull() {
 	go func() {
 		m, err := FetchAShareNames()
 		if err != nil || len(m) < 3000 {
-			log.Printf("股票名称自动抓取跳过(%v, %d 条)——可稍后手动 `report-portal fetchnames`", err, len(m))
+			log.Printf("stock-name auto-fetch skipped (%v, %d so far); run `report-portal fetchnames` later", err, len(m))
 			return
 		}
 		n.merge(m)
 		_ = n.save(m)
-		log.Printf("股票名称已自动补全: %d 条", n.count())
+		log.Printf("stock names fetched: %d", n.count())
 	}()
 }
 
@@ -100,38 +100,70 @@ func FetchNamesToFile(dir string) (int, error) {
 }
 
 // FetchAShareNames 从 eastmoney 分页抓取全部 A 股 代码→名称。
+// 注意：用 push2.eastmoney.com（82.push2 子域在部分网络被墙）；diff 兼容对象/数组两种格式；每页失败重试并轮换主机。
 func FetchAShareNames() (map[string]string, error) {
 	const fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+	hosts := []string{"push2.eastmoney.com", "push2delay.eastmoney.com", "82.push2.eastmoney.com"}
 	hc := &http.Client{Timeout: 25 * time.Second}
 	m := map[string]string{}
 	for pn := 1; pn <= 80; pn++ {
-		u := fmt.Sprintf("https://82.push2.eastmoney.com/api/qt/clist/get?pn=%d&pz=100&po=1&np=1"+
-			"&fltt=2&invt=2&fid=f12&fs=%s&fields=f12,f14", pn, fs)
-		req, _ := http.NewRequest("GET", u, nil)
-		req.Header.Set("User-Agent", "Mozilla/5.0")
-		req.Header.Set("Referer", "https://quote.eastmoney.com/")
-		resp, err := hc.Do(req)
-		if err != nil {
-			return m, err
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		var raw struct {
-			Data *struct {
-				Diff []map[string]any `json:"diff"`
-			} `json:"data"`
-		}
-		if json.Unmarshal(body, &raw) != nil || raw.Data == nil || len(raw.Data.Diff) == 0 {
+		ok, got := false, 0
+		for attempt := 0; attempt < 4; attempt++ {
+			host := hosts[attempt%len(hosts)]
+			u := fmt.Sprintf("https://%s/api/qt/clist/get?pn=%d&pz=100&po=1&np=1"+
+				"&fltt=2&invt=2&fid=f12&fs=%s&fields=f12,f14", host, pn, fs)
+			req, _ := http.NewRequest("GET", u, nil)
+			req.Header.Set("User-Agent", "Mozilla/5.0")
+			req.Header.Set("Referer", "https://quote.eastmoney.com/")
+			resp, err := hc.Do(req)
+			if err != nil {
+				time.Sleep(time.Duration(attempt+1) * 800 * time.Millisecond)
+				continue
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			ok, got = true, mergeDiff(body, m)
 			break
 		}
-		for _, d := range raw.Data.Diff {
-			code, _ := d["f12"].(string)
-			name, _ := d["f14"].(string)
-			if code != "" && name != "" {
-				m[code] = name
-			}
+		if !ok || got == 0 { // 连续失败，或已到末页
+			break
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(400 * time.Millisecond)
+	}
+	if len(m) == 0 {
+		return m, fmt.Errorf("no stock names fetched (eastmoney may be unreachable)")
 	}
 	return m, nil
+}
+
+// mergeDiff 解析 clist 响应的 data.diff（对象 {"0":{…}} 或数组 [{…}] 都支持），并入 m，返回解析到的条数。
+func mergeDiff(body []byte, m map[string]string) int {
+	var raw struct {
+		Data *struct {
+			Diff json.RawMessage `json:"diff"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &raw) != nil || raw.Data == nil || len(raw.Data.Diff) == 0 {
+		return 0
+	}
+	var items []map[string]any
+	if json.Unmarshal(raw.Data.Diff, &items) != nil {
+		var obj map[string]map[string]any
+		if json.Unmarshal(raw.Data.Diff, &obj) != nil {
+			return 0
+		}
+		for _, v := range obj {
+			items = append(items, v)
+		}
+	}
+	n := 0
+	for _, d := range items {
+		code, _ := d["f12"].(string)
+		name, _ := d["f14"].(string)
+		if code != "" && name != "" {
+			m[code] = name
+			n++
+		}
+	}
+	return n
 }
