@@ -19,7 +19,7 @@
 {{if gt (len .Members) 1}}
 <div class="tabs">
   {{range .Members}}
-  <a class="tab {{if eq .RID $.Sel}}active{{end}}" href="/run/{{$.Key | urlq}}?r={{.RID}}&back={{$.Back | urlq}}">{{.Label}}</a>
+  <a class="tab {{if eq .RID $.Sel}}active{{end}}" href="/run/{{$.Key}}?r={{.RID}}&back={{$.Back}}">{{.Label}}</a>
   {{end}}
 </div>
 {{end}}

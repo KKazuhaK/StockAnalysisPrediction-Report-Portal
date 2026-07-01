@@ -44,7 +44,7 @@
 
 <div class="cards">
   {{range .Groups}}
-  <a class="card" href="/run/{{.Key | urlq}}?back={{$.ListURL | urlq}}">
+  <a class="card" href="/run/{{.Key}}?back={{$.ListURL}}">
     <div class="card-top">
       <span class="tag {{if eq .Src "new"}}new{{else}}old{{end}}">{{if eq .Src "new"}}新{{else}}旧{{end}}</span>
       {{if .Symbol}}<span class="tag sym">{{.Symbol}}</span>{{end}}
@@ -64,9 +64,9 @@
 
 {{if gt .Pages 1}}
 <div class="pager">
-  {{if gt .Page 1}}<a class="btn-ghost" href="/?page={{add .Page -1}}&{{.QS}}">← 上一页</a>{{end}}
+  {{if gt .Page 1}}<a class="btn-ghost" href="{{.PrevURL}}">← 上一页</a>{{end}}
   <span class="pager-now">第 {{.Page}} / {{.Pages}} 页</span>
-  {{if lt .Page .Pages}}<a class="btn-ghost" href="/?page={{add .Page 1}}&{{.QS}}">下一页 →</a>{{end}}
+  {{if lt .Page .Pages}}<a class="btn-ghost" href="{{.NextURL}}">下一页 →</a>{{end}}
 </div>
 {{end}}
 {{end}}

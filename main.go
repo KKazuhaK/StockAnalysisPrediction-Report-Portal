@@ -306,19 +306,27 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, user string) {
 	types := append(s.st.NewTypes(), s.st.OldCategories()...)
 	types = uniqSorted(types)
 
-	// pager 用的 query（除 page 外）
-	qs := url.Values{}
+	// 分页链接在后端整条构建，作为 template.URL 传出（避免模板再次转义）
+	base := url.Values{}
 	for _, k := range []string{"symbol", "rtype", "date_from", "date_to", "q", "scope", "sort", "src", "size"} {
 		if v := r.URL.Query().Get(k); v != "" {
-			qs.Set(k, v)
+			base.Set(k, v)
 		}
+	}
+	mkURL := func(p int) template.URL {
+		v := url.Values{}
+		for k, vs := range base {
+			v[k] = vs
+		}
+		v.Set("page", strconv.Itoa(p))
+		return template.URL("/?" + v.Encode())
 	}
 	s.render(w, "index", map[string]any{
 		"User": user, "Admin": s.isAdmin(user),
 		"Groups": pageGroups, "NewTotal": newTotal, "OldTotal": oldTotal, "TotalRuns": totalRuns,
 		"Types": types, "Links": s.st.Links(),
 		"Page": page, "Pages": pages, "PageSizes": pageSizes,
-		"QS": qs.Encode(), "ListURL": "/?" + r.URL.RawQuery,
+		"PrevURL": mkURL(page - 1), "NextURL": mkURL(page + 1), "ListURL": "/?" + r.URL.RawQuery,
 		"F": map[string]any{
 			"Q": f.Q, "Scope": f.Scope, "Symbol": f.Symbol, "RType": f.RType,
 			"DateFrom": f.DateFrom, "DateTo": f.DateTo, "Sort": f.Sort, "Src": src, "Size": size,
