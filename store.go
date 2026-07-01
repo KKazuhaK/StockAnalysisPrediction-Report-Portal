@@ -166,9 +166,6 @@ func (s *Store) SetUserPassword(name, hash string) error {
 }
 
 func (s *Store) SetUserRole(name, role string) error {
-	if role != "admin" {
-		role = "user"
-	}
 	_, err := s.exec("UPDATE users SET role=? WHERE username=?", role, name)
 	return err
 }

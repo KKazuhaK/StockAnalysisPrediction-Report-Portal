@@ -13,9 +13,9 @@
       <tr>
         <td class="u-name">{{.Username}}{{if eq .Username $.Me}} <span class="me-tag">你</span>{{end}}</td>
         <td>
+          {{$u := .}}
           <select name="role" form="u-{{.Username}}">
-            <option value="admin" {{if .IsAdmin}}selected{{end}}>管理员</option>
-            <option value="user" {{if not .IsAdmin}}selected{{end}}>普通用户</option>
+            {{range $.Roles}}<option value="{{.Code}}" {{if eq .Code $u.Role}}selected{{end}}>{{.Name}}</option>{{end}}
           </select>
         </td>
         <td><input type="password" name="password" form="u-{{.Username}}" placeholder="留空不改" autocomplete="new-password"></td>
@@ -33,8 +33,7 @@
 <form class="add-user" method="post" action="/manage/users/add">
   <input name="username" placeholder="用户名" required autocomplete="off">
   <select name="role">
-    <option value="user">普通用户</option>
-    <option value="admin">管理员</option>
+    {{range .Roles}}<option value="{{.Code}}" {{if eq .Code "user"}}selected{{end}}>{{.Name}}</option>{{end}}
   </select>
   <input type="password" name="password" placeholder="密码" required autocomplete="new-password">
   <button type="submit">添加</button>

@@ -336,7 +336,7 @@ func (s *Server) currentUser(r *http.Request) string {
 
 func (s *Server) isAdmin(user string) bool {
 	u := s.st.GetUser(user)
-	return u != nil && u.IsAdmin()
+	return u != nil && can(u.Role, PermManage)
 }
 
 type handler func(http.ResponseWriter, *http.Request, string)
@@ -794,7 +794,7 @@ func (s *Server) manageTypesAdd(w http.ResponseWriter, r *http.Request, user str
 
 func (s *Server) manageUsers(w http.ResponseWriter, r *http.Request, user string) {
 	s.render(w, r, "manage_users", map[string]any{
-		"User": user, "Admin": true, "Users": s.st.Users(), "Me": user})
+		"User": user, "Admin": true, "Users": s.st.Users(), "Me": user, "Roles": roleRegistry})
 }
 
 func (s *Server) userAdd(w http.ResponseWriter, r *http.Request, user string) {
@@ -803,7 +803,7 @@ func (s *Server) userAdd(w http.ResponseWriter, r *http.Request, user string) {
 	pw := r.FormValue("password")
 	if name != "" && pw != "" {
 		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
-		s.st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: r.FormValue("role")})
+		s.st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: validRole(r.FormValue("role"))})
 	}
 	http.Redirect(w, r, "/manage/users", http.StatusSeeOther)
 }
@@ -816,7 +816,7 @@ func (s *Server) userSave(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	r.ParseForm()
-	newRole := r.FormValue("role")
+	newRole := validRole(r.FormValue("role"))
 	if newRole != "admin" && u.IsAdmin() && s.st.CountAdmins() <= 1 { // 不许降级最后一个管理员
 		newRole = "admin"
 	}
