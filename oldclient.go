@@ -47,6 +47,17 @@ func NewOldClient(base, user, pw string) *OldClient {
 	}
 }
 
+// SetCreds 运行时更新旧门户地址/账号/密码（系统设置改动后调用），并清空缓存 token。
+func (c *OldClient) SetCreds(base, user, pw string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.base = strings.TrimRight(base, "/")
+	c.user = user
+	c.pw = pw
+	c.token = ""
+	c.tokenExp = time.Time{}
+}
+
 func (c *OldClient) getToken() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

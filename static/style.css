@@ -252,3 +252,16 @@ a:hover{text-decoration:underline}
 .btn-primary{padding:9px 20px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer;font-size:14px}
 .btn-ghost.icon-only{padding:6px 9px}
 [data-eff="dark"] .type-kind-h{color:#9cc0f5;border-color:#26314a}
+
+/* 系统设置 */
+.set-form{padding:16px 20px}
+.set-sec{font-size:13px;font-weight:600;color:var(--brand-d);margin:8px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--line)}
+.set-sec:not(:first-child){margin-top:20px}
+.set-row{display:flex;align-items:center;gap:12px;margin-bottom:12px;font-size:14px}
+.set-row>span:first-child{width:150px;color:var(--muted);flex:none}
+.set-row input{flex:1;max-width:420px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff;color:var(--ink)}
+.set-hint{color:var(--muted);font-size:12px;flex:none}
+.set-acts{margin-top:16px}
+.set-acts button{padding:9px 22px;border:0;border-radius:9px;background:var(--brand);color:#fff;cursor:pointer}
+[data-eff="dark"] .set-form input{background:#1b2333;border-color:#2e3a55;color:#dde5f0}
+[data-eff="dark"] .set-sec{color:#9cc0f5;border-color:#26314a}

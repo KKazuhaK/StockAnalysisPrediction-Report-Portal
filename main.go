@@ -135,6 +135,17 @@ func main() {
 	s.names.ensureFull() // 无全量表时后台 best-effort 抓一次
 	s.parseTemplates()
 
+	// 系统设置：DB 优先，首启从 config 种子（old_portal / 同步间隔），之后网页「系统设置」管理
+	if st.GetSetting("old_base", "") == "" && cfg.OldPortal.BaseURL != "" {
+		st.SetSetting("old_base", cfg.OldPortal.BaseURL)
+		st.SetSetting("old_user", cfg.OldPortal.Username)
+		st.SetSetting("old_pass", cfg.OldPortal.Password)
+	}
+	if st.GetSetting("sync_min", "") == "" && cfg.SyncMin > 0 {
+		st.SetSetting("sync_min", strconv.Itoa(cfg.SyncMin))
+	}
+	s.old.SetCreds(st.GetSetting("old_base", ""), st.GetSetting("old_user", ""), st.GetSetting("old_pass", ""))
+
 	go s.syncLoop() // 后台同步旧元数据
 
 	mux := http.NewServeMux()
@@ -162,6 +173,9 @@ func main() {
 	mux.HandleFunc("POST /manage/users/add", s.requireAdmin(s.userAdd))
 	mux.HandleFunc("POST /manage/users/{name}/save", s.requireAdmin(s.userSave))
 	mux.HandleFunc("POST /manage/users/{name}/delete", s.requireAdmin(s.userDelete))
+	mux.HandleFunc("GET /manage/settings", s.requireAdmin(s.manageSettings))
+	mux.HandleFunc("POST /manage/settings", s.requireAdmin(s.manageSettingsSave))
+	mux.HandleFunc("POST /manage/settings/sync", s.requireAdmin(s.settingsSyncNow))
 
 	log.Printf("研报门户 %s 启动于 %s (新:%d 旧:%d)", version, cfg.Listen, st.CountNew(), st.CountOld())
 	if err := http.ListenAndServe(cfg.Listen, mux); err != nil {
@@ -193,7 +207,7 @@ func (s *Server) parseTemplates() {
 		},
 	}
 	s.pages = map[string]*template.Template{}
-	for _, name := range []string{"login", "index", "run", "manage_links", "manage_types", "manage_users"} {
+	for _, name := range []string{"login", "index", "run", "manage_links", "manage_types", "manage_users", "manage_settings"} {
 		s.pages[name] = template.Must(template.New("base.html").Funcs(funcs).
 			ParseFS(tplFS, "templates/base.html", "templates/"+name+".html"))
 	}
@@ -751,6 +765,37 @@ func (s *Server) userDelete(w http.ResponseWriter, r *http.Request, user string)
 
 // ---------- 后台同步 ----------
 
+// ---------- 系统设置（旧门户凭据 / 同步间隔，存 DB） ----------
+
+func (s *Server) manageSettings(w http.ResponseWriter, r *http.Request, user string) {
+	s.render(w, "manage_settings", map[string]any{"User": user, "Admin": true,
+		"OldBase":  s.st.GetSetting("old_base", ""),
+		"OldUser":  s.st.GetSetting("old_user", ""),
+		"HasPass":  s.st.GetSetting("old_pass", "") != "",
+		"SyncMin":  s.st.GetSetting("sync_min", "0"),
+		"OldCount": s.st.CountOld()})
+}
+
+func (s *Server) manageSettingsSave(w http.ResponseWriter, r *http.Request, user string) {
+	r.ParseForm()
+	s.st.SetSetting("old_base", strings.TrimSpace(r.FormValue("old_base")))
+	s.st.SetSetting("old_user", strings.TrimSpace(r.FormValue("old_user")))
+	if pw := r.FormValue("old_pass"); pw != "" { // 留空=不改密码
+		s.st.SetSetting("old_pass", pw)
+	}
+	s.st.SetSetting("sync_min", strings.TrimSpace(r.FormValue("sync_min")))
+	s.old.SetCreds(s.st.GetSetting("old_base", ""), s.st.GetSetting("old_user", ""), s.st.GetSetting("old_pass", ""))
+	http.Redirect(w, r, "/manage/settings", http.StatusSeeOther)
+}
+
+func (s *Server) settingsSyncNow(w http.ResponseWriter, r *http.Request, user string) {
+	go func() {
+		n, err := s.old.SyncAllMeta(s.st)
+		log.Printf("手动同步旧元数据: %d 条 err=%v", n, err)
+	}()
+	http.Redirect(w, r, "/manage/settings", http.StatusSeeOther)
+}
+
 func (s *Server) syncLoop() {
 	do := func() {
 		n, err := s.old.SyncAllMeta(s.st)
@@ -761,11 +806,14 @@ func (s *Server) syncLoop() {
 		log.Printf("旧元数据同步完成: %d 条", s.st.CountOld())
 	}
 	do()
-	if s.cfg.SyncMin > 0 {
-		t := time.NewTicker(time.Duration(s.cfg.SyncMin) * time.Minute)
-		for range t.C {
-			do()
+	for {
+		min := 0
+		fmt.Sscanf(s.st.GetSetting("sync_min", "0"), "%d", &min)
+		if min <= 0 {
+			return // 0 = 只启动同步一次
 		}
+		time.Sleep(time.Duration(min) * time.Minute)
+		do()
 	}
 }
 

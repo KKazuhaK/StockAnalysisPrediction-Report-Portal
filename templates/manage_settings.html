@@ -1,0 +1,21 @@
+{{define "content"}}
+<div class="report-head"><a href="/" class="btn-ghost">{{icon "arrow-left"}} 返回列表</a></div>
+<h2 class="page-h">系统设置</h2>
+<p class="hint-line">这些设置存在数据库、网页可改；<code>config.yaml</code> 只管数据库/端口。旧门户用于共存期读透历史报告，最终淘汰后可清空。</p>
+
+<form class="set-form card-box" method="post" action="/manage/settings">
+  <div class="set-sec">旧门户（读透历史报告）· 已同步 <b>{{.OldCount}}</b> 篇</div>
+  <label class="set-row"><span>地址</span><input name="old_base" value="{{.OldBase}}" placeholder="http://47.237.204.217:8888"></label>
+  <label class="set-row"><span>账号</span><input name="old_user" value="{{.OldUser}}" autocomplete="off"></label>
+  <label class="set-row"><span>密码</span><input name="old_pass" type="password" placeholder="{{if .HasPass}}已设置，留空不改{{else}}未设置{{end}}" autocomplete="new-password"></label>
+  <div class="set-sec">同步</div>
+  <label class="set-row"><span>自动同步间隔(分钟)</span><input name="sync_min" type="number" min="0" value="{{.SyncMin}}" style="max-width:120px"> <span class="set-hint">0 = 只启动时同步一次</span></label>
+  <div class="set-acts">
+    <button type="submit">保存</button>
+  </div>
+</form>
+
+<form method="post" action="/manage/settings/sync" style="margin-top:12px">
+  <button type="submit" class="btn-ghost">{{icon "refresh"}} 立即同步一次</button>
+</form>
+{{end}}

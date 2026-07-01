@@ -188,6 +188,21 @@ func (s *Store) CountAdmins() (n int) {
 	return
 }
 
+// ---------- 系统设置（存 meta 表，网页可改） ----------
+
+func (s *Store) GetSetting(k, def string) string {
+	var v sql.NullString
+	if err := s.queryRow("SELECT v FROM meta WHERE k=?", k).Scan(&v); err == nil && v.Valid {
+		return v.String
+	}
+	return def
+}
+
+func (s *Store) SetSetting(k, v string) error {
+	_, err := s.exec("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", k, v)
+	return err
+}
+
 // ---------- 报告类型配置（管理员可改） ----------
 
 type TypeConfig struct {
