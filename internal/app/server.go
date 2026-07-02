@@ -114,6 +114,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) { // public: shown on the login/about page
 		writeJSON(w, map[string]any{"version": version.Version, "commit": version.Commit, "buildDate": version.BuildDate})
 	})
+	mux.HandleFunc("GET /api/openapi.json", s.apiOpenAPI) // public: OpenAPI 3.1 spec for the v1 machine API
 
 	// ---- Dify machine API: Bearer token auth (kept unchanged; the workflow depends on it) ----
 	mux.HandleFunc("POST /api/reports", s.ingestReport)             // ingest

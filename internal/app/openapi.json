@@ -1,0 +1,278 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "研报门户 · Dify 机器接口 (v1)",
+    "version": "1.0.0",
+    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，身份键由服务端生成 = `symbol|date|subtype`（客户端不传 uid）。"
+  },
+  "servers": [{ "url": "/", "description": "当前门户源" }],
+  "security": [{ "bearerAuth": [] }],
+  "tags": [
+    { "name": "reports", "description": "报告入库/查询/撤回" },
+    { "name": "discovery", "description": "标的、报告组、清单" },
+    { "name": "tracking", "description": "假设/跟踪项复核" },
+    { "name": "meta", "description": "公开：健康与版本" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "API 令牌。作用域：ingest（入库/撤回/改跟踪项）、query（读）、all（全部）。" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean", "const": false },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string", "description": "机器可判定的错误码：unauthorized/bad_json/missing_param/invalid_param/not_found/db_error" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      },
+      "IngestRequest": {
+        "type": "object",
+        "required": ["symbol", "date", "subtype"],
+        "properties": {
+          "symbol": { "type": "string", "description": "股票代码，如 300750。", "examples": ["300750"] },
+          "date": { "type": "string", "description": "报告日期，YYYY-MM-DD（严格校验）。", "examples": ["2026-07-02"] },
+          "subtype": { "type": "string", "description": "小类，如 汇总/财务分析。参与身份键。", "examples": ["汇总"] },
+          "rtype": { "type": "string", "description": "subtype 的别名（subtype 缺失时用）。" },
+          "kind": { "type": "string", "description": "大类，如 投资决策/深度研究/重组决策/事件监测/其他。为空则按注册表→runKind 推断。不参与身份键。" },
+          "name": { "type": "string", "description": "入库当时公司名快照。为空则取当时现名。历史不可变。" },
+          "title": { "type": "string" },
+          "source": { "type": "string", "description": "来源/作者，可按此过滤查询。" },
+          "run_id": { "type": "string", "description": "批次/生成轮次标签，不参与身份键。" },
+          "time": { "type": "string", "description": "同日排序用时间戳，为空取 date。" },
+          "body_md": { "type": "string", "description": "Markdown 正文。body_html 为空时据此渲染。" },
+          "body_html": { "type": "string", "description": "预渲染 HTML 正文。" },
+          "tracking": { "type": "array", "items": { "$ref": "#/components/schemas/TrackingInput" }, "description": "假设/跟踪项；非空时整体覆盖该报告的项。" }
+        }
+      },
+      "TrackingInput": {
+        "type": "object",
+        "properties": {
+          "itype": { "type": "string", "description": "assumption | tracking" },
+          "content": { "type": "string" },
+          "status": { "type": "string", "description": "为空默认 pending" },
+          "review_point": { "type": "string" }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "properties": {
+          "uid": { "type": "string" },
+          "run_id": { "type": "string" },
+          "symbol": { "type": "string" },
+          "name": { "type": "string", "description": "as-of 快照名（回退现名）" },
+          "date": { "type": "string" },
+          "kind": { "type": "string" },
+          "subtype": { "type": "string" },
+          "title": { "type": "string" },
+          "source": { "type": "string" },
+          "body_md": { "type": "string", "description": "仅 with_body / 详情返回" },
+          "body_html": { "type": "string", "description": "仅详情返回" }
+        }
+      },
+      "TrackingItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "report_uid": { "type": "string" },
+          "itype": { "type": "string" },
+          "content": { "type": "string" },
+          "status": { "type": "string" },
+          "review_point": { "type": "string" },
+          "created_at": { "type": "string" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/reports": {
+      "post": {
+        "tags": ["reports"],
+        "operationId": "ingestReport",
+        "summary": "入库（幂等 upsert）一篇报告，可附带 tracking 假设项",
+        "x-scope": "ingest",
+        "description": "身份键由服务端生成 = symbol|date|subtype（不接受客户端 uid，不含 kind）。再次入库同一身份键会整行覆盖。响应 created 区分新建/覆盖。正文上限 16MB。",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IngestRequest" } } }
+        },
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X POST $BASE/api/v1/reports \\\n  -H \"Authorization: Bearer <ingest-token>\" -H \"Content-Type: application/json\" \\\n  -d '{\"symbol\":\"300750\",\"date\":\"2026-07-02\",\"subtype\":\"汇总\",\"kind\":\"投资决策\",\"title\":\"宁德时代投资决策汇总\",\"source\":\"dify\",\"run_id\":\"r1\",\"body_md\":\"## 结论\\n增持\",\"tracking\":[{\"itype\":\"assumption\",\"content\":\"H2 出货 +20%\",\"review_point\":\"三季报\"}]}'" }],
+        "responses": {
+          "200": { "description": "入库成功", "content": { "application/json": { "example": { "ok": true, "uid": "300750|2026-07-02|汇总", "created": true } } } },
+          "400": { "description": "bad_json / missing_param(symbol、subtype) / invalid_param(date)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "数据库错误（db_error）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "get": {
+        "tags": ["reports"],
+        "operationId": "queryReports",
+        "summary": "搜索历史报告（分页，返回 total）",
+        "x-scope": "query",
+        "description": "symbol、q、run_id 至少给一个。q 匹配 标题/代码/现名/正文。恒按日期倒序。",
+        "parameters": [
+          { "name": "symbol", "in": "query", "schema": { "type": "string" }, "description": "精确代码匹配。" },
+          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "关键字（标题/代码/现名/正文 LIKE）。" },
+          { "name": "kind", "in": "query", "schema": { "type": "string" }, "description": "精确大类过滤。" },
+          { "name": "subtype", "in": "query", "schema": { "type": "string" }, "description": "精确小类过滤（rtype 别名）。" },
+          { "name": "source", "in": "query", "schema": { "type": "string" }, "description": "精确来源过滤（须与 symbol/q/run_id 同用）。" },
+          { "name": "run_id", "in": "query", "schema": { "type": "string" }, "description": "批次过滤，可单独使用。" },
+          { "name": "since", "in": "query", "schema": { "type": "string" }, "description": "起始日期（>=）。" },
+          { "name": "until", "in": "query", "schema": { "type": "string" }, "description": "截止日期（<=）。" },
+          { "name": "date", "in": "query", "schema": { "type": "string" }, "description": "精确某天；today = 服务器当天。覆盖 since/until。" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "每页条数，<=0 或 >200 取默认 20。" },
+          { "name": "offset", "in": "query", "schema": { "type": "integer" }, "description": "翻页偏移，默认 0。" },
+          { "name": "with_body", "in": "query", "schema": { "type": "string" }, "description": "=1/true 时含 body_md。" }
+        ],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/reports \\\n  -H \"Authorization: Bearer <query-token>\" \\\n  --data-urlencode \"symbol=300750\" --data-urlencode \"date=today\" --data-urlencode \"with_body=1\"" }],
+        "responses": {
+          "200": { "description": "命中列表", "content": { "application/json": { "example": { "ok": true, "count": 1, "total": 1, "offset": 0, "limit": 20, "items": [{ "uid": "300750|2026-07-02|汇总", "run_id": "r1", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持" }] } } } },
+          "400": { "description": "symbol、q、run_id 都未给（missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/reports/manifest": {
+      "get": {
+        "tags": ["discovery"],
+        "operationId": "reportManifest",
+        "summary": "预探某标的的报告清单（总数/按日期/大类/小类）",
+        "x-scope": "query",
+        "parameters": [{ "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" }, "description": "股票代码。" }],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/reports/manifest -H \"Authorization: Bearer <query-token>\" --data-urlencode \"symbol=300750\"" }],
+        "responses": {
+          "200": { "description": "清单", "content": { "application/json": { "example": { "ok": true, "symbol": "300750", "name": "宁德时代", "total": 6, "dates": [{ "date": "2026-07-02", "count": 4, "kinds": ["投资决策"] }], "kinds": ["投资决策", "深度研究"], "subtypes": ["汇总", "财务分析"] } } } },
+          "400": { "description": "symbol 缺失（missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/reports/{uid}": {
+      "get": {
+        "tags": ["reports"],
+        "operationId": "getReport",
+        "summary": "取单篇完整正文（含 body_md + body_html）",
+        "x-scope": "query",
+        "parameters": [{ "name": "uid", "in": "path", "required": true, "schema": { "type": "string" }, "description": "报告身份键（入库返回值，需 URL 编码）。" }],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -H \"Authorization: Bearer <query-token>\" \\\n  \"$BASE/api/v1/reports/300750%7C2026-07-02%7C%E6%B1%87%E6%80%BB\"" }],
+        "responses": {
+          "200": { "description": "报告", "content": { "application/json": { "example": { "ok": true, "uid": "300750|2026-07-02|汇总", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持", "body_html": "<h2>结论</h2><p>增持</p>" } } } },
+          "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "uid 未命中（not_found）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "tags": ["reports"],
+        "operationId": "deleteReport",
+        "summary": "撤回一篇报告（级联删除其 tracking，幂等）",
+        "x-scope": "ingest",
+        "parameters": [{ "name": "uid", "in": "path", "required": true, "schema": { "type": "string" }, "description": "报告身份键（需 URL 编码）。" }],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X DELETE -H \"Authorization: Bearer <ingest-token>\" \\\n  \"$BASE/api/v1/reports/300750%7C2026-07-02%7C%E6%B1%87%E6%80%BB\"" }],
+        "responses": {
+          "200": { "description": "已删；deleted=删除行数（0 也返回 200，幂等）", "content": { "application/json": { "example": { "ok": true, "deleted": 1 } } } },
+          "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/runs": {
+      "get": {
+        "tags": ["discovery"],
+        "operationId": "listRuns",
+        "summary": "报告组视图（每个 标的+日期+大类 一行）",
+        "x-scope": "query",
+        "parameters": [
+          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "date", "in": "query", "schema": { "type": "string" }, "description": "可选精确某天。" }
+        ],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/runs -H \"Authorization: Bearer <query-token>\" --data-urlencode \"symbol=300750\"" }],
+        "responses": {
+          "200": { "description": "报告组", "content": { "application/json": { "example": { "ok": true, "symbol": "300750", "name": "宁德时代", "count": 1, "has": true, "items": [{ "symbol": "300750", "date": "2026-07-02", "kind": "投资决策", "run_id": "r1", "subtypes": ["汇总", "财务分析"], "count": 2 }] } } } },
+          "400": { "description": "symbol 缺失（missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/symbols": {
+      "get": {
+        "tags": ["discovery"],
+        "operationId": "listSymbols",
+        "summary": "列出有报告的股票（按报告数排序，可补全）",
+        "x-scope": "query",
+        "parameters": [
+          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "按代码或现名匹配；空则返回最多的一批。" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "<=0 或 >500 取默认 200。" }
+        ],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/symbols -H \"Authorization: Bearer <query-token>\" --data-urlencode \"q=宁德\"" }],
+        "responses": {
+          "200": { "description": "股票列表", "content": { "application/json": { "example": { "ok": true, "count": 1, "has": true, "items": [{ "symbol": "300750", "name": "宁德时代", "count": 6, "latest": "2026-07-02" }] } } } },
+          "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/tracking": {
+      "get": {
+        "tags": ["tracking"],
+        "operationId": "listTracking",
+        "summary": "列出某标的的假设/跟踪项（返回 id 供 PATCH）",
+        "x-scope": "query",
+        "parameters": [
+          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string" }, "description": "精确状态过滤。" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "<=0 或 >500 取默认 100。" }
+        ],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/tracking -H \"Authorization: Bearer <query-token>\" --data-urlencode \"symbol=300750\" --data-urlencode \"status=pending\"" }],
+        "responses": {
+          "200": { "description": "跟踪项", "content": { "application/json": { "example": { "ok": true, "symbol": "300750", "count": 1, "has": true, "items": [{ "id": 42, "report_uid": "300750|2026-07-02|汇总", "itype": "assumption", "content": "H2 出货 +20%", "status": "pending", "review_point": "三季报", "created_at": "2026-07-02 08:15:03" }] } } } },
+          "400": { "description": "symbol 缺失（missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/tracking/{id}": {
+      "patch": {
+        "tags": ["tracking"],
+        "operationId": "updateTracking",
+        "summary": "按 id 更新单个假设/跟踪项的状态或复核点",
+        "x-scope": "ingest",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "tracking 项 id（来自 GET /api/v1/tracking）。" }],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" }, "review_point": { "type": "string" } } } } }
+        },
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X PATCH $BASE/api/v1/tracking/42 \\\n  -H \"Authorization: Bearer <ingest-token>\" -H \"Content-Type: application/json\" \\\n  -d '{\"status\":\"confirmed\",\"review_point\":\"三季报已验证\"}'" }],
+        "responses": {
+          "200": { "description": "已更新", "content": { "application/json": { "example": { "ok": true, "id": 42, "status": "confirmed" } } } },
+          "400": { "description": "id 非整数 / status 与 review_point 都为空（invalid_param/missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "id 未命中（not_found）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "healthz",
+        "summary": "健康探针（公开，返回版本与报告计数）",
+        "x-scope": "public",
+        "security": [],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s $BASE/healthz" }],
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "example": { "ok": true, "version": "1.0.0", "commit": "a1b2c3d", "new": 1284, "old": 50213 } } } } }
+      }
+    },
+    "/api/version": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "version",
+        "summary": "构建/版本信息（公开）",
+        "x-scope": "public",
+        "security": [],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s $BASE/api/version" }],
+        "responses": { "200": { "description": "版本", "content": { "application/json": { "example": { "version": "1.0.0", "commit": "a1b2c3d", "buildDate": "2026-06-28T09:12:00Z" } } } } }
+      }
+    }
+  }
+}

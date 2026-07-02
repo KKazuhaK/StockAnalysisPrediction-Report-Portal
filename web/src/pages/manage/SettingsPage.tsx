@@ -10,6 +10,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Spin,
   Statistic,
   Table,
   Tabs,
@@ -21,7 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { SettingsResp, TokenRow } from '../../api/types'
 import Markdown from '../../components/Markdown'
-import { API_CONVENTIONS, API_ENDPOINTS, type ApiEndpoint, type ApiParam, type ApiError } from './apiDoc'
+import { specToEndpoints, type ApiEndpoint, type ApiParam, type ApiError } from './openapiDoc'
 
 const SCOPE_COLORS: Record<string, string> = { all: 'gold', ingest: 'blue', query: 'green' }
 
@@ -314,12 +315,31 @@ function EndpointCard({ e }: { e: ApiEndpoint }) {
 }
 
 function ApiDocTab() {
+  const [doc, setDoc] = useState<{ conventions: string; endpoints: ApiEndpoint[] } | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/openapi.json', { credentials: 'same-origin' })
+      .then((r) => r.json())
+      .then((spec) => setDoc(specToEndpoints(spec, window.location.origin)))
+      .catch(() => setFailed(true))
+  }, [])
+
+  if (failed) return <Typography.Text type="danger">加载 openapi.json 失败</Typography.Text>
+  if (!doc) return <Spin />
+
   return (
     <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <Space wrap>
+        <Tag color="geekblue">OpenAPI 3.1</Tag>
+        <Button size="small" href="/api/openapi.json" target="_blank" rel="noreferrer">
+          下载 openapi.json
+        </Button>
+      </Space>
       <Card size="small" title="约定">
-        <Markdown md={API_CONVENTIONS} />
+        <Markdown md={doc.conventions} />
       </Card>
-      {API_ENDPOINTS.map((e) => (
+      {doc.endpoints.map((e) => (
         <EndpointCard key={`${e.method} ${e.path}`} e={e} />
       ))}
     </Space>
