@@ -500,6 +500,7 @@ func (s *Store) Manifest(symbol string) map[string]any {
 			dates[i].Kinds = append(dates[i].Kinds, k)
 		}
 	}
+	sort.SliceStable(dates, func(i, j int) bool { return dates[i].Date > dates[j].Date }) // newest first
 	return map[string]any{
 		"symbol": symbol, "total": len(reps),
 		"dates": dates, "kinds": keysOf(kindSet), "subtypes": keysOf(subSet),
@@ -516,45 +517,71 @@ func keysOf(m map[string]bool) []string {
 }
 
 // QueryReports lets Dify query historical new reports by code/keyword/category/subtype/date range (date descending). symbol may be empty (searches the whole database). withBody includes body_md.
-func (s *Store) QueryReports(symbol, q, kind, rtype, since, until string, limit int, withBody bool) ([]Rep, error) {
+// ReportQuery is the filter for QueryReports (Dify /api/reports search).
+type ReportQuery struct {
+	Symbol, Q, Kind, RType, Source, RunID, Since, Until string
+	Limit, Offset                                       int
+	WithBody                                            bool
+}
+
+// QueryReports searches new reports and returns the page plus the TOTAL match
+// count (for pagination). Keyword q matches title, code, current name, or body.
+func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
 	var where []string
 	var args []any
-	if symbol != "" {
-		where = append(where, "symbol=?")
-		args = append(args, symbol)
+	if f.Symbol != "" {
+		where = append(where, "r.symbol=?")
+		args = append(args, f.Symbol)
 	}
-	if q != "" {
-		where = append(where, "(title LIKE ? OR body_md LIKE ?)")
-		args = append(args, "%"+q+"%", "%"+q+"%")
+	if f.Q != "" {
+		like := "%" + f.Q + "%"
+		where = append(where, "(r.title LIKE ? OR r.symbol LIKE ? OR s.name LIKE ? OR r.body_md LIKE ?)")
+		args = append(args, like, like, like, like)
 	}
-	if kind != "" {
-		where = append(where, "kind=?")
-		args = append(args, kind)
+	if f.Kind != "" {
+		where = append(where, "r.kind=?")
+		args = append(args, f.Kind)
 	}
-	if rtype != "" {
-		where = append(where, "rtype=?")
-		args = append(args, rtype)
+	if f.RType != "" {
+		where = append(where, "r.rtype=?")
+		args = append(args, f.RType)
 	}
-	if since != "" {
-		where = append(where, "rdate>=?")
-		args = append(args, since)
+	if f.Source != "" {
+		where = append(where, "r.source=?")
+		args = append(args, f.Source)
 	}
-	if until != "" {
-		where = append(where, "rdate<=?")
-		args = append(args, until)
+	if f.RunID != "" {
+		where = append(where, "r.run_id=?")
+		args = append(args, f.RunID)
 	}
+	if f.Since != "" {
+		where = append(where, "r.rdate>=?")
+		args = append(args, f.Since)
+	}
+	if f.Until != "" {
+		where = append(where, "r.rdate<=?")
+		args = append(args, f.Until)
+	}
+	limit := f.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 20
+	}
+	offset := f.Offset
+	if offset < 0 {
+		offset = 0
 	}
 	whereClause := "1=1"
 	if len(where) > 0 {
 		whereClause = strings.Join(where, " AND ")
 	}
-	sqlStr := fmt.Sprintf(`SELECT rowid,uid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md
-		FROM reports WHERE %s ORDER BY rdate DESC, sent_at DESC LIMIT %d`, whereClause, limit)
+	from := "FROM reports r LEFT JOIN stocks s ON s.code = r.symbol WHERE " + whereClause
+	var total int
+	s.queryRow("SELECT COUNT(*) "+from, args...).Scan(&total)
+	sqlStr := fmt.Sprintf(`SELECT r.rowid,r.uid,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,r.body_md
+		%s ORDER BY r.rdate DESC, r.sent_at DESC LIMIT %d OFFSET %d`, from, limit, offset)
 	rows, err := s.query(sqlStr, args...)
 	if err != nil {
-		return nil, err
+		return nil, total, err
 	}
 	defer rows.Close()
 	var out []Rep
@@ -565,12 +592,12 @@ func (s *Store) QueryReports(symbol, q, kind, rtype, since, until string, limit 
 		r := Rep{RID: fmt.Sprintf("n%d", id), Src: "new", UID: uid.String, Title: title.String,
 			Symbol: sym.String, Name: name.String, RType: rt.String, Date: rd.String, Kind: kind.String,
 			RunID: runID.String, Source: src.String, Time: sent.String}
-		if withBody {
+		if f.WithBody {
 			r.MD = md.String
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // GetByUID fetches a single new report by uid (with body).
@@ -804,7 +831,11 @@ func (s *Store) GetNew(rowid int64) (*Rep, error) {
 	}, nil
 }
 
-func (s *Store) UpsertReport(r Rep) error {
+// UpsertReport inserts or overwrites a report by uid. Returns created=true when a
+// new row was inserted, false when an existing row was overwritten.
+func (s *Store) UpsertReport(r Rep) (bool, error) {
+	var x int
+	created := s.queryRow("SELECT 1 FROM reports WHERE uid=?", r.UID).Scan(&x) == sql.ErrNoRows
 	_, err := s.exec(`
 		INSERT INTO reports(uid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
@@ -812,7 +843,53 @@ func (s *Store) UpsertReport(r Rep) error {
 		  rtype=excluded.rtype,rdate=excluded.rdate,kind=excluded.kind,run_id=excluded.run_id,
 		  source=excluded.source,sent_at=excluded.sent_at,body_md=excluded.body_md,body_html=excluded.body_html`,
 		r.UID, r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.RunID, r.Source, r.Time, r.MD, r.HTML)
-	return err
+	return created, err
+}
+
+// DeleteReport removes a report and its tracking items by uid (one tx). Returns
+// the number of report rows deleted (0 = no match; safe to retry).
+func (s *Store) DeleteReport(uid string) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(s.bind("DELETE FROM reports WHERE uid=?"), uid)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if _, err := tx.Exec(s.bind("DELETE FROM tracking_items WHERE report_uid=?"), uid); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, tx.Commit()
+}
+
+// UpdateTrackingStatus updates a single tracking item's status and/or review_point
+// by id (the hypothesis re-check loop). Empty fields are left unchanged. Returns
+// ok=false when no row matched the id.
+func (s *Store) UpdateTrackingStatus(id int64, status, reviewPoint string) (bool, error) {
+	var sets []string
+	var args []any
+	if status != "" {
+		sets = append(sets, "status=?")
+		args = append(args, status)
+	}
+	if reviewPoint != "" {
+		sets = append(sets, "review_point=?")
+		args = append(args, reviewPoint)
+	}
+	if len(sets) == 0 {
+		return false, nil
+	}
+	args = append(args, id)
+	res, err := s.exec("UPDATE tracking_items SET "+strings.Join(sets, ",")+" WHERE id=?", args...)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (s *Store) CountNew() (n int) {
