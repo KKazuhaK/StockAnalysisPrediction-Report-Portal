@@ -1,19 +1,20 @@
-# 复制为 config.yaml 后按需修改。config.yaml 不进 git。
-# 程序首次运行时若没有 config.yaml，会【自动生成】一份（含随机 secret_key），一般无需手动建。
+# Copy to config.yaml and edit as needed. config.yaml is git-ignored.
+# If config.yaml is missing on first run, one is generated automatically
+# (with a random secret_key), so you usually don't need to create it by hand.
 #
-# config 只放【基础设施】：监听端口 / 会话密钥 / 数据库连接。
-# 其余全部在网页里管、存数据库：
-#   旧门户凭据、同步间隔 → 「系统设置」
-#   账号（角色）        → 「账号管理」（首次启动自动创建 admin，密码打印在终端）
-#   入口按钮、报告类型   → 对应管理页
+# config holds INFRASTRUCTURE only: listen port / session key / database.
+# Everything else is managed in the web UI and stored in the DB:
+#   legacy-portal credentials, sync interval -> Settings
+#   accounts (roles)                         -> Users (first run auto-creates admin, password printed in the terminal)
+#   entry buttons, report types              -> the corresponding admin pages
 
 listen: ":8790"
 
-# 会话签名密钥（部署密钥，非应用设置）：openssl rand -hex 32
-# 自动生成的配置里已随机填好，通常无需改动。
-secret_key: "换成长随机串"
+# Session signing key (a deployment secret, not an app setting): openssl rand -hex 32
+# The auto-generated config already fills this in randomly; usually no need to change it.
+secret_key: "replace-with-a-long-random-string"
 
-# 数据库：sqlite(默认，单文件零依赖) 或 postgres
+# Database: sqlite (default, single file, zero deps) or postgres
 db_driver: "sqlite"
 db_path: "data/portal.db"
 # db_driver: "postgres"
