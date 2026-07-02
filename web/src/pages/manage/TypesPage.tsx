@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { App, AutoComplete, Button, Checkbox, Divider, Form, Input, Popconfirm, Space, Table, Tag, Typography } from 'antd'
+import { App, AutoComplete, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, Typography } from 'antd'
 import { DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
@@ -13,6 +13,8 @@ export default function TypesPage() {
   const [kinds, setKinds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState<string[]>([])
   const [addForm] = Form.useForm()
 
   const load = () =>
@@ -62,7 +64,19 @@ export default function TypesPage() {
   const add = async () => {
     const v = await addForm.validateFields()
     await api.post('/api/admin/types/add', { ...v, summary: !!v.summary })
+    setOpen(false)
+    message.success(t('common.done'))
+    load()
+  }
+
+  const openAdd = () => {
     addForm.resetFields()
+    setOpen(true)
+  }
+
+  const removeSelected = async () => {
+    await Promise.all(selected.map((name) => api.del(`/api/admin/types/${encodeURIComponent(name)}`)))
+    setSelected([])
     message.success(t('common.done'))
     load()
   }
@@ -126,59 +140,83 @@ export default function TypesPage() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      {/* Add new type */}
-      <Form form={addForm} layout="inline" onFinish={add}>
-        <Form.Item name="name" rules={[{ required: true }]}>
-          <Input placeholder={t('types.addName')} style={{ width: 160 }} />
-        </Form.Item>
-        <Form.Item name="kind">
-          <AutoComplete
-            placeholder={t('types.kind')}
-            options={kindOptions}
-            style={{ width: 140 }}
-            allowClear
-            filterOption={(input, opt) => String(opt?.value ?? '').toLowerCase().includes(input.toLowerCase())}
-          />
-        </Form.Item>
-        <Form.Item name="label">
-          <Input placeholder={t('types.label')} style={{ width: 160 }} />
-        </Form.Item>
-        <Form.Item name="summary" valuePropName="checked">
-          <Checkbox>{t('types.summary')}</Checkbox>
-        </Form.Item>
-        <Form.Item>
-          <Button icon={<PlusOutlined />} htmlType="submit">
-            {t('common.add')}
-          </Button>
-        </Form.Item>
-      </Form>
+      <Space wrap>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
+          {t('common.add')}
+        </Button>
+        {selected.length > 0 && (
+          <Popconfirm title={t('common.deleteConfirm')} onConfirm={removeSelected}>
+            <Button danger icon={<DeleteOutlined />}>
+              {t('common.deleteSelected')} ({selected.length})
+            </Button>
+          </Popconfirm>
+        )}
+      </Space>
 
-      <Divider style={{ margin: '4px 0' }} />
-
-      {groups.map((g) => (
-        <div key={g.kind}>
-          <Tag color="blue" style={{ marginBottom: 8, fontSize: 13 }}>
-            {g.kind}
-          </Tag>
-          <SortableWrapper ids={g.rows.map((r) => r.name)} onReorder={(names) => reorderGroup(g.kind, names)}>
-            <Table<TypeRow>
-              rowKey="name"
-              size="small"
-              loading={loading}
-              dataSource={g.rows}
-              pagination={false}
-              components={sortableTableComponents}
-              columns={columns}
-            />
-          </SortableWrapper>
-        </div>
-      ))}
+      {groups.map((g) => {
+        const groupNames = g.rows.map((r) => r.name)
+        return (
+          <div key={g.kind}>
+            <Tag color="blue" style={{ marginBottom: 8, fontSize: 13 }}>
+              {g.kind}
+            </Tag>
+            <SortableWrapper ids={groupNames} onReorder={(names) => reorderGroup(g.kind, names)}>
+              <Table<TypeRow>
+                rowKey="name"
+                size="small"
+                loading={loading}
+                dataSource={g.rows}
+                pagination={false}
+                components={sortableTableComponents}
+                rowSelection={{
+                  selectedRowKeys: selected.filter((n) => groupNames.includes(n)),
+                  onChange: (keys) =>
+                    setSelected((prev) => [
+                      ...prev.filter((n) => !groupNames.includes(n)),
+                      ...(keys as string[]),
+                    ]),
+                }}
+                columns={columns}
+              />
+            </SortableWrapper>
+          </div>
+        )
+      })}
 
       <div>
         <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
           {t('types.save')}
         </Button>
       </div>
+
+      <Modal
+        open={open}
+        title={t('common.add')}
+        onOk={add}
+        onCancel={() => setOpen(false)}
+        okText={t('common.add')}
+        cancelText={t('common.cancel')}
+        destroyOnClose
+      >
+        <Form form={addForm} layout="vertical">
+          <Form.Item name="name" label={t('types.addName')} rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="kind" label={t('types.kind')}>
+            <AutoComplete
+              options={kindOptions}
+              allowClear
+              filterOption={(input, opt) => String(opt?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
+          </Form.Item>
+          <Form.Item name="label" label={t('types.label')}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="summary" valuePropName="checked">
+            <Checkbox>{t('types.summary')}</Checkbox>
+          </Form.Item>
+        </Form>
+      </Modal>
     </Space>
   )
 }

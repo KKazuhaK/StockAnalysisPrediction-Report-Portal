@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { RunResp } from '../api/types'
 import Markdown from '../components/Markdown'
+import { exportReportPdf } from '../lib/exportPdf'
 
 export default function RunPage() {
   const { t } = useTranslation()
@@ -78,7 +79,18 @@ export default function RunPage() {
               <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
                 {t('stock.exportMd')}
               </Button>
-              <Button icon={<FilePdfOutlined />} href={`/report/${rep.rid}/pdf`} target="_blank" rel="noreferrer">
+              <Button
+                icon={<FilePdfOutlined />}
+                onClick={() =>
+                  exportReportPdf(rep.rid, {
+                    title: rep.title,
+                    date: rep.date,
+                    source: rep.source,
+                    html: rep.html,
+                    md: rep.md,
+                  })
+                }
+              >
                 {t('stock.exportPdf')}
               </Button>
             </Space>
@@ -86,6 +98,10 @@ export default function RunPage() {
         </Space>
 
         <Card
+          styles={{
+            // Tabs bring their own baseline; drop the card-head border to avoid a double line.
+            header: data.tabs.length > 1 ? { borderBottom: 'none' } : {},
+          }}
           title={
             data.tabs.length > 1 ? (
               <Tabs

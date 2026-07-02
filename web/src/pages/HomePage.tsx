@@ -16,7 +16,6 @@ import {
   theme,
   Typography,
 } from 'antd'
-import { LinkOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
@@ -25,6 +24,7 @@ import type { HomeResp } from '../api/types'
 import Omnibox from '../components/Omnibox'
 import ReportCard from '../components/ReportCard'
 import { BrandIcon } from '../components/icons'
+import { linkIconComponent } from '../components/linkIcons'
 
 const { RangePicker } = DatePicker
 
@@ -112,11 +112,21 @@ export default function HomePage() {
       {!!data?.links?.length && (
         <div style={{ textAlign: 'center' }}>
           <Space size={[8, 8]} wrap>
-            {data.links.map((l) => (
-              <Button key={l.id} icon={<LinkOutlined />} href={l.url} target="_blank" rel="noreferrer">
-                {l.label}
-              </Button>
-            ))}
+            {data.links.map((l) => {
+              const Icon = linkIconComponent(l.icon)
+              const newTab = l.newTab !== false // default: open in a new tab
+              return (
+                <Button
+                  key={l.id}
+                  icon={<Icon />}
+                  href={l.url}
+                  target={newTab ? '_blank' : undefined}
+                  rel={newTab ? 'noreferrer' : undefined}
+                >
+                  {l.label}
+                </Button>
+              )
+            })}
           </Space>
         </div>
       )}

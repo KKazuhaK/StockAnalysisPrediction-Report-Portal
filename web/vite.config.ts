@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite'
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 // In dev, proxy API / downloads / health check to the Go backend (:8790). The
@@ -19,5 +20,12 @@ export default defineConfig({
     outDir: '../internal/web/dist',
     emptyOutDir: false,
     chunkSizeWarningLimit: 1600,
+  },
+  test: {
+    // jsdom for component tests; explicit imports (no globals) keep tsc happy.
+    environment: 'jsdom',
+    globals: false,
+    setupFiles: ['src/test/setup.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 })

@@ -1,10 +1,25 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Form, Input, Modal, Popconfirm, Space, Table, Typography } from 'antd'
+import { App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, Typography } from 'antd'
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { LinkItem } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
+import { LINK_ICON_OPTIONS, linkIconComponent } from '../../components/linkIcons'
+
+// Options for the icon picker: each renders its glyph + name.
+const iconSelectOptions = LINK_ICON_OPTIONS.map(({ value }) => {
+  const Icon = linkIconComponent(value)
+  return {
+    value,
+    label: (
+      <Space size={8}>
+        <Icon />
+        {value}
+      </Space>
+    ),
+  }
+})
 
 export default function LinksPage() {
   const { t } = useTranslation()
@@ -28,11 +43,12 @@ export default function LinksPage() {
   const openAdd = () => {
     setEditing(null)
     form.resetFields()
+    form.setFieldsValue({ newTab: true }) // default: open in a new tab
     setOpen(true)
   }
   const openEdit = (l: LinkItem) => {
     setEditing(l)
-    form.setFieldsValue({ label: l.label, url: l.url })
+    form.setFieldsValue({ label: l.label, url: l.url, icon: l.icon, newTab: l.newTab !== false })
     setOpen(true)
   }
 
@@ -73,6 +89,16 @@ export default function LinksPage() {
           components={sortableTableComponents}
           columns={[
             { key: 'sort', width: 48, align: 'center', render: () => <DragHandle /> },
+            {
+              title: t('links.icon'),
+              dataIndex: 'icon',
+              width: 60,
+              align: 'center',
+              render: (icon: string) => {
+                const Icon = linkIconComponent(icon)
+                return <Icon />
+              },
+            },
             { title: t('links.label'), dataIndex: 'label' },
             {
               title: t('links.url'),
@@ -82,6 +108,13 @@ export default function LinksPage() {
                   {u}
                 </a>
               ),
+            },
+            {
+              title: t('links.newTab'),
+              dataIndex: 'newTab',
+              width: 96,
+              align: 'center',
+              render: (v: boolean) => <Checkbox checked={v !== false} disabled />,
             },
             {
               title: '',
@@ -115,6 +148,12 @@ export default function LinksPage() {
           </Form.Item>
           <Form.Item name="url" label={t('links.url')} rules={[{ required: true }]}>
             <Input placeholder="https://…" />
+          </Form.Item>
+          <Form.Item name="icon" label={t('links.icon')}>
+            <Select allowClear showSearch placeholder={t('links.iconPlaceholder')} options={iconSelectOptions} optionFilterProp="value" />
+          </Form.Item>
+          <Form.Item name="newTab" valuePropName="checked">
+            <Checkbox>{t('links.newTab')}</Checkbox>
           </Form.Item>
         </Form>
       </Modal>

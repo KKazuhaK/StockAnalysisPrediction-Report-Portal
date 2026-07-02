@@ -12,7 +12,7 @@ type Group struct {
 	Name              string   // as-of company name (snapshot at ingest; falls back to current)
 	CurName           string   // current company name; differs after rename / backdoor listing
 	Title             string   // fallback display title when there is no stock code/name (thematic/industry reports)
-	Kind              string   // category of this run (并购重组/综合分析/…)
+	Kind              string   // category of this run (重组决策/投资决策/…)
 	Kinds             []string // new reports: the multiple top-level categories for this symbol on this date
 	Source, Src       string
 	Members           []Rep
@@ -20,26 +20,33 @@ type Group struct {
 	Types             []string
 }
 
-// runKind infers "what this run was about" from the report types.
+// runKind maps report type(s) to their canonical top-level kind. It covers every
+// category we emit so no subtype leaks through as its own "kind"; the keyword
+// order encodes priority when a run mixes several types.
 func runKind(types []string) string {
 	j := strings.Join(types, "")
 	switch {
-	case strings.Contains(j, "重组"):
-		return "并购重组"
-	case strings.Contains(j, "深度研究") || strings.Contains(j, "DeepResearch"):
+	case strings.Contains(j, "重组") || strings.Contains(j, "资本运作"):
+		return "重组决策"
+	case strings.Contains(j, "深度研究") || strings.Contains(j, "DeepResearch") ||
+		strings.Contains(j, "管理能力") || strings.Contains(j, "调研"):
 		return "深度研究"
 	case strings.Contains(j, "技术分析"):
 		return "技术分析"
-	case strings.Contains(j, "事件监测"):
+	case strings.Contains(j, "事件监测") || strings.Contains(j, "舆情"):
 		return "事件监测"
-	case strings.Contains(j, "投资决策") || strings.Contains(j, "估值") ||
-		strings.Contains(j, "财务") || strings.Contains(j, "行业") || strings.Contains(j, "研报"):
+	case strings.Contains(j, "投资") || strings.Contains(j, "估值") ||
+		strings.Contains(j, "财务") || strings.Contains(j, "行业") ||
+		strings.Contains(j, "研报") || strings.Contains(j, "股权") ||
+		strings.Contains(j, "汇总"):
 		return "投资决策"
+	case strings.Contains(j, "未分类"):
+		return "其他"
 	}
 	if len(types) > 0 {
 		return types[0]
 	}
-	return "研报"
+	return "投资决策"
 }
 
 var (
@@ -114,22 +121,20 @@ func buildGroups(reps []Rep, nameOf func(string) string) []Group {
 			}
 		}
 		g.Kind = runKind(g.Types)
-		if g.Src == "new" { // new reports: the multiple top-level categories for this symbol on this date
-			ks := map[string]bool{}
-			for _, m := range g.Members {
-				ks[repKind(m)] = true
-			}
-			for _, k := range kindOrder {
-				if ks[k] {
-					g.Kinds = append(g.Kinds, k)
-					delete(ks, k)
-				}
-			}
-			for k := range ks {
+		// Every distinct top-level kind present in the run, ordered by kindOrder —
+		// for legacy groups just like new ones (a card shows all kinds, or none).
+		ks := map[string]bool{}
+		for _, m := range g.Members {
+			ks[repKind(m)] = true
+		}
+		for _, k := range kindOrder {
+			if ks[k] {
 				g.Kinds = append(g.Kinds, k)
+				delete(ks, k)
 			}
-		} else {
-			g.Kinds = []string{g.Kind}
+		}
+		for k := range ks {
+			g.Kinds = append(g.Kinds, k)
 		}
 		if nameOf != nil {
 			g.CurName = nameOf(g.Symbol)

@@ -129,6 +129,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/login", s.apiLogin)
 	mux.HandleFunc("POST /api/logout", s.apiLogout)
 	mux.HandleFunc("GET /api/home", s.requireUserJSON(s.apiHome))
+	mux.HandleFunc("GET /api/research", s.requireUserJSON(s.apiResearch)) // 深度研究: symbol-less topic reports
 	mux.HandleFunc("GET /api/stock/{symbol}", s.requireUserJSON(s.apiStock))
 	mux.HandleFunc("GET /api/run/{key}", s.requireUserJSON(s.apiRun))
 	mux.HandleFunc("GET /api/repbody", s.requireUserJSON(s.apiRepBody))
@@ -380,7 +381,7 @@ var defaultTypeOrd = map[string]int{
 // Admins can rename/reassign category/reorder/add in the UI afterward.
 //
 // These are the actual categories our Dify workflow modules emit (dept-1 single-
-// stock analysis → 投资决策/深度研究; the 3-x 重组 series → 并购重组; DeepResearch →
+// stock analysis → 投资决策/深度研究; the 3-x 重组 series → 重组决策; DeepResearch →
 // 深度研究), cross-checked against the categories present in ingested data.
 var defaultSeedTypes = []struct {
 	Name    string
@@ -404,11 +405,11 @@ var defaultSeedTypes = []struct {
 	// 事件监测 (sentiment / signal monitoring)
 	{"舆情分析", "事件监测", 0, false},
 	{"事件监测", "事件监测", 10, false},
-	// 并购重组 (the 3-x 重组 series; 重组分析 is the 综合决策 summary)
-	{"重组分析", "并购重组", 0, true},
-	{"重组基本面分析", "并购重组", 10, false},
-	{"重组交易分析", "并购重组", 20, false},
-	{"资本运作分析", "并购重组", 30, false},
+	// 重组决策 (the 3-x 重组 series; 重组分析 is the 综合决策 summary)
+	{"重组分析", "重组决策", 0, true},
+	{"重组基本面分析", "重组决策", 10, false},
+	{"重组交易分析", "重组决策", 20, false},
+	{"资本运作分析", "重组决策", 30, false},
 	// 其他 (uncategorized / thematic)
 	{"未分类", "其他", 0, false},
 }
@@ -812,7 +813,8 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) 
 			`<h2 style="color:#0c447c">PDF 暂不可用</h2>`+
 			`<p>本机未安装 <code>wkhtmltopdf</code>，无法在本地生成 PDF。</p>`+
 			`<p><b>Docker 部署已内置</b>，线上正常。想本地用可装：<br><code>brew install --cask wkhtmltopdf</code></p>`+
-			`<p>也可先用 <b>⬇ MD</b> 导出。<br><a href="javascript:history.back()">← 返回</a></p></div>`)
+			`<p>也可先用 <b>⬇ MD</b> 导出。</p>`+
+			`<p><a href="#" onclick="window.close();return false;">关闭此页</a> · <a href="/">返回首页</a></p></div>`)
 		return
 	}
 	if err != nil {
@@ -838,7 +840,7 @@ func safeFile(title, fallback string) string {
 
 // ---------- Report-type management ----------
 
-var kindOrder = []string{"并购重组", "投资决策", "深度研究", "技术分析", "事件监测", "其他"}
+var kindOrder = []string{"重组决策", "投资决策", "深度研究", "技术分析", "事件监测", "其他"}
 
 // ---------- Account management ----------
 

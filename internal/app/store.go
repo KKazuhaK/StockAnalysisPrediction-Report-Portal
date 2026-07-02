@@ -14,6 +14,14 @@ import (
 
 func nowStr() string { return time.Now().Format("2006-01-02 15:04:05") }
 
+// boolInt maps a bool to the 0/1 integer stored in SQLite/Postgres.
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // Rep is the unified representation for both new and old reports (used for lists/grouping/reading).
 type Rep struct {
 	RID, Src      string // RID: "n<rowid>" new / "o<id>" old
@@ -21,7 +29,7 @@ type Rep struct {
 	Title, Symbol string
 	Name          string // company name snapshotted at ingest (backdoor-listing / rename safe)
 	RType, Date   string
-	Kind, RunID   string // Kind: category (并购重组/投资决策…, used by new reports); RunID: one generation group
+	Kind, RunID   string // Kind: category (重组决策/投资决策…, used by new reports); RunID: one generation group
 	Source, Time  string
 	HTML, MD      string // body (only filled when reading)
 	Label         string // short tab label within a run
@@ -31,6 +39,8 @@ type Rep struct {
 type Link struct {
 	ID         int64
 	Label, URL string
+	Icon       string // icon name chosen in the admin UI (empty = default link glyph)
+	NewTab     bool   // open in a new browser tab (default true)
 	Ord        int
 }
 
@@ -114,7 +124,7 @@ func (s *Store) init() error {
 		`CREATE INDEX IF NOT EXISTS idx_old_date ON old_meta(report_date)`,
 		`CREATE INDEX IF NOT EXISTS idx_old_sym  ON old_meta(stock_code)`,
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
-			id %s, label TEXT, url TEXT, ord INTEGER DEFAULT 0)`, pk),
+			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
 		`CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)`,
 		// Report type registry: subtype (name, unique) → explicit category (kind) + display name/order/default page.
 		// Auto-registered on ingest, editable in the admin backend; replaces runKind guessing (runKind only serves as the fallback default for new types).
@@ -909,10 +919,48 @@ func (s *Store) SearchOldMeta(f Filters) ([]Rep, error) {
 	return out, rows.Err()
 }
 
+// ResearchReports lists the symbol-less (topic / free-form Q&A) reports — deep
+// research not tied to a fixed ticker — newest first, with optional title search
+// and pagination. Returns the page and the total match count.
+// (Legacy reports live in old_meta; new symbol-less reports can be folded in here later.)
+func (s *Store) ResearchReports(q string, limit, offset int) ([]Rep, int) {
+	where := "(stock_code IS NULL OR stock_code='')"
+	var args []any
+	if q != "" {
+		where += " AND title LIKE ?"
+		args = append(args, "%"+q+"%")
+	}
+	var total int
+	s.queryRow("SELECT COUNT(*) FROM old_meta WHERE "+where, args...).Scan(&total)
+	if limit <= 0 || limit > 200 {
+		limit = 30
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.query("SELECT id,title,category,author,time,report_date,stock_code FROM old_meta WHERE "+
+		where+" ORDER BY report_date DESC, time DESC LIMIT ? OFFSET ?", append(args, limit, offset)...)
+	if err != nil {
+		return nil, total
+	}
+	defer rows.Close()
+	var out []Rep
+	for rows.Next() {
+		var id int64
+		var title, cat, auth, tm, rd, sc sql.NullString
+		rows.Scan(&id, &title, &cat, &auth, &tm, &rd, &sc)
+		out = append(out, Rep{
+			RID: fmt.Sprintf("o%d", id), Src: "old", Title: title.String, Symbol: sc.String,
+			RType: cat.String, Date: rd.String, Source: auth.String, Time: tm.String,
+		})
+	}
+	return out, total
+}
+
 // ---------- Entry buttons ----------
 
 func (s *Store) Links() []Link {
-	rows, err := s.query("SELECT id,label,url,ord FROM links ORDER BY ord,id")
+	rows, err := s.query("SELECT id,label,url,icon,new_tab,ord FROM links ORDER BY ord,id")
 	if err != nil {
 		return nil
 	}
@@ -920,24 +968,24 @@ func (s *Store) Links() []Link {
 	var out []Link
 	for rows.Next() {
 		var l Link
-		rows.Scan(&l.ID, &l.Label, &l.URL, &l.Ord)
+		var icon sql.NullString
+		var newTab sql.NullInt64
+		rows.Scan(&l.ID, &l.Label, &l.URL, &icon, &newTab, &l.Ord)
+		l.Icon = icon.String
+		l.NewTab = !newTab.Valid || newTab.Int64 != 0 // default: open in new tab
 		out = append(out, l)
 	}
 	return out
 }
 
-func (s *Store) AddLink(label, url string, ord int) error {
-	_, err := s.exec("INSERT INTO links(label,url,ord) VALUES(?,?,?)", label, url, ord)
-	return err
-}
-func (s *Store) UpdateLink(id int64, label, url string, ord int) error {
-	_, err := s.exec("UPDATE links SET label=?,url=?,ord=? WHERE id=?", label, url, ord, id)
+func (s *Store) AddLink(label, url, icon string, newTab bool, ord int) error {
+	_, err := s.exec("INSERT INTO links(label,url,icon,new_tab,ord) VALUES(?,?,?,?,?)", label, url, icon, boolInt(newTab), ord)
 	return err
 }
 
-// UpdateLinkFields changes only the label/URL, preserving the sort position (ordering is handled by drag).
-func (s *Store) UpdateLinkFields(id int64, label, url string) error {
-	_, err := s.exec("UPDATE links SET label=?,url=? WHERE id=?", label, url, id)
+// UpdateLinkFields changes the label/URL/icon/newTab, preserving the sort position (ordering is handled by drag).
+func (s *Store) UpdateLinkFields(id int64, label, url, icon string, newTab bool) error {
+	_, err := s.exec("UPDATE links SET label=?,url=?,icon=?,new_tab=? WHERE id=?", label, url, icon, boolInt(newTab), id)
 	return err
 }
 

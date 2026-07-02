@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type { Group } from '../api/types'
 
 const KIND_COLORS: Record<string, string> = {
-  并购重组: 'volcano',
+  重组决策: 'volcano',
   投资决策: 'blue',
   深度研究: 'geekblue',
   技术分析: 'purple',

@@ -12,6 +12,7 @@ import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import StockPage from './pages/StockPage'
 import RunPage from './pages/RunPage'
+import ResearchPage from './pages/ResearchPage'
 import ManageLayout from './pages/manage/ManageLayout'
 import LinksPage from './pages/manage/LinksPage'
 import TypesPage from './pages/manage/TypesPage'
@@ -51,6 +52,7 @@ function AppRoutes() {
         }
       >
         <Route path="/" element={<HomePage />} />
+        <Route path="/research" element={<ResearchPage />} />
         <Route path="/stock/:symbol" element={<StockPage />} />
         <Route path="/run/:key" element={<RunPage />} />
         <Route

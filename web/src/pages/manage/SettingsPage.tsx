@@ -6,6 +6,7 @@ import {
   DatePicker,
   Form,
   Input,
+  Modal,
   Popconfirm,
   Select,
   Space,
@@ -90,6 +91,8 @@ function TokensTab() {
   const { message } = App.useApp()
   const [tokens, setTokens] = useState<TokenRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState<number[]>([])
   const [form] = Form.useForm()
 
   const load = () =>
@@ -102,6 +105,12 @@ function TokensTab() {
     load()
   }, [])
 
+  const openAdd = () => {
+    form.resetFields()
+    form.setFieldsValue({ scope: 'all' })
+    setOpen(true)
+  }
+
   const create = async () => {
     const v = await form.validateFields()
     await api.post('/api/admin/tokens', {
@@ -109,7 +118,7 @@ function TokensTab() {
       scope: v.scope || 'all',
       expires: v.expires ? v.expires.format('YYYY-MM-DD') : '',
     })
-    form.resetFields()
+    setOpen(false)
     message.success(t('common.done'))
     load()
   }
@@ -119,31 +128,27 @@ function TokensTab() {
     load()
   }
 
+  const removeSelected = async () => {
+    await Promise.all(selected.map((id) => api.del(`/api/admin/tokens/${id}`)))
+    setSelected([])
+    message.success(t('common.done'))
+    load()
+  }
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Form form={form} layout="inline" onFinish={create} initialValues={{ scope: 'all' }}>
-        <Form.Item name="name">
-          <Input placeholder={t('settings.tokenName')} style={{ width: 140 }} />
-        </Form.Item>
-        <Form.Item name="scope">
-          <Select
-            style={{ width: 120 }}
-            options={[
-              { value: 'all', label: t('scope.all') },
-              { value: 'ingest', label: t('scope.ingest') },
-              { value: 'query', label: t('scope.query') },
-            ]}
-          />
-        </Form.Item>
-        <Form.Item name="expires">
-          <DatePicker placeholder={t('settings.tokenExpires')} />
-        </Form.Item>
-        <Form.Item>
-          <Button icon={<PlusOutlined />} htmlType="submit">
-            {t('common.add')}
-          </Button>
-        </Form.Item>
-      </Form>
+      <Space wrap>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
+          {t('common.add')}
+        </Button>
+        {selected.length > 0 && (
+          <Popconfirm title={t('common.deleteConfirm')} onConfirm={removeSelected}>
+            <Button danger icon={<DeleteOutlined />}>
+              {t('common.deleteSelected')} ({selected.length})
+            </Button>
+          </Popconfirm>
+        )}
+      </Space>
 
       <Table<TokenRow>
         rowKey="id"
@@ -151,6 +156,7 @@ function TokensTab() {
         loading={loading}
         dataSource={tokens}
         pagination={false}
+        rowSelection={{ selectedRowKeys: selected, onChange: (keys) => setSelected(keys as number[]) }}
         columns={[
           { title: t('settings.tokenName'), dataIndex: 'name', render: (n: string) => n || '—' },
           {
@@ -181,6 +187,34 @@ function TokensTab() {
           },
         ]}
       />
+
+      <Modal
+        open={open}
+        title={t('settings.tokens')}
+        onOk={create}
+        onCancel={() => setOpen(false)}
+        okText={t('common.add')}
+        cancelText={t('common.cancel')}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" initialValues={{ scope: 'all' }}>
+          <Form.Item name="name" label={t('settings.tokenName')}>
+            <Input placeholder={t('settings.tokenName')} />
+          </Form.Item>
+          <Form.Item name="scope" label={t('settings.tokenScope')}>
+            <Select
+              options={[
+                { value: 'all', label: t('scope.all') },
+                { value: 'ingest', label: t('scope.ingest') },
+                { value: 'query', label: t('scope.query') },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="expires" label={t('settings.tokenExpires')}>
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Space>
   )
 }

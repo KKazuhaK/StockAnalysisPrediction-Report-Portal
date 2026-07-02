@@ -1,13 +1,15 @@
-import { Button, Dropdown, Layout, Segmented, Select, Space, theme } from 'antd'
-import { LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
+import { useEffect, useState } from 'react'
+import { Button, Dropdown, Grid, Layout, Segmented, Select, Space, theme } from 'antd'
+import { FileSearchOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { api } from '../api/client'
 import { usePrefs } from '../prefs'
 import { useAuth } from '../auth'
 import Omnibox from './Omnibox'
 import { AutoIcon, BrandIcon, MoonIcon, SunIcon } from './icons'
 
-const { Header, Content } = Layout
+const { Header, Content, Footer } = Layout
 
 export default function AppLayout() {
   const { t } = useTranslation()
@@ -16,7 +18,13 @@ export default function AppLayout() {
   const navigate = useNavigate()
   const loc = useLocation()
   const { token } = theme.useToken()
+  const screens = Grid.useBreakpoint()
+  const compact = !screens.md // phone / small tablet
   const onHome = loc.pathname === '/'
+  const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
+  useEffect(() => {
+    api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
+  }, [])
 
   return (
     <Layout style={{ minHeight: '100vh', background: token.colorBgLayout }}>
@@ -27,8 +35,12 @@ export default function AppLayout() {
           zIndex: 20,
           display: 'flex',
           alignItems: 'center',
-          gap: 16,
-          padding: '0 20px',
+          flexWrap: 'wrap',
+          rowGap: 8,
+          gap: compact ? 8 : 16,
+          height: 'auto',
+          minHeight: 64,
+          padding: compact ? '8px 12px' : '0 20px',
           background: token.colorBgContainer,
           borderBottom: `1px solid ${token.colorBorderSecondary}`,
         }}
@@ -46,18 +58,19 @@ export default function AppLayout() {
           }}
         >
           <BrandIcon style={{ color: token.colorPrimary, fontSize: 22 }} />
-          {t('brand')}
+          {!compact && t('brand')}
         </Link>
 
-        <div style={{ flex: 1, minWidth: 0, display: 'flex' }}>
+        {/* On mobile the search drops to its own full-width row (order:2) below the controls. */}
+        <div style={{ flex: 1, minWidth: compact ? '100%' : 0, order: compact ? 2 : 0, display: 'flex' }}>
           {!onHome && (
-            <div style={{ width: '100%', maxWidth: 420 }}>
+            <div style={{ width: '100%', maxWidth: compact ? undefined : 420 }}>
               <Omnibox size="middle" />
             </div>
           )}
         </div>
 
-        <Space size={10} wrap style={{ flexShrink: 0 }}>
+        <Space size={compact ? 6 : 10} wrap style={{ flexShrink: 0, marginLeft: compact ? 'auto' : 0 }}>
           <Segmented
             value={mode}
             onChange={(v) => setMode(v as any)}
@@ -71,15 +84,26 @@ export default function AppLayout() {
             size="middle"
             value={locale}
             onChange={(v) => setLocale(v)}
-            style={{ width: 92 }}
+            style={{ width: compact ? 76 : 92 }}
             options={[
               { value: 'zh', label: '中文' },
               { value: 'en', label: 'EN' },
             ]}
           />
+          <Button
+            icon={<FileSearchOutlined />}
+            onClick={() => navigate('/research')}
+            title={t('nav.research')}
+          >
+            {!compact && t('nav.research')}
+          </Button>
           {admin && (
-            <Button icon={<SettingOutlined />} onClick={() => navigate('/manage')}>
-              {t('nav.manage')}
+            <Button
+              icon={<SettingOutlined />}
+              onClick={() => navigate('/manage')}
+              title={t('nav.manage')}
+            >
+              {!compact && t('nav.manage')}
             </Button>
           )}
           <Dropdown
@@ -107,6 +131,12 @@ export default function AppLayout() {
       <Content style={{ padding: '24px 20px', maxWidth: 1240, width: '100%', margin: '0 auto' }}>
         <Outlet />
       </Content>
+
+      <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
+        <BrandIcon style={{ marginInlineEnd: 6 }} />
+        {t('brand')}
+        {ver && ` · ${ver.version} (${ver.commit})`}
+      </Footer>
     </Layout>
   )
 }

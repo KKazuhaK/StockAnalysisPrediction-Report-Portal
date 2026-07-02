@@ -146,6 +146,29 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 	})
 }
 
+// apiResearch lists symbol-less deep-research / topic reports (free-form Q&A not
+// tied to a ticker), searchable by title and paginated.
+func (s *Server) apiResearch(w http.ResponseWriter, r *http.Request, user string) {
+	q := r.URL.Query()
+	size, _ := strconv.Atoi(q.Get("size"))
+	if size != 15 && size != 30 && size != 50 {
+		size = 30
+	}
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	reps, total := s.st.ResearchReports(strings.TrimSpace(q.Get("q")), size, (page-1)*size)
+	items := make([]map[string]any, 0, len(reps))
+	for _, rep := range reps {
+		items = append(items, map[string]any{
+			"rid": rep.RID, "title": rep.Title, "rtype": rep.RType, "date": rep.Date, "source": rep.Source,
+		})
+	}
+	pages := int(math.Max(1, math.Ceil(float64(total)/float64(size))))
+	writeJSON(w, map[string]any{"items": items, "total": total, "page": page, "pages": pages, "size": size})
+}
+
 func groupsJSON(gs []Group) []map[string]any {
 	out := make([]map[string]any, 0, len(gs))
 	for _, g := range gs {
@@ -301,7 +324,7 @@ func repJSON(rep *Rep, nameOf func(string) string) map[string]any {
 func linksJSON(ls []Link) []map[string]any {
 	out := make([]map[string]any, 0, len(ls))
 	for _, l := range ls {
-		out = append(out, map[string]any{"id": l.ID, "label": l.Label, "url": l.URL, "ord": l.Ord})
+		out = append(out, map[string]any{"id": l.ID, "label": l.Label, "url": l.URL, "icon": l.Icon, "newTab": l.NewTab, "ord": l.Ord})
 	}
 	return out
 }
@@ -311,20 +334,26 @@ func (s *Server) apiAdminLinks(w http.ResponseWriter, r *http.Request, user stri
 }
 
 func (s *Server) apiLinkAdd(w http.ResponseWriter, r *http.Request, user string) {
-	var in struct{ Label, URL string }
+	var in struct {
+		Label, URL, Icon string
+		NewTab           *bool // pointer so an omitted field defaults to true (open in new tab)
+	}
 	readJSON(r, &in)
 	ord := 0
 	if ls := s.st.Links(); len(ls) > 0 {
 		ord = ls[len(ls)-1].Ord + 1
 	}
-	s.st.AddLink(strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), ord)
+	s.st.AddLink(strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab, ord)
 	writeJSON(w, okJSON)
 }
 
 func (s *Server) apiLinkEdit(w http.ResponseWriter, r *http.Request, user string) {
-	var in struct{ Label, URL string }
+	var in struct {
+		Label, URL, Icon string
+		NewTab           *bool
+	}
 	readJSON(r, &in)
-	s.st.UpdateLinkFields(pathID(r, "id"), strings.TrimSpace(in.Label), strings.TrimSpace(in.URL))
+	s.st.UpdateLinkFields(pathID(r, "id"), strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab)
 	writeJSON(w, okJSON)
 }
 
@@ -351,7 +380,7 @@ func (s *Server) apiAdminTypes(w http.ResponseWriter, r *http.Request, user stri
 	// Group each type by its ACTUAL category so custom (user-added) categories get
 	// their own group. Order: preset categories (that have rows), then custom
 	// categories (sorted), then the "其他" catch-all last.
-	presets := []string{"并购重组", "投资决策", "深度研究", "技术分析", "事件监测"}
+	presets := []string{"重组决策", "投资决策", "深度研究", "技术分析", "事件监测"}
 	presetSet := map[string]bool{}
 	for _, k := range presets {
 		presetSet[k] = true

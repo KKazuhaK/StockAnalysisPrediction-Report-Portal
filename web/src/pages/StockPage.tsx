@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Col, Empty, Result, Row, Segmented, Space, Spin, Tabs, Tag, Timeline, Typography, theme } from 'antd'
+import { Button, Card, Col, Empty, Grid, Result, Row, Segmented, Space, Spin, Tabs, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { StockResp } from '../api/types'
 import Markdown from '../components/Markdown'
+import TimelinePanel from '../components/TimelinePanel'
+import { exportReportPdf } from '../lib/exportPdf'
 
 export default function StockPage() {
   const { t } = useTranslation()
   const { symbol = '' } = useParams()
   const [sp, setSp] = useSearchParams()
   const navigate = useNavigate()
-  const { token } = theme.useToken()
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
   const [data, setData] = useState<StockResp | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -87,7 +90,18 @@ export default function StockPage() {
               <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
                 {t('stock.exportMd')}
               </Button>
-              <Button icon={<FilePdfOutlined />} href={`/report/${rep.rid}/pdf`} target="_blank" rel="noreferrer">
+              <Button
+                icon={<FilePdfOutlined />}
+                onClick={() =>
+                  exportReportPdf(rep.rid, {
+                    title: rep.title,
+                    date: rep.date,
+                    source: rep.source,
+                    html: rep.html,
+                    md: rep.md,
+                  })
+                }
+              >
                 {t('stock.exportPdf')}
               </Button>
             </Space>
@@ -95,28 +109,10 @@ export default function StockPage() {
         </Space>
 
         <Row gutter={20}>
-          {/* Timeline */}
+          {/* Timeline — vertical scroll box on desktop, horizontal chip strip on mobile */}
           <Col xs={24} md={6}>
             <Card size="small" title={t('stock.timeline')} styles={{ body: { paddingTop: 16 } }}>
-              <Timeline
-                items={data.timeline.map((n) => ({
-                  color: n.date === data.selDate ? token.colorPrimary : 'gray',
-                  children: (
-                    <a
-                      onClick={() => setDate(n.date)}
-                      style={{
-                        fontWeight: n.date === data.selDate ? 600 : 400,
-                        color: n.date === data.selDate ? token.colorPrimary : token.colorText,
-                      }}
-                    >
-                      {n.date}
-                      <Typography.Text type="secondary" style={{ marginLeft: 6, fontSize: 12 }}>
-                        {n.n}
-                      </Typography.Text>
-                    </a>
-                  ),
-                }))}
-              />
+              <TimelinePanel nodes={data.timeline} selected={data.selDate} onSelect={setDate} horizontal={isMobile} />
             </Card>
           </Col>
 
@@ -124,14 +120,20 @@ export default function StockPage() {
           <Col xs={24} md={18}>
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
               {data.kinds.length > 1 && (
-                <Segmented
-                  value={data.selKind}
-                  onChange={(v) => setKind(String(v))}
-                  options={data.kinds.map((k) => ({ label: k, value: k }))}
-                />
+                <div style={{ overflowX: 'auto' }}>
+                  <Segmented
+                    value={data.selKind}
+                    onChange={(v) => setKind(String(v))}
+                    options={data.kinds.map((k) => ({ label: k, value: k }))}
+                  />
+                </div>
               )}
               <Card
-                styles={{ body: { paddingTop: 8 } }}
+                styles={{
+                  body: { paddingTop: 8 },
+                  // Tabs bring their own baseline; drop the card-head border to avoid a double line.
+                  header: data.subtabs.length > 1 ? { borderBottom: 'none' } : {},
+                }}
                 tabList={undefined}
                 title={
                   data.subtabs.length > 1 ? (
