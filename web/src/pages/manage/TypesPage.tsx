@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { App, AutoComplete, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, Typography } from 'antd'
-import { DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
+import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { TypeGroup, TypeRow, TypesResp } from '../../api/types'
@@ -15,6 +15,7 @@ export default function TypesPage() {
   const [saving, setSaving] = useState(false)
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
+  const [reclassifying, setReclassifying] = useState(false)
   const [addForm] = Form.useForm()
 
   const load = () =>
@@ -72,6 +73,18 @@ export default function TypesPage() {
   const openAdd = () => {
     addForm.resetFields()
     setOpen(true)
+  }
+
+  // Re-apply the current subtype→大类 mapping to every stored report.
+  const reclassify = async () => {
+    setReclassifying(true)
+    try {
+      const r = await api.post<{ updated: number }>('/api/admin/types/recompute', {})
+      message.success(t('types.reclassifyDone', { n: r.updated }))
+      load()
+    } finally {
+      setReclassifying(false)
+    }
   }
 
   const removeSelected = async () => {
@@ -144,6 +157,11 @@ export default function TypesPage() {
         <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
           {t('common.add')}
         </Button>
+        <Popconfirm title={t('types.reclassifyConfirm')} onConfirm={reclassify}>
+          <Button icon={<ReloadOutlined />} loading={reclassifying}>
+            {t('types.reclassify')}
+          </Button>
+        </Popconfirm>
         {selected.length > 0 && (
           <Popconfirm title={t('common.deleteConfirm')} onConfirm={removeSelected}>
             <Button danger icon={<DeleteOutlined />}>

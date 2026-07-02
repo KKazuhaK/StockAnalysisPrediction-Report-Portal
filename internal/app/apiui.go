@@ -565,6 +565,17 @@ func (s *Server) apiAdminSettings(w http.ResponseWriter, r *http.Request, user s
 	})
 }
 
+// apiTypesRecompute re-applies the subtype→大类 (类型管理) mapping to every stored
+// report — the "重新分类" button. Returns how many reports changed kind.
+func (s *Server) apiTypesRecompute(w http.ResponseWriter, r *http.Request, user string) {
+	n, err := s.st.RecomputeKinds()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "重新分类失败")
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "updated": n})
+}
+
 func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct{ OldBase, OldUser, OldPass string }
 	readJSON(r, &in)

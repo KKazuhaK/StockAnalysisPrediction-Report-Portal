@@ -913,12 +913,16 @@ func (s *Store) CountNew() (n int) {
 	return
 }
 
-// RecomputeKinds re-derives every report's top-level kind with the current rules
-// and updates the rows that changed (returns how many). Legacy reports recompute
-// from their subtype (runKind); reports with an explicit kind (from Dify) are just
-// folded into the canonical buckets. Used to apply a taxonomy change to stored data.
+// RecomputeKinds re-derives every report's top-level kind from its subtype using
+// the current rules — the admin-editable 类型管理 mapping (TypeKind) first, then
+// runKind, then folded into the canonical buckets — and updates rows that changed
+// (returns how many). This is the "重新分类" action: re-apply the subtype→大类 table
+// to all stored reports.
 func (s *Store) RecomputeKinds() (int, error) {
-	rows, err := s.query("SELECT rowid, rtype, kind, source FROM reports")
+	// Load the subtype→大类 map once up front; querying it inside the open rows
+	// loop would deadlock the single-connection SQLite pool.
+	cfg := s.TypeConfigs()
+	rows, err := s.query("SELECT rowid, rtype, kind FROM reports")
 	if err != nil {
 		return 0, err
 	}
@@ -929,15 +933,19 @@ func (s *Store) RecomputeKinds() (int, error) {
 	var ups []upd
 	for rows.Next() {
 		var rowid int64
-		var rtype, kind, source sql.NullString
-		if err := rows.Scan(&rowid, &rtype, &kind, &source); err != nil {
+		var rtype, kind sql.NullString
+		if err := rows.Scan(&rowid, &rtype, &kind); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		nk := foldKind(kind.String)
-		if source.String == "legacy" || kind.String == "" {
+		nk := ""
+		if c, ok := cfg[rtype.String]; ok {
+			nk = c.Kind
+		}
+		if nk == "" {
 			nk = runKind([]string{rtype.String})
 		}
+		nk = foldKind(nk)
 		if nk != kind.String {
 			ups = append(ups, upd{rowid, nk})
 		}

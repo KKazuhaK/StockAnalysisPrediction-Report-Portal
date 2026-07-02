@@ -152,6 +152,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/types/save", s.requireAdminJSON(s.apiTypesSave))
 	mux.HandleFunc("POST /api/admin/types/add", s.requireAdminJSON(s.apiTypesAdd))
 	mux.HandleFunc("POST /api/admin/types/reorder", s.requireAdminJSON(s.apiTypesReorder))
+	mux.HandleFunc("POST /api/admin/types/recompute", s.requireAdminJSON(s.apiTypesRecompute))
 	mux.HandleFunc("DELETE /api/admin/types/{name}", s.requireAdminJSON(s.apiTypesDelete))
 	mux.HandleFunc("GET /api/admin/users", s.requireAdminJSON(s.apiAdminUsers))
 	mux.HandleFunc("POST /api/admin/users", s.requireAdminJSON(s.apiUserAdd))
