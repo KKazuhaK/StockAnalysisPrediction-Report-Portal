@@ -7,8 +7,11 @@ package app
 import (
 	"database/sql"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
@@ -28,20 +31,102 @@ func RunLegacyImport(cfgPath string, logf func(string, ...any)) (imported, skipp
 	if err != nil {
 		return 0, 0, 0, nil, err
 	}
-	base := st.GetSetting("old_base", "")
-	if base == "" {
+	im := st.legacyImporter(logf)
+	if im == nil {
 		return 0, 0, 0, nil, fmt.Errorf("old_base not configured — set the legacy portal URL/credentials under Settings first")
 	}
-	oc := NewOldClient(base, st.GetSetting("old_user", ""), st.GetSetting("old_pass", ""))
+	res, err := im.Run()
+	return res.Imported, res.Skipped, res.Failed, res.FailedIDs, err
+}
+
+// legacyImporter builds a resumable importer from the store's saved legacy
+// credentials, or returns nil if old_base is not configured. Shared by the CLI
+// (RunLegacyImport) and the admin "run import" button.
+func (s *Store) legacyImporter(logf func(string, ...any)) *legacy.Importer {
+	base := s.GetSetting("old_base", "")
+	if base == "" {
+		return nil
+	}
+	oc := NewOldClient(base, s.GetSetting("old_user", ""), s.GetSetting("old_pass", ""))
 	im := &legacy.Importer{
-		Src: legacySource{c: oc}, Sink: legacySink{s: st}, Log: logf,
+		Src: legacySource{c: oc}, Sink: legacySink{s: s}, Log: logf,
 		MaxConsecutiveFailures: 15, // fail fast if the old system dies; a re-run resumes
 	}
 	if ms, _ := strconv.Atoi(os.Getenv("RP_IMPORT_DELAY_MS")); ms > 0 {
 		im.Delay = time.Duration(ms) * time.Millisecond // optional throttle for a fragile backend
 	}
-	res, err := im.Run()
-	return res.Imported, res.Skipped, res.Failed, res.FailedIDs, err
+	return im
+}
+
+// CountLegacy is the number of imported legacy reports (live progress for the UI).
+func (s *Store) CountLegacy() (n int) {
+	s.queryRow("SELECT COUNT(*) FROM reports WHERE source=?", "legacy").Scan(&n)
+	return
+}
+
+// legacyImportJob tracks a single background import triggered from the admin UI
+// (only one runs at a time). Package-level because there is one server instance.
+type legacyImportJob struct {
+	mu       sync.Mutex
+	running  bool
+	started  string
+	finished string
+	res      legacy.Result
+	errMsg   string
+}
+
+var legacyJob legacyImportJob
+
+func (j *legacyImportJob) tryStart() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.running {
+		return false
+	}
+	j.running, j.started, j.finished, j.res, j.errMsg = true, nowStr(), "", legacy.Result{}, ""
+	return true
+}
+
+func (j *legacyImportJob) done(res legacy.Result, err error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.running, j.finished, j.res = false, nowStr(), res
+	if err != nil {
+		j.errMsg = err.Error()
+	}
+}
+
+func (j *legacyImportJob) snapshot() map[string]any {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return map[string]any{
+		"running": j.running, "started": j.started, "finished": j.finished,
+		"imported": j.res.Imported, "skipped": j.res.Skipped, "failed": j.res.Failed,
+		"aborted": j.res.Aborted, "error": j.errMsg,
+	}
+}
+
+// apiLegacyImportStart triggers a resumable import in the background (fills gaps /
+// transition-phase sync). Idempotent while running.
+func (s *Server) apiLegacyImportStart(w http.ResponseWriter, r *http.Request, user string) {
+	im := s.st.legacyImporter(func(f string, a ...any) { log.Printf(f, a...) })
+	if im == nil {
+		jsonError(w, http.StatusBadRequest, "旧门户未配置：请先填写旧门户地址/账号并保存")
+		return
+	}
+	if !legacyJob.tryStart() {
+		writeJSON(w, map[string]any{"ok": true, "alreadyRunning": true})
+		return
+	}
+	go func() { legacyJob.done(im.Run()) }()
+	writeJSON(w, map[string]any{"ok": true, "started": true})
+}
+
+// apiLegacyImportStatus returns the background import's progress + live imported count.
+func (s *Server) apiLegacyImportStatus(w http.ResponseWriter, r *http.Request, user string) {
+	snap := legacyJob.snapshot()
+	snap["count"] = s.st.CountLegacy()
+	writeJSON(w, snap)
 }
 
 // ImportLegacyReport folds one legacy report (metadata + body) into the unified

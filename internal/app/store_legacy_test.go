@@ -1,6 +1,51 @@
 package app
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/legacy"
+)
+
+// legacyImporter needs old_base configured; CountLegacy tracks imported rows.
+func TestLegacyImporterHelperAndCount(t *testing.T) {
+	st := newTestStore(t)
+	if im := st.legacyImporter(nil); im != nil {
+		t.Error("legacyImporter without old_base should be nil")
+	}
+	st.SetSetting("old_base", "http://example")
+	if im := st.legacyImporter(nil); im == nil {
+		t.Error("legacyImporter with old_base should be non-nil")
+	}
+	if st.CountLegacy() != 0 {
+		t.Errorf("CountLegacy = %d, want 0", st.CountLegacy())
+	}
+	st.ImportLegacyReport(1, "T", "600000", "宏观", "2026-01-01", "t", "b", "")
+	if st.CountLegacy() != 1 {
+		t.Errorf("CountLegacy after import = %d, want 1", st.CountLegacy())
+	}
+}
+
+// The background job runs one import at a time and reports its result.
+func TestLegacyImportJob(t *testing.T) {
+	var j legacyImportJob
+	if !j.tryStart() {
+		t.Fatal("first tryStart should succeed")
+	}
+	if j.tryStart() {
+		t.Error("second tryStart while running should fail")
+	}
+	if j.snapshot()["running"] != true {
+		t.Error("snapshot.running should be true while running")
+	}
+	j.done(legacy.Result{Imported: 5, Skipped: 2}, nil)
+	snap := j.snapshot()
+	if snap["running"] != false || snap["imported"] != 5 || snap["skipped"] != 2 {
+		t.Errorf("after done snapshot = %+v", snap)
+	}
+	if !j.tryStart() {
+		t.Error("tryStart after done should succeed")
+	}
+}
 
 // ImportLegacyReport migrates an old report into the unified reports table with its
 // body, marking it source="legacy" with a stable uid, and is idempotent on re-run.

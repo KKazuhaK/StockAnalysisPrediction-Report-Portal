@@ -159,6 +159,8 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("DELETE /api/admin/users/{name}", s.requireAdminJSON(s.apiUserDelete))
 	mux.HandleFunc("GET /api/admin/settings", s.requireAdminJSON(s.apiAdminSettings))
 	mux.HandleFunc("POST /api/admin/settings", s.requireAdminJSON(s.apiSettingsSave))
+	mux.HandleFunc("POST /api/admin/legacy/import", s.requireAdminJSON(s.apiLegacyImportStart))
+	mux.HandleFunc("GET /api/admin/legacy/status", s.requireAdminJSON(s.apiLegacyImportStatus))
 	mux.HandleFunc("GET /api/admin/tokens", s.requireAdminJSON(s.apiAdminTokens))
 	mux.HandleFunc("POST /api/admin/tokens", s.requireAdminJSON(s.apiTokenAdd))
 	mux.HandleFunc("DELETE /api/admin/tokens/{id}", s.requireAdminJSON(s.apiTokenDelete))
