@@ -498,6 +498,8 @@ func (s *Store) Manifest(symbol string) map[string]any {
 		k := r.Kind
 		if k == "" {
 			k = runKind([]string{r.RType})
+		} else {
+			k = foldKind(k)
 		}
 		kindSet[k] = true
 		if r.RType != "" {
@@ -909,6 +911,44 @@ func (s *Store) UpdateTrackingStatus(id int64, status, reviewPoint string) (bool
 func (s *Store) CountNew() (n int) {
 	s.queryRow("SELECT COUNT(*) FROM reports").Scan(&n)
 	return
+}
+
+// RecomputeKinds re-derives every report's top-level kind with the current rules
+// and updates the rows that changed (returns how many). Legacy reports recompute
+// from their subtype (runKind); reports with an explicit kind (from Dify) are just
+// folded into the canonical buckets. Used to apply a taxonomy change to stored data.
+func (s *Store) RecomputeKinds() (int, error) {
+	rows, err := s.query("SELECT rowid, rtype, kind, source FROM reports")
+	if err != nil {
+		return 0, err
+	}
+	type upd struct {
+		rowid int64
+		kind  string
+	}
+	var ups []upd
+	for rows.Next() {
+		var rowid int64
+		var rtype, kind, source sql.NullString
+		if err := rows.Scan(&rowid, &rtype, &kind, &source); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		nk := foldKind(kind.String)
+		if source.String == "legacy" || kind.String == "" {
+			nk = runKind([]string{rtype.String})
+		}
+		if nk != kind.String {
+			ups = append(ups, upd{rowid, nk})
+		}
+	}
+	rows.Close()
+	for _, u := range ups {
+		if _, err := s.exec("UPDATE reports SET kind=? WHERE rowid=?", u.kind, u.rowid); err != nil {
+			return 0, err
+		}
+	}
+	return len(ups), nil
 }
 
 func (s *Store) NewTypes() []string {

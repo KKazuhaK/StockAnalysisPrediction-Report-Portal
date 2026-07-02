@@ -20,33 +20,42 @@ type Group struct {
 	Types             []string
 }
 
-// runKind maps report type(s) to their canonical top-level kind. It covers every
-// category we emit so no subtype leaks through as its own "kind"; the keyword
-// order encodes priority when a run mixes several types.
+// runKind maps report type(s) to their canonical top-level kind — one of the four
+// pipelines we run (重组决策 / 投资决策 / 深度研究 / 技术分析), or 未分类 as the
+// catch-all. Keyword order encodes priority when a run mixes several types. 舆情 /
+// 事件监测 / 信号监测 belong to the 重组 pipeline (its sentiment/signal sub-models).
 func runKind(types []string) string {
 	j := strings.Join(types, "")
 	switch {
-	case strings.Contains(j, "重组") || strings.Contains(j, "资本运作"):
+	case strings.Contains(j, "重组") || strings.Contains(j, "资本运作") ||
+		strings.Contains(j, "舆情") || strings.Contains(j, "事件监测") || strings.Contains(j, "信号监测"):
 		return "重组决策"
 	case strings.Contains(j, "深度研究") || strings.Contains(j, "DeepResearch") ||
 		strings.Contains(j, "管理能力") || strings.Contains(j, "调研"):
 		return "深度研究"
-	case strings.Contains(j, "技术分析"):
+	case strings.Contains(j, "技术分析") || strings.Contains(j, "缠论"):
 		return "技术分析"
-	case strings.Contains(j, "事件监测") || strings.Contains(j, "舆情"):
-		return "事件监测"
 	case strings.Contains(j, "投资") || strings.Contains(j, "估值") ||
 		strings.Contains(j, "财务") || strings.Contains(j, "行业") ||
 		strings.Contains(j, "研报") || strings.Contains(j, "股权") ||
 		strings.Contains(j, "汇总"):
 		return "投资决策"
-	case strings.Contains(j, "未分类"):
-		return "其他"
 	}
-	if len(types) > 0 {
-		return types[0]
+	return "未分类"
+}
+
+// foldKind collapses any stored/legacy kind into the current buckets: the four
+// pipelines (重组决策 / 投资决策 / 深度研究 / 技术分析) plus 未分类. Legacy kinds
+// 事件监测→重组决策 (they were 舆情分析更新) and 其他→未分类; anything unknown → 未分类.
+func foldKind(k string) string {
+	switch k {
+	case "重组决策", "投资决策", "深度研究", "技术分析", "未分类":
+		return k
+	case "事件监测":
+		return "重组决策"
+	default: // 其他 and anything unrecognized
+		return "未分类"
 	}
-	return "投资决策"
 }
 
 var (

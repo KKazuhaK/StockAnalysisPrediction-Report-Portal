@@ -197,6 +197,21 @@ func AddUser(cfgPath, name, pw string, admin bool) error {
 	return st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: role})
 }
 
+// RecomputeKinds opens the store and re-derives every report's top-level kind with
+// the current taxonomy rules (returns rows updated). Behind the `recompute-kinds` CLI.
+func RecomputeKinds(cfgPath string) (int, error) {
+	c, err := config.EnsureConfig(cfgPath)
+	if err != nil {
+		return 0, err
+	}
+	st, err := OpenStore(c.DBDriver, c.DBSource())
+	if err != nil {
+		return 0, err
+	}
+	defer st.Close()
+	return st.RecomputeKinds()
+}
+
 // FetchNames fetches the full A-share name list to <data-dir>/names.json and
 // returns the count and the written path.
 func FetchNames(cfgPath string) (int, string, error) {
@@ -405,16 +420,19 @@ var defaultSeedTypes = []struct {
 	{"综合深度研究", "深度研究", 0, true},
 	{"管理能力分析", "深度研究", 10, false},
 	{"调研纪要", "深度研究", 20, false},
-	// 事件监测 (sentiment / signal monitoring)
-	{"舆情分析", "事件监测", 0, false},
-	{"事件监测", "事件监测", 10, false},
-	// 重组决策 (the 3-x 重组 series; 重组分析 is the 综合决策 summary)
+	// 重组决策 (the 3-x 重组 series; 重组分析 is the 综合决策 summary; 舆情/事件/信号监测 are its sub-models)
 	{"重组分析", "重组决策", 0, true},
 	{"重组基本面分析", "重组决策", 10, false},
 	{"重组交易分析", "重组决策", 20, false},
 	{"资本运作分析", "重组决策", 30, false},
-	// 其他 (uncategorized / thematic)
-	{"未分类", "其他", 0, false},
+	{"舆情分析", "重组决策", 40, false},
+	{"事件监测", "重组决策", 50, false},
+	{"信号监测", "重组决策", 60, false},
+	// 技术分析 (Daily_Quote 缠论 / 技术分析)
+	{"技术分析", "技术分析", 0, false},
+	{"缠论分析", "技术分析", 10, false},
+	// 未分类 (uncategorized / thematic — its own bucket)
+	{"未分类", "未分类", 0, false},
 }
 
 // seedDefaultTypes registers the default report types (first run only) and returns the count.
@@ -505,7 +523,7 @@ func containsStr(ss []string, x string) bool {
 // repKind returns a report's top-level category: new reports use the Kind field, otherwise it is inferred from the type.
 func repKind(r Rep) string {
 	if r.Kind != "" {
-		return r.Kind
+		return foldKind(r.Kind)
 	}
 	return runKind([]string{r.RType})
 }
@@ -898,7 +916,7 @@ func safeFile(title, fallback string) string {
 
 // ---------- Report-type management ----------
 
-var kindOrder = []string{"重组决策", "投资决策", "深度研究", "技术分析", "事件监测", "其他"}
+var kindOrder = []string{"重组决策", "投资决策", "深度研究", "技术分析", "未分类"}
 
 // ---------- Account management ----------
 

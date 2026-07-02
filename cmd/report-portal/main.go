@@ -51,6 +51,13 @@ func main() {
 			}
 			fmt.Printf("user saved: %s (role=%s)\n", os.Args[2], role)
 			return
+		case "recompute-kinds": // report-portal recompute-kinds — re-derive every report's top-level kind after a taxonomy change
+			n, err := app.RecomputeKinds(configPath())
+			if err != nil {
+				log.Fatalf("recompute-kinds failed: %v", err)
+			}
+			fmt.Printf("recompute-kinds: %d rows updated\n", n)
+			return
 		case "import-legacy": // report-portal import-legacy — resumable one-shot pull of all legacy reports (incl. body) into the store, then old system can be retired
 			imported, skipped, failed, failedIDs, err := app.RunLegacyImport(configPath(), log.Printf)
 			fmt.Printf("legacy import: imported=%d skipped=%d failed=%d\n", imported, skipped, failed)
