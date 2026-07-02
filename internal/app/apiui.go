@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -66,6 +67,23 @@ func (s *Server) requireAdminJSON(h handler) http.HandlerFunc {
 	}
 }
 
+// requirePermJSON wraps a handler so only a logged-in user whose role holds perm
+// may reach it. Generalises requireAdminJSON (which is requirePermJSON(PermManage)).
+func (s *Server) requirePermJSON(perm string, h handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u := s.currentUser(r)
+		if u == "" {
+			jsonError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if !s.hasPerm(u, perm) {
+			jsonError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		h(w, r, u)
+	}
+}
+
 // canQuery allows two kinds of query auth: a logged-in browser session, or a Bearer token with the query scope (Dify).
 func (s *Server) canQuery(r *http.Request) bool {
 	if s.currentUser(r) != "" {
@@ -83,7 +101,11 @@ func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	writeJSON(w, map[string]any{"user": u, "admin": s.isAdmin(u)})
+	role := ""
+	if usr := s.st.GetUser(u); usr != nil {
+		role = usr.EffRole()
+	}
+	writeJSON(w, map[string]any{"user": u, "admin": s.isAdmin(u), "role": role, "perms": permsOf(role)})
 }
 
 func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +181,7 @@ func (s *Server) apiResearch(w http.ResponseWriter, r *http.Request, user string
 	items := make([]map[string]any, 0, len(reps))
 	for _, rep := range reps {
 		items = append(items, map[string]any{
-			"rid": rep.RID, "title": rep.Title, "rtype": rep.RType, "date": rep.Date, "source": rep.Source,
+			"rid": rep.RID, "title": rep.Title, "rtype": rep.RType, "date": rep.Date, "time": rep.Time, "source": rep.Source,
 		})
 	}
 	pages := int(math.Max(1, math.Ceil(float64(total)/float64(size))))
@@ -307,7 +329,7 @@ func repJSON(rep *Rep, nameOf func(string) string) map[string]any {
 	return map[string]any{
 		"rid": rep.RID, "uid": rep.UID, "title": rep.Title, "symbol": rep.Symbol,
 		"name": asof, "curName": cur, // name = as-of; curName = current (client shows both when they differ)
-		"date": rep.Date, "kind": repKind(*rep), "rtype": rep.RType, "source": rep.Source,
+		"date": rep.Date, "time": rep.Time, "kind": repKind(*rep), "rtype": rep.RType, "source": rep.Source,
 		"md": rep.MD, "html": rep.HTML,
 	}
 }
@@ -561,6 +583,7 @@ func (s *Server) apiAdminSettings(w http.ResponseWriter, r *http.Request, user s
 		"oldBase":  s.st.GetSetting("old_base", ""),
 		"oldUser":  s.st.GetSetting("old_user", ""),
 		"hasPass":  s.st.GetSetting("old_pass", "") != "",
+		"timezone": s.st.GetSetting("timezone", ""), // "" = follow system zone
 		"newCount": s.st.CountNew(),
 	})
 }
@@ -577,12 +600,32 @@ func (s *Server) apiTypesRecompute(w http.ResponseWriter, r *http.Request, user 
 }
 
 func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user string) {
-	var in struct{ OldBase, OldUser, OldPass string }
+	// All pointers: a nil field was omitted from the request → leave that setting
+	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
+	var in struct {
+		OldBase, OldUser, OldPass, Timezone *string
+	}
 	readJSON(r, &in)
-	s.st.SetSetting("old_base", strings.TrimSpace(in.OldBase))
-	s.st.SetSetting("old_user", strings.TrimSpace(in.OldUser))
-	if in.OldPass != "" { // empty = don't change the password
-		s.st.SetSetting("old_pass", in.OldPass)
+	// Validate the timezone before writing anything so a bad zone can't half-apply.
+	if in.Timezone != nil {
+		if tz := strings.TrimSpace(*in.Timezone); tz != "" {
+			if _, err := time.LoadLocation(tz); err != nil {
+				jsonError(w, http.StatusBadRequest, "无效的时区")
+				return
+			}
+		}
+	}
+	if in.OldBase != nil {
+		s.st.SetSetting("old_base", strings.TrimSpace(*in.OldBase))
+	}
+	if in.OldUser != nil {
+		s.st.SetSetting("old_user", strings.TrimSpace(*in.OldUser))
+	}
+	if in.OldPass != nil && *in.OldPass != "" { // empty = don't change the password
+		s.st.SetSetting("old_pass", *in.OldPass)
+	}
+	if in.Timezone != nil { // "" clears → follow system zone
+		s.st.SetSetting("timezone", strings.TrimSpace(*in.Timezone))
 	}
 	writeJSON(w, okJSON)
 }

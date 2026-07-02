@@ -366,12 +366,69 @@ function ApiDocTab() {
   )
 }
 
+// tzOptions lists the panel-timezone choices: a "follow system" default plus the
+// browser's full IANA zone list (Intl.supportedValuesOf, guarded for older engines).
+function tzOptions(systemLabel: string) {
+  let zones: string[] = []
+  try {
+    zones = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? []
+  } catch {
+    zones = []
+  }
+  return [{ value: '', label: systemLabel }, ...zones.map((z) => ({ value: z, label: z }))]
+}
+
+function GeneralTab() {
+  const { t } = useTranslation()
+  const { message } = App.useApp()
+  const [tz, setTz] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api.get<SettingsResp>('/api/admin/settings').then((r) => setTz(r.timezone || ''))
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await api.post('/api/admin/settings', { timezone: tz })
+      message.success(t('common.saved'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 480 }}>
+      <Form layout="vertical">
+        <Form.Item label={t('settings.timezone')} style={{ marginBottom: 8 }}>
+          <Select
+            showSearch
+            value={tz}
+            onChange={setTz}
+            options={tzOptions(t('settings.timezoneSystem'))}
+            style={{ width: '100%' }}
+            filterOption={(input, opt) => (opt?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+          />
+        </Form.Item>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          {t('settings.timezoneHint')}
+        </Typography.Paragraph>
+        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
+          {t('common.save')}
+        </Button>
+      </Form>
+    </Space>
+  )
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation()
   return (
     <Card variant="borderless" styles={{ body: { paddingTop: 8 } }}>
       <Tabs
         items={[
+          { key: 'general', label: t('settings.general'), children: <GeneralTab /> },
           { key: 'tokens', label: t('settings.tokens'), children: <TokensTab /> },
           { key: 'apidoc', label: t('settings.apidoc'), children: <ApiDocTab /> },
           { key: 'legacy', label: t('settings.legacyTab'), children: <LegacyTab /> },

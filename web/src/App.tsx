@@ -1,10 +1,5 @@
-import { useEffect } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { App as AntdApp, ConfigProvider, Spin, theme } from 'antd'
-import zhCN from 'antd/locale/zh_CN'
-import enUS from 'antd/locale/en_US'
-import dayjs from 'dayjs'
-import 'dayjs/locale/zh-cn'
 import { PrefsProvider, usePrefs } from './prefs'
 import { AuthProvider, useAuth } from './auth'
 import AppLayout from './components/AppLayout'
@@ -18,6 +13,9 @@ import LinksPage from './pages/manage/LinksPage'
 import TypesPage from './pages/manage/TypesPage'
 import UsersPage from './pages/manage/UsersPage'
 import SettingsPage from './pages/manage/SettingsPage'
+import BatchAdminPage from './pages/manage/BatchAdminPage'
+import WebhooksPage from './pages/manage/WebhooksPage'
+import BatchConsole from './pages/BatchConsole'
 
 function FullSpin() {
   return (
@@ -40,6 +38,12 @@ function AdminOnly({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function RequirePerm({ perm, children }: { perm: string; children: React.ReactNode }) {
+  const { can } = useAuth()
+  if (!can(perm)) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -56,6 +60,14 @@ function AppRoutes() {
         <Route path="/stock/:symbol" element={<StockPage />} />
         <Route path="/run/:key" element={<RunPage />} />
         <Route
+          path="/batch"
+          element={
+            <RequirePerm perm="run_batch">
+              <BatchConsole />
+            </RequirePerm>
+          }
+        />
+        <Route
           path="/manage"
           element={
             <AdminOnly>
@@ -68,6 +80,8 @@ function AppRoutes() {
           <Route path="types" element={<TypesPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="batch" element={<BatchAdminPage />} />
+          <Route path="webhooks" element={<WebhooksPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -76,15 +90,11 @@ function AppRoutes() {
 }
 
 function Themed() {
-  const { dark, locale } = usePrefs()
-
-  useEffect(() => {
-    dayjs.locale(locale === 'zh' ? 'zh-cn' : 'en')
-  }, [locale])
+  const { dark, antd } = usePrefs()
 
   return (
     <ConfigProvider
-      locale={locale === 'zh' ? zhCN : enUS}
+      locale={antd}
       theme={{
         algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: { colorPrimary: '#1677ff', borderRadius: 8 },

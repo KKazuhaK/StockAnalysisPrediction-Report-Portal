@@ -58,6 +58,13 @@ func main() {
 			}
 			fmt.Printf("recompute-kinds: %d rows updated\n", n)
 			return
+		case "freeze-names": // report-portal freeze-names — snapshot each un-named report's current name onto its row so later renames never rewrite history
+			n, err := app.FreezeReportNames(configPath())
+			if err != nil {
+				log.Fatalf("freeze-names failed: %v", err)
+			}
+			fmt.Printf("freeze-names: %d rows frozen\n", n)
+			return
 		case "import-legacy": // report-portal import-legacy — resumable one-shot pull of all legacy reports (incl. body) into the store, then old system can be retired
 			imported, skipped, failed, failedIDs, err := app.RunLegacyImport(configPath(), log.Printf)
 			fmt.Printf("legacy import: imported=%d skipped=%d failed=%d\n", imported, skipped, failed)

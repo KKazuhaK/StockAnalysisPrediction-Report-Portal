@@ -20,12 +20,17 @@ import (
 //go:embed names.json
 var embeddedNames []byte
 
+// nameFetchTimeout caps how long ingest waits for a live name fetch before falling back
+// to the last known name; a slow fetch keeps running and updates the cache in the background.
+const nameFetchTimeout = 5 * time.Second
+
 // Names maps stock code to name. Embedded seed (common/demo tickers) + runtime full table (data/names.json).
 type Names struct {
-	mu  sync.RWMutex
-	m   map[string]string
-	dir string
-	st  *Store // syncs names into the stocks table (used for searching by name)
+	mu    sync.RWMutex
+	m     map[string]string
+	dir   string
+	st    *Store                   // syncs names into the stocks table (used for searching by name)
+	fetch func(code string) string // live single-name fetch (injectable for tests); defaults to FetchOneName
 }
 
 func LoadNames(dataDir string, st *Store) *Names {
@@ -223,26 +228,73 @@ func httpGetGBK(url, referer string) string {
 	return string(b)
 }
 
-// FetchOneName is a fallback for a single stock name: Tencent -> Sina (both GBK). Used when the eastmoney batch misses or fails.
+// Per-source retry policy for the single-name live fetch. Each source is tried up to
+// nameFetchAttempts times (short pause between same-source retries) before falling over to
+// the next source. nameRetryDelay is a var so tests can zero it.
+const nameFetchAttempts = 2
+
+var nameRetryDelay = 300 * time.Millisecond
+
+// nameSource is one live quote endpoint plus the parser that extracts the stock name from its body.
+type nameSource struct {
+	url, referer string
+	parse        func(body string) string
+}
+
+// aShareNameSources builds the ordered live sources for a code: Tencent then Sina (both GBK).
+func aShareNameSources(pre, code string) []nameSource {
+	return []nameSource{
+		{ // Tencent: v_sh601899="1~紫金矿业~601899~...
+			url: "https://qt.gtimg.cn/q=" + pre + code, referer: "https://gu.qq.com/",
+			parse: func(s string) string {
+				if strings.Count(s, "~") < 2 {
+					return ""
+				}
+				return strings.TrimSpace(strings.Split(s, "~")[1])
+			},
+		},
+		{ // Sina: var hq_str_sz000001="平安银行,10.05,...
+			url: "https://hq.sinajs.cn/list=" + pre + code, referer: "https://finance.sina.com.cn/",
+			parse: func(s string) string {
+				i := strings.Index(s, `"`)
+				if i < 0 {
+					return ""
+				}
+				rest := s[i+1:]
+				if j := strings.Index(rest, ","); j > 0 {
+					return strings.TrimSpace(rest[:j])
+				}
+				return ""
+			},
+		},
+	}
+}
+
+// fetchNameWithRetry tries each source up to nameFetchAttempts times (pausing nameRetryDelay
+// between same-source retries), returning the first parsed non-empty name; "" if all fail.
+func fetchNameWithRetry(sources []nameSource, get func(url, referer string) string) string {
+	for _, src := range sources {
+		for attempt := 0; attempt < nameFetchAttempts; attempt++ {
+			if attempt > 0 {
+				time.Sleep(nameRetryDelay)
+			}
+			if name := src.parse(get(src.url, src.referer)); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// FetchOneName fetches a single stock's current name live (Tencent -> Sina, both GBK
+// real-time quote endpoints), each source retried per the policy above. Used at ingest and
+// as a fallback when the eastmoney batch misses or fails.
 func FetchOneName(code string) string {
 	pre := marketPrefix(code)
 	if pre == "" {
 		return ""
 	}
-	// Tencent: v_sh601899="1~紫金矿业~601899~...
-	if s := httpGetGBK("https://qt.gtimg.cn/q="+pre+code, "https://gu.qq.com/"); strings.Count(s, "~") >= 2 {
-		if p := strings.Split(s, "~"); strings.TrimSpace(p[1]) != "" {
-			return strings.TrimSpace(p[1])
-		}
-	}
-	// Sina: var hq_str_sz000001="平安银行,10.05,...
-	if s := httpGetGBK("https://hq.sinajs.cn/list="+pre+code, "https://finance.sina.com.cn/"); strings.Contains(s, `"`) {
-		rest := s[strings.Index(s, `"`)+1:]
-		if i := strings.Index(rest, ","); i > 0 {
-			return strings.TrimSpace(rest[:i])
-		}
-	}
-	return ""
+	return fetchNameWithRetry(aShareNameSources(pre, code), httpGetGBK)
 }
 
 // EnsureOne, if a code has no name yet, fetches it once in the background from the fallback sources (Tencent -> Sina) and caches it in memory and the stocks table (called on ingestion).
@@ -261,4 +313,42 @@ func (n *Names) EnsureOne(code string) {
 		}
 		log.Printf("stock name fallback: %s = %s", code, name)
 	}()
+}
+
+func (n *Names) fetchOne(code string) string {
+	if n.fetch != nil {
+		return n.fetch(code)
+	}
+	return FetchOneName(code)
+}
+
+// Resolve returns the name to freeze onto a report at ingest time. Whenever the payload
+// carries no name we re-fetch the current live name (names can change on rename / backdoor
+// listing, so a rename is reflected on the very next report while earlier reports keep their
+// own frozen name). The fetch is bounded by nameFetchTimeout; on a slow/failed fetch it falls
+// back to the last known name and lets the fetch finish updating the cache in the background.
+func (n *Names) Resolve(code string) string {
+	if code == "" {
+		return ""
+	}
+	ch := make(chan string, 1)
+	go func() {
+		name := n.fetchOne(code)
+		if name != "" {
+			n.merge(map[string]string{code: name})
+			if n.st != nil {
+				n.st.SyncStocks(map[string]string{code: name})
+			}
+		}
+		ch <- name
+	}()
+	select {
+	case name := <-ch:
+		if name != "" {
+			return name
+		}
+	case <-time.After(nameFetchTimeout):
+		// too slow; snapshot the last known name and let the fetch finish in the background
+	}
+	return n.Get(code)
 }

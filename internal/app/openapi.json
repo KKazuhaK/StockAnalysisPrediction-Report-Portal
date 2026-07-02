@@ -44,7 +44,7 @@
           "title": { "type": "string" },
           "source": { "type": "string", "description": "来源/作者，可按此过滤查询。" },
           "run_id": { "type": "string", "description": "批次/生成轮次标签，不参与身份键。" },
-          "time": { "type": "string", "description": "同日排序用时间戳，为空取 date。" },
+          "time": { "type": "string", "description": "报告时刻，UTC RFC3339（如 2026-07-03T06:14:22Z）。省略或非法时服务端盖当前 UTC 时刻；仅当传入为合法 RFC3339 才采用（如 GET /api/v1/now 的 utc）。不参与身份键，仅用于同日排序与显示。" },
           "body_md": { "type": "string", "description": "Markdown 正文。body_html 为空时据此渲染。" },
           "body_html": { "type": "string", "description": "预渲染 HTML 正文。" },
           "tracking": { "type": "array", "items": { "$ref": "#/components/schemas/TrackingInput" }, "description": "假设/跟踪项；非空时整体覆盖该报告的项。" }
@@ -66,7 +66,8 @@
           "run_id": { "type": "string" },
           "symbol": { "type": "string" },
           "name": { "type": "string", "description": "as-of 快照名（回退现名）" },
-          "date": { "type": "string" },
+          "date": { "type": "string", "description": "业务交易日 YYYY-MM-DD（面板时区）。" },
+          "time": { "type": "string", "description": "入库/生成时刻，UTC RFC3339（如 2026-07-03T06:14:22Z）；旧数据可能仅日期。前端按浏览器本地时区显示。" },
           "kind": { "type": "string" },
           "subtype": { "type": "string" },
           "title": { "type": "string" },
@@ -249,6 +250,20 @@
           "400": { "description": "id 非整数 / status 与 review_point 都为空（invalid_param/missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "404": { "description": "id 未命中（not_found）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/v1/now": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "now",
+        "summary": "门户权威时钟：UTC 时刻 + 面板时区的日历日期",
+        "x-scope": "query",
+        "description": "返回 UTC 时刻（utc，RFC3339 带 Z）与面板时区下的 date/datetime/tz。生产端（如 Dify）据此锚定“今天”，避免自身沙箱时钟（常为 UTC）把中国市场研报错标一天。面板时区在系统设置页配置，默认跟随系统时区。",
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -H \"Authorization: Bearer <query-token>\" $BASE/api/v1/now" }],
+        "responses": {
+          "200": { "description": "时钟", "content": { "application/json": { "example": { "ok": true, "utc": "2026-07-02T16:20:00Z", "date": "2026-07-03", "datetime": "2026-07-03 00:20:00", "tz": "Asia/Shanghai" } } } },
+          "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },

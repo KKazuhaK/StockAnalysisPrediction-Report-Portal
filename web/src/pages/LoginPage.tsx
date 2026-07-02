@@ -11,7 +11,7 @@ import { AutoIcon, BrandIcon, MoonIcon, SunIcon } from '../components/icons'
 export default function LoginPage() {
   const { t } = useTranslation()
   const { user, loading, login } = useAuth()
-  const { mode, setMode, locale, setLocale } = usePrefs()
+  const { mode, setMode, lang, setLang, langs } = usePrefs()
   const { token } = theme.useToken()
   const navigate = useNavigate()
   const [err, setErr] = useState('')
@@ -65,13 +65,10 @@ export default function LoginPage() {
               />
               <Select
                 size="small"
-                value={locale}
-                onChange={setLocale}
-                style={{ width: 78 }}
-                options={[
-                  { value: 'zh', label: '中文' },
-                  { value: 'en', label: 'EN' },
-                ]}
+                value={lang}
+                onChange={setLang}
+                style={{ width: 116 }}
+                options={langs.map((l) => ({ value: l.code, label: l.label }))}
               />
             </Space>
           </div>
