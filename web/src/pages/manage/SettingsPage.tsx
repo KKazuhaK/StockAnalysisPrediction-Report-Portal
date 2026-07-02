@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import {
   App,
   Button,
@@ -20,6 +20,8 @@ import { CloudSyncOutlined, DeleteOutlined, PlusOutlined, SaveOutlined } from '@
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { SettingsResp, TokenRow } from '../../api/types'
+import Markdown from '../../components/Markdown'
+import { API_CONVENTIONS, API_ENDPOINTS, type ApiEndpoint, type ApiParam, type ApiError } from './apiDoc'
 
 const SCOPE_COLORS: Record<string, string> = { all: 'gold', ingest: 'blue', query: 'green' }
 
@@ -219,85 +221,107 @@ function TokensTab() {
   )
 }
 
-const INGEST_BODY = `{
-  "symbol": "002594",
-  "name": "比亚迪",
-  "date": "2024-01-01",
-  "kind": "投资决策",
-  "subtype": "汇总",
-  "title": "比亚迪 投资决策汇总",
-  "body_md": "# 结论\\n**买入**。",
-  "run_id": "batch-2024-01",
-  "source": "Dify",
-  "tracking": [
-    { "itype": "assumption", "content": "毛利率维持 20%", "status": "pending", "review_point": "下季度财报" }
-  ]
-}`
+const METHOD_COLORS: Record<string, string> = {
+  GET: 'green',
+  POST: 'blue',
+  PUT: 'gold',
+  PATCH: 'orange',
+  DELETE: 'red',
+}
+
+const CODE_BLOCK: CSSProperties = {
+  background: 'rgba(128,128,128,0.12)',
+  padding: 12,
+  borderRadius: 8,
+  overflow: 'auto',
+  fontSize: 12,
+  lineHeight: 1.6,
+  margin: '4px 0 0',
+  whiteSpace: 'pre',
+}
+
+function EndpointCard({ e }: { e: ApiEndpoint }) {
+  return (
+    <Card size="small">
+      <Space direction="vertical" size={10} style={{ width: '100%' }}>
+        <Space wrap align="center">
+          <Tag color={METHOD_COLORS[e.method] || 'default'} style={{ fontFamily: 'monospace', fontWeight: 600, margin: 0 }}>
+            {e.method}
+          </Tag>
+          <Typography.Text code copyable={{ text: e.path }} style={{ fontSize: 14 }}>
+            {e.path}
+          </Typography.Text>
+          <Tag>{e.scope}</Tag>
+        </Space>
+        <Typography.Text type="secondary">{e.summary}</Typography.Text>
+
+        {e.params.length > 0 && (
+          <Table<ApiParam>
+            size="small"
+            pagination={false}
+            rowKey={(p) => `${p.in}:${p.name}`}
+            dataSource={e.params}
+            columns={[
+              { title: '参数', dataIndex: 'name', width: 130, render: (n: string) => <Typography.Text code>{n}</Typography.Text> },
+              { title: '位置', dataIndex: 'in', width: 64 },
+              { title: '类型', dataIndex: 'type', width: 108 },
+              {
+                title: '必填',
+                dataIndex: 'required',
+                width: 60,
+                align: 'center',
+                render: (v: boolean) => (v ? <Tag color="red">必填</Tag> : <Typography.Text type="secondary">—</Typography.Text>),
+              },
+              { title: '说明', dataIndex: 'desc' },
+            ]}
+          />
+        )}
+
+        <div>
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            请求示例
+          </Typography.Text>
+          <pre style={CODE_BLOCK}>{e.requestExample}</pre>
+        </div>
+        <div>
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            响应示例
+          </Typography.Text>
+          <pre style={CODE_BLOCK}>{e.responseExample}</pre>
+        </div>
+
+        {e.errors.length > 0 && (
+          <Table<ApiError>
+            size="small"
+            pagination={false}
+            rowKey={(er) => String(er.code)}
+            dataSource={e.errors}
+            columns={[
+              { title: '状态码', dataIndex: 'code', width: 80, render: (c: number) => <Tag color="volcano">{c}</Tag> },
+              { title: '触发条件', dataIndex: 'when' },
+            ]}
+          />
+        )}
+
+        {e.notes && (
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+            {e.notes}
+          </Typography.Paragraph>
+        )}
+      </Space>
+    </Card>
+  )
+}
 
 function ApiDocTab() {
-  const base = window.location.origin
-  const endpoints: [string, string][] = [
-    ['POST /api/reports', '入库一篇报告（可带 name / tracking[]），同键覆盖。scope: ingest'],
-    ['GET /api/reports', '查/搜历史报告（symbol|q 至少一个）。scope: query'],
-    ['GET /api/reports/manifest?symbol=', '某标的报告清单（日期/大类/小文档/计数）'],
-    ['GET /api/report?uid=', '取单篇完整正文'],
-    ['GET /api/runs?symbol=&date=', '报告组视图（标的+日期+大类）'],
-    ['GET /api/symbols?q=&limit=', '有报告的股票清单/补全（按代码或名字）'],
-    ['GET /api/tracking?symbol=&status=', '结构化假设/跟踪项（重跑复核）'],
-  ]
   return (
     <Space direction="vertical" size={12} style={{ width: '100%' }}>
-      <Typography.Paragraph type="secondary">
-        全部接口需请求头 <Typography.Text code>Authorization: Bearer &lt;令牌&gt;</Typography.Text>。 Base:{' '}
-        <Typography.Text code copyable>
-          {base}
-        </Typography.Text>
-      </Typography.Paragraph>
-      <Table
-        rowKey={(r) => r[0]}
-        size="small"
-        pagination={false}
-        dataSource={endpoints}
-        columns={[
-          {
-            title: 'Endpoint',
-            render: (_: any, r: [string, string]) => (
-              <Typography.Text code copyable={{ text: r[0] }}>
-                {r[0]}
-              </Typography.Text>
-            ),
-          },
-          { title: '说明', render: (_: any, r: [string, string]) => r[1] },
-        ]}
-      />
-
-      <Typography.Text strong>
-        入库请求体示例 · POST /api/reports{' '}
-        <Typography.Text
-          type="secondary"
-          copyable={{ text: INGEST_BODY }}
-          style={{ fontWeight: 400, fontSize: 12 }}
-        >
-          （复制）
-        </Typography.Text>
-      </Typography.Text>
-      <pre
-        style={{
-          background: 'rgba(128,128,128,0.12)',
-          padding: 12,
-          borderRadius: 8,
-          overflow: 'auto',
-          fontSize: 12,
-          margin: 0,
-        }}
-      >
-        {INGEST_BODY}
-      </pre>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-        · 只 <Typography.Text code>symbol</Typography.Text> / <Typography.Text code>date</Typography.Text> 必填。
-        <br />· <Typography.Text code>name</Typography.Text>：可选，入库当时的公司名快照。借壳/改名后老报告仍显示当时名；不传则取名录里的现名。
-        <br />· <Typography.Text code>kind</Typography.Text>（大类）不传则按 subtype 推断；身份键 = <Typography.Text code>symbol|date|kind|subtype</Typography.Text>，同键覆盖更新。
-      </Typography.Paragraph>
+      <Card size="small" title="约定">
+        <Markdown md={API_CONVENTIONS} />
+      </Card>
+      {API_ENDPOINTS.map((e) => (
+        <EndpointCard key={`${e.method} ${e.path}`} e={e} />
+      ))}
     </Space>
   )
 }

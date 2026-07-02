@@ -116,13 +116,26 @@ func RunServer(cfgPath string) {
 	})
 
 	// ---- Dify machine API: Bearer token auth (kept unchanged; the workflow depends on it) ----
-	mux.HandleFunc("POST /api/reports", s.ingestReport)        // ingest
-	mux.HandleFunc("GET /api/reports", s.apiQueryReports)      // query/search historical reports
-	mux.HandleFunc("GET /api/reports/manifest", s.apiManifest) // probe the manifest
-	mux.HandleFunc("GET /api/report", s.apiGetReport)          // fetch a single report body (by uid)
-	mux.HandleFunc("GET /api/runs", s.apiRuns)                 // report-group view
-	mux.HandleFunc("GET /api/symbols", s.apiSymbols)           // stock list / autocomplete (also used by the omnibox)
-	mux.HandleFunc("GET /api/tracking", s.apiTracking)         // structured hypotheses / tracking items
+	mux.HandleFunc("POST /api/reports", s.ingestReport)             // ingest
+	mux.HandleFunc("GET /api/reports", s.apiQueryReports)           // query/search historical reports
+	mux.HandleFunc("GET /api/reports/manifest", s.apiManifest)      // probe the manifest
+	mux.HandleFunc("GET /api/report", s.apiGetReport)               // fetch a single report body (by uid)
+	mux.HandleFunc("DELETE /api/report", s.apiDeleteReport)         // retract a report by uid (scope ingest)
+	mux.HandleFunc("GET /api/runs", s.apiRuns)                      // report-group view
+	mux.HandleFunc("GET /api/symbols", s.apiSymbols)                // stock list / autocomplete (also used by the omnibox)
+	mux.HandleFunc("GET /api/tracking", s.apiTracking)              // structured hypotheses / tracking items
+	mux.HandleFunc("PATCH /api/tracking/{id}", s.apiTrackingUpdate) // update one tracking item's status (scope ingest)
+
+	// ---- Dify machine API v1: clean contract (JSON errors, portal-derived uid, envelopes) ----
+	mux.HandleFunc("POST /api/v1/reports", s.v1Ingest)
+	mux.HandleFunc("GET /api/v1/reports", s.v1QueryReports)
+	mux.HandleFunc("GET /api/v1/reports/manifest", s.v1Manifest) // more specific than {uid}, matched first
+	mux.HandleFunc("GET /api/v1/reports/{uid}", s.v1GetReport)
+	mux.HandleFunc("DELETE /api/v1/reports/{uid}", s.v1DeleteReport)
+	mux.HandleFunc("GET /api/v1/runs", s.v1Runs)
+	mux.HandleFunc("GET /api/v1/symbols", s.v1Symbols)
+	mux.HandleFunc("GET /api/v1/tracking", s.v1Tracking)
+	mux.HandleFunc("PATCH /api/v1/tracking/{id}", s.v1TrackingUpdate)
 
 	// ---- Browser (React SPA) API: signed-cookie session auth ----
 	mux.HandleFunc("GET /api/me", s.apiMe)
@@ -573,8 +586,10 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 		RType: rtype, Title: in.Title, Source: in.Source, Time: firstNonEmpty(in.Time, in.Date),
 		MD: in.BodyMD, HTML: html,
 	}
-	if err := s.st.UpsertReport(rep); err != nil {
-		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+	created, err := s.st.UpsertReport(rep)
+	if err != nil {
+		log.Printf("ingest db error: %v", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
 		return
 	}
 	if len(in.Tracking) > 0 { // only update when tracking items are present (overwrite the old ones to match the latest body)
@@ -584,8 +599,8 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 		}
 		s.st.SetTracking(uid, in.Symbol, items)
 	}
-	log.Printf("ingest %s %s", in.Symbol, in.Date)
-	writeJSON(w, map[string]any{"ok": true, "uid": uid})
+	log.Printf("ingest %s %s created=%v", in.Symbol, in.Date, created)
+	writeJSON(w, map[string]any{"ok": true, "uid": uid, "created": created})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -604,11 +619,19 @@ func (s *Server) apiQueryReports(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	symbol := strings.TrimSpace(q.Get("symbol"))
 	kw := strings.TrimSpace(q.Get("q"))
-	if symbol == "" && kw == "" {
-		http.Error(w, "symbol or q required", http.StatusBadRequest)
+	runID := strings.TrimSpace(q.Get("run_id"))
+	if symbol == "" && kw == "" && runID == "" {
+		http.Error(w, "symbol, q or run_id required", http.StatusBadRequest)
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
 	withBody := q.Get("with_body") == "1" || q.Get("with_body") == "true"
 	since, until := q.Get("since"), q.Get("until")
 	if d := strings.TrimSpace(q.Get("date")); d != "" { // date (an exact day; "today" is an alias)
@@ -617,15 +640,19 @@ func (s *Server) apiQueryReports(w http.ResponseWriter, r *http.Request) {
 		}
 		since, until = d, d
 	}
-	reps, err := s.st.QueryReports(symbol, kw, q.Get("kind"), firstNonEmpty(q.Get("subtype"), q.Get("rtype")),
-		since, until, limit, withBody)
+	reps, total, err := s.st.QueryReports(ReportQuery{
+		Symbol: symbol, Q: kw, Kind: q.Get("kind"), RType: firstNonEmpty(q.Get("subtype"), q.Get("rtype")),
+		Source: strings.TrimSpace(q.Get("source")), RunID: runID,
+		Since: since, Until: until, Limit: limit, Offset: offset, WithBody: withBody,
+	})
 	if err != nil {
-		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("query db error: %v", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"symbol": symbol, "q": kw, "has": len(reps) > 0,
-		"count": len(reps), "reports": s.repsJSON(reps, withBody)})
-	log.Printf("query symbol=%s -> %d reports", symbol, len(reps))
+	writeJSON(w, map[string]any{"symbol": symbol, "q": kw, "has": total > 0,
+		"count": len(reps), "total": total, "offset": offset, "limit": limit, "reports": s.repsJSON(reps, withBody)})
+	log.Printf("query symbol=%s -> %d/%d reports", symbol, len(reps), total)
 }
 
 // repsJSON converts []Rep into Dify-friendly JSON (includes the company name; includes body_md when withBody is set).
@@ -680,6 +707,61 @@ func (s *Server) apiGetReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"uid": rep.UID, "run_id": rep.RunID, "symbol": rep.Symbol, "date": rep.Date,
 		"kind": rep.Kind, "subtype": rep.RType, "title": rep.Title, "source": rep.Source,
 		"body_md": rep.MD, "body_html": rep.HTML})
+}
+
+// apiDeleteReport retracts a report and its tracking items by uid. Bearer scope ingest. DELETE /api/report?uid=...
+func (s *Server) apiDeleteReport(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r, "ingest") {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	uid := strings.TrimSpace(r.URL.Query().Get("uid"))
+	if uid == "" {
+		http.Error(w, "uid required", http.StatusBadRequest)
+		return
+	}
+	n, err := s.st.DeleteReport(uid)
+	if err != nil {
+		log.Printf("delete db error: %v", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("delete %s -> %d", uid, n)
+	writeJSON(w, map[string]any{"ok": true, "deleted": n}) // deleted:0 (not 404) so retries stay idempotent
+}
+
+// apiTrackingUpdate updates one tracking item's status/review_point by id (the hypothesis re-check loop).
+// Bearer scope ingest. PATCH /api/tracking/{id} with body {status?, review_point?}.
+func (s *Server) apiTrackingUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.tokenOK(r, "ingest") {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	var in struct {
+		Status      string `json:"status"`
+		ReviewPoint string `json:"review_point"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) // empty body tolerated
+	if strings.TrimSpace(in.Status) == "" && strings.TrimSpace(in.ReviewPoint) == "" {
+		http.Error(w, "status or review_point required", http.StatusBadRequest)
+		return
+	}
+	ok, err := s.st.UpdateTrackingStatus(id, strings.TrimSpace(in.Status), strings.TrimSpace(in.ReviewPoint))
+	if err != nil {
+		log.Printf("tracking update db error: %v", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "id": id, "status": in.Status})
 }
 
 // apiRuns is the report-group view (one generation run = same symbol + date + category). GET /api/runs?symbol=300750&date= (optional)
@@ -738,7 +820,7 @@ func (s *Server) apiTracking(w http.ResponseWriter, r *http.Request) {
 	items := s.st.QueryTracking(symbol, strings.TrimSpace(q.Get("status")), limit)
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, map[string]any{"report_uid": it.ReportUID, "itype": it.IType, "content": it.Content,
+		out = append(out, map[string]any{"id": it.ID, "report_uid": it.ReportUID, "itype": it.IType, "content": it.Content,
 			"status": it.Status, "review_point": it.ReviewPoint, "created_at": it.Created})
 	}
 	writeJSON(w, map[string]any{"symbol": symbol, "has": len(out) > 0, "count": len(out), "items": out})
