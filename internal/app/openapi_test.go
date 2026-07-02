@@ -22,7 +22,7 @@ func TestOpenAPISpecValid(t *testing.T) {
 	for _, p := range []string{
 		"/api/v1/reports", "/api/v1/reports/{uid}", "/api/v1/reports/manifest",
 		"/api/v1/runs", "/api/v1/symbols", "/api/v1/tracking", "/api/v1/tracking/{id}",
-		"/healthz", "/api/version",
+		"/api/v1/now", "/healthz", "/api/version",
 	} {
 		if paths[p] == nil {
 			t.Errorf("openapi.json missing path %s", p)

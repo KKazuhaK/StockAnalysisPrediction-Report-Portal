@@ -35,6 +35,55 @@ func deriveUID(symbol, date, rtype string) string {
 	return symbol + "|" + date + "|" + rtype
 }
 
+// ingestInstant is the real time-of-day stamped onto a report's sent_at. It is a
+// UTC RFC3339 instant, server-stamped by default so same-day reports always order
+// correctly; a client-supplied `time` is honored only when it parses as a full
+// RFC3339 instant (e.g. the utc from GET /api/v1/now), never the old date-only
+// fallback. The instant is stored/returned in UTC and localized for display
+// client-side; it never enters the identity uid (symbol|date|subtype).
+func ingestInstant(clientTime string) string {
+	if t := strings.TrimSpace(clientTime); t != "" {
+		if _, err := time.Parse(time.RFC3339, t); err == nil {
+			return t
+		}
+	}
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+// panelLocation resolves the configured panel timezone (meta['timezone']), falling
+// back to the process/system zone when unset or unparseable. This is the business
+// timezone: date-only values (report date, date=today, /now's date) resolve here,
+// while instant timestamps travel as UTC and are localized for display client-side.
+func (s *Server) panelLocation() *time.Location {
+	name := s.st.GetSetting("timezone", "")
+	if name == "" {
+		return time.Local
+	}
+	if loc, err := time.LoadLocation(name); err == nil {
+		return loc
+	}
+	return time.Local
+}
+
+// GET /api/v1/now — the portal's authoritative clock. Returns a UTC instant plus the
+// civil date/datetime in the panel timezone, so producers (e.g. Dify) anchor "today"
+// to the portal instead of their own (possibly UTC) sandbox clock. scope query.
+func (s *Server) v1Now(w http.ResponseWriter, r *http.Request) {
+	if !s.canQuery(r) {
+		v1err(w, http.StatusUnauthorized, "unauthorized", "missing or invalid query credentials")
+		return
+	}
+	loc := s.panelLocation()
+	now := time.Now()
+	writeJSON(w, map[string]any{
+		"ok":       true,
+		"utc":      now.UTC().Format(time.RFC3339),
+		"date":     now.In(loc).Format("2006-01-02"),
+		"datetime": now.In(loc).Format("2006-01-02 15:04:05"),
+		"tz":       loc.String(),
+	})
+}
+
 // v1err writes a JSON error envelope with the given HTTP status and machine code.
 func v1err(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -48,7 +97,7 @@ func (s *Server) v1RepJSON(r Rep, withBody bool) map[string]any {
 	m := map[string]any{
 		"uid": r.UID, "run_id": r.RunID, "symbol": r.Symbol,
 		"name": firstNonEmpty(r.Name, s.names.Get(r.Symbol)),
-		"date": r.Date, "kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source,
+		"date": r.Date, "time": r.Time, "kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source,
 	}
 	if withBody {
 		m["body_md"] = r.MD
@@ -108,16 +157,20 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		kind = runKind([]string{rtype})
 	}
 	s.st.RegisterType(rtype, kind)
-	s.names.EnsureOne(in.Symbol)
 	uid := deriveUID(in.Symbol, in.Date, rtype)
 	html := in.BodyHTML
 	if html == "" && in.BodyMD != "" {
 		html = mdToHTML(in.BodyMD)
 	}
-	name := firstNonEmpty(in.Name, s.names.Get(in.Symbol))
+	// Freeze the as-of name onto this report row: an explicit payload name wins,
+	// otherwise resolve the current live name (rename-safe; earlier reports keep theirs).
+	name := in.Name
+	if name == "" {
+		name = s.names.Resolve(in.Symbol)
+	}
 	created, err := s.st.UpsertReport(Rep{
 		UID: uid, RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
-		RType: rtype, Title: in.Title, Source: in.Source, Time: firstNonEmpty(in.Time, in.Date),
+		RType: rtype, Title: in.Title, Source: in.Source, Time: ingestInstant(in.Time),
 		MD: in.BodyMD, HTML: html,
 	})
 	if err != nil {
@@ -133,6 +186,10 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		s.st.SetTracking(uid, in.Symbol, items)
 	}
 	log.Printf("v1 ingest %s %s created=%v", in.Symbol, in.Date, created)
+	s.fireEvent(EventReportIngested, map[string]any{
+		"uid": uid, "symbol": in.Symbol, "name": name, "date": in.Date,
+		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source, "created": created,
+	})
 	writeJSON(w, map[string]any{"ok": true, "uid": uid, "created": created})
 }
 
@@ -162,7 +219,7 @@ func (s *Server) v1QueryReports(w http.ResponseWriter, r *http.Request) {
 	since, until := q.Get("since"), q.Get("until")
 	if d := strings.TrimSpace(q.Get("date")); d != "" {
 		if d == "today" {
-			d = time.Now().Format("2006-01-02")
+			d = time.Now().In(s.panelLocation()).Format("2006-01-02")
 		}
 		since, until = d, d
 	}

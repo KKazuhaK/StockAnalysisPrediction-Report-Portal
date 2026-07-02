@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button, Card, Col, Empty, Grid, Result, Row, Segmented, Space, Spin, Tabs, Tag, Typography } from 'antd'
-import { ArrowLeftOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
@@ -8,6 +8,7 @@ import type { StockResp } from '../api/types'
 import Markdown from '../components/Markdown'
 import TimelinePanel from '../components/TimelinePanel'
 import { exportReportPdf } from '../lib/exportPdf'
+import { formatReportDateTime, isInstant } from '../lib/datetime'
 
 export default function StockPage() {
   const { t } = useTranslation()
@@ -148,6 +149,15 @@ export default function StockPage() {
                   )
                 }
               >
+                {rep && isInstant(rep.time) && (
+                  <Typography.Text
+                    type="secondary"
+                    title={formatReportDateTime(rep.time)}
+                    style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
+                  >
+                    <ClockCircleOutlined /> {formatReportDateTime(rep.time)}
+                  </Typography.Text>
+                )}
                 {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
               </Card>
             </Space>

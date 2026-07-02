@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -33,10 +34,11 @@ var tplFS embed.FS
 const cookieName = "rp_session"
 
 type Server struct {
-	cfg   *config.Config
-	st    *Store
-	names *Names
-	pdf   *template.Template
+	cfg          *config.Config
+	st           *Store
+	names        *Names
+	pdf          *template.Template
+	batchRunning sync.Map // jobID -> struct{}; guards against launching a job twice in-process
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -101,6 +103,8 @@ func RunServer(cfgPath string) {
 		log.Printf("seeded %d default report types", n)
 	}
 
+	s.resumeBatchJobs() // requeue items left in-flight by a restart and relaunch running jobs
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"ok":true,"version":%q,"commit":%q,"new":%d}`, version.Version, version.Commit, st.CountNew())
@@ -131,6 +135,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/v1/symbols", s.v1Symbols)
 	mux.HandleFunc("GET /api/v1/tracking", s.v1Tracking)
 	mux.HandleFunc("PATCH /api/v1/tracking/{id}", s.v1TrackingUpdate)
+	mux.HandleFunc("GET /api/v1/now", s.v1Now) // authoritative clock: UTC instant + panel-tz civil date
 
 	// ---- Browser (React SPA) API: signed-cookie session auth ----
 	mux.HandleFunc("GET /api/me", s.apiMe)
@@ -165,6 +170,30 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/admin/tokens", s.requireAdminJSON(s.apiAdminTokens))
 	mux.HandleFunc("POST /api/admin/tokens", s.requireAdminJSON(s.apiTokenAdd))
 	mux.HandleFunc("DELETE /api/admin/tokens/{id}", s.requireAdminJSON(s.apiTokenDelete))
+
+	// ---- Batch-run feature (see docs/adr/0001-batch-run-engine.md) ----
+	// Plugin market + targets + config are admin-only (PermManage); running jobs is PermRunBatch.
+	mux.HandleFunc("GET /api/admin/batch/plugins", s.requireAdminJSON(s.apiBatchPlugins))
+	mux.HandleFunc("POST /api/admin/batch/plugins/import", s.requireAdminJSON(s.apiBatchPluginImport))
+	mux.HandleFunc("DELETE /api/admin/batch/plugins/{slug}", s.requireAdminJSON(s.apiBatchPluginDelete))
+	mux.HandleFunc("GET /api/admin/batch/market", s.requireAdminJSON(s.apiBatchMarket))
+	mux.HandleFunc("POST /api/admin/batch/market/install", s.requireAdminJSON(s.apiBatchMarketInstall))
+	mux.HandleFunc("GET /api/admin/batch/config", s.requireAdminJSON(s.apiBatchConfigGet))
+	mux.HandleFunc("POST /api/admin/batch/config", s.requireAdminJSON(s.apiBatchConfigSave))
+	mux.HandleFunc("GET /api/admin/batch/targets", s.requirePermJSON(PermRunBatch, s.apiBatchTargets))
+	mux.HandleFunc("POST /api/admin/batch/targets", s.requireAdminJSON(s.apiBatchTargetAdd))
+	mux.HandleFunc("DELETE /api/admin/batch/targets/{id}", s.requireAdminJSON(s.apiBatchTargetDelete))
+	mux.HandleFunc("GET /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobs))
+	mux.HandleFunc("POST /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobCreate))
+	mux.HandleFunc("GET /api/admin/batch/jobs/{id}", s.requirePermJSON(PermRunBatch, s.apiBatchJobDetail))
+	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/cancel", s.requirePermJSON(PermRunBatch, s.apiBatchJobCancel))
+	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requirePermJSON(PermRunBatch, s.apiBatchJobRetry))
+
+	// ---- Outbound event webhooks (extension point; see docs/adr/0002-extension-architecture.md) ----
+	mux.HandleFunc("GET /api/admin/webhooks", s.requireAdminJSON(s.apiWebhooks))
+	mux.HandleFunc("POST /api/admin/webhooks", s.requireAdminJSON(s.apiWebhookAdd))
+	mux.HandleFunc("DELETE /api/admin/webhooks/{id}", s.requireAdminJSON(s.apiWebhookDelete))
+	mux.HandleFunc("POST /api/admin/webhooks/{id}/test", s.requireAdminJSON(s.apiWebhookTest))
 
 	// ---- Downloads: MD / PDF (cookie session) ----
 	mux.HandleFunc("GET /report/{rid}/md", s.requireUser(s.reportMD))
@@ -211,6 +240,21 @@ func RecomputeKinds(cfgPath string) (int, error) {
 	}
 	defer st.Close()
 	return st.RecomputeKinds()
+}
+
+// FreezeReportNames snapshots the current name onto every un-named report row so a later
+// rename never rewrites history (run once after backfilling stock names; idempotent).
+func FreezeReportNames(cfgPath string) (int64, error) {
+	c, err := config.EnsureConfig(cfgPath)
+	if err != nil {
+		return 0, err
+	}
+	st, err := OpenStore(c.DBDriver, c.DBSource())
+	if err != nil {
+		return 0, err
+	}
+	defer st.Close()
+	return st.FreezeReportNames()
 }
 
 // FetchNames fetches the full A-share name list to <data-dir>/names.json and
@@ -313,6 +357,12 @@ func (s *Server) currentUser(r *http.Request) string {
 func (s *Server) isAdmin(user string) bool {
 	u := s.st.GetUser(user)
 	return u != nil && can(u.Role, PermManage)
+}
+
+// hasPerm reports whether the logged-in user's role holds a permission.
+func (s *Server) hasPerm(user, perm string) bool {
+	u := s.st.GetUser(user)
+	return u != nil && can(u.EffRole(), perm)
 }
 
 type handler func(http.ResponseWriter, *http.Request, string)
@@ -609,6 +659,10 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 		s.st.SetTracking(uid, in.Symbol, items)
 	}
 	log.Printf("ingest %s %s created=%v", in.Symbol, in.Date, created)
+	s.fireEvent(EventReportIngested, map[string]any{
+		"uid": uid, "symbol": in.Symbol, "name": name, "date": in.Date,
+		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source, "created": created,
+	})
 	writeJSON(w, map[string]any{"ok": true, "uid": uid, "created": created})
 }
 

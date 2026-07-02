@@ -1,0 +1,153 @@
+package app
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
+)
+
+// fakeProv adapts a function to batch.Provider for store-integration tests.
+type fakeProv struct {
+	fn func(map[string]string) (batch.RunResult, error)
+}
+
+func (p fakeProv) Run(_ context.Context, in map[string]string) (batch.RunResult, error) { return p.fn(in) }
+
+func seedTarget(t *testing.T, st *Store) int64 {
+	t.Helper()
+	if err := st.UpsertPlugin("dify", "Dify", "1.0.0", "{}", "bundled"); err != nil {
+		t.Fatalf("UpsertPlugin: %v", err)
+	}
+	id, err := st.CreateTarget("dify", "My Workflow", `{"base_url":"x","api_key":"k"}`)
+	if err != nil {
+		t.Fatalf("CreateTarget: %v", err)
+	}
+	return id
+}
+
+// End-to-end: create a job, drive it with the real engine over the real Store,
+// and assert per-item state plus the final aggregate counts.
+func TestBatchJobLifecycleWithEngine(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	rows := []map[string]string{{"code": "a"}, {"code": "b"}, {"code": "c"}}
+	job, err := st.CreateBatchJob(tgt, 2, 1, "admin", rows)
+	if err != nil {
+		t.Fatalf("CreateBatchJob: %v", err)
+	}
+
+	prov := fakeProv{fn: func(in map[string]string) (batch.RunResult, error) {
+		if in["code"] == "b" {
+			return batch.RunResult{Status: batch.Failed, Detail: "bad code"}, nil
+		}
+		return batch.RunResult{Status: batch.Ok, RunID: "run-" + in["code"]}, nil
+	}}
+	eng := &batch.Engine{Store: st, Backoff: func(int) time.Duration { return 0 }}
+	if err := eng.RunJob(context.Background(), batch.JobSpec{JobID: job, Concurrency: 2, MaxRetries: 1}, prov); err != nil {
+		t.Fatalf("RunJob: %v", err)
+	}
+
+	j, ok := st.GetBatchJob(job)
+	if !ok {
+		t.Fatal("job vanished")
+	}
+	if j.Status != "finished" {
+		t.Errorf("status = %q, want finished", j.Status)
+	}
+	if j.Total != 3 || j.Succeeded != 2 || j.Failed != 1 || j.Partial != 0 {
+		t.Errorf("counts = total:%d ok:%d fail:%d partial:%d, want 3/2/1/0", j.Total, j.Succeeded, j.Failed, j.Partial)
+	}
+	for _, it := range st.BatchJobItems(job) {
+		switch {
+		case it.Inputs == `{"code":"b"}`:
+			if it.Status != "failed" || it.Error != "bad code" {
+				t.Errorf("item b = {status:%s error:%q}, want failed/bad code", it.Status, it.Error)
+			}
+		default:
+			if it.Status != "succeeded" {
+				t.Errorf("item %s status=%s, want succeeded", it.Inputs, it.Status)
+			}
+		}
+	}
+}
+
+// Crash recovery: items left running are requeued and the job is resumable.
+func TestResetInFlightItemsRequeues(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}})
+	// simulate a crash mid-run: one item stuck running
+	items := st.BatchJobItems(job)
+	st.StartItem(items[0].ID)
+
+	if err := st.ResetInFlightItems(); err != nil {
+		t.Fatalf("ResetInFlightItems: %v", err)
+	}
+	q, _ := st.QueuedItems(job)
+	if len(q) != 2 {
+		t.Errorf("queued after reset = %d, want 2 (both items resumable)", len(q))
+	}
+	ids := st.ResumableJobIDs()
+	if len(ids) != 1 || ids[0] != job {
+		t.Errorf("ResumableJobIDs = %v, want [%d]", ids, job)
+	}
+}
+
+// A cancelled job stops dispatching and unstarted rows stay queued.
+func TestCancelBatchJobStopsDispatch(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}, {"code": "c"}})
+	if err := st.CancelBatchJob(job); err != nil {
+		t.Fatalf("CancelBatchJob: %v", err)
+	}
+
+	var calls int
+	prov := fakeProv{fn: func(map[string]string) (batch.RunResult, error) {
+		calls++
+		return batch.RunResult{Status: batch.Ok}, nil
+	}}
+	eng := &batch.Engine{Store: st, Backoff: func(int) time.Duration { return 0 }}
+	eng.RunJob(context.Background(), batch.JobSpec{JobID: job, Concurrency: 2}, prov)
+
+	if calls != 0 {
+		t.Errorf("provider called %d times on a cancelled job, want 0", calls)
+	}
+	j, _ := st.GetBatchJob(job)
+	if j.Status != "cancelled" {
+		t.Errorf("status = %q, want cancelled", j.Status)
+	}
+	q, _ := st.QueuedItems(job)
+	if len(q) != 3 {
+		t.Errorf("queued = %d, want 3 (nothing dispatched)", len(q))
+	}
+}
+
+// Retrying failed rows requeues only them and reopens the job.
+func TestRequeueFailedOnly(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}})
+	items := st.BatchJobItems(job)
+	st.FinishItem(items[0].ID, batch.Ok, 1, "r", "")
+	st.FinishItem(items[1].ID, batch.Failed, 1, "", "boom")
+	st.FinishJob(job, false)
+
+	n, err := st.RequeueItems(job, "failed")
+	if err != nil {
+		t.Fatalf("RequeueItems: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("requeued = %d, want 1", n)
+	}
+	q, _ := st.QueuedItems(job)
+	if len(q) != 1 || q[0].Inputs["code"] != "b" {
+		t.Errorf("queued = %v, want only the failed row b", q)
+	}
+	j, _ := st.GetBatchJob(job)
+	if j.Status != "running" {
+		t.Errorf("status after requeue = %q, want running", j.Status)
+	}
+}

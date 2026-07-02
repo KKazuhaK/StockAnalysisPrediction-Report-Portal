@@ -98,6 +98,22 @@ func (s *Store) bind(q string) string {
 }
 
 func (s *Store) exec(q string, args ...any) (sql.Result, error) { return s.db.Exec(s.bind(q), args...) }
+
+// insertID runs an INSERT and returns the new row's id, portable across sqlite
+// (LastInsertId) and postgres (RETURNING id). The query must not already end with
+// RETURNING; the id column must be named "id".
+func (s *Store) insertID(q string, args ...any) (int64, error) {
+	if s.driver == "postgres" {
+		var id int64
+		err := s.queryRow(q+" RETURNING id", args...).Scan(&id)
+		return id, err
+	}
+	res, err := s.exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
 func (s *Store) query(q string, args ...any) (*sql.Rows, error) {
 	return s.db.Query(s.bind(q), args...)
 }
@@ -164,6 +180,27 @@ func (s *Store) init() error {
 		// Stock code → name (enables searching by name after ingest; sourced from eastmoney, synced on startup/fetchnames).
 		`CREATE TABLE IF NOT EXISTS stocks(code TEXT PRIMARY KEY, name TEXT, updated_at TEXT)`,
 		`CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name)`,
+		// Batch-run feature (see docs/adr/0001-batch-run-engine.md). Plugins are
+		// declarative manifests; a target is a configured instance; a job fans a
+		// target over many input rows with per-row state persisted for resume.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS plugins(
+			id %s, slug TEXT UNIQUE, name TEXT, version TEXT, spec TEXT,
+			enabled INTEGER DEFAULT 1, source TEXT DEFAULT 'imported', imported_at TEXT)`, pk),
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_targets(
+			id %s, plugin_slug TEXT, name TEXT, config TEXT, created_at TEXT)`, pk),
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_jobs(
+			id %s, target_id BIGINT, status TEXT, concurrency INTEGER DEFAULT 1, max_retries INTEGER DEFAULT 0,
+			total INTEGER DEFAULT 0, succeeded INTEGER DEFAULT 0, partial INTEGER DEFAULT 0, failed INTEGER DEFAULT 0,
+			created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT)`, pk),
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_items(
+			id %s, job_id BIGINT, row_index INTEGER, inputs TEXT, status TEXT DEFAULT 'queued',
+			attempts INTEGER DEFAULT 0, run_id TEXT, error TEXT, started_at TEXT, finished_at TEXT)`, pk),
+		`CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id, status)`,
+		// Outbound event webhooks (extension point; see docs/adr/0002-extension-architecture.md).
+		// events is a comma-separated subscription list; last_* columns give the admin delivery visibility.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS webhooks(
+			id %s, url TEXT, events TEXT, secret TEXT, active INTEGER DEFAULT 1,
+			created_at TEXT, last_status INTEGER DEFAULT 0, last_error TEXT, last_delivered_at TEXT)`, pk),
 	}
 	for _, st := range stmts {
 		if _, err := s.exec(st); err != nil {
@@ -961,6 +998,20 @@ func (s *Store) RecomputeKinds() (int, error) {
 
 func (s *Store) NewTypes() []string {
 	return s.distinct("SELECT DISTINCT rtype FROM reports WHERE rtype<>'' ORDER BY rtype")
+}
+
+// FreezeReportNames snapshots the current stocks-cache name onto each report that has no
+// frozen name yet (legacy imports / pre-snapshot ingests). Afterwards a report's displayed
+// name comes solely from its own row, so a later rename never rewrites earlier reports.
+// Idempotent; leaves already-named rows and unknown symbols untouched. Returns rows frozen.
+func (s *Store) FreezeReportNames() (int64, error) {
+	res, err := s.exec("UPDATE reports SET name = (SELECT s.name FROM stocks s WHERE s.code = reports.symbol) " +
+		"WHERE (name IS NULL OR name = '') " +
+		"AND EXISTS (SELECT 1 FROM stocks s WHERE s.code = reports.symbol AND s.name IS NOT NULL AND s.name <> '')")
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // ---------- Legacy import support (disposable) ----------

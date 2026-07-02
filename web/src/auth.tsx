@@ -5,6 +5,8 @@ import type { Me } from './api/types'
 interface AuthCtx {
   user: string | null
   admin: boolean
+  perms: Record<string, boolean>
+  can: (perm: string) => boolean
   loading: boolean
   login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
@@ -31,6 +33,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user: me?.user ?? null,
       admin: me?.admin ?? false,
+      perms: me?.perms ?? {},
+      can: (perm: string) => (me?.admin ?? false) || !!me?.perms?.[perm],
       loading,
       login: async (username, password) => {
         const res = await api.post<Me>('/api/login', { username, password })

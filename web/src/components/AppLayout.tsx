@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button, Dropdown, Grid, Layout, Segmented, Select, Space, theme } from 'antd'
-import { FileSearchOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
+import { FileSearchOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UserOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -13,8 +13,8 @@ const { Header, Content, Footer } = Layout
 
 export default function AppLayout() {
   const { t } = useTranslation()
-  const { mode, setMode, locale, setLocale } = usePrefs()
-  const { user, admin, logout } = useAuth()
+  const { mode, setMode, lang, setLang, langs } = usePrefs()
+  const { user, admin, can, logout } = useAuth()
   const navigate = useNavigate()
   const loc = useLocation()
   const { token } = theme.useToken()
@@ -82,13 +82,10 @@ export default function AppLayout() {
           />
           <Select
             size="middle"
-            value={locale}
-            onChange={(v) => setLocale(v)}
-            style={{ width: compact ? 76 : 92 }}
-            options={[
-              { value: 'zh', label: '中文' },
-              { value: 'en', label: 'EN' },
-            ]}
+            value={lang}
+            onChange={setLang}
+            style={{ width: compact ? 104 : 116 }}
+            options={langs.map((l) => ({ value: l.code, label: l.label }))}
           />
           <Button
             icon={<FileSearchOutlined />}
@@ -97,6 +94,15 @@ export default function AppLayout() {
           >
             {!compact && t('nav.research')}
           </Button>
+          {can('run_batch') && (
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={() => navigate('/batch')}
+              title={t('nav.batch')}
+            >
+              {!compact && t('nav.batch')}
+            </Button>
+          )}
           {admin && (
             <Button
               icon={<SettingOutlined />}

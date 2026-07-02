@@ -38,7 +38,9 @@ func newV1Server(t *testing.T) *Server {
 	t.Helper()
 	st := newTestStore(t)
 	st.CreateToken("tok-all", "test", "all", "")
-	return &Server{st: st, names: LoadNames(t.TempDir(), st)}
+	srv := &Server{st: st, names: LoadNames(t.TempDir(), st)}
+	srv.names.fetch = func(string) string { return "" } // no network in tests unless a test opts in
+	return srv
 }
 
 // v1 ingest: portal-generated uid, created flag, JSON error envelope, date validation.

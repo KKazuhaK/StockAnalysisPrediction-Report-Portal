@@ -73,4 +73,26 @@ func TestPostgresQueries(t *testing.T) {
 	if len(reps) == 0 {
 		t.Error("case-insensitive search for 'apple' found nothing; ILIKE not applied on Postgres")
 	}
+
+	// FreezeReportNames: the correlated-subquery UPDATE must run on Postgres and only
+	// touch un-named rows whose symbol is known.
+	if _, err := st.exec(ins, "u3", "T3", "600161", "", "交易分析", "2026-07-01", "重组决策", "run2", "dify", nowStr(), "body three", ""); err != nil {
+		t.Fatalf("insert 3: %v", err)
+	}
+	if _, err := st.exec("INSERT INTO stocks(code,name,updated_at) VALUES(?,?,?)", "600161", "Frozen Co", nowStr()); err != nil {
+		t.Fatalf("insert stock 2: %v", err)
+	}
+	n, err := st.FreezeReportNames()
+	if err != nil {
+		t.Fatalf("FreezeReportNames: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("frozen rows = %d, want 1 (only the un-named u3)", n)
+	}
+	if r := st.GetByUID("u3"); r == nil || r.Name != "Frozen Co" {
+		t.Fatalf("u3 name = %v, want Frozen Co", r)
+	}
+	if r := st.GetByUID("u1"); r == nil || r.Name != "Apple Inc" {
+		t.Fatalf("u1 name = %v, want Apple Inc (already-named row must be untouched)", r)
+	}
 }

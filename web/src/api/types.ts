@@ -3,6 +3,101 @@
 export interface Me {
   user: string
   admin: boolean
+  role?: string
+  perms?: Record<string, boolean>
+}
+
+// ---- Batch-run feature ----
+
+export interface PluginInput {
+  key: string
+  label?: string
+  required?: boolean
+}
+
+export interface PluginConfigField {
+  key: string
+  label?: string
+  secret?: boolean
+}
+
+export interface BatchPlugin {
+  slug: string
+  name: string
+  version: string
+  source: string
+  enabled: boolean
+  inputs: PluginInput[]
+  config: PluginConfigField[]
+}
+
+export interface MarketPlugin {
+  slug: string
+  name: string
+  version: string
+  description: string
+  installed: boolean
+}
+
+export interface BatchTarget {
+  id: number
+  plugin_slug: string
+  plugin_name?: string
+  name: string
+  created_at: string
+  inputs?: PluginInput[]
+}
+
+export interface BatchJob {
+  id: number
+  target_id: number
+  status: string
+  concurrency: number
+  max_retries: number
+  total: number
+  succeeded: number
+  partial: number
+  failed: number
+  created_by: string
+  created_at: string
+  started_at: string
+  finished_at: string
+}
+
+export interface BatchItem {
+  id: number
+  row_index: number
+  inputs: string
+  status: string
+  attempts: number
+  run_id: string
+  error: string
+  started_at: string
+  finished_at: string
+}
+
+export interface BatchJobDetail {
+  job: BatchJob
+  counts: { queued: number; running: number; succeeded: number; partial: number; failed: number }
+  running_in_process: boolean
+  items: BatchItem[]
+}
+
+export interface Webhook {
+  id: number
+  url: string
+  events: string[]
+  active: boolean
+  created_at: string
+  has_secret: boolean
+  last_status: number
+  last_error: string
+  last_delivered_at: string
+}
+
+export interface WebhooksResp {
+  webhooks: Webhook[]
+  events: string[]
 }
 
 export interface SymbolInfo {
@@ -20,6 +115,7 @@ export interface Rep {
   name: string // as-of company name (snapshot at ingest)
   curName?: string // current company name; differs after rename / backdoor listing
   date: string
+  time?: string // UTC RFC3339 ingest instant; legacy rows are date-only/empty
   kind: string
   rtype: string
   source: string
@@ -156,6 +252,7 @@ export interface SettingsResp {
   oldBase: string
   oldUser: string
   hasPass: boolean
+  timezone: string // '' = follow system zone
   newCount: number
 }
 
