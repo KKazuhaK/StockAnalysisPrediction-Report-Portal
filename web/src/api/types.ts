@@ -156,9 +156,7 @@ export interface SettingsResp {
   oldBase: string
   oldUser: string
   hasPass: boolean
-  syncMin: string
   newCount: number
-  oldCount: number
 }
 
 export interface TokenRow {

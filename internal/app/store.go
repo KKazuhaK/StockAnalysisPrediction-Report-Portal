@@ -75,6 +75,9 @@ func OpenStore(driver, source string) (*Store, error) {
 	return s, s.init()
 }
 
+// Close closes the underlying database connection.
+func (s *Store) Close() error { return s.db.Close() }
+
 // bind rewrites ? placeholders according to the driver (postgres uses $1,$2…).
 func (s *Store) bind(q string) string {
 	if s.driver != "postgres" {
@@ -108,6 +111,26 @@ func (s *Store) pkAuto() string {
 	return "INTEGER PRIMARY KEY AUTOINCREMENT"
 }
 
+// likeOp returns the substring-match operator. Postgres LIKE is case-sensitive
+// while SQLite's is not, so on Postgres we use ILIKE to keep name/keyword search
+// case-insensitive (matches the SQLite behaviour users rely on).
+func (s *Store) likeOp() string {
+	if s.driver == "postgres" {
+		return "ILIKE"
+	}
+	return "LIKE"
+}
+
+// groupConcatDistinct returns a driver-specific aggregate joining the distinct
+// values of col with commas. SQLite has GROUP_CONCAT; Postgres has no such
+// function and uses STRING_AGG instead.
+func (s *Store) groupConcatDistinct(col string) string {
+	if s.driver == "postgres" {
+		return fmt.Sprintf("STRING_AGG(DISTINCT %s, ',' ORDER BY %s)", col, col)
+	}
+	return fmt.Sprintf("GROUP_CONCAT(DISTINCT %s)", col)
+}
+
 func (s *Store) init() error {
 	pk := s.pkAuto()
 	stmts := []string{
@@ -118,11 +141,6 @@ func (s *Store) init() error {
 			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(rdate)`,
 		`CREATE INDEX IF NOT EXISTS idx_reports_sym  ON reports(symbol)`,
-		`CREATE TABLE IF NOT EXISTS old_meta(
-			id BIGINT PRIMARY KEY, title TEXT, category TEXT, author TEXT,
-			time TEXT, report_date TEXT, stock_code TEXT)`,
-		`CREATE INDEX IF NOT EXISTS idx_old_date ON old_meta(report_date)`,
-		`CREATE INDEX IF NOT EXISTS idx_old_sym  ON old_meta(stock_code)`,
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
 			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
 		`CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)`,
@@ -319,9 +337,6 @@ func (s *Store) DiscoveredTypes() []string {
 	for _, v := range s.distinct("SELECT DISTINCT rtype FROM reports WHERE rtype<>''") {
 		add(v)
 	}
-	for _, v := range s.distinct("SELECT DISTINCT category FROM old_meta WHERE category<>''") {
-		add(v)
-	}
 	for k := range s.TypeConfigs() {
 		add(k)
 	}
@@ -347,20 +362,21 @@ func dir(sort string) string {
 func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 	var where []string
 	var args []any
+	op := s.likeOp()
 	if f.Q != "" {
 		// Match title, code, the as-of snapshot name, or the current name (via
 		// the stocks join); full-text scope also scans the body.
 		like := "%" + f.Q + "%"
 		if f.Scope == "fulltext" {
-			where = append(where, "(r.title LIKE ? OR r.symbol LIKE ? OR r.name LIKE ? OR s.name LIKE ? OR r.body_md LIKE ?)")
+			where = append(where, fmt.Sprintf("(r.title %[1]s ? OR r.symbol %[1]s ? OR r.name %[1]s ? OR s.name %[1]s ? OR r.body_md %[1]s ?)", op))
 			args = append(args, like, like, like, like, like)
 		} else {
-			where = append(where, "(r.title LIKE ? OR r.symbol LIKE ? OR r.name LIKE ? OR s.name LIKE ?)")
+			where = append(where, fmt.Sprintf("(r.title %[1]s ? OR r.symbol %[1]s ? OR r.name %[1]s ? OR s.name %[1]s ?)", op))
 			args = append(args, like, like, like, like)
 		}
 	}
 	if f.Symbol != "" {
-		where = append(where, "r.symbol LIKE ?")
+		where = append(where, "r.symbol "+op+" ?")
 		args = append(args, "%"+f.Symbol+"%")
 	}
 	if f.RType != "" {
@@ -535,7 +551,7 @@ func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
 	}
 	if f.Q != "" {
 		like := "%" + f.Q + "%"
-		where = append(where, "(r.title LIKE ? OR r.symbol LIKE ? OR s.name LIKE ? OR r.body_md LIKE ?)")
+		where = append(where, fmt.Sprintf("(r.title %[1]s ? OR r.symbol %[1]s ? OR s.name %[1]s ? OR r.body_md %[1]s ?)", s.likeOp()))
 		args = append(args, like, like, like, like)
 	}
 	if f.Kind != "" {
@@ -731,19 +747,17 @@ func (s *Store) ListSymbols(q string, limit int) []SymbolInfo {
 		// Match the stock code OR its current name (from the stocks table), so a
 		// name fragment or a code fragment both work — even for legacy reports,
 		// whose titles carry only the code.
-		where += " AND (t.sym LIKE ? OR s.name LIKE ?)"
+		where += fmt.Sprintf(" AND (t.sym %[1]s ? OR s.name %[1]s ?)", s.likeOp())
 		args = append(args, "%"+q+"%", "%"+q+"%")
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	// Aggregate report counts per symbol across both the new and legacy tables,
-	// then resolve the display name from the stocks table.
+	// Aggregate report counts per symbol from the unified reports table (legacy
+	// reports were migrated in), then resolve the display name from stocks.
 	rows, err := s.query(fmt.Sprintf(`SELECT t.sym, s.name, SUM(t.cnt) AS c, MAX(t.latest) AS latest
 		FROM (
 			SELECT symbol AS sym, COUNT(*) AS cnt, MAX(rdate) AS latest FROM reports GROUP BY symbol
-			UNION ALL
-			SELECT stock_code AS sym, COUNT(*) AS cnt, MAX(report_date) AS latest FROM old_meta GROUP BY stock_code
 		) t LEFT JOIN stocks s ON s.code = t.sym
 		%s
 		GROUP BY t.sym, s.name ORDER BY c DESC, t.sym LIMIT %d`, where, limit), args...)
@@ -778,8 +792,8 @@ func (s *Store) ListRuns(symbol, date string) []RunInfo {
 		args = append(args, date)
 	}
 	rows, err := s.query(fmt.Sprintf(`SELECT symbol,rdate,kind,MAX(run_id),
-		GROUP_CONCAT(DISTINCT rtype), COUNT(*) FROM reports WHERE %s
-		GROUP BY symbol,rdate,kind ORDER BY rdate DESC, kind`, strings.Join(where, " AND ")), args...)
+		%s, COUNT(*) FROM reports WHERE %s
+		GROUP BY symbol,rdate,kind ORDER BY rdate DESC, kind`, s.groupConcatDistinct("rtype"), strings.Join(where, " AND ")), args...)
 	if err != nil {
 		return nil
 	}
@@ -901,9 +915,9 @@ func (s *Store) NewTypes() []string {
 	return s.distinct("SELECT DISTINCT rtype FROM reports WHERE rtype<>'' ORDER BY rtype")
 }
 
-// ---------- Local index of old-report metadata ----------
+// ---------- Legacy import support (disposable) ----------
 
-// OldRaw is a raw record from the old API /api/reports.
+// OldRaw is a raw record from the old API /api/reports (used by the one-shot legacy import).
 type OldRaw struct {
 	ID         int64  `json:"id"`
 	Title      string `json:"title"`
@@ -914,109 +928,27 @@ type OldRaw struct {
 	StockCode  string `json:"stockCode"`
 }
 
-func (s *Store) UpsertOldMeta(rows []OldRaw) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	st, err := tx.Prepare(s.bind(`INSERT INTO old_meta(id,title,category,author,time,report_date,stock_code)
-		VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,category=excluded.category,
-		author=excluded.author,time=excluded.time,report_date=excluded.report_date,stock_code=excluded.stock_code`))
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	defer st.Close()
-	for _, r := range rows {
-		if _, err := st.Exec(r.ID, r.Title, r.Category, r.Author, r.Time, r.ReportDate, r.StockCode); err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *Store) CountOld() (n int) {
-	s.queryRow("SELECT COUNT(*) FROM old_meta").Scan(&n)
-	return
-}
-
-func (s *Store) OldCategories() []string {
-	return s.distinct("SELECT DISTINCT category FROM old_meta WHERE category<>'' ORDER BY category")
-}
-
-// SearchOldMeta returns matching old reports (normalized to Rep, body left empty).
-func (s *Store) SearchOldMeta(f Filters) ([]Rep, error) {
-	var where []string
-	var args []any
-	if f.Q != "" {
-		// Match the report title, the stock code, or the stock's current name —
-		// legacy titles carry only the code, so name search needs the join.
-		where = append(where, "(o.title LIKE ? OR o.stock_code LIKE ? OR s.name LIKE ?)")
-		args = append(args, "%"+f.Q+"%", "%"+f.Q+"%", "%"+f.Q+"%")
-	}
-	if f.Symbol != "" {
-		where = append(where, "o.stock_code LIKE ?")
-		args = append(args, "%"+f.Symbol+"%")
-	}
-	if f.RType != "" {
-		where = append(where, "o.category = ?")
-		args = append(args, f.RType)
-	}
-	if f.DateFrom != "" {
-		where = append(where, "o.report_date >= ?")
-		args = append(args, f.DateFrom)
-	}
-	if f.DateTo != "" {
-		where = append(where, "o.report_date <= ?")
-		args = append(args, f.DateTo)
-	}
-	q := "SELECT o.id,o.title,o.category,o.author,o.time,o.report_date,o.stock_code FROM old_meta o LEFT JOIN stocks s ON s.code = o.stock_code"
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
-	}
-	q += fmt.Sprintf(" ORDER BY o.report_date %s, o.time %s", dir(f.Sort), dir(f.Sort))
-	rows, err := s.query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Rep
-	for rows.Next() {
-		var id int64
-		var title, cat, auth, tm, rd, sc sql.NullString
-		if err := rows.Scan(&id, &title, &cat, &auth, &tm, &rd, &sc); err != nil {
-			return nil, err
-		}
-		out = append(out, Rep{
-			RID: fmt.Sprintf("o%d", id), Src: "old", Title: title.String, Symbol: sc.String,
-			RType: cat.String, Date: rd.String, Source: auth.String, Time: tm.String,
-		})
-	}
-	return out, rows.Err()
-}
-
 // ResearchReports lists the symbol-less (topic / free-form Q&A) reports — deep
 // research not tied to a fixed ticker — newest first, with optional title search
-// and pagination. Returns the page and the total match count.
-// (Legacy reports live in old_meta; new symbol-less reports can be folded in here later.)
+// and pagination. Returns the page and the total match count. Reads the unified
+// reports table (legacy reports were migrated there), so RIDs are n<rowid>.
 func (s *Store) ResearchReports(q string, limit, offset int) ([]Rep, int) {
-	where := "(stock_code IS NULL OR stock_code='')"
+	where := "(symbol IS NULL OR symbol='')"
 	var args []any
 	if q != "" {
-		where += " AND title LIKE ?"
+		where += " AND title " + s.likeOp() + " ?"
 		args = append(args, "%"+q+"%")
 	}
 	var total int
-	s.queryRow("SELECT COUNT(*) FROM old_meta WHERE "+where, args...).Scan(&total)
+	s.queryRow("SELECT COUNT(*) FROM reports WHERE "+where, args...).Scan(&total)
 	if limit <= 0 || limit > 200 {
 		limit = 30
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := s.query("SELECT id,title,category,author,time,report_date,stock_code FROM old_meta WHERE "+
-		where+" ORDER BY report_date DESC, time DESC LIMIT ? OFFSET ?", append(args, limit, offset)...)
+	rows, err := s.query("SELECT rowid,title,rtype,rdate,source,sent_at FROM reports WHERE "+
+		where+" ORDER BY rdate DESC, sent_at DESC LIMIT ? OFFSET ?", append(args, limit, offset)...)
 	if err != nil {
 		return nil, total
 	}
@@ -1024,11 +956,11 @@ func (s *Store) ResearchReports(q string, limit, offset int) ([]Rep, int) {
 	var out []Rep
 	for rows.Next() {
 		var id int64
-		var title, cat, auth, tm, rd, sc sql.NullString
-		rows.Scan(&id, &title, &cat, &auth, &tm, &rd, &sc)
+		var title, rt, rd, src, tm sql.NullString
+		rows.Scan(&id, &title, &rt, &rd, &src, &tm)
 		out = append(out, Rep{
-			RID: fmt.Sprintf("o%d", id), Src: "old", Title: title.String, Symbol: sc.String,
-			RType: cat.String, Date: rd.String, Source: auth.String, Time: tm.String,
+			RID: fmt.Sprintf("n%d", id), Src: "new", Title: title.String,
+			RType: rt.String, Date: rd.String, Source: src.String, Time: tm.String,
 		})
 	}
 	return out, total

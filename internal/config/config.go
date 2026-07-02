@@ -74,6 +74,24 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, err
 	}
+	// RP_* env vars override the file (used by the Docker image, which defaults to
+	// Postgres). Empty/unset vars leave the file value untouched.
+	if v := os.Getenv("RP_LISTEN"); v != "" {
+		c.Listen = v
+	}
+	if v := os.Getenv("RP_SECRET_KEY"); v != "" {
+		c.SecretKey = v
+	}
+	if v := os.Getenv("RP_DB_DRIVER"); v != "" {
+		c.DBDriver = v
+	}
+	if v := os.Getenv("RP_DB_DSN"); v != "" {
+		c.DBDSN = v
+	}
+	if v := os.Getenv("RP_DB_PATH"); v != "" {
+		c.DBPath = v
+	}
+	// Defaults for anything still empty (standalone binary with no env → SQLite).
 	if c.Listen == "" {
 		c.Listen = ":8790"
 	}

@@ -121,11 +121,8 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 		newTotal = len(nn)
 		reps = append(reps, nn...)
 	}
-	if src == "all" || src == "old" {
-		oo, _ := s.st.SearchOldMeta(f)
-		oldTotal = len(oo)
-		reps = append(reps, oo...)
-	}
+	// oldTotal stays 0: legacy reports were migrated into the reports table and now
+	// come back via SearchNew above (the live old-portal read path is gone).
 	groups := buildGroups(reps, s.names.Get)
 	totalRuns := len(groups)
 	pages := int(math.Max(1, math.Ceil(float64(totalRuns)/float64(size))))
@@ -137,7 +134,7 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 	if hi > len(groups) {
 		hi = len(groups)
 	}
-	types := uniqSorted(append(s.st.NewTypes(), s.st.OldCategories()...))
+	types := uniqSorted(s.st.NewTypes())
 	writeJSON(w, map[string]any{
 		"groups":   groupsJSON(groups[lo:hi]),
 		"newTotal": newTotal, "oldTotal": oldTotal, "totalRuns": totalRuns,
@@ -189,10 +186,6 @@ func groupsJSON(gs []Group) []map[string]any {
 func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	symbol := r.PathValue("symbol")
 	all, _ := s.st.NewBySymbol(symbol)
-	// Also fold in legacy reports for this symbol so the per-stock timeline covers
-	// the full history (most data lives in old_meta), not just new reports.
-	old, _ := s.st.SearchOldMeta(Filters{Symbol: symbol})
-	all = append(all, old...)
 	if len(all) == 0 {
 		jsonError(w, http.StatusNotFound, "该标的暂无报告")
 		return
@@ -561,37 +554,25 @@ func (s *Server) apiUserDelete(w http.ResponseWriter, r *http.Request, user stri
 	writeJSON(w, okJSON)
 }
 
-// ---------- Admin: system settings (legacy portal credentials / sync interval) ----------
+// ---------- Admin: system settings (legacy portal credentials, used by the one-shot import) ----------
 
 func (s *Server) apiAdminSettings(w http.ResponseWriter, r *http.Request, user string) {
 	writeJSON(w, map[string]any{
 		"oldBase":  s.st.GetSetting("old_base", ""),
 		"oldUser":  s.st.GetSetting("old_user", ""),
 		"hasPass":  s.st.GetSetting("old_pass", "") != "",
-		"syncMin":  s.st.GetSetting("sync_min", "0"),
 		"newCount": s.st.CountNew(),
-		"oldCount": s.st.CountOld(),
 	})
 }
 
 func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user string) {
-	var in struct{ OldBase, OldUser, OldPass, SyncMin string }
+	var in struct{ OldBase, OldUser, OldPass string }
 	readJSON(r, &in)
 	s.st.SetSetting("old_base", strings.TrimSpace(in.OldBase))
 	s.st.SetSetting("old_user", strings.TrimSpace(in.OldUser))
 	if in.OldPass != "" { // empty = don't change the password
 		s.st.SetSetting("old_pass", in.OldPass)
 	}
-	s.st.SetSetting("sync_min", strings.TrimSpace(in.SyncMin))
-	s.old.SetCreds(s.st.GetSetting("old_base", ""), s.st.GetSetting("old_user", ""), s.st.GetSetting("old_pass", ""))
-	writeJSON(w, okJSON)
-}
-
-func (s *Server) apiSettingsSync(w http.ResponseWriter, r *http.Request, user string) {
-	go func() {
-		n, err := s.old.SyncAllMeta(s.st)
-		log.Printf("manual old-meta sync: %d, err=%v", n, err)
-	}()
 	writeJSON(w, okJSON)
 }
 

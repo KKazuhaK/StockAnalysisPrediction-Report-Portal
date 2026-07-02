@@ -17,7 +17,7 @@ import {
   Tag,
   Typography,
 } from 'antd'
-import { CloudSyncOutlined, DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
+import { DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { SettingsResp, TokenRow } from '../../api/types'
@@ -26,7 +26,7 @@ import { specToEndpoints, type ApiEndpoint, type ApiParam, type ApiError } from 
 
 const SCOPE_COLORS: Record<string, string> = { all: 'gold', ingest: 'blue', query: 'green' }
 
-function SyncTab() {
+function LegacyTab() {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [data, setData] = useState<SettingsResp | null>(null)
@@ -35,7 +35,7 @@ function SyncTab() {
   const load = () =>
     api.get<SettingsResp>('/api/admin/settings').then((r) => {
       setData(r)
-      form.setFieldsValue({ oldBase: r.oldBase, oldUser: r.oldUser, syncMin: r.syncMin })
+      form.setFieldsValue({ oldBase: r.oldBase, oldUser: r.oldUser })
     })
 
   useEffect(() => {
@@ -49,17 +49,12 @@ function SyncTab() {
     load()
   }
 
-  const syncNow = async () => {
-    await api.post('/api/admin/settings/sync')
-    message.info(t('settings.syncStarted'))
-  }
-
   return (
     <Space direction="vertical" size={20} style={{ width: '100%', maxWidth: 560 }}>
-      <Space size={40}>
-        <Statistic title={t('src.new')} value={data?.newCount ?? 0} />
-        <Statistic title={t('src.old')} value={data?.oldCount ?? 0} />
-      </Space>
+      <Statistic title={t('src.new')} value={data?.newCount ?? 0} />
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        {t('settings.legacyHint')}
+      </Typography.Paragraph>
       <Form form={form} layout="vertical">
         <Form.Item name="oldBase" label={t('settings.oldBase')}>
           <Input placeholder="http://…" />
@@ -73,17 +68,9 @@ function SyncTab() {
             placeholder={data?.hasPass ? t('settings.oldPassSet') : ''}
           />
         </Form.Item>
-        <Form.Item name="syncMin" label={t('settings.syncMin')}>
-          <Input style={{ width: 120 }} />
-        </Form.Item>
-        <Space>
-          <Button type="primary" icon={<SaveOutlined />} onClick={save}>
-            {t('common.save')}
-          </Button>
-          <Button icon={<CloudSyncOutlined />} onClick={syncNow}>
-            {t('settings.syncNow')}
-          </Button>
-        </Space>
+        <Button type="primary" icon={<SaveOutlined />} onClick={save}>
+          {t('common.save')}
+        </Button>
       </Form>
     </Space>
   )
@@ -352,7 +339,7 @@ export default function SettingsPage() {
     <Card variant="borderless" styles={{ body: { paddingTop: 8 } }}>
       <Tabs
         items={[
-          { key: 'sync', label: t('settings.oldBase'), children: <SyncTab /> },
+          { key: 'legacy', label: t('settings.legacyTab'), children: <LegacyTab /> },
           { key: 'tokens', label: t('settings.tokens'), children: <TokensTab /> },
           { key: 'apidoc', label: t('settings.apidoc'), children: <ApiDocTab /> },
         ]}

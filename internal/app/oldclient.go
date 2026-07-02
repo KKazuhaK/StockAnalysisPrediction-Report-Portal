@@ -135,28 +135,27 @@ func (c *OldClient) listPage(page, pageSize int) (oldListResp, error) {
 	return r, json.Unmarshal(b, &r)
 }
 
-// SyncAllMeta paginates through all report metadata from the old portal and writes it to the local old_meta.
-func (c *OldClient) SyncAllMeta(st *Store) (int, error) {
-	page, got, total := 1, 0, -1
+// ListAllMeta paginates through all report metadata (no DB write). Used by the
+// one-shot legacy import to enumerate the full history.
+func (c *OldClient) ListAllMeta() ([]OldRaw, error) {
+	var out []OldRaw
+	page, total := 1, -1
 	for {
 		r, err := c.listPage(page, 100)
 		if err != nil {
-			return got, err
+			return out, err
 		}
 		if len(r.Reports) == 0 {
 			break
 		}
-		if err := st.UpsertOldMeta(r.Reports); err != nil {
-			return got, err
-		}
-		got += len(r.Reports)
+		out = append(out, r.Reports...)
 		total = r.Total
-		if total >= 0 && got >= total {
+		if total >= 0 && len(out) >= total {
 			break
 		}
 		page++
 	}
-	return got, nil
+	return out, nil
 }
 
 // Detail fetches a single report's content (cached for 30 minutes).

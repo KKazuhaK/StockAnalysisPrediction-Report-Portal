@@ -162,7 +162,6 @@ export default function HomePage() {
                         options={[
                           { value: 'all', label: t('src.all') },
                           { value: 'new', label: t('src.new') },
-                          { value: 'old', label: t('src.old') },
                         ]}
                       />
                     </Form.Item>

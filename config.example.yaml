@@ -14,8 +14,12 @@ listen: ":8790"
 # The auto-generated config already fills this in randomly; usually no need to change it.
 secret_key: "replace-with-a-long-random-string"
 
-# Database: sqlite (default, single file, zero deps) or postgres
+# Database: sqlite (default for the standalone binary, single file, zero deps) or postgres.
+# The Docker stack defaults to Postgres via env vars (see docker-compose.yml).
 db_driver: "sqlite"
 db_path: "data/portal.db"
 # db_driver: "postgres"
 # db_dsn: "postgres://user:pass@127.0.0.1:5432/reports?sslmode=disable"
+#
+# Env overrides (take precedence over this file; used by the Docker image):
+#   RP_LISTEN, RP_SECRET_KEY, RP_DB_DRIVER, RP_DB_DSN, RP_DB_PATH

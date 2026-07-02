@@ -35,7 +35,6 @@ const cookieName = "rp_session"
 type Server struct {
 	cfg   *config.Config
 	st    *Store
-	old   *OldClient
 	names *Names
 	pdf   *template.Template
 }
@@ -87,13 +86,10 @@ func RunServer(cfgPath string) {
 		bar := strings.Repeat("=", 52)
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
-	s := &Server{cfg: cfg, st: st, old: NewOldClient("", "", "")}
+	s := &Server{cfg: cfg, st: st}
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()
-
-	// Old-portal credentials / sync interval are all stored in the database and managed in the web "System Settings" (config is no longer involved).
-	s.old.SetCreds(st.GetSetting("old_base", ""), st.GetSetting("old_user", ""), st.GetSetting("old_pass", ""))
 
 	if st.CountTokens() == 0 { // on first run, create a default API token (managed on the System Settings page: multiple tokens / notes / expiry / scope)
 		st.CreateToken(randToken(), "default", "all", "")
@@ -105,11 +101,9 @@ func RunServer(cfgPath string) {
 		log.Printf("seeded %d default report types", n)
 	}
 
-	go s.syncLoop() // sync old metadata in the background
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"ok":true,"version":%q,"commit":%q,"new":%d,"old":%d}`, version.Version, version.Commit, st.CountNew(), st.CountOld())
+		fmt.Fprintf(w, `{"ok":true,"version":%q,"commit":%q,"new":%d}`, version.Version, version.Commit, st.CountNew())
 	})
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) { // public: shown on the login/about page
 		writeJSON(w, map[string]any{"version": version.Version, "commit": version.Commit, "buildDate": version.BuildDate})
@@ -165,7 +159,6 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("DELETE /api/admin/users/{name}", s.requireAdminJSON(s.apiUserDelete))
 	mux.HandleFunc("GET /api/admin/settings", s.requireAdminJSON(s.apiAdminSettings))
 	mux.HandleFunc("POST /api/admin/settings", s.requireAdminJSON(s.apiSettingsSave))
-	mux.HandleFunc("POST /api/admin/settings/sync", s.requireAdminJSON(s.apiSettingsSync))
 	mux.HandleFunc("GET /api/admin/tokens", s.requireAdminJSON(s.apiAdminTokens))
 	mux.HandleFunc("POST /api/admin/tokens", s.requireAdminJSON(s.apiTokenAdd))
 	mux.HandleFunc("DELETE /api/admin/tokens/{id}", s.requireAdminJSON(s.apiTokenDelete))
@@ -177,7 +170,7 @@ func RunServer(cfgPath string) {
 	// ---- SPA: hand all other paths to React (deep links fall back to index.html) ----
 	mux.HandleFunc("GET /", s.spaHandler())
 
-	log.Printf("report-portal %s | listen %s | db %s | reports new:%d old:%d", version.String(), cfg.Listen, cfg.DBDriver, st.CountNew(), st.CountOld())
+	log.Printf("report-portal %s | listen %s | db %s | reports:%d", version.String(), cfg.Listen, cfg.DBDriver, st.CountNew())
 	if err := http.ListenAndServe(cfg.Listen, logMiddleware(mux)); err != nil {
 		log.Fatal(err)
 	}
@@ -357,12 +350,6 @@ func (s *Server) runMembers(key string) []Rep {
 		nn, _ := s.st.SearchNew(Filters{DateFrom: date, DateTo: date, Sort: "date_asc"})
 		for _, m := range nn {
 			if m.Symbol == symbol {
-				members = append(members, m)
-			}
-		}
-		oo, _ := s.st.SearchOldMeta(Filters{Symbol: symbol})
-		for _, m := range oo {
-			if m.Symbol == symbol && m.Date == date {
 				members = append(members, m)
 			}
 		}
@@ -846,20 +833,6 @@ func (s *Server) loadRep(rid string) *Rep {
 		rep, _ := s.st.GetNew(id)
 		return rep
 	}
-	if strings.HasPrefix(rid, "o") {
-		id, err := strconv.ParseInt(rid[1:], 10, 64)
-		if err != nil {
-			return nil
-		}
-		d, err := s.old.Detail(id)
-		if err != nil {
-			return nil
-		}
-		return &Rep{
-			RID: rid, Src: "old", Title: d.Title, Symbol: d.StockCode, RType: d.Category,
-			Date: d.ReportDate, Source: d.Author, Time: d.Time, HTML: d.ContentHTML, MD: d.Content,
-		}
-	}
 	return nil
 }
 
@@ -927,33 +900,10 @@ var kindOrder = []string{"重组决策", "投资决策", "深度研究", "技术
 
 // ---------- Account management ----------
 
-// ---------- Background sync ----------
-
-// ---------- System settings (old-portal credentials / sync interval, stored in the DB) ----------
-
-func (s *Server) syncLoop() {
-	do := func() {
-		if s.st.GetSetting("old_base", "") == "" {
-			return // old portal not configured, skip sync
-		}
-		n, err := s.old.SyncAllMeta(s.st)
-		if err != nil {
-			log.Printf("old-meta sync error (synced %d): %v", n, err)
-			return
-		}
-		log.Printf("old-meta sync done: %d", s.st.CountOld())
-	}
-	do()
-	for {
-		min := 0
-		fmt.Sscanf(s.st.GetSetting("sync_min", "0"), "%d", &min)
-		if min <= 0 {
-			return // 0 = sync only once at startup
-		}
-		time.Sleep(time.Duration(min) * time.Minute)
-		do()
-	}
-}
+// ---------- System settings ----------
+// Old-portal credentials are stored in the DB and set via System Settings; the
+// one-shot importer (report-portal import-legacy) reads them. There is no live
+// sync/read-through anymore — legacy data is migrated into the reports table.
 
 func uniqSorted(in []string) []string {
 	seen := map[string]bool{}

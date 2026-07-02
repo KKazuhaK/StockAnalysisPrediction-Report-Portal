@@ -7,8 +7,36 @@
 #   # To enable legacy-portal passthrough / change settings: log in and configure under Settings
 #
 # Update: docker compose pull && docker compose up -d
+#
+# Database: this Docker stack defaults to a bundled PostgreSQL ("db" service) — the
+# portal is pointed at it via the RP_DB_DSN env var below. (The standalone binary,
+# run without these env vars, still defaults to a local SQLite file.)
+# Set a strong DB password by exporting PG_PASSWORD or putting it in a .env file:
+#   echo "PG_PASSWORD=$(openssl rand -hex 16)" > .env
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: report-portal-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: portal
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-portal}
+      POSTGRES_DB: reports
+      TZ: Asia/Shanghai
+    volumes:
+      - rp-pgdata:/var/lib/postgresql/data
+    # Not published to the host — only reachable on the internal compose network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portal -d reports"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
   report-portal:
     # Three image channels:
     #   :latest → newest stable (recommended, default)
@@ -18,19 +46,25 @@ services:
     container_name: report-portal
     restart: unless-stopped
     pull_policy: always
+    depends_on:
+      db:
+        condition: service_healthy
 
     ports:
       - "127.0.0.1:8790:8790"   # bind to localhost only; expose via host nginx reverse proxy + TLS
 
     volumes:
-      - ./config:/app/config    # bind mount: edit config.yaml directly on the host
-      - rp-data:/app/data       # SQLite + runtime data
+      - ./config:/app/config    # holds the auto-generated secret_key (persisted across restarts)
+      - rp-data:/app/data       # runtime data (unused for the DB when Postgres is active)
 
     environment:
+      TZ: Asia/Shanghai
+      # Point the portal at the bundled Postgres. These override config.yaml.
+      RP_DB_DRIVER: postgres
+      RP_DB_DSN: "postgres://portal:${PG_PASSWORD:-portal}@db:5432/reports?sslmode=disable"
       # Make ./config owned by you so it's editable on the host without sudo (set your id -u / id -g)
       # PUID: "1000"
       # PGID: "1000"
-      TZ: Asia/Shanghai
 
     # Resource cap so it doesn't contend with Dify/Ragflow on the same host
     deploy:
@@ -40,3 +74,4 @@ services:
 
 volumes:
   rp-data:
+  rp-pgdata:

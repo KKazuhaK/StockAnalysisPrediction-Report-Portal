@@ -1,24 +1,29 @@
 package app
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
-func insertOld(t *testing.T, st *Store, id int64, title, category, date, code string) {
+func insertResearch(t *testing.T, st *Store, uid, title, rtype, date, code string) {
 	t.Helper()
-	if _, err := st.exec(
-		"INSERT INTO old_meta(id,title,category,author,time,report_date,stock_code) VALUES(?,?,?,?,?,?,?)",
-		id, title, category, "src", date+" 10:00", date, code); err != nil {
-		t.Fatalf("insert old_meta: %v", err)
+	if _, err := st.UpsertReport(Rep{
+		UID: uid, Title: title, Symbol: code, RType: rtype,
+		Date: date, Source: "dify", Time: date + " 10:00",
+	}); err != nil {
+		t.Fatalf("UpsertReport: %v", err)
 	}
 }
 
 // ResearchReports returns only the symbol-less (topic / Q&A) reports — the ones
 // that don't belong to a fixed ticker — newest first, with optional title search
-// and pagination.
+// and pagination. Post-cutover it reads the unified reports table (legacy reports
+// were migrated there), so RIDs are n<rowid>.
 func TestResearchReports(t *testing.T) {
 	st := newTestStore(t)
-	insertOld(t, st, 1, "航空产业链深度研究", "综合深度研究", "2026-05-01", "")
-	insertOld(t, st, 2, "AI 泡沫程度评估", "综合深度研究", "2026-05-03", "")
-	insertOld(t, st, 3, "贵州茅台点评", "估值分析", "2026-05-02", "600519") // has a ticker → excluded
+	insertResearch(t, st, "r1", "航空产业链深度研究", "综合深度研究", "2026-05-01", "")
+	insertResearch(t, st, "r2", "AI 泡沫程度评估", "综合深度研究", "2026-05-03", "")
+	insertResearch(t, st, "r3", "贵州茅台点评", "估值分析", "2026-05-02", "600519") // has a ticker → excluded
 
 	reps, total := st.ResearchReports("", 10, 0)
 	if total != 2 {
@@ -31,8 +36,8 @@ func TestResearchReports(t *testing.T) {
 	if reps[0].Title != "AI 泡沫程度评估" {
 		t.Errorf("first = %q, want the newest (AI 泡沫程度评估)", reps[0].Title)
 	}
-	if reps[0].RID == "" || reps[0].RID[0] != 'o' {
-		t.Errorf("RID = %q, want an o<id> legacy id", reps[0].RID)
+	if reps[0].RID == "" || reps[0].RID[0] != 'n' {
+		t.Errorf("RID = %q, want an n<rowid> report id", reps[0].RID)
 	}
 
 	// title search
@@ -45,7 +50,7 @@ func TestResearchReports(t *testing.T) {
 func TestResearchReportsPagination(t *testing.T) {
 	st := newTestStore(t)
 	for i := int64(1); i <= 5; i++ {
-		insertOld(t, st, i, "研究", "综合深度研究", "2026-05-0"+string(rune('0'+i)), "")
+		insertResearch(t, st, fmt.Sprintf("r%d", i), "研究", "综合深度研究", "2026-05-0"+string(rune('0'+i)), "")
 	}
 	page1, total := st.ResearchReports("", 2, 0)
 	page2, _ := st.ResearchReports("", 2, 2)
