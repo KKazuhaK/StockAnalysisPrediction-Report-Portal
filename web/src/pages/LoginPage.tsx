@@ -42,7 +42,7 @@ export default function LoginPage() {
         background: token.colorBgLayout,
       }}
     >
-      <Card style={{ width: 380, boxShadow: token.boxShadowSecondary }}>
+      <Card style={{ width: '100%', maxWidth: 380, boxShadow: token.boxShadowSecondary }}>
         <Space direction="vertical" size={20} style={{ width: '100%' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <Typography.Title
