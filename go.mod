@@ -1,4 +1,4 @@
-module github.com/KKazuhaK/StockAnalysisPrediction-Dify-Report-Portal
+module github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal
 
 go 1.26.3
 

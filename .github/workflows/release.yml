@@ -1,7 +1,14 @@
 name: Release
 
-# 打 v* tag（或手动 dispatch）→ 跨平台编译单二进制 → 发 GitHub Release +
-# 推 ghcr.io 多架构镜像（镜像只 COPY 预编译二进制，无需 QEMU）。
+# 单流水线同时产出 GitHub Release 归档 + ghcr.io 多架构镜像，二者来自同一批二进制。
+# 套路抄 KazuhaHub/Passwall-Sub-Panel：
+#
+#   web     → 只构建一次前端 SPA(Vite)，作为 artifact 复用（旧写法在每个 matrix 里各编一遍 = 浪费）
+#   build   → matrix 原生交叉编译 6 平台，把 web 产物下载进 web/dist 后 //go:embed 进二进制
+#   release → 打 tar/zip + SHA256，发 GitHub Release
+#   docker  → 复用 linux amd64/arm64 二进制推多架构镜像（容器内不编译，免 QEMU）
+#
+# 你从 Release 校验的二进制与镜像里的逐字节一致（同一 artifact）。
 
 on:
   push:
@@ -19,6 +26,7 @@ permissions:
 
 jobs:
   setup:
+    name: Resolve tag
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.t.outputs.tag }}
@@ -37,37 +45,76 @@ jobs:
           echo "owner_lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
           echo "repo_lc=$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+  web:
+    name: Build web assets
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install deps
+        working-directory: web
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Build SPA bundle
+        working-directory: web
+        run: npm run build # vite outputs to ../internal/web/dist for go:embed
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: internal/web/dist
+          if-no-files-found: error
+          retention-days: 1
+
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
-    needs: setup
+    needs: [setup, web]
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { goos: linux,   goarch: amd64, ext: ""     }
-          - { goos: linux,   goarch: arm64, ext: ""     }
-          - { goos: darwin,  goarch: amd64, ext: ""     }
-          - { goos: darwin,  goarch: arm64, ext: ""     }
+          - { goos: linux, goarch: amd64, ext: "" }
+          - { goos: linux, goarch: arm64, ext: "" }
+          - { goos: darwin, goarch: amd64, ext: "" }
+          - { goos: darwin, goarch: arm64, ext: "" }
           - { goos: windows, goarch: amd64, ext: ".exe" }
+          - { goos: windows, goarch: arm64, ext: ".exe" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26.x"
           cache-dependency-path: go.sum
-      - name: Build
+      - name: Download web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: internal/web/dist
+      - name: Build report-portal
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
           VERSION: ${{ needs.setup.outputs.tag }}
+          COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           mkdir -p out
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
-            -o "out/report-portal${{ matrix.ext }}" .
-      - uses: actions/upload-artifact@v4
+          mod=github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal
+          short_sha="${COMMIT:0:7}"
+          build_date="$(date -u +%FT%TZ)"
+          ldflags="-s -w"
+          ldflags+=" -X ${mod}/internal/version.Version=${VERSION}"
+          ldflags+=" -X ${mod}/internal/version.Commit=${short_sha}"
+          ldflags+=" -X ${mod}/internal/version.BuildDate=${build_date}"
+          go build -trimpath -ldflags="${ldflags}" -o "out/report-portal${{ matrix.ext }}" ./cmd/report-portal
+      - uses: actions/upload-artifact@v7
         with:
           name: report-portal-${{ matrix.goos }}-${{ matrix.goarch }}
           path: out/report-portal${{ matrix.ext }}
@@ -75,15 +122,16 @@ jobs:
           retention-days: 1
 
   release:
+    name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs: [setup, build]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: report-portal-*
-      - name: Package
+      - name: Package archives
         shell: bash
         env:
           VERSION: ${{ needs.setup.outputs.tag }}
@@ -97,6 +145,8 @@ jobs:
             pkg="report-portal_${VERSION}_${goos}_${goarch}"
             mkdir -p "build/${pkg}"
             cp "${dir}/report-portal${ext}" "build/${pkg}/"
+            chmod +x "build/${pkg}/report-portal${ext}" || true
+            # README + 示例配置 + LICENSE 都是跟踪文件，缺失即让发布显式失败
             cp README.md config.example.yaml LICENSE "build/${pkg}/"
             if [ "$goos" = "windows" ]; then
               (cd build && zip -qr "../dist/${pkg}.zip" "${pkg}")
@@ -105,42 +155,81 @@ jobs:
             fi
           done
           (cd dist && sha256sum * > SHA256SUMS.txt)
-      - uses: softprops/action-gh-release@v2
+      - name: Generate release body
+        shell: bash
+        env:
+          VERSION: ${{ needs.setup.outputs.tag }}
+          OWNER_LC: ${{ needs.setup.outputs.owner_lc }}
+          REPO_LC: ${{ needs.setup.outputs.repo_lc }}
+        run: |
+          cat <<EOF > release_notes.md
+          ### Docker 镜像 (ghcr.io)
+
+          \`\`\`shell
+          docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:latest
+          # 或锁定版本
+          docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:${VERSION}
+          \`\`\`
+
+          ### 校验
+
+          \`\`\`shell
+          sha256sum -c SHA256SUMS.txt
+          \`\`\`
+          EOF
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.setup.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: ${{ needs.setup.outputs.tag }}
+          # 带 "-"（如 v1.0.0-beta）标为预发布，/releases/latest 会排除它。
           prerelease: ${{ contains(needs.setup.outputs.tag, '-') }}
           generate_release_notes: true
+          body_path: release_notes.md
+          append_body: true
           files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
+    name: Publish container image
     runs-on: ubuntu-latest
     needs: [setup, build]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with: { name: report-portal-linux-amd64, path: bin/linux-amd64 }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: report-portal-linux-arm64, path: bin/linux-arm64 }
       - run: chmod +x bin/linux-amd64/report-portal bin/linux-arm64/report-portal
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}
+          # 两条滚动通道：
+          #   :latest → 只跟最新【稳定】版（不含预发布）
+          #   :beta   → 跟最新一次发布（含预发布），始终"最新"
           tags: |
             type=raw,value=${{ needs.setup.outputs.tag }}
             type=raw,value=latest,enable=${{ startsWith(needs.setup.outputs.tag, 'v') && !contains(needs.setup.outputs.tag, '-') }}
             type=raw,value=beta,enable=${{ startsWith(needs.setup.outputs.tag, 'v') }}
-      - uses: docker/build-push-action@v6
+          labels: |
+            org.opencontainers.image.title=report-portal
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.setup.outputs.tag }}
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.release
+          # 免 QEMU：Dockerfile.release 只 COPY 预编译的对应架构二进制，debian 基础镜像本身多架构。
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

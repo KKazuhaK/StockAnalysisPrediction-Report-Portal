@@ -1,26 +1,39 @@
-# 密钥/运行时数据 —— 绝不进 git
+# Secrets / runtime data — never commit
 config.yaml
 /data/
 *.db
 *.db-wal
 *.db-shm
 
-# Go 构建产物
+# Go build outputs
 /report-portal
 /psp
 *.exe
 /dist/
 /out/
+/bin/
 
-# 杂项
+# Misc
 .DS_Store
 .env
 
-# go build 默认输出(名=目录名)
-/StockAnalysisPrediction-Dify-Report-Portal
+# Default `go build` output (named after the directory)
+/StockAnalysisPrediction-Report-Portal
 
-# 本地测试沙盒
+# Local test sandbox
 /local-build/
 
-# 前端依赖(绝不进 git)
+# Frontend dependencies — never commit
 web/node_modules/
+
+# Frontend build output: built by CI then go:embed'd. Keep the .gitkeep
+# placeholder so `go build` compiles the embed even before the SPA is built.
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+
+# Editor / tool directories
+.idea/
+.vscode/
+.claude/
+.codex/
+.cursor/

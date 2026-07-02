@@ -1,38 +1,38 @@
-# 零克隆部署：
-#   mkdir -p /opt/StockAnalysisPrediction-Dify-Report-Portal
-#   cd /opt/StockAnalysisPrediction-Dify-Report-Portal
-#   curl -O https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Dify-Report-Portal/main/docker-compose.yml
+# Zero-clone deployment:
+#   mkdir -p /opt/StockAnalysisPrediction-Report-Portal
+#   cd /opt/StockAnalysisPrediction-Report-Portal
+#   curl -O https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/main/docker-compose.yml
 #   docker compose up -d
-#   docker compose logs           # 首启会打印随机管理员密码
-#   # 需要旧门户读透/改设置：登录后在网页「系统设置」里配
+#   docker compose logs           # first run prints the random admin password
+#   # To enable legacy-portal passthrough / change settings: log in and configure under Settings
 #
-# 更新：docker compose pull && docker compose up -d
+# Update: docker compose pull && docker compose up -d
 
 services:
   report-portal:
-    # 镜像三档：
-    #   :latest → 最新稳定版（推荐，默认）
-    #   :beta   → 最新版（含预发布），始终最前沿
-    #   :vX.Y.Z → 锁定某个版本
-    image: ghcr.io/kkazuhak/stockanalysisprediction-dify-report-portal:latest
+    # Three image channels:
+    #   :latest → newest stable (recommended, default)
+    #   :beta   → newest build (incl. pre-releases), always bleeding edge
+    #   :vX.Y.Z → pin a specific version
+    image: ghcr.io/kkazuhak/stockanalysisprediction-report-portal:latest
     container_name: report-portal
     restart: unless-stopped
     pull_policy: always
 
     ports:
-      - "127.0.0.1:8790:8790"   # 只绑本机；对外用宿主 nginx 反代 + TLS
+      - "127.0.0.1:8790:8790"   # bind to localhost only; expose via host nginx reverse proxy + TLS
 
     volumes:
-      - ./config:/app/config    # bind：宿主机直接编辑 config.yaml
-      - rp-data:/app/data       # SQLite + 运行时数据
+      - ./config:/app/config    # bind mount: edit config.yaml directly on the host
+      - rp-data:/app/data       # SQLite + runtime data
 
     environment:
-      # 让 ./config 文件归属你本人、宿主机免 sudo 可编辑（填你的 id -u / id -g）
+      # Make ./config owned by you so it's editable on the host without sudo (set your id -u / id -g)
       # PUID: "1000"
       # PGID: "1000"
       TZ: Asia/Shanghai
 
-    # 资源上限，别跟同机 Dify/Ragflow 抢
+    # Resource cap so it doesn't contend with Dify/Ragflow on the same host
     deploy:
       resources:
         limits:
