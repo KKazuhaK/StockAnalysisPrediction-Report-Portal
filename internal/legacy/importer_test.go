@@ -20,9 +20,13 @@ func (f *fakeSource) Content(id int64) (string, string, error) {
 	return c[0], c[1], nil
 }
 
-type fakeSink struct{ got []ImportedReport }
+type fakeSink struct {
+	got  []ImportedReport
+	have map[int64]bool
+}
 
 func (s *fakeSink) ImportOne(r ImportedReport) error { s.got = append(s.got, r); return nil }
+func (s *fakeSink) Has(id int64) (bool, error)       { return s.have[id], nil }
 
 func TestImporterMigratesAllWithContent(t *testing.T) {
 	src := &fakeSource{
@@ -60,5 +64,39 @@ func TestImporterSkipsFailedFetch(t *testing.T) {
 	res, _ := (&Importer{Src: src, Sink: sink}).Run()
 	if res.Imported != 2 || res.Failed != 1 || len(res.FailedIDs) != 1 || res.FailedIDs[0] != 2 {
 		t.Fatalf("result = %+v, want imported2 failed1 failedIDs[2]", res)
+	}
+}
+
+// Resume: reports already present in the sink are skipped without re-fetching their body.
+func TestImporterResumeSkipsExisting(t *testing.T) {
+	src := &fakeSource{
+		list:    []OldReport{{ID: 1}, {ID: 2}, {ID: 3}},
+		content: map[int64][2]string{1: {"a", ""}, 2: {"b", ""}, 3: {"c", ""}},
+	}
+	sink := &fakeSink{have: map[int64]bool{2: true}} // id 2 already imported
+	res, _ := (&Importer{Src: src, Sink: sink}).Run()
+	if res.Imported != 2 || res.Skipped != 1 {
+		t.Fatalf("result = %+v, want imported2 skipped1", res)
+	}
+	for _, g := range sink.got {
+		if g.OldID == 2 {
+			t.Errorf("id=2 was re-imported despite already existing (resume should skip it)")
+		}
+	}
+}
+
+// Circuit breaker: after N consecutive failures the run aborts (old system likely
+// down) instead of churning through the rest, so a re-run can resume.
+func TestImporterCircuitBreaker(t *testing.T) {
+	src := &fakeSource{
+		list:    []OldReport{{ID: 1}, {ID: 2}, {ID: 3}, {ID: 4}, {ID: 5}},
+		failIDs: map[int64]bool{1: true, 2: true, 3: true, 4: true, 5: true},
+	}
+	res, err := (&Importer{Src: src, Sink: &fakeSink{}, MaxConsecutiveFailures: 3}).Run()
+	if !res.Aborted || err == nil {
+		t.Fatalf("expected abort with error; res=%+v err=%v", res, err)
+	}
+	if res.Failed != 3 {
+		t.Errorf("failed=%d, want 3 (stopped at the breaker, not all 5)", res.Failed)
 	}
 }

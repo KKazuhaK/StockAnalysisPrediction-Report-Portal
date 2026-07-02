@@ -51,14 +51,14 @@ func main() {
 			}
 			fmt.Printf("user saved: %s (role=%s)\n", os.Args[2], role)
 			return
-		case "import-legacy": // report-portal import-legacy — one-shot pull of all legacy reports (incl. body) into the store, then old system can be retired
-			imported, failed, failedIDs, err := app.RunLegacyImport(configPath(), log.Printf)
-			if err != nil {
-				log.Fatalf("legacy import failed: %v", err)
-			}
-			fmt.Printf("legacy import complete: imported=%d failed=%d\n", imported, failed)
+		case "import-legacy": // report-portal import-legacy — resumable one-shot pull of all legacy reports (incl. body) into the store, then old system can be retired
+			imported, skipped, failed, failedIDs, err := app.RunLegacyImport(configPath(), log.Printf)
+			fmt.Printf("legacy import: imported=%d skipped=%d failed=%d\n", imported, skipped, failed)
 			if len(failedIDs) > 0 {
-				fmt.Printf("failed ids (retry by re-running): %v\n", failedIDs)
+				fmt.Printf("failed ids (re-run to retry): %v\n", failedIDs)
+			}
+			if err != nil {
+				log.Fatalf("legacy import stopped: %v", err)
 			}
 			return
 		}

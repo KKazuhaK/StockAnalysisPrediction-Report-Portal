@@ -50,12 +50,21 @@ func TestRunLegacyImportE2E(t *testing.T) {
 	seed.SetSetting("old_pass", "p")
 	seed.Close()
 
-	imported, failed, failedIDs, err := RunLegacyImport(cfgPath, nil)
+	imported, skipped, failed, failedIDs, err := RunLegacyImport(cfgPath, nil)
 	if err != nil {
 		t.Fatalf("RunLegacyImport: %v", err)
 	}
 	if imported != 2 || failed != 0 || len(failedIDs) != 0 {
-		t.Fatalf("imported=%d failed=%d failedIDs=%v, want 2/0/[]", imported, failed, failedIDs)
+		t.Fatalf("imported=%d skipped=%d failed=%d failedIDs=%v, want 2/0/0/[]", imported, skipped, failed, failedIDs)
+	}
+
+	// Re-run must skip both (already imported) — resume works end-to-end.
+	imported2, skipped2, _, _, err := RunLegacyImport(cfgPath, nil)
+	if err != nil {
+		t.Fatalf("RunLegacyImport re-run: %v", err)
+	}
+	if imported2 != 0 || skipped2 != 2 {
+		t.Errorf("re-run imported=%d skipped=%d, want 0/2 (resume skips existing)", imported2, skipped2)
 	}
 
 	// Verify the rows actually landed.
