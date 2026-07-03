@@ -10,6 +10,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': 'http://localhost:8790',
+      '/app-assets': 'http://localhost:8790', // installed iframe apps' static files (ADR 0003)
       '/report': 'http://localhost:8790',
       '/healthz': 'http://localhost:8790',
     },

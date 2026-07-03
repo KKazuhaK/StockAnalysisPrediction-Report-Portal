@@ -32,11 +32,30 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   return data as T
 }
 
+async function requestForm<T>(method: string, url: string, body: FormData): Promise<T> {
+  const res = await fetch(url, { method, body, credentials: 'same-origin' })
+  const text = await res.text()
+  let data: any = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = text
+    }
+  }
+  if (!res.ok) {
+    const msg = (data && typeof data === 'object' && data.error) || res.statusText || 'request failed'
+    throw new ApiError(res.status, msg)
+  }
+  return data as T
+}
+
 export const api = {
   get: <T = any>(url: string) => request<T>('GET', url),
   post: <T = any>(url: string, body?: unknown) => request<T>('POST', url, body ?? {}),
   put: <T = any>(url: string, body?: unknown) => request<T>('PUT', url, body ?? {}),
   del: <T = any>(url: string) => request<T>('DELETE', url),
+  upload: <T = any>(url: string, body: FormData) => requestForm<T>('POST', url, body),
 }
 
 // qs builds a query string from a filter object (skipping empty values).

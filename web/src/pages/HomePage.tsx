@@ -207,9 +207,9 @@ export default function HomePage() {
         )}
       </Spin>
 
-      {/* Pagination */}
+      {/* Pagination — flex-centered (textAlign doesn't center antd's flex Pagination) */}
       {!!data && data.totalRuns > 0 && (
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 8 }}>
           <Pagination
             current={data.page}
             pageSize={Number(params.size)}

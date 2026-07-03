@@ -11,6 +11,8 @@ const DEFAULT_SETTINGS: SiteSettings = {
   footerText: '',
   footerShowInfo: true,
   footerShowVersion: true,
+  pwaEnabled: true,
+  pwaIconUrl: '',
 }
 
 interface SiteCtx {
@@ -29,6 +31,8 @@ function normalizeSettings(s?: Partial<SiteSettings> | null): SiteSettings {
     footerText: (s?.footerText ?? '').trim(),
     footerShowInfo: s?.footerShowInfo !== false,
     footerShowVersion: s?.footerShowVersion !== false,
+    pwaEnabled: s?.pwaEnabled !== false,
+    pwaIconUrl: (s?.pwaIconUrl ?? '').trim(),
   }
 }
 
@@ -70,6 +74,15 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       link.type = 'image/svg+xml'
     }
   }, [title, logoUrl])
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    if (settings.pwaEnabled) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {})
+    } else {
+      navigator.serviceWorker.getRegistration('/sw.js').then((reg) => reg?.unregister()).catch(() => {})
+    }
+  }, [settings.pwaEnabled])
 
   const value = useMemo<SiteCtx>(() => ({ settings, title, logoUrl, refresh }), [settings, title, logoUrl, refresh])
 
