@@ -1,5 +1,5 @@
 import { Card, Tabs } from 'antd'
-import { ApiOutlined, AppstoreAddOutlined, AppstoreOutlined, KeyOutlined, LinkOutlined, TeamOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { ApiOutlined, AppstoreAddOutlined, AppstoreOutlined, ControlOutlined, KeyOutlined, LinkOutlined, TeamOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
@@ -20,6 +20,7 @@ export default function ManageLayout() {
           { key: 'users', label: t('nav.users'), icon: <TeamOutlined /> },
           { key: 'settings', label: t('nav.settings'), icon: <KeyOutlined /> },
           { key: 'batch', label: t('nav.batchAdmin'), icon: <ThunderboltOutlined /> },
+          { key: 'runqueue', label: t('nav.runQueue'), icon: <ControlOutlined /> },
           { key: 'apps', label: t('nav.appsAdmin'), icon: <AppstoreAddOutlined /> },
           { key: 'webhooks', label: t('nav.webhooks'), icon: <ApiOutlined /> },
         ]}

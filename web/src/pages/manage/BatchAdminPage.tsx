@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, App, Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Space, Table, Tag, Typography, Upload } from 'antd'
+import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Space, Table, Tag, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, DeleteOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -12,10 +12,6 @@ export default function BatchAdminPage() {
 
   const [plugins, setPlugins] = useState<BatchPlugin[]>([])
   const [targets, setTargets] = useState<BatchTarget[]>([])
-  const [maxConcurrency, setMaxConcurrency] = useState<number>(10)
-  const [maxJobs, setMaxJobs] = useState<number>(1)
-  const [reservedSlots, setReservedSlots] = useState<number>(1)
-  const [ticketPeriod, setTicketPeriod] = useState<number>(7)
 
   const [targetOpen, setTargetOpen] = useState(false)
   const [form] = Form.useForm()
@@ -29,20 +25,10 @@ export default function BatchAdminPage() {
     api.get<{ plugins: BatchPlugin[] }>('/api/admin/batch/plugins').then((r) => setPlugins(r.plugins || []))
   const loadTargets = () =>
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || []))
-  const loadConfig = () =>
-    api
-      .get<{ max_concurrency: number; max_jobs: number; reserved_slots: number; ticket_period_days: number }>('/api/admin/batch/config')
-      .then((r) => {
-        setMaxConcurrency(r.max_concurrency)
-        setMaxJobs(r.max_jobs)
-        setReservedSlots(r.reserved_slots)
-        setTicketPeriod(r.ticket_period_days)
-      })
 
   useEffect(() => {
     loadPlugins()
     loadTargets()
-    loadConfig()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -129,16 +115,6 @@ export default function BatchAdminPage() {
     await api.del(`/api/admin/batch/targets/${id}`)
     loadTargets()
   }
-  const saveConfig = async () => {
-    await api.post('/api/admin/batch/config', {
-      max_concurrency: maxConcurrency,
-      max_jobs: maxJobs,
-      reserved_slots: reservedSlots,
-      ticket_period_days: ticketPeriod,
-    })
-    message.success(t('common.saved'))
-    loadConfig()
-  }
 
   const targetCols: ColumnsType<BatchTarget> = [
     { title: t('common.name'), dataIndex: 'name' },
@@ -182,34 +158,6 @@ export default function BatchAdminPage() {
       >
         {targets.length === 0 && <Typography.Text type="secondary">{t('batch.dify.targetsHint')}</Typography.Text>}
         <Table rowKey="id" size="small" dataSource={targets} columns={targetCols} pagination={false} style={{ marginTop: targets.length ? 0 : 12 }} />
-      </Card>
-
-      <Card title={t('batch.admin.settings')}>
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          <Space wrap>
-            <span>{t('batch.admin.maxJobs')}</span>
-            <InputNumber min={1} max={50} value={maxJobs} onChange={(v) => setMaxJobs(v || 1)} />
-            <Typography.Text type="secondary">{t('batch.admin.maxJobsHint')}</Typography.Text>
-          </Space>
-          <Space wrap>
-            <span>{t('batch.admin.reservedSlots')}</span>
-            <InputNumber min={0} max={Math.max(0, maxJobs - 1)} value={reservedSlots} onChange={(v) => setReservedSlots(v ?? 0)} />
-            <Typography.Text type="secondary">{t('batch.admin.reservedSlotsHint')}</Typography.Text>
-          </Space>
-          <Space wrap>
-            <span>{t('batch.admin.ticketPeriod')}</span>
-            <InputNumber min={1} max={365} value={ticketPeriod} onChange={(v) => setTicketPeriod(v || 7)} addonAfter={t('batch.admin.days')} />
-            <Typography.Text type="secondary">{t('batch.admin.ticketPeriodHint')}</Typography.Text>
-          </Space>
-          <Space wrap>
-            <span>{t('batch.admin.maxConcurrency')}</span>
-            <InputNumber min={1} max={100} value={maxConcurrency} onChange={(v) => setMaxConcurrency(v || 1)} />
-            <Typography.Text type="secondary">{t('batch.admin.maxConcurrencyHint')}</Typography.Text>
-          </Space>
-          <Button type="primary" onClick={saveConfig}>
-            {t('common.save')}
-          </Button>
-        </Space>
       </Card>
 
       {/* Advanced: custom (non-Dify) manifest plugins */}

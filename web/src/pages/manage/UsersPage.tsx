@@ -387,8 +387,8 @@ function GroupsDrawer({
 
   const openForm = (g: UserGroupRow | 'new') => {
     setEdit(g)
-    if (g === 'new') form.setFieldsValue({ name: '', description: '', weight: 0 })
-    else form.setFieldsValue({ name: g.name, description: g.description, weight: g.weight })
+    if (g === 'new') form.setFieldsValue({ name: '', description: '', weight: 0, priority: undefined })
+    else form.setFieldsValue({ name: g.name, description: g.description, weight: g.weight, priority: g.priority || undefined })
   }
   const save = async () => {
     const v = await form.validateFields()
@@ -431,6 +431,7 @@ function GroupsDrawer({
                         {t('users.weightN', { n: g.weight })}
                       </Tag>
                     )}
+                    {g.priority && <Tag color="blue">{t(`batch.priority.${g.priority}`)}</Tag>}
                   </Space>
                   {g.description && (
                     <div>
@@ -470,6 +471,16 @@ function GroupsDrawer({
           </Form.Item>
           <Form.Item name="weight" label={t('users.weight')} extra={t('users.weightHint')}>
             <InputNumber min={0} max={999} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="priority" label={t('users.priority')} extra={t('users.priorityHint')}>
+            <Select
+              allowClear
+              placeholder={t('users.prioritySystemDefault')}
+              options={[
+                { value: 'normal', label: t('batch.priority.normal') },
+                { value: 'other', label: t('batch.priority.other') },
+              ]}
+            />
           </Form.Item>
         </Form>
       </Modal>

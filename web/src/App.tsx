@@ -22,6 +22,7 @@ const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
 const UsersPage = lazyRetry(() => import('./pages/manage/UsersPage'))
 const SettingsPage = lazyRetry(() => import('./pages/manage/SettingsPage'))
 const BatchAdminPage = lazyRetry(() => import('./pages/manage/BatchAdminPage'))
+const RunQueueSettingsPage = lazyRetry(() => import('./pages/manage/RunQueueSettingsPage'))
 const WebhooksPage = lazyRetry(() => import('./pages/manage/WebhooksPage'))
 const AppsHub = lazyRetry(() => import('./pages/AppsHub'))
 const AppView = lazyRetry(() => import('./pages/AppView'))
@@ -105,6 +106,7 @@ function AppRoutes() {
           <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="batch" element={<BatchAdminPage />} />
+          <Route path="runqueue" element={<RunQueueSettingsPage />} />
           <Route path="apps" element={<AppsAdminPage />} />
           <Route path="webhooks" element={<WebhooksPage />} />
         </Route>
