@@ -17,7 +17,7 @@ export default function AppLayout() {
   const { t } = useTranslation()
   const { settings, title } = useSite()
   const { mode, setMode, lang, setLang, langs } = usePrefs()
-  const { user, admin, can, logout } = useAuth()
+  const { user, name, admin, logout } = useAuth()
   const navigate = useNavigate()
   const loc = useLocation()
   const { token } = theme.useToken()
@@ -90,15 +90,13 @@ export default function AppLayout() {
           >
             {!compact && t('nav.research')}
           </Button>
-          {can('run_batch') && (
-            <Button
-              icon={<AppstoreOutlined />}
-              onClick={() => navigate('/apps')}
-              title={t('nav.apps')}
-            >
-              {!compact && t('nav.apps')}
-            </Button>
-          )}
+          <Button
+            icon={<AppstoreOutlined />}
+            onClick={() => navigate('/apps')}
+            title={t('nav.apps')}
+          >
+            {!compact && t('nav.apps')}
+          </Button>
           {admin && (
             <Button
               icon={<SettingOutlined />}
@@ -146,7 +144,7 @@ export default function AppLayout() {
             }}
           >
             <Button type="text" icon={<UserOutlined />}>
-              {user}
+              {name || user}
             </Button>
           </Dropdown>
         </Space>

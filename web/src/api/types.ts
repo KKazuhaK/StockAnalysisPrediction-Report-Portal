@@ -2,6 +2,7 @@
 
 export interface Me {
   user: string
+  name?: string // display name, falls back to username
   admin: boolean
   role?: string
   perms?: Record<string, boolean>
@@ -52,6 +53,8 @@ export interface BatchJob {
   id: number
   target_id: number
   status: string
+  priority?: string // queue priority level (urgent | normal | other)
+  ahead?: number // for a queued job: how many are ahead of it in the queue
   concurrency: number
   max_retries: number
   total: number
@@ -240,12 +243,34 @@ export interface Role {
 export interface UserRow {
   username: string
   role: string
+  display_name?: string
+  email?: string
+  active: boolean
+  last_login?: string
+  groups: number[] // group ids the user belongs to
+}
+
+export interface UserGroupRow {
+  id: number
+  name: string
+  description?: string
+  weight: number // 加急 tickets granted per period to each member (ADR 0005)
+  members: number // member count
+}
+
+// 加急 ticket balance for the batch run form (ADR 0005).
+export interface BatchTickets {
+  unlimited: boolean
+  remaining?: number
+  allocation?: number
+  period_days?: number
 }
 
 export interface UsersResp {
   users: UserRow[]
   me: string
   roles: Role[]
+  groups: UserGroupRow[]
 }
 
 export interface SettingsResp {
@@ -258,6 +283,8 @@ export interface SettingsResp {
   footerText: string
   footerShowInfo: boolean
   footerShowVersion: boolean
+  pwaEnabled: boolean
+  pwaIconUrl: string
   newCount: number
 }
 
@@ -267,6 +294,8 @@ export interface SiteSettings {
   footerText: string
   footerShowInfo: boolean
   footerShowVersion: boolean
+  pwaEnabled: boolean
+  pwaIconUrl: string
 }
 
 export interface LegacyImportStatus {
@@ -289,4 +318,26 @@ export interface TokenRow {
   created: string
   expires: string
   lastUsed: string
+}
+
+// ---- Downloadable iframe apps (docs/adr/0003-downloadable-apps.md) ----
+
+export interface AppSummary {
+  id: string
+  name: string
+  icon?: string
+  version?: string
+  entry?: string
+  scopes?: string[]
+}
+
+export interface AppsResp {
+  apps: AppSummary[]
+}
+
+export interface AppTokenResp {
+  app: AppSummary
+  token: string
+  scopes: string[]
+  expires_in: number
 }

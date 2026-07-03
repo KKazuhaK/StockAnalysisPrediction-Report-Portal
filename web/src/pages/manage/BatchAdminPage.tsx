@@ -16,16 +16,10 @@ import {
   Upload,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import {
-  CloudDownloadOutlined,
-  DeleteOutlined,
-  PlusOutlined,
-  ReloadOutlined,
-  UploadOutlined,
-} from '@ant-design/icons'
+import { DeleteOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import type { BatchPlugin, BatchTarget, MarketPlugin } from '../../api/types'
+import type { BatchPlugin, BatchTarget } from '../../api/types'
 
 export default function BatchAdminPage() {
   const { t } = useTranslation()
@@ -33,10 +27,10 @@ export default function BatchAdminPage() {
 
   const [plugins, setPlugins] = useState<BatchPlugin[]>([])
   const [targets, setTargets] = useState<BatchTarget[]>([])
-  const [market, setMarket] = useState<MarketPlugin[] | null>(null)
-  const [marketLoading, setMarketLoading] = useState(false)
   const [maxConcurrency, setMaxConcurrency] = useState<number>(10)
-  const [marketURL, setMarketURL] = useState('')
+  const [maxJobs, setMaxJobs] = useState<number>(1)
+  const [reservedSlots, setReservedSlots] = useState<number>(1)
+  const [ticketPeriod, setTicketPeriod] = useState<number>(7)
 
   const [targetOpen, setTargetOpen] = useState(false)
   const [form] = Form.useForm()
@@ -47,10 +41,14 @@ export default function BatchAdminPage() {
   const loadTargets = () =>
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || []))
   const loadConfig = () =>
-    api.get<{ max_concurrency: number; market_index_url: string }>('/api/admin/batch/config').then((r) => {
-      setMaxConcurrency(r.max_concurrency)
-      setMarketURL(r.market_index_url)
-    })
+    api
+      .get<{ max_concurrency: number; max_jobs: number; reserved_slots: number; ticket_period_days: number }>('/api/admin/batch/config')
+      .then((r) => {
+        setMaxConcurrency(r.max_concurrency)
+        setMaxJobs(r.max_jobs)
+        setReservedSlots(r.reserved_slots)
+        setTicketPeriod(r.ticket_period_days)
+      })
 
   useEffect(() => {
     loadPlugins()
@@ -58,25 +56,6 @@ export default function BatchAdminPage() {
     loadConfig()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const refreshMarket = async () => {
-    setMarketLoading(true)
-    try {
-      const r = await api.get<{ plugins: MarketPlugin[] }>('/api/admin/batch/market')
-      setMarket(r.plugins || [])
-    } catch (e) {
-      message.error(`${t('batch.admin.msgFetchFailed')}：${(e as Error).message || ''}`)
-    } finally {
-      setMarketLoading(false)
-    }
-  }
-
-  const install = async (slug: string) => {
-    await api.post('/api/admin/batch/market/install', { slug })
-    message.success(t('batch.admin.msgInstalled'))
-    loadPlugins()
-    refreshMarket()
-  }
 
   const importFile = (file: File) => {
     const reader = new FileReader()
@@ -117,7 +96,12 @@ export default function BatchAdminPage() {
   }
 
   const saveConfig = async () => {
-    await api.post('/api/admin/batch/config', { max_concurrency: maxConcurrency, market_index_url: marketURL })
+    await api.post('/api/admin/batch/config', {
+      max_concurrency: maxConcurrency,
+      max_jobs: maxJobs,
+      reserved_slots: reservedSlots,
+      ticket_period_days: ticketPeriod,
+    })
     message.success(t('common.saved'))
     loadConfig()
   }
@@ -160,41 +144,8 @@ export default function BatchAdminPage() {
     },
   ]
 
-  const marketCols: ColumnsType<MarketPlugin> = [
-    { title: t('common.name'), dataIndex: 'name' },
-    { title: t('batch.admin.desc'), dataIndex: 'description' },
-    { title: t('batch.admin.version'), dataIndex: 'version', width: 90 },
-    {
-      title: t('batch.col.actions'),
-      width: 110,
-      render: (_: unknown, m: MarketPlugin) =>
-        m.installed ? (
-          <Tag color="success">{t('batch.admin.installedTag')}</Tag>
-        ) : (
-          <Button size="small" type="primary" icon={<CloudDownloadOutlined />} onClick={() => install(m.slug)}>
-            {t('batch.admin.install')}
-          </Button>
-        ),
-    },
-  ]
-
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card
-        title={t('batch.admin.market')}
-        extra={
-          <Button icon={<ReloadOutlined />} loading={marketLoading} onClick={refreshMarket}>
-            {market == null ? t('batch.admin.fetchMarket') : t('batch.admin.refresh')}
-          </Button>
-        }
-      >
-        {market == null ? (
-          <Typography.Text type="secondary">{t('batch.admin.marketHint')}</Typography.Text>
-        ) : (
-          <Table rowKey="slug" size="small" dataSource={market} columns={marketCols} pagination={false} />
-        )}
-      </Card>
-
       <Card
         title={t('batch.admin.installed')}
         extra={
@@ -228,13 +179,24 @@ export default function BatchAdminPage() {
       <Card title={t('batch.admin.settings')}>
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Space wrap>
+            <span>{t('batch.admin.maxJobs')}</span>
+            <InputNumber min={1} max={50} value={maxJobs} onChange={(v) => setMaxJobs(v || 1)} />
+            <Typography.Text type="secondary">{t('batch.admin.maxJobsHint')}</Typography.Text>
+          </Space>
+          <Space wrap>
+            <span>{t('batch.admin.reservedSlots')}</span>
+            <InputNumber min={0} max={Math.max(0, maxJobs - 1)} value={reservedSlots} onChange={(v) => setReservedSlots(v ?? 0)} />
+            <Typography.Text type="secondary">{t('batch.admin.reservedSlotsHint')}</Typography.Text>
+          </Space>
+          <Space wrap>
+            <span>{t('batch.admin.ticketPeriod')}</span>
+            <InputNumber min={1} max={365} value={ticketPeriod} onChange={(v) => setTicketPeriod(v || 7)} addonAfter={t('batch.admin.days')} />
+            <Typography.Text type="secondary">{t('batch.admin.ticketPeriodHint')}</Typography.Text>
+          </Space>
+          <Space wrap>
             <span>{t('batch.admin.maxConcurrency')}</span>
             <InputNumber min={1} max={100} value={maxConcurrency} onChange={(v) => setMaxConcurrency(v || 1)} />
             <Typography.Text type="secondary">{t('batch.admin.maxConcurrencyHint')}</Typography.Text>
-          </Space>
-          <Space wrap style={{ width: '100%' }}>
-            <span>{t('batch.admin.marketUrl')}</span>
-            <Input style={{ width: 520 }} value={marketURL} onChange={(e) => setMarketURL(e.target.value)} />
           </Space>
           <Button type="primary" onClick={saveConfig}>
             {t('common.save')}

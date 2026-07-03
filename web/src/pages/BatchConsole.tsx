@@ -26,7 +26,7 @@ import {
   UploadOutlined,
 } from '@ant-design/icons'
 import { api } from '../api/client'
-import type { BatchItem, BatchJob, BatchJobDetail, BatchTarget } from '../api/types'
+import type { BatchItem, BatchJob, BatchJobDetail, BatchTarget, BatchTickets } from '../api/types'
 import { csvToRows, toCSV } from '../lib/csv'
 
 const ITEM_STATUS_COLOR: Record<string, string> = {
@@ -37,14 +37,28 @@ const ITEM_STATUS_COLOR: Record<string, string> = {
   failed: 'error',
 }
 const JOB_STATUS_COLOR: Record<string, string> = {
+  queued: 'default',
   running: 'processing',
   cancelling: 'warning',
   cancelled: 'default',
   finished: 'success',
 }
 
+// Queue priority tiers (mirror queue.DefaultRegistry on the backend). Highest first.
+const PRIORITY_LEVELS = ['urgent', 'normal', 'other'] as const
+const PRIORITY_COLOR: Record<string, string> = { urgent: 'red', normal: 'blue', other: 'default' }
+
 function statusTag(t: TFunction, s: string, colors: Record<string, string>) {
   return <Tag color={colors[s] || 'default'}>{t(`batch.status.${s}`)}</Tag>
+}
+
+function priorityTag(t: TFunction, p?: string) {
+  const level = p || 'normal'
+  return <Tag color={PRIORITY_COLOR[level] || 'default'}>{t(`batch.priority.${level}`)}</Tag>
+}
+
+function priorityOptions(t: TFunction) {
+  return PRIORITY_LEVELS.map((p) => ({ value: p, label: t(`batch.priority.${p}`) }))
 }
 
 function isTerminal(status: string) {
@@ -172,6 +186,12 @@ function JobDrawer({
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Space wrap>
             {statusTag(t, job.status, JOB_STATUS_COLOR)}
+            {priorityTag(t, job.priority)}
+            {job.status === 'queued' && (
+              <Typography.Text type="secondary">
+                {job.ahead ? t('batch.aheadN', { n: job.ahead }) : t('batch.aheadNext')}
+              </Typography.Text>
+            )}
             <Typography.Text type="secondary">
               {t('batch.countsFull', {
                 total: job.total,
@@ -212,6 +232,8 @@ export default function BatchConsole() {
   const [targetId, setTargetId] = useState<number | undefined>()
   const [concurrency, setConcurrency] = useState(3)
   const [maxRetries, setMaxRetries] = useState(2)
+  const [priority, setPriority] = useState<string>('normal')
+  const [tickets, setTickets] = useState<BatchTickets | null>(null)
   const [csvText, setCsvText] = useState('')
   const [jobs, setJobs] = useState<BatchJob[]>([])
   const [openJobId, setOpenJobId] = useState<number | null>(null)
@@ -220,14 +242,22 @@ export default function BatchConsole() {
   const loadTargets = () =>
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || []))
   const loadJobs = () => api.get<{ jobs: BatchJob[] }>('/api/admin/batch/jobs').then((r) => setJobs(r.jobs || []))
+  const loadTickets = () => api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
 
   useEffect(() => {
     loadTargets()
     loadJobs()
+    loadTickets()
     const id = setInterval(() => loadJobs().catch(() => {}), 3000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 加急 needs a ticket (unless unlimited/admin); disable it when the balance is 0.
+  const urgentDisabled = tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
+  useEffect(() => {
+    if (urgentDisabled && priority === 'urgent') setPriority('normal')
+  }, [urgentDisabled, priority])
 
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputKeys = useMemo(() => (target?.inputs || []).map((i) => i.key), [target])
@@ -244,16 +274,19 @@ export default function BatchConsole() {
     if (!targetId || rows.length === 0) return
     setSubmitting(true)
     try {
-      const res = await api.post<{ job_id: number; concurrency: number }>('/api/admin/batch/jobs', {
+      const res = await api.post<{ job_id: number; concurrency: number; downgraded?: boolean }>('/api/admin/batch/jobs', {
         target_id: targetId,
         concurrency,
         max_retries: maxRetries,
+        priority,
         rows,
       })
       message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
       if (res.concurrency !== concurrency) message.info(t('batch.msg.clamped', { n: res.concurrency }))
+      if (res.downgraded) message.warning(t('batch.ticketDowngraded'))
       setCsvText('')
       loadJobs()
+      loadTickets() // a 加急 run may have spent a ticket
       setOpenJobId(res.job_id)
     } catch (e) {
       message.error((e as Error).message || t('batch.msg.startFailed'))
@@ -262,10 +295,43 @@ export default function BatchConsole() {
     }
   }
 
+  const reprioritize = async (id: number, p: string) => {
+    await api.post(`/api/admin/batch/jobs/${id}/priority`, { priority: p })
+    loadJobs()
+  }
+
   const jobCols: ColumnsType<BatchJob> = [
     { title: '#', dataIndex: 'id', width: 64 },
     { title: t('batch.col.status'), dataIndex: 'status', width: 96, render: (s: string) => statusTag(t, s, JOB_STATUS_COLOR) },
-    { title: t('batch.col.progress'), width: 240, render: (_: unknown, j: BatchJob) => <JobProgress job={j} /> },
+    {
+      // Queued jobs get an inline priority picker (插队); others show a static tag.
+      title: t('batch.priorityLabel'),
+      width: 116,
+      render: (_: unknown, j: BatchJob) =>
+        j.status === 'queued' ? (
+          <Select
+            size="small"
+            style={{ width: 96 }}
+            value={j.priority || 'normal'}
+            onChange={(p) => reprioritize(j.id, p)}
+            options={priorityOptions(t)}
+          />
+        ) : (
+          priorityTag(t, j.priority)
+        ),
+    },
+    {
+      title: t('batch.col.progress'),
+      width: 240,
+      render: (_: unknown, j: BatchJob) =>
+        j.status === 'queued' ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {j.ahead ? t('batch.aheadN', { n: j.ahead }) : t('batch.aheadNext')}
+          </Typography.Text>
+        ) : (
+          <JobProgress job={j} />
+        ),
+    },
     { title: t('batch.col.createdBy'), dataIndex: 'created_by', width: 110 },
     { title: t('batch.col.startedAt'), dataIndex: 'started_at', width: 170 },
     {
@@ -309,6 +375,18 @@ export default function BatchConsole() {
               <InputNumber min={1} max={99} value={concurrency} onChange={(v) => setConcurrency(v || 1)} />
               <span>{t('batch.maxRetries')}：</span>
               <InputNumber min={0} max={5} value={maxRetries} onChange={(v) => setMaxRetries(v ?? 0)} />
+              <span>{t('batch.priorityLabel')}：</span>
+              <Select
+                style={{ minWidth: 120 }}
+                value={priority}
+                onChange={setPriority}
+                options={priorityOptions(t).map((o) => (o.value === 'urgent' ? { ...o, disabled: urgentDisabled } : o))}
+              />
+              {tickets && !tickets.unlimited && (
+                <Tag color={(tickets.remaining ?? 0) > 0 ? 'gold' : 'default'} icon={<ThunderboltOutlined />}>
+                  {t('batch.ticketsLeft', { n: tickets.remaining ?? 0, total: tickets.allocation ?? 0 })}
+                </Tag>
+              )}
             </Space>
             {target && (
               <div>

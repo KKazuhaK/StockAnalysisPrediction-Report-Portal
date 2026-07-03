@@ -400,6 +400,8 @@ function GeneralTab() {
           footerText: r.footerText || '',
           footerShowInfo: r.footerShowInfo !== false,
           footerShowVersion: r.footerShowVersion !== false,
+          pwaEnabled: r.pwaEnabled !== false,
+          pwaIconUrl: r.pwaIconUrl || '',
           timezone: r.timezone || '',
         }),
       )
@@ -416,6 +418,8 @@ function GeneralTab() {
         footerText: v.footerText || '',
         footerShowInfo: v.footerShowInfo !== false,
         footerShowVersion: v.footerShowVersion !== false,
+        pwaEnabled: v.pwaEnabled !== false,
+        pwaIconUrl: v.pwaIconUrl || '',
         timezone: v.timezone || '',
       })
       await refresh()
@@ -425,19 +429,38 @@ function GeneralTab() {
     }
   }
 
+  const uploadAsset = async (kind: 'logo' | 'pwaIcon', file: File, field: 'siteLogoUrl' | 'pwaIconUrl') => {
+    const fd = new FormData()
+    fd.set('kind', kind)
+    fd.set('file', file)
+    const r = await api.upload<{ url: string }>('/api/admin/site-asset', fd)
+    form.setFieldsValue({ [field]: r.url })
+    message.success(t('common.done'))
+  }
+
   const uploadLogo = (file: File) => {
     if (!file.type.startsWith('image/')) {
       message.error(t('settings.logoTypeInvalid'))
       return false
     }
-    if (file.size > 256 * 1024) {
+    if (file.size > 512 * 1024) {
       message.error(t('settings.logoTooLarge'))
       return false
     }
-    const reader = new FileReader()
-    reader.onload = () => form.setFieldsValue({ siteLogoUrl: String(reader.result || '') })
-    reader.onerror = () => message.error(t('settings.logoReadFailed'))
-    reader.readAsDataURL(file)
+    uploadAsset('logo', file, 'siteLogoUrl').catch((e) => message.error(e instanceof Error ? e.message : t('settings.logoReadFailed')))
+    return false
+  }
+
+  const uploadPwaIcon = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      message.error(t('settings.logoTypeInvalid'))
+      return false
+    }
+    if (file.size > 512 * 1024) {
+      message.error(t('settings.pwaIconTooLarge'))
+      return false
+    }
+    uploadAsset('pwaIcon', file, 'pwaIconUrl').catch((e) => message.error(e instanceof Error ? e.message : t('settings.logoReadFailed')))
     return false
   }
 
@@ -476,6 +499,35 @@ function GeneralTab() {
                   <BrandIcon style={{ color: 'var(--ant-color-primary)', fontSize: 32 }} />
                 )}
                 <Typography.Text strong>{title}</Typography.Text>
+              </div>
+            )
+          }}
+        </Form.Item>
+        <Form.Item name="pwaEnabled" label={t('settings.pwaEnabled')} valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item name="pwaIconUrl" label={t('settings.pwaIconUrl')} extra={t('settings.pwaIconHint')}>
+          <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder={t('settings.logoPlaceholder')} />
+        </Form.Item>
+        <Space wrap style={{ marginBottom: 16 }}>
+          <Upload accept="image/*" showUploadList={false} beforeUpload={uploadPwaIcon}>
+            <Button icon={<UploadOutlined />}>{t('settings.pwaIconUpload')}</Button>
+          </Upload>
+          <Button icon={<DeleteOutlined />} onClick={() => form.setFieldsValue({ pwaIconUrl: '' })}>
+            {t('settings.pwaIconClear')}
+          </Button>
+        </Space>
+        <Form.Item shouldUpdate noStyle>
+          {({ getFieldValue }) => {
+            const icon = String(getFieldValue('pwaIconUrl') || getFieldValue('siteLogoUrl') || '').trim()
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+                {icon ? (
+                  <img src={icon} alt="" style={{ width: 40, height: 40, objectFit: 'contain', borderRadius: 8 }} />
+                ) : (
+                  <BrandIcon style={{ color: 'var(--ant-color-primary)', fontSize: 40 }} />
+                )}
+                <Typography.Text type="secondary">{t('settings.pwaIconPreview')}</Typography.Text>
               </div>
             )
           }}

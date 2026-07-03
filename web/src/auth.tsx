@@ -4,6 +4,7 @@ import type { Me } from './api/types'
 
 interface AuthCtx {
   user: string | null
+  name: string | null // display name, falls back to username
   admin: boolean
   perms: Record<string, boolean>
   can: (perm: string) => boolean
@@ -32,6 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthCtx>(
     () => ({
       user: me?.user ?? null,
+      name: me?.name ?? me?.user ?? null,
       admin: me?.admin ?? false,
       perms: me?.perms ?? {},
       can: (perm: string) => (me?.admin ?? false) || !!me?.perms?.[perm],

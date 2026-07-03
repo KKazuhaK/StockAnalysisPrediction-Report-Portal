@@ -24,6 +24,8 @@ const SettingsPage = lazyRetry(() => import('./pages/manage/SettingsPage'))
 const BatchAdminPage = lazyRetry(() => import('./pages/manage/BatchAdminPage'))
 const WebhooksPage = lazyRetry(() => import('./pages/manage/WebhooksPage'))
 const AppsHub = lazyRetry(() => import('./pages/AppsHub'))
+const AppView = lazyRetry(() => import('./pages/AppView'))
+const AppsAdminPage = lazyRetry(() => import('./pages/manage/AppsAdminPage'))
 const BatchConsole = lazyRetry(() => import('./pages/BatchConsole'))
 
 function FullSpin() {
@@ -68,14 +70,10 @@ function AppRoutes() {
         <Route path="/research" element={<ResearchPage />} />
         <Route path="/stock/:symbol" element={<StockPage />} />
         <Route path="/run/:key" element={<RunPage />} />
-        <Route
-          path="/apps"
-          element={
-            <RequirePerm perm="run_batch">
-              <AppsHub />
-            </RequirePerm>
-          }
-        />
+        {/* The apps hub and installed iframe apps are open to any logged-in user;
+            the built-in batch console stays permission-gated. */}
+        <Route path="/apps" element={<AppsHub />} />
+        <Route path="/apps/x/:id" element={<AppView />} />
         <Route
           path="/apps/batch"
           element={
@@ -98,6 +96,7 @@ function AppRoutes() {
           <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="batch" element={<BatchAdminPage />} />
+          <Route path="apps" element={<AppsAdminPage />} />
           <Route path="webhooks" element={<WebhooksPage />} />
         </Route>
       </Route>
