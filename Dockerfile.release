@@ -2,11 +2,13 @@
 # per platform in CI and downloaded as an artifact (COPY, no in-container build);
 # buildx picks the right arch via TARGETARCH.
 # wkhtmltopdf uses the official patched-Qt .deb (headless, no X) for self-contained PDF generation.
+# fonts-wqy-zenhei is a compact CJK font (~15 MB) that covers Simplified Chinese for the
+# PDF output — fonts-noto-cjk (~215 MB) was the bulk of the image and is overkill here.
 FROM debian:bookworm-slim
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates tzdata fonts-noto-cjk gosu wget \
+      ca-certificates tzdata fonts-wqy-zenhei gosu wget \
  && wget -qO /tmp/wkhtmltox.deb \
       "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_${TARGETARCH}.deb" \
  && apt-get install -y --no-install-recommends /tmp/wkhtmltox.deb \
