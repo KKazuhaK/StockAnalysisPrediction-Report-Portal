@@ -3,6 +3,7 @@ import { CalendarOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { Group } from '../api/types'
+import { formatReportDateTime, isInstant } from '../lib/datetime'
 
 const KIND_COLORS: Record<string, string> = {
   重组决策: 'volcano',
@@ -45,7 +46,9 @@ export default function ReportCard({ g }: { g: Group }) {
             )}
           </div>
           {g.symbol && (
-            <Typography.Text type="secondary" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
+            <Typography.Text
+              style={{ fontSize: 15, fontWeight: 500, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+            >
               {g.symbol}
             </Typography.Text>
           )}
@@ -62,7 +65,7 @@ export default function ReportCard({ g }: { g: Group }) {
 
         <Space style={{ justifyContent: 'space-between', width: '100%' }}>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            <CalendarOutlined /> {g.date}
+            <CalendarOutlined /> {isInstant(g.time) ? formatReportDateTime(g.time) : g.date}
           </Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
             <FileTextOutlined /> {g.n} {t('card.reports')}

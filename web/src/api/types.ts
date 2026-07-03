@@ -162,6 +162,7 @@ export interface Group {
   curName?: string // current company name; differs after rename / backdoor listing
   title?: string // fallback display title for thematic reports with no stock code/name
   date: string
+  time?: string // latest ingest instant in the run (when pushed to the portal; UTC RFC3339)
   kind: string
   kinds: string[]
   src: string // "new" | "old"

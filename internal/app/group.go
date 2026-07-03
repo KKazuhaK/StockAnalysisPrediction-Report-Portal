@@ -18,6 +18,7 @@ type Group struct {
 	Members           []Rep
 	N                 int
 	Types             []string
+	Time              string // latest member's ingest instant (when it was pushed to the portal; UTC RFC3339)
 }
 
 // runKind maps report type(s) to their canonical top-level kind — one of the four
@@ -124,6 +125,7 @@ func buildGroups(reps []Rep, nameOf func(string) string) []Group {
 		g := m[k]
 		sort.SliceStable(g.Members, func(i, j int) bool { return g.Members[i].Time < g.Members[j].Time })
 		g.N = len(g.Members)
+		g.Time = g.Members[len(g.Members)-1].Time // latest ingest instant in the run
 		for _, mm := range g.Members {
 			if mm.RType != "" {
 				g.Types = append(g.Types, mm.RType)

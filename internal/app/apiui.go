@@ -246,7 +246,7 @@ func groupsJSON(gs []Group) []map[string]any {
 		}
 		out = append(out, map[string]any{
 			"key": g.Key, "symbol": g.Symbol, "name": g.Name, "curName": g.CurName, "title": g.Title, "date": g.Date,
-			"kind": g.Kind, "kinds": g.Kinds, "src": g.Src, "n": g.N, "members": members,
+			"time": g.Time, "kind": g.Kind, "kinds": g.Kinds, "src": g.Src, "n": g.N, "members": members,
 		})
 	}
 	return out
