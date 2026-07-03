@@ -115,6 +115,7 @@ func RunServer(cfgPath string) {
 	}
 
 	s.resumeBatchJobs() // requeue items left in-flight by a restart and relaunch running jobs
+	go s.scheduleLoop() // release one-shot 定时 jobs when their run_at passes (ADR 0007)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -208,12 +209,15 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/batch/dify/targets", s.requireAdminJSON(s.apiBatchDifyTargetAdd))
 	mux.HandleFunc("DELETE /api/admin/batch/targets/{id}", s.requireAdminJSON(s.apiBatchTargetDelete))
 	mux.HandleFunc("GET /api/admin/batch/tickets", s.requirePermJSON(PermRunBatch, s.apiBatchTickets))
+	mux.HandleFunc("GET /api/admin/batch/queue", s.requirePermJSON(PermRunBatch, s.apiBatchQueue))
 	mux.HandleFunc("GET /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobs))
 	mux.HandleFunc("POST /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobCreate))
 	mux.HandleFunc("GET /api/admin/batch/jobs/{id}", s.requirePermJSON(PermRunBatch, s.apiBatchJobDetail))
+	mux.HandleFunc("DELETE /api/admin/batch/jobs/{id}", s.requirePermJSON(PermRunBatch, s.apiBatchJobDelete))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/cancel", s.requirePermJSON(PermRunBatch, s.apiBatchJobCancel))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requirePermJSON(PermRunBatch, s.apiBatchJobRetry))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/priority", s.requirePermJSON(PermRunBatch, s.apiBatchJobReprioritize))
+	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/schedule", s.requirePermJSON(PermRunBatch, s.apiBatchJobSchedule))
 
 	// ---- Downloadable iframe apps (see docs/adr/0003-downloadable-apps.md) ----
 	// List/open is any-user; install/uninstall is admin; assets are served publicly.

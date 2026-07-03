@@ -103,16 +103,49 @@ func parseEnqueueUnix(ts string) int64 {
 	return t.Unix()
 }
 
+// runAtDue reports whether a stored one-shot schedule (定时运行) has arrived. An
+// empty run_at means "run ASAP"; a malformed value is treated as due so a bad
+// timestamp can never strand a job forever. run_at shares created_at's local
+// basis (see docs/adr/0007-run-analysis-and-scheduling.md).
+func runAtDue(runAt string, now time.Time) bool {
+	if runAt == "" {
+		return true
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", runAt, time.Local)
+	if err != nil {
+		return true
+	}
+	return !t.After(now)
+}
+
 // queuedItems maps the currently-queued jobs to scheduler items (id + level +
-// aging key), used both by the scheduler and by the "N ahead" computation.
+// aging key), used both by the scheduler and by the "N ahead" computation. A
+// job scheduled for the future is hidden until its run_at passes, so it is never
+// admitted early nor counted as waiting.
 func (s *Server) queuedItems() []queue.Item {
 	reg := s.priorityRegistry()
+	now := time.Now()
 	jobs := s.st.QueuedJobs()
 	items := make([]queue.Item, 0, len(jobs))
 	for _, j := range jobs {
+		if !runAtDue(j.RunAt, now) {
+			continue
+		}
 		items = append(items, queue.Item{ID: j.ID, Level: j.Priority, SchedKey: reg.SchedKey(j.Priority, parseEnqueueUnix(j.CreatedAt))})
 	}
 	return items
+}
+
+// scheduleLoop periodically re-runs admission so one-shot scheduled jobs start
+// when their run_at passes, even while the system is otherwise idle. The queue is
+// event-driven; this ticker is the only always-on timer (ADR 0007). It runs for
+// the process lifetime.
+func (s *Server) scheduleLoop() {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for range t.C {
+		s.scheduleTick()
+	}
 }
 
 // scheduleTick admits as many queued jobs as the budget + reserved-slot rule allow,
