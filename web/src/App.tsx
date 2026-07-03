@@ -1,28 +1,30 @@
-import { lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { App as AntdApp, ConfigProvider, Spin, theme } from 'antd'
 import { PrefsProvider, usePrefs } from './prefs'
 import { AuthProvider, useAuth } from './auth'
 import { SiteProvider } from './site'
+import { lazyRetry } from './lib/lazyRetry'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
 
 // Route pages are lazy-loaded (Suspense boundary lives in AppLayout), so the first
 // paint only ships the shell + landing page; admin / batch / webhook code and the
-// markdown renderer load on demand.
-const HomePage = lazy(() => import('./pages/HomePage'))
-const StockPage = lazy(() => import('./pages/StockPage'))
-const RunPage = lazy(() => import('./pages/RunPage'))
-const ResearchPage = lazy(() => import('./pages/ResearchPage'))
-const ManageLayout = lazy(() => import('./pages/manage/ManageLayout'))
-const LinksPage = lazy(() => import('./pages/manage/LinksPage'))
-const TypesPage = lazy(() => import('./pages/manage/TypesPage'))
-const UsersPage = lazy(() => import('./pages/manage/UsersPage'))
-const SettingsPage = lazy(() => import('./pages/manage/SettingsPage'))
-const BatchAdminPage = lazy(() => import('./pages/manage/BatchAdminPage'))
-const WebhooksPage = lazy(() => import('./pages/manage/WebhooksPage'))
-const AppsHub = lazy(() => import('./pages/AppsHub'))
-const BatchConsole = lazy(() => import('./pages/BatchConsole'))
+// markdown renderer load on demand. lazyRetry (not React.lazy directly) recovers
+// from a stale chunk — the dist is wiped clean on every build, so a tab left open
+// across a deploy can 404 on a route it hasn't loaded yet; see lib/lazyRetry.ts.
+const HomePage = lazyRetry(() => import('./pages/HomePage'))
+const StockPage = lazyRetry(() => import('./pages/StockPage'))
+const RunPage = lazyRetry(() => import('./pages/RunPage'))
+const ResearchPage = lazyRetry(() => import('./pages/ResearchPage'))
+const ManageLayout = lazyRetry(() => import('./pages/manage/ManageLayout'))
+const LinksPage = lazyRetry(() => import('./pages/manage/LinksPage'))
+const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
+const UsersPage = lazyRetry(() => import('./pages/manage/UsersPage'))
+const SettingsPage = lazyRetry(() => import('./pages/manage/SettingsPage'))
+const BatchAdminPage = lazyRetry(() => import('./pages/manage/BatchAdminPage'))
+const WebhooksPage = lazyRetry(() => import('./pages/manage/WebhooksPage'))
+const AppsHub = lazyRetry(() => import('./pages/AppsHub'))
+const BatchConsole = lazyRetry(() => import('./pages/BatchConsole'))
 
 function FullSpin() {
   return (
