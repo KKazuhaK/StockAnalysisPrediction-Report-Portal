@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Button, Dropdown, Grid, Layout, Space, Spin, theme } from 'antd'
+import { Button, Dropdown, Grid, Layout, Space, Spin, Tooltip, theme } from 'antd'
 import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -7,6 +7,7 @@ import { api } from '../api/client'
 import { usePrefs } from '../prefs'
 import { useAuth } from '../auth'
 import { SiteLogo, useSite } from '../site'
+import { sanitizeFooterHtml } from '../lib/footerHtml'
 import Omnibox from './Omnibox'
 import { AutoIcon, MoonIcon, SunIcon } from './icons'
 
@@ -14,7 +15,7 @@ const { Header, Content, Footer } = Layout
 
 export default function AppLayout() {
   const { t } = useTranslation()
-  const { title } = useSite()
+  const { settings, title } = useSite()
   const { mode, setMode, lang, setLang, langs } = usePrefs()
   const { user, admin, can, logout } = useAuth()
   const navigate = useNavigate()
@@ -27,6 +28,11 @@ export default function AppLayout() {
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
+  const footerText = settings.footerText || title
+  const footerHtml = settings.footerText ? sanitizeFooterHtml(settings.footerText) : ''
+  const showFooterInfo = settings.footerShowInfo
+  const showFooterVersion = settings.footerShowVersion && !!ver
+  const showFooter = showFooterInfo || showFooterVersion
 
   return (
     <Layout style={{ minHeight: '100vh', background: token.colorBgLayout }}>
@@ -152,11 +158,32 @@ export default function AppLayout() {
         </Suspense>
       </Content>
 
-      <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
-        <SiteLogo size={14} style={{ marginInlineEnd: 6 }} />
-        {title}
-        {ver && ` · ${ver.version} (${ver.commit})`}
-      </Footer>
+      {showFooter && (
+        <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
+          <Space size={6} wrap style={{ justifyContent: 'center' }}>
+            {showFooterInfo && (
+              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <SiteLogo size={14} style={{ marginInlineEnd: 6 }} />
+                {settings.footerText ? <span dangerouslySetInnerHTML={{ __html: footerHtml }} /> : footerText}
+              </span>
+            )}
+            {showFooterInfo && showFooterVersion && <span>·</span>}
+            {showFooterVersion && (
+              <Tooltip
+                title={
+                  <div style={{ lineHeight: 1.6, fontWeight: 600 }}>
+                    <div>{ver.version}</div>
+                    <div>commit: {ver.commit}</div>
+                    <div>built: {ver.buildDate}</div>
+                  </div>
+                }
+              >
+                <span style={{ cursor: 'help', fontVariantNumeric: 'tabular-nums' }}>{ver.version}</span>
+              </Tooltip>
+            )}
+          </Space>
+        </Footer>
+      )}
     </Layout>
   )
 }

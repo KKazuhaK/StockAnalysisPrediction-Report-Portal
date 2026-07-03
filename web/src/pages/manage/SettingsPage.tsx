@@ -12,6 +12,7 @@ import {
   Space,
   Spin,
   Statistic,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -396,6 +397,9 @@ function GeneralTab() {
         form.setFieldsValue({
           siteTitle: r.siteTitle || '',
           siteLogoUrl: r.siteLogoUrl || '',
+          footerText: r.footerText || '',
+          footerShowInfo: r.footerShowInfo !== false,
+          footerShowVersion: r.footerShowVersion !== false,
           timezone: r.timezone || '',
         }),
       )
@@ -409,6 +413,9 @@ function GeneralTab() {
       await api.post('/api/admin/settings', {
         siteTitle: v.siteTitle || '',
         siteLogoUrl: v.siteLogoUrl || '',
+        footerText: v.footerText || '',
+        footerShowInfo: v.footerShowInfo !== false,
+        footerShowVersion: v.footerShowVersion !== false,
         timezone: v.timezone || '',
       })
       await refresh()
@@ -472,6 +479,25 @@ function GeneralTab() {
               </div>
             )
           }}
+        </Form.Item>
+        <Form.Item name="footerShowInfo" label={t('settings.footerShowInfo')} valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          name="footerText"
+          label={t('settings.footerText')}
+          extra={t('settings.footerTextHint')}
+          rules={[{ max: 1000, message: t('settings.footerTextTooLong') }]}
+        >
+          <Input.TextArea
+            maxLength={1000}
+            showCount
+            autoSize={{ minRows: 2, maxRows: 4 }}
+            placeholder={t('settings.footerTextPlaceholder')}
+          />
+        </Form.Item>
+        <Form.Item name="footerShowVersion" label={t('settings.footerShowVersion')} valuePropName="checked">
+          <Switch />
         </Form.Item>
         <Form.Item name="timezone" label={t('settings.timezone')} style={{ marginBottom: 8 }}>
           <Select

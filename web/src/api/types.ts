@@ -255,12 +255,18 @@ export interface SettingsResp {
   timezone: string // '' = follow system zone
   siteTitle: string
   siteLogoUrl: string
+  footerText: string
+  footerShowInfo: boolean
+  footerShowVersion: boolean
   newCount: number
 }
 
 export interface SiteSettings {
   siteTitle: string
   siteLogoUrl: string
+  footerText: string
+  footerShowInfo: boolean
+  footerShowVersion: boolean
 }
 
 export interface LegacyImportStatus {
