@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
 import { Button, Dropdown, Grid, Layout, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UserOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -10,6 +10,7 @@ import { useAuth } from '../auth'
 import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
 import Omnibox from './Omnibox'
+import RunAnalysisModal from './RunAnalysisModal'
 import { AutoIcon, MoonIcon, SunIcon } from './icons'
 
 const { Header, Content, Footer } = Layout
@@ -18,7 +19,7 @@ export default function AppLayout() {
   const { t } = useTranslation()
   const { settings, title } = useSite()
   const { mode, setMode, lang, setLang, langs } = usePrefs()
-  const { user, name, admin, logout } = useAuth()
+  const { user, name, admin, can, logout } = useAuth()
   const navigate = useNavigate()
   const loc = useLocation()
   const { token } = theme.useToken()
@@ -30,6 +31,7 @@ export default function AppLayout() {
   const onReader = /^\/(stock|run)\//.test(loc.pathname)
   const contentMaxWidth = onReader && wide ? 1600 : 1240
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
+  const [runOpen, setRunOpen] = useState(false)
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
@@ -78,8 +80,10 @@ export default function AppLayout() {
           {!compact && title}
         </Link>
 
-        {/* On mobile the search drops to its own full-width row (order:2) below the controls. */}
-        <div style={{ flex: 1, minWidth: compact ? '100%' : 0, order: compact ? 2 : 0, display: 'flex' }}>
+        {/* On mobile the search drops to its own full-width row (order:2) below the controls.
+            On the home page there is no header search, so don't force that empty row —
+            otherwise the phantom line pushes the control row off-center in the header. */}
+        <div style={{ flex: 1, minWidth: compact && !onHome ? '100%' : 0, order: compact ? 2 : 0, display: 'flex' }}>
           {!onHome && (
             <div style={{ width: '100%', maxWidth: compact ? undefined : 420 }}>
               <Omnibox size="middle" />
@@ -88,33 +92,47 @@ export default function AppLayout() {
         </div>
 
         <Space size={compact ? 6 : 10} wrap style={{ flexShrink: 0, marginLeft: compact ? 'auto' : 0 }}>
-          <Button
-            icon={<FileSearchOutlined />}
-            onClick={() => navigate('/research')}
-            title={t('nav.research')}
-          >
-            {!compact && t('nav.research')}
-          </Button>
-          <Button
-            icon={<AppstoreOutlined />}
-            onClick={() => navigate('/apps')}
-            title={t('nav.apps')}
-          >
-            {!compact && t('nav.apps')}
-          </Button>
-          {admin && (
+          {can('run_batch') && (
+            // The primary action keeps its label even on mobile (unlike the other
+            // nav buttons, which collapse to icons when compact).
             <Button
-              icon={<SettingOutlined />}
-              onClick={() => navigate('/manage')}
-              title={t('nav.manage')}
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              onClick={() => setRunOpen(true)}
+              title={t('nav.runAnalysis')}
             >
-              {!compact && t('nav.manage')}
+              {t('nav.runAnalysis')}
             </Button>
+          )}
+          {/* On mobile these fold into the account menu below to keep the header light. */}
+          {!compact && (
+            <>
+              <Button icon={<FileSearchOutlined />} onClick={() => navigate('/research')} title={t('nav.research')}>
+                {t('nav.research')}
+              </Button>
+              <Button icon={<AppstoreOutlined />} onClick={() => navigate('/apps')} title={t('nav.apps')}>
+                {t('nav.apps')}
+              </Button>
+              {admin && (
+                <Button icon={<SettingOutlined />} onClick={() => navigate('/manage')} title={t('nav.manage')}>
+                  {t('nav.manage')}
+                </Button>
+              )}
+            </>
           )}
           <Dropdown
             trigger={['click']}
             menu={{
               items: [
+                // On mobile the primary nav lives here (the standalone buttons are hidden).
+                ...(compact
+                  ? [
+                      { key: 'research', icon: <FileSearchOutlined />, label: t('nav.research'), onClick: () => navigate('/research') },
+                      { key: 'apps', icon: <AppstoreOutlined />, label: t('nav.apps'), onClick: () => navigate('/apps') },
+                      ...(admin ? [{ key: 'manage', icon: <SettingOutlined />, label: t('nav.manage'), onClick: () => navigate('/manage') }] : []),
+                      { type: 'divider' as const },
+                    ]
+                  : []),
                 {
                   key: 'theme',
                   icon: mode === 'light' ? <SunIcon /> : mode === 'dark' ? <MoonIcon /> : <AutoIcon />,
@@ -148,8 +166,8 @@ export default function AppLayout() {
               ],
             }}
           >
-            <Button type="text" icon={<UserOutlined />}>
-              {name || user}
+            <Button type="text" icon={<UserOutlined />} title={name || user || undefined}>
+              {!compact && (name || user)}
             </Button>
           </Dropdown>
         </Space>
@@ -160,6 +178,8 @@ export default function AppLayout() {
           <Outlet />
         </Suspense>
       </Content>
+
+      {can('run_batch') && <RunAnalysisModal open={runOpen} onClose={() => setRunOpen(false)} />}
 
       {showFooter && (
         <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>

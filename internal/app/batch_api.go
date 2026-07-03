@@ -409,14 +409,18 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusNotFound, "target not found")
 		return
 	}
-	plug, ok := s.st.GetPlugin(tgt.PluginSlug)
-	if !ok {
-		jsonError(w, http.StatusBadRequest, "target's plugin is missing")
-		return
-	}
-	if _, err := batch.Compile([]byte(plug.Spec)); err != nil {
-		jsonError(w, http.StatusBadRequest, "target's plugin manifest is invalid: "+err.Error())
-		return
+	// Dify-native targets have no manifest (they run via buildDifyProvider, ADR 0006);
+	// only generic plugin targets carry a manifest to validate.
+	if tgt.PluginSlug != difyPluginSlug {
+		plug, ok := s.st.GetPlugin(tgt.PluginSlug)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "target's plugin is missing")
+			return
+		}
+		if _, err := batch.Compile([]byte(plug.Spec)); err != nil {
+			jsonError(w, http.StatusBadRequest, "target's plugin manifest is invalid: "+err.Error())
+			return
+		}
 	}
 	conc := s.clampConcurrency(in.Concurrency)
 	maxRetries := in.MaxRetries

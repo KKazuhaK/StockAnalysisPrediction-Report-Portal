@@ -58,11 +58,21 @@ export interface BatchTarget {
   inputs?: PluginInput[]
 }
 
+// Queue summary for the home banner + drawer (docs/adr/0007-run-analysis-and-scheduling.md).
+export interface BatchQueueSummary {
+  waiting: number // due, awaiting admission (excludes not-yet-due scheduled)
+  running: number
+  scheduled: number // 定时 jobs not yet due
+  budget: number // jobs allowed to run at once
+  reserved: number // slots held for 加急
+}
+
 export interface BatchJob {
   id: number
   target_id: number
   status: string
   priority?: string // queue priority level (urgent | normal | other)
+  run_at?: string // one-shot scheduled start ("" = ASAP)
   ahead?: number // for a queued job: how many are ahead of it in the queue
   concurrency: number
   max_retries: number
@@ -264,6 +274,7 @@ export interface UserGroupRow {
   name: string
   description?: string
   weight: number // 加急 tickets granted per period to each member (ADR 0005)
+  priority?: string // default run priority for members (non-urgent tier; ADR 0007)
   members: number // member count
 }
 
