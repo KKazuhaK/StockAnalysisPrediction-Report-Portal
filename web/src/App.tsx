@@ -15,6 +15,7 @@ import UsersPage from './pages/manage/UsersPage'
 import SettingsPage from './pages/manage/SettingsPage'
 import BatchAdminPage from './pages/manage/BatchAdminPage'
 import WebhooksPage from './pages/manage/WebhooksPage'
+import AppsHub from './pages/AppsHub'
 import BatchConsole from './pages/BatchConsole'
 
 function FullSpin() {
@@ -60,7 +61,15 @@ function AppRoutes() {
         <Route path="/stock/:symbol" element={<StockPage />} />
         <Route path="/run/:key" element={<RunPage />} />
         <Route
-          path="/batch"
+          path="/apps"
+          element={
+            <RequirePerm perm="run_batch">
+              <AppsHub />
+            </RequirePerm>
+          }
+        />
+        <Route
+          path="/apps/batch"
           element={
             <RequirePerm perm="run_batch">
               <BatchConsole />

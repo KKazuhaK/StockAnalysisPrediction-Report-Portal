@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button, Dropdown, Grid, Layout, Segmented, Select, Space, theme } from 'antd'
-import { FileSearchOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UserOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, FileSearchOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -96,11 +96,11 @@ export default function AppLayout() {
           </Button>
           {can('run_batch') && (
             <Button
-              icon={<ThunderboltOutlined />}
-              onClick={() => navigate('/batch')}
-              title={t('nav.batch')}
+              icon={<AppstoreOutlined />}
+              onClick={() => navigate('/apps')}
+              title={t('nav.apps')}
             >
-              {!compact && t('nav.batch')}
+              {!compact && t('nav.apps')}
             </Button>
           )}
           {admin && (
