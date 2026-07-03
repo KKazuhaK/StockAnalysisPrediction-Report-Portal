@@ -32,6 +32,11 @@ func (s *Server) spaHandler() http.HandlerFunc {
 		if clean != "" && clean != "index.html" { // serve a real static file if present
 			if f, e := sub.Open(clean); e == nil {
 				f.Close()
+				// Vite asset filenames are content-hashed, so they can be cached
+				// forever — this makes a refresh serve them from disk with no network.
+				if strings.HasPrefix(r.URL.Path, "/assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				fileServer.ServeHTTP(w, r)
 				return
 			}

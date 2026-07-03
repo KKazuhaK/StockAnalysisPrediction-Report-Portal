@@ -203,7 +203,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /", s.spaHandler())
 
 	log.Printf("report-portal %s | listen %s | db %s | reports:%d", version.String(), cfg.Listen, cfg.DBDriver, st.CountNew())
-	if err := http.ListenAndServe(cfg.Listen, logMiddleware(mux)); err != nil {
+	if err := http.ListenAndServe(cfg.Listen, logMiddleware(gzipMiddleware(mux))); err != nil {
 		log.Fatal(err)
 	}
 }
