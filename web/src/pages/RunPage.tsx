@@ -1,14 +1,14 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Empty, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
-import { ArrowLeftOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { RunResp } from '../api/types'
 import Markdown from '../components/Markdown'
 import ReaderControls from '../components/ReaderControls'
+import { ExportPdfButton } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
-import { exportReportPdf } from '../lib/exportPdf'
 
 export default function RunPage() {
   const { t } = useTranslation()
@@ -79,25 +79,15 @@ export default function RunPage() {
             )}
           </Space>
           {rep && (
-            <Space>
+            <Space wrap>
               <ReaderControls />
               <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
                 {t('stock.exportMd')}
               </Button>
-              <Button
-                icon={<FilePdfOutlined />}
-                onClick={() =>
-                  exportReportPdf(rep.rid, {
-                    title: rep.title,
-                    date: rep.date,
-                    source: rep.source,
-                    html: rep.html,
-                    md: rep.md,
-                  })
-                }
-              >
-                {t('stock.exportPdf')}
-              </Button>
+              <ExportPdfButton
+                rid={rep.rid}
+                report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+              />
             </Space>
           )}
         </Space>

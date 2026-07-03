@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Col, Empty, Grid, Result, Row, Segmented, Space, Spin, Tag, Typography } from 'antd'
-import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
@@ -8,8 +8,8 @@ import type { StockResp } from '../api/types'
 import Markdown from '../components/Markdown'
 import ReaderControls from '../components/ReaderControls'
 import TimelinePanel from '../components/TimelinePanel'
+import { ExportPdfButton, ExportDayButton } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
-import { exportReportPdf } from '../lib/exportPdf'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
 
 export default function StockPage() {
@@ -91,25 +91,16 @@ export default function StockPage() {
             )}
           </Space>
           {rep && (
-            <Space>
+            <Space wrap>
               <ReaderControls />
               <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
                 {t('stock.exportMd')}
               </Button>
-              <Button
-                icon={<FilePdfOutlined />}
-                onClick={() =>
-                  exportReportPdf(rep.rid, {
-                    title: rep.title,
-                    date: rep.date,
-                    source: rep.source,
-                    html: rep.html,
-                    md: rep.md,
-                  })
-                }
-              >
-                {t('stock.exportPdf')}
-              </Button>
+              <ExportPdfButton
+                rid={rep.rid}
+                report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+              />
+              <ExportDayButton symbol={data.symbol} date={data.selDate} name={data.name} />
             </Space>
           )}
         </Space>

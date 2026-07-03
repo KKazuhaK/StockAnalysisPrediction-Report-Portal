@@ -237,6 +237,7 @@ func RunServer(cfgPath string) {
 	// ---- Downloads: MD / PDF (cookie session) ----
 	mux.HandleFunc("GET /report/{rid}/md", s.requireUser(s.reportMD))
 	mux.HandleFunc("GET /report/{rid}/pdf", s.requireUser(s.reportPDF))
+	mux.HandleFunc("GET /report/day.zip", s.requireUser(s.reportDayZip)) // every report a stock has on one date, as a ZIP of .md + .pdf
 
 	// ---- SPA: hand all other paths to React (deep links fall back to index.html) ----
 	mux.HandleFunc("GET /", s.spaHandler())

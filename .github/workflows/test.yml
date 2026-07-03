@@ -31,5 +31,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - run: go build ./... # compile every package (fails fast on a build break)
       - run: go vet ./...
       - run: go test ./... -v
+
+  web-build:
+    name: web typecheck + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install deps
+        working-directory: web
+        run: npm ci
+      - name: Typecheck # tsc --noEmit: catches type errors the build would tolerate
+        working-directory: web
+        run: npm run typecheck
+      - name: Unit tests
+        working-directory: web
+        run: npm run test
+      - name: Build SPA # vite build → ../internal/web/dist; fails on any compile error
+        working-directory: web
+        run: npm run build

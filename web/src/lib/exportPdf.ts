@@ -67,18 +67,69 @@ function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url)
 }
 
-// exportReportPdf tries the server first, then falls back to browser print.
-export async function exportReportPdf(rid: string, report: ReportForPrint): Promise<void> {
+// PdfExportResult tells the caller how the export resolved, so the UI can show the
+// right toast: a real server PDF downloaded, or the browser-print fallback opened.
+export type PdfExportResult = 'downloaded' | 'printed'
+
+// safeFilename strips characters illegal in filenames (matches the server-side rule).
+function safeFilename(s: string): string {
+  return s.replace(/[\\/:*?"<>|]+/g, '_')
+}
+
+// isAbortError reports whether a rejection came from an aborted fetch (the user hit
+// Cancel), so callers can treat it as a no-op rather than a failure.
+export function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === 'AbortError'
+}
+
+// exportReportPdf tries the server first, then falls back to browser print. It returns
+// which path won so the caller can report progress accurately (the server render can
+// take a few seconds, so callers should show a pending indicator while awaiting). Pass
+// an AbortSignal to make it cancelable; aborting rejects with an AbortError and, unlike
+// a real network error, does NOT fall back to print (the user asked to stop).
+export async function exportReportPdf(
+  rid: string,
+  report: ReportForPrint,
+  signal?: AbortSignal,
+): Promise<PdfExportResult> {
   try {
-    const res = await fetch(`/report/${encodeURIComponent(rid)}/pdf`, { credentials: 'same-origin' })
+    const res = await fetch(`/report/${encodeURIComponent(rid)}/pdf`, { credentials: 'same-origin', signal })
     if (shouldDownloadPdf({ ok: res.ok, contentType: res.headers.get('content-type') })) {
       const blob = await res.blob()
-      const safe = (report.title || rid).replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80)
+      const safe = safeFilename(report.title || rid).slice(0, 80)
       downloadBlob(blob, `${safe}.pdf`)
-      return
+      return 'downloaded'
     }
-  } catch {
+  } catch (e) {
+    if (isAbortError(e)) throw e // user cancelled — do not silently fall back to print
     // network error — fall through to print
   }
   printReport(report)
+  return 'printed'
+}
+
+// DayExportEmptyError is thrown by exportDayZip when the day has no reports (404), so
+// the UI can distinguish "nothing to export" from a real failure.
+export class DayExportEmptyError extends Error {
+  constructor() {
+    super('empty')
+    this.name = 'DayExportEmptyError'
+  }
+}
+
+// exportDayZip downloads every report a stock has on one date as a single ZIP (each
+// report as .md + .pdf), built by the server. Progress is inherently indeterminate —
+// the server renders all PDFs before responding — so callers show a pending indicator
+// while awaiting. Pass an AbortSignal to make it cancelable (aborting rejects with an
+// AbortError). Throws DayExportEmptyError on 404, or a generic Error otherwise.
+export async function exportDayZip(symbol: string, date: string, name?: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`/report/day.zip?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(date)}`, {
+    credentials: 'same-origin',
+    signal,
+  })
+  if (res.status === 404) throw new DayExportEmptyError()
+  if (!res.ok) throw new Error(`export failed (${res.status})`)
+  const blob = await res.blob()
+  const base = safeFilename(name || symbol)
+  downloadBlob(blob, `${base}_${date}.zip`)
 }
