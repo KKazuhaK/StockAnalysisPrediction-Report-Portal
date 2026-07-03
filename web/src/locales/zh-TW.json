@@ -67,6 +67,8 @@
   "apps.msgInstalled": "應用已安裝",
   "apps.msgInstallFailed": "安裝失敗：{{error}}",
   "nav.logout": "退出",
+  "nav.refresh": "重新整理",
+  "nav.backTop": "返回頂部",
   "nav.theme": "主題",
   "nav.language": "語言",
   "nav.links": "入口管理",

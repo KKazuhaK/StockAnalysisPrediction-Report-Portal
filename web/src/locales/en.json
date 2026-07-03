@@ -67,6 +67,8 @@
   "apps.msgInstalled": "App installed",
   "apps.msgInstallFailed": "Install failed: {{error}}",
   "nav.logout": "Log out",
+  "nav.refresh": "Refresh",
+  "nav.backTop": "Back to top",
   "nav.theme": "Theme",
   "nav.language": "Language",
   "nav.links": "Links",
