@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (design only — not yet implemented) — 2026-07-03
+Accepted — 2026-07-03. **Phase 1 implemented** 2026-07-03 (app registry +
+`.zip` install, sandboxed-iframe hub, postMessage → `/api/v1` scoped-token bridge,
+demo app under `apps/demo-symbols`).
 
 ## Context
 
@@ -72,13 +74,19 @@ free, genuinely "download and install", and realistic for a small self-hosted to
 
 ## Rollout (when built)
 
-1. **Phase 1 — proof of concept:** an app registry table, install (upload a bundle),
-   the Apps hub rendering installed apps as sandboxed iframe cards, a minimal
-   postMessage → `/api/v1` bridge with a scoped token, and one demo app. Proves the
-   core chain: empty hub → install → a card appears → open it → it works.
-2. **Phase 2:** a GitHub app market (download like plugins), scoped tokens with
-   expiry, an install-time permission prompt, and a theme handshake into the iframe.
-3. **Phase 3:** polish, a small developer SDK, and docs.
+1. **Phase 1 — proof of concept (done):** an app registry (`apps` + `app_files`
+   tables, content stored in the DB so install needs no writable filesystem),
+   admin `.zip` install (`POST /api/admin/apps/install`, zip-slip + size guards),
+   the Apps hub rendering installed apps as sandboxed iframe cards, a postMessage →
+   `/api/v1` bridge with an ephemeral, query-scoped token minted per open
+   (`POST /api/apps/{id}/token`, held by the host, never handed to the iframe), and
+   the `apps/demo-symbols` app. Proves the core chain: empty hub → install → a card
+   appears → open it → it reads the API through the bridge.
+2. **Phase 2 (paused 2026-07-03):** a GitHub app market (download like plugins),
+   write scopes with an install-time permission prompt, and a richer theme
+   handshake into the iframe. Deferred by product decision — Phase 1 covers the
+   in-house need; revisit when third-party/community distribution is wanted.
+3. **Phase 3 (paused):** polish, a small developer SDK, and docs.
 
 ## Appendix — layering
 

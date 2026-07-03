@@ -18,33 +18,34 @@ var _ batch.JobStore = (*Store)(nil)
 // ---------- types ----------
 
 type Plugin struct {
-	ID                                  int64
-	Slug, Name, Version, Spec, Source   string
-	Enabled                             bool
-	ImportedAt                          string
+	ID                                int64
+	Slug, Name, Version, Spec, Source string
+	Enabled                           bool
+	ImportedAt                        string
 }
 
 type BatchTarget struct {
-	ID                             int64
+	ID                                int64
 	PluginSlug, Name, Config, Created string
 }
 
 type BatchJob struct {
-	ID, TargetID                            int64
-	Status                                  string
-	Concurrency, MaxRetries                 int
-	Total, Succeeded, Partial, Failed       int
+	ID, TargetID                                int64
+	Status                                      string
+	Priority                                    string // queue priority level (see docs/adr/0004-run-queue.md)
+	Concurrency, MaxRetries                     int
+	Total, Succeeded, Partial, Failed           int
 	CreatedBy, CreatedAt, StartedAt, FinishedAt string
 }
 
 type BatchItem struct {
-	ID, JobID              int64
-	RowIndex               int
-	Inputs                 string
-	Status                 string
-	Attempts               int
-	RunID, Error           string
-	StartedAt, FinishedAt  string
+	ID, JobID             int64
+	RowIndex              int
+	Inputs                string
+	Status                string
+	Attempts              int
+	RunID, Error          string
+	StartedAt, FinishedAt string
 }
 
 // itemStatus maps a normalised Outcome to the terminal item status vocabulary.
@@ -145,13 +146,21 @@ func (s *Store) ResumableJobIDs() []int64 {
 
 // ---------- jobs ----------
 
-// CreateBatchJob inserts a running job and its queued items in one shot.
-func (s *Store) CreateBatchJob(targetID int64, concurrency, maxRetries int, createdBy string, rows []map[string]string) (int64, error) {
+// CreateBatchJob inserts a queued job (status 'queued', no started_at yet) with the
+// given priority and its items. The scheduler admits it to 'running' later, subject
+// to the global budget (see docs/adr/0004-run-queue.md).
+func (s *Store) CreateBatchJob(targetID int64, concurrency, maxRetries int, createdBy string, rows []map[string]string, priority string) (int64, error) {
+	if priority == "" {
+		priority = "normal"
+	}
 	now := nowStr()
 	jobID, err := s.insertID(`INSERT INTO batch_jobs(target_id,status,concurrency,max_retries,total,created_by,created_at,started_at)
-		VALUES(?,?,?,?,?,?,?,?)`, targetID, "running", concurrency, maxRetries, len(rows), createdBy, now, now)
+		VALUES(?,?,?,?,?,?,?,?)`, targetID, "queued", concurrency, maxRetries, len(rows), createdBy, now, "")
 	if err != nil {
 		return 0, err
+	}
+	if _, err := s.exec(`INSERT INTO job_queue(job_id,priority) VALUES(?,?)`, jobID, priority); err != nil {
+		return jobID, err
 	}
 	for i, row := range rows {
 		b, _ := json.Marshal(row)
@@ -162,9 +171,65 @@ func (s *Store) CreateBatchJob(targetID int64, concurrency, maxRetries int, crea
 	return jobID, nil
 }
 
-// CancelBatchJob asks a running job to stop; workers observe it via Cancelled().
+// QueuedJobs lists jobs waiting to be admitted (status 'queued'), with their
+// priority and enqueue time (created_at), for the scheduler and the queue view.
+func (s *Store) QueuedJobs() []BatchJob {
+	rows, err := s.query(`SELECT b.id, COALESCE(q.priority,'normal'), b.created_at
+		FROM batch_jobs b LEFT JOIN job_queue q ON q.job_id=b.id
+		WHERE b.status='queued' ORDER BY b.id`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []BatchJob
+	for rows.Next() {
+		var j BatchJob
+		var priority, createdAt sql.NullString
+		rows.Scan(&j.ID, &priority, &createdAt)
+		j.Status, j.Priority, j.CreatedAt = "queued", priority.String, createdAt.String
+		out = append(out, j)
+	}
+	return out
+}
+
+// RunningJobCount returns how many jobs are currently admitted (status 'running'
+// or 'cancelling') — the in-flight count the scheduler weighs against the budget.
+func (s *Store) RunningJobCount() int {
+	var n int
+	s.queryRow("SELECT COUNT(*) FROM batch_jobs WHERE status IN ('running','cancelling')").Scan(&n)
+	return n
+}
+
+// MarkJobRunning atomically flips a job from 'queued' to 'running' (stamping
+// started_at). It returns true only for the caller that won the transition, so two
+// concurrent scheduler ticks can never launch the same job twice.
+func (s *Store) MarkJobRunning(jobID int64) bool {
+	res, err := s.exec("UPDATE batch_jobs SET status='running', started_at=? WHERE id=? AND status='queued'", nowStr(), jobID)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n == 1
+}
+
+// SetJobPriority changes a job's queue priority (the 插队 / re-prioritise action).
+func (s *Store) SetJobPriority(jobID int64, priority string) error {
+	_, err := s.exec(`INSERT INTO job_queue(job_id,priority) VALUES(?,?)
+		ON CONFLICT(job_id) DO UPDATE SET priority=excluded.priority`, jobID, priority)
+	return err
+}
+
+// CancelBatchJob cancels a job. A still-queued job is cancelled outright (nothing
+// is dispatching it); a running job is asked to stop and its workers observe the
+// 'cancelling' status via Cancelled().
 func (s *Store) CancelBatchJob(jobID int64) error {
-	_, err := s.exec("UPDATE batch_jobs SET status='cancelling' WHERE id=? AND status='running'", jobID)
+	res, err := s.exec("UPDATE batch_jobs SET status='cancelled', finished_at=? WHERE id=? AND status='queued'", nowStr(), jobID)
+	if err == nil {
+		if n, _ := res.RowsAffected(); n == 1 {
+			return nil
+		}
+	}
+	_, err = s.exec("UPDATE batch_jobs SET status='cancelling' WHERE id=? AND status='running'", jobID)
 	return err
 }
 
@@ -185,37 +250,50 @@ func (s *Store) RequeueItems(jobID int64, statuses ...string) (int, error) {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	s.exec("UPDATE batch_jobs SET status='running', finished_at='' WHERE id=?", jobID)
+	// Re-enter the queue (status 'queued'); the scheduler re-admits it by priority.
+	s.exec("UPDATE batch_jobs SET status='queued', finished_at='' WHERE id=?", jobID)
 	return int(n), nil
 }
 
-func (s *Store) GetBatchJob(id int64) (BatchJob, bool) {
+// batchJobCols is the shared SELECT list for a job row joined with its queue
+// priority (COALESCE so a job without a job_queue row reads as 'normal').
+const batchJobCols = `b.id,b.target_id,b.status,COALESCE(q.priority,'normal'),b.concurrency,b.max_retries,
+	b.total,b.succeeded,b.partial,b.failed,b.created_by,b.created_at,b.started_at,b.finished_at`
+
+func scanBatchJob(scan func(...any) error) (BatchJob, error) {
 	var j BatchJob
-	var createdBy, createdAt, startedAt, finishedAt, status sql.NullString
-	err := s.queryRow(`SELECT id,target_id,status,concurrency,max_retries,total,succeeded,partial,failed,created_by,created_at,started_at,finished_at
-		FROM batch_jobs WHERE id=?`, id).Scan(&j.ID, &j.TargetID, &status, &j.Concurrency, &j.MaxRetries,
-		&j.Total, &j.Succeeded, &j.Partial, &j.Failed, &createdBy, &createdAt, &startedAt, &finishedAt)
+	var priority, createdBy, createdAt, startedAt, finishedAt, status sql.NullString
+	if err := scan(&j.ID, &j.TargetID, &status, &priority, &j.Concurrency, &j.MaxRetries,
+		&j.Total, &j.Succeeded, &j.Partial, &j.Failed, &createdBy, &createdAt, &startedAt, &finishedAt); err != nil {
+		return BatchJob{}, err
+	}
+	j.Status, j.Priority, j.CreatedBy, j.CreatedAt, j.StartedAt, j.FinishedAt =
+		status.String, priority.String, createdBy.String, createdAt.String, startedAt.String, finishedAt.String
+	return j, nil
+}
+
+func (s *Store) GetBatchJob(id int64) (BatchJob, bool) {
+	j, err := scanBatchJob(s.queryRow(`SELECT `+batchJobCols+`
+		FROM batch_jobs b LEFT JOIN job_queue q ON q.job_id=b.id WHERE b.id=?`, id).Scan)
 	if err != nil {
 		return BatchJob{}, false
 	}
-	j.Status, j.CreatedBy, j.CreatedAt, j.StartedAt, j.FinishedAt = status.String, createdBy.String, createdAt.String, startedAt.String, finishedAt.String
 	return j, true
 }
 
 func (s *Store) ListBatchJobs() []BatchJob {
-	rows, err := s.query(`SELECT id,target_id,status,concurrency,max_retries,total,succeeded,partial,failed,created_by,created_at,started_at,finished_at
-		FROM batch_jobs ORDER BY id DESC`)
+	rows, err := s.query(`SELECT ` + batchJobCols + `
+		FROM batch_jobs b LEFT JOIN job_queue q ON q.job_id=b.id ORDER BY b.id DESC`)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 	var out []BatchJob
 	for rows.Next() {
-		var j BatchJob
-		var createdBy, createdAt, startedAt, finishedAt, status sql.NullString
-		rows.Scan(&j.ID, &j.TargetID, &status, &j.Concurrency, &j.MaxRetries,
-			&j.Total, &j.Succeeded, &j.Partial, &j.Failed, &createdBy, &createdAt, &startedAt, &finishedAt)
-		j.Status, j.CreatedBy, j.CreatedAt, j.StartedAt, j.FinishedAt = status.String, createdBy.String, createdAt.String, startedAt.String, finishedAt.String
+		j, err := scanBatchJob(rows.Scan)
+		if err != nil {
+			continue
+		}
 		out = append(out, j)
 	}
 	return out

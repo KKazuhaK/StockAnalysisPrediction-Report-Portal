@@ -16,7 +16,7 @@ type Role struct {
 var roleRegistry = []Role{
 	{Code: "admin", Name: "管理员", Perms: map[string]bool{PermManage: true, PermRunBatch: true}},
 	{Code: "operator", Name: "执行员", Perms: map[string]bool{PermRunBatch: true}}, // Runs configured batch jobs; no admin access
-	{Code: "user", Name: "普通用户", Perms: map[string]bool{}},                       // Read-only browsing
+	{Code: "user", Name: "普通用户", Perms: map[string]bool{}},                      // Read-only browsing
 }
 
 func roleByCode(code string) *Role {

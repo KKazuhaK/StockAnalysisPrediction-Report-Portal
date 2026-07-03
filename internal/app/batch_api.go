@@ -11,11 +11,23 @@ import (
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
 )
 
 // HTTP handlers for the batch-run feature. Plugin/market/target/config management
 // is admin-only (PermManage); listing targets and running jobs is PermRunBatch.
 // See docs/adr/0001-batch-run-engine.md.
+
+// itemByID returns the queue item with the given id (zero value if absent), so the
+// API can compute its "N ahead" position.
+func itemByID(items []queue.Item, id int64) queue.Item {
+	for _, it := range items {
+		if it.ID == id {
+			return it
+		}
+	}
+	return queue.Item{ID: id}
+}
 
 // ---------- plugins ----------
 
@@ -201,15 +213,21 @@ func (s *Server) apiBatchMarketInstall(w http.ResponseWriter, r *http.Request, u
 
 func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user string) {
 	writeJSON(w, map[string]any{
-		"max_concurrency":  s.batchMaxConcurrency(),
-		"market_index_url": s.marketIndexURL(),
+		"max_concurrency":    s.batchMaxConcurrency(),
+		"max_jobs":           s.batchBudget(),      // queue budget: jobs running at once (ADR 0004)
+		"reserved_slots":     s.batchReserved(),    // slots held for the urgent tier
+		"ticket_period_days": s.ticketPeriodDays(), // how often 加急 tickets refill (ADR 0005)
+		"market_index_url":   s.marketIndexURL(),
 	})
 }
 
 func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		MaxConcurrency int    `json:"max_concurrency"`
-		MarketIndexURL string `json:"market_index_url"`
+		MaxConcurrency   int    `json:"max_concurrency"`
+		MaxJobs          int    `json:"max_jobs"`
+		ReservedSlots    int    `json:"reserved_slots"`
+		TicketPeriodDays int    `json:"ticket_period_days"`
+		MarketIndexURL   string `json:"market_index_url"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -218,9 +236,20 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	if in.MaxConcurrency >= 1 {
 		s.st.SetSetting("batch_max_concurrency", strconv.Itoa(in.MaxConcurrency))
 	}
+	if in.MaxJobs >= 1 {
+		s.st.SetSetting("batch_max_concurrent_jobs", strconv.Itoa(in.MaxJobs))
+	}
+	if in.ReservedSlots >= 0 {
+		s.st.SetSetting("batch_reserved_slots", strconv.Itoa(in.ReservedSlots))
+	}
+	if in.TicketPeriodDays >= 1 {
+		s.st.SetSetting("batch_ticket_period_days", strconv.Itoa(in.TicketPeriodDays))
+	}
 	if in.MarketIndexURL != "" {
 		s.st.SetSetting("batch_market_index_url", in.MarketIndexURL)
 	}
+	// A raised budget may let queued jobs start right away.
+	s.scheduleTick()
 	writeJSON(w, okJSON)
 }
 
@@ -283,7 +312,7 @@ func (s *Server) apiBatchTargetDelete(w http.ResponseWriter, r *http.Request, us
 
 func jobJSON(j BatchJob) map[string]any {
 	return map[string]any{
-		"id": j.ID, "target_id": j.TargetID, "status": j.Status,
+		"id": j.ID, "target_id": j.TargetID, "status": j.Status, "priority": j.Priority,
 		"concurrency": j.Concurrency, "max_retries": j.MaxRetries,
 		"total": j.Total, "succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed,
 		"created_by": j.CreatedBy, "created_at": j.CreatedAt, "started_at": j.StartedAt, "finished_at": j.FinishedAt,
@@ -291,6 +320,7 @@ func jobJSON(j BatchJob) map[string]any {
 }
 
 func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user string) {
+	waiting := s.queuedItems() // for the live "N ahead" of each queued job
 	out := make([]map[string]any, 0)
 	for _, j := range s.st.ListBatchJobs() {
 		m := jobJSON(j)
@@ -300,9 +330,12 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 			_, _, succeeded, partial, failed := s.st.LiveJobCounts(j.ID)
 			m["succeeded"], m["partial"], m["failed"] = succeeded, partial, failed
 		}
+		if j.Status == "queued" {
+			m["ahead"] = queue.Ahead(itemByID(waiting, j.ID), waiting)
+		}
 		out = append(out, m)
 	}
-	writeJSON(w, map[string]any{"jobs": out})
+	writeJSON(w, map[string]any{"jobs": out, "budget": s.batchBudget()})
 }
 
 // apiBatchJobCreate validates the target's plugin compiles, clamps concurrency to
@@ -312,10 +345,18 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		TargetID    int64               `json:"target_id"`
 		Concurrency int                 `json:"concurrency"`
 		MaxRetries  int                 `json:"max_retries"`
+		Priority    string              `json:"priority"`
 		Rows        []map[string]string `json:"rows"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if in.Priority == "" {
+		in.Priority = "normal"
+	}
+	if !s.priorityRegistry().Has(in.Priority) {
+		jsonError(w, http.StatusBadRequest, "unknown priority")
 		return
 	}
 	if len(in.Rows) == 0 {
@@ -341,13 +382,27 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
-	jobID, err := s.st.CreateBatchJob(in.TargetID, conc, maxRetries, user, in.Rows)
+	// 加急 costs a ticket for non-admins; out of tickets → runs as 普通.
+	priority, downgraded := s.urgentAllowed(user, in.Priority)
+	jobID, err := s.st.CreateBatchJob(in.TargetID, conc, maxRetries, user, in.Rows, priority)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.launchJob(jobID)
-	writeJSON(w, map[string]any{"ok": true, "job_id": jobID, "concurrency": conc})
+	s.scheduleTick() // enqueued — admit now if the budget allows, else it waits in the queue
+	writeJSON(w, map[string]any{"ok": true, "job_id": jobID, "concurrency": conc, "priority": priority, "downgraded": downgraded})
+}
+
+// apiBatchTickets reports the caller's 加急 ticket balance for the run form. Admins
+// are exempt (unlimited).
+func (s *Server) apiBatchTickets(w http.ResponseWriter, r *http.Request, user string) {
+	if s.isAdmin(user) {
+		writeJSON(w, map[string]any{"unlimited": true})
+		return
+	}
+	alloc := s.st.UserTicketAllocation(user)
+	remaining := s.st.TicketStatus(user, alloc, s.ticketPeriodDays(), time.Now())
+	writeJSON(w, map[string]any{"unlimited": false, "remaining": remaining, "allocation": alloc, "period_days": s.ticketPeriodDays()})
 }
 
 func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user string) {
@@ -367,8 +422,13 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 		})
 	}
 	_, inProc := s.batchRunning.Load(id)
+	m := jobJSON(job)
+	if job.Status == "queued" {
+		waiting := s.queuedItems()
+		m["ahead"] = queue.Ahead(itemByID(waiting, id), waiting)
+	}
 	writeJSON(w, map[string]any{
-		"job":                jobJSON(job),
+		"job":                m,
 		"counts":             map[string]int{"queued": queued, "running": running, "succeeded": succeeded, "partial": partial, "failed": failed},
 		"running_in_process": inProc,
 		"items":              items,
@@ -396,6 +456,25 @@ func (s *Server) apiBatchJobRetry(w http.ResponseWriter, r *http.Request, user s
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.launchJob(id)
+	s.scheduleTick() // re-enqueued — the scheduler re-admits it by priority
 	writeJSON(w, map[string]any{"ok": true, "requeued": n})
+}
+
+// apiBatchJobReprioritize changes a job's queue priority (插队) and re-runs the
+// scheduler, which may admit it immediately if it now outranks the queue.
+func (s *Server) apiBatchJobReprioritize(w http.ResponseWriter, r *http.Request, user string) {
+	id := pathID(r, "id")
+	var in struct {
+		Priority string `json:"priority"`
+	}
+	if err := readJSON(r, &in); err != nil || !s.priorityRegistry().Has(in.Priority) {
+		jsonError(w, http.StatusBadRequest, "unknown priority")
+		return
+	}
+	if err := s.st.SetJobPriority(id, in.Priority); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.scheduleTick()
+	writeJSON(w, map[string]any{"ok": true, "priority": in.Priority})
 }

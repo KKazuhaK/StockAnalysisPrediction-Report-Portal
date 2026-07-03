@@ -26,7 +26,7 @@ var okJSON = map[string]any{"ok": true}
 const (
 	maxSiteTitleRunes  = 80
 	maxFooterTextRunes = 1000
-	maxSiteLogoBytes   = 512 * 1024
+	maxSiteLogoBytes   = 1024 * 1024
 )
 
 // jsonError writes a uniform JSON error response.
@@ -50,7 +50,7 @@ func pathID(r *http.Request, name string) int64 {
 
 func (s *Server) requireUserJSON(h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u := s.currentUser(r)
+		u := s.currentActiveUser(r)
 		if u == "" {
 			jsonError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -61,7 +61,7 @@ func (s *Server) requireUserJSON(h handler) http.HandlerFunc {
 
 func (s *Server) requireAdminJSON(h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u := s.currentUser(r)
+		u := s.currentActiveUser(r)
 		if u == "" {
 			jsonError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -78,7 +78,7 @@ func (s *Server) requireAdminJSON(h handler) http.HandlerFunc {
 // may reach it. Generalises requireAdminJSON (which is requirePermJSON(PermManage)).
 func (s *Server) requirePermJSON(perm string, h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u := s.currentUser(r)
+		u := s.currentActiveUser(r)
 		if u == "" {
 			jsonError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -93,7 +93,7 @@ func (s *Server) requirePermJSON(perm string, h handler) http.HandlerFunc {
 
 // canQuery allows two kinds of query auth: a logged-in browser session, or a Bearer token with the query scope (Dify).
 func (s *Server) canQuery(r *http.Request) bool {
-	if s.currentUser(r) != "" {
+	if s.currentActiveUser(r) != "" {
 		return true
 	}
 	return s.tokenOK(r, "query")
@@ -108,6 +108,8 @@ func (s *Server) siteSettingsJSON() map[string]any {
 		"footerText":        s.st.GetSetting("footer_text", ""),
 		"footerShowInfo":    settingBool(s.st.GetSetting("footer_show_info", ""), true),
 		"footerShowVersion": settingBool(s.st.GetSetting("footer_show_version", ""), true),
+		"pwaEnabled":        settingBool(s.st.GetSetting("pwa_enabled", ""), true),
+		"pwaIconUrl":        s.st.GetSetting("pwa_icon_url", ""),
 	}
 }
 
@@ -120,16 +122,16 @@ func (s *Server) apiSite(w http.ResponseWriter, r *http.Request) {
 
 // apiMe returns the current login state. Not logged in → 401, so the frontend switches to the login page.
 func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
-	u := s.currentUser(r)
+	u := s.currentActiveUser(r)
 	if u == "" {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	role := ""
+	role, name := "", u
 	if usr := s.st.GetUser(u); usr != nil {
-		role = usr.EffRole()
+		role, name = usr.EffRole(), usr.Name()
 	}
-	writeJSON(w, map[string]any{"user": u, "admin": s.isAdmin(u), "role": role, "perms": permsOf(role)})
+	writeJSON(w, map[string]any{"user": u, "name": name, "admin": s.isAdmin(u), "role": role, "perms": permsOf(role)})
 }
 
 func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
@@ -143,12 +145,17 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
+	if !u.Active {
+		jsonError(w, http.StatusForbidden, "账号已停用")
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: s.sign(u.Username), Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
 	})
+	s.st.TouchLastLogin(u.Username)
 	log.Printf("login %s", u.Username)
-	writeJSON(w, map[string]any{"user": u.Username, "admin": s.isAdmin(u.Username)})
+	writeJSON(w, map[string]any{"user": u.Username, "name": u.Name(), "admin": s.isAdmin(u.Username)})
 }
 
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
@@ -544,32 +551,59 @@ func (s *Server) apiTypesDelete(w http.ResponseWriter, r *http.Request, user str
 
 // ---------- Admin: accounts ----------
 
+// userJSON is the enriched account row the admin UI renders.
+func userJSON(u User, groups []int64) map[string]any {
+	if groups == nil {
+		groups = []int64{}
+	}
+	return map[string]any{
+		"username": u.Username, "role": u.EffRole(), "display_name": u.DisplayName,
+		"email": u.Email, "active": u.Active, "last_login": u.LastLogin, "groups": groups,
+	}
+}
+
 func (s *Server) apiAdminUsers(w http.ResponseWriter, r *http.Request, user string) {
 	us := s.st.Users()
+	members := s.st.AllUserGroups()
 	out := make([]map[string]any, 0, len(us))
 	for _, u := range us {
-		out = append(out, map[string]any{"username": u.Username, "role": u.EffRole()})
+		out = append(out, userJSON(u, members[u.Username]))
 	}
 	roles := make([]map[string]any, 0, len(roleRegistry))
 	for _, ro := range roleRegistry {
 		roles = append(roles, map[string]any{"code": ro.Code, "name": ro.Name})
 	}
-	writeJSON(w, map[string]any{"users": out, "me": user, "roles": roles})
+	writeJSON(w, map[string]any{"users": out, "me": user, "roles": roles, "groups": userGroupsJSON(s.st.ListUserGroups())})
 }
 
 func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string) {
-	var in struct{ Username, Password, Role string }
+	var in struct {
+		Username    string  `json:"username"`
+		Password    string  `json:"password"`
+		Role        string  `json:"role"`
+		DisplayName string  `json:"display_name"`
+		Email       string  `json:"email"`
+		Groups      []int64 `json:"groups"`
+	}
 	readJSON(r, &in)
 	name := strings.TrimSpace(in.Username)
 	if name == "" || in.Password == "" {
 		jsonError(w, http.StatusBadRequest, "username and password required")
 		return
 	}
+	if s.st.GetUser(name) != nil {
+		jsonError(w, http.StatusBadRequest, "username already exists")
+		return
+	}
 	h, _ := bcrypt.GenerateFromPassword([]byte(in.Password), 12)
 	s.st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: validRole(in.Role)})
+	s.st.SetUserProfile(name, strings.TrimSpace(in.DisplayName), strings.TrimSpace(in.Email))
+	s.st.SetUserGroups(name, in.Groups)
 	writeJSON(w, okJSON)
 }
 
+// apiUserSave is a partial update: only the fields present in the body are applied,
+// so the password-reset modal and the full edit form can share one endpoint.
 func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string) {
 	name := r.PathValue("name")
 	u := s.st.GetUser(name)
@@ -577,16 +611,45 @@ func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusNotFound, "not found")
 		return
 	}
-	var in struct{ Role, Password string }
-	readJSON(r, &in)
-	newRole := validRole(in.Role)
-	if newRole != "admin" && u.IsAdmin() && s.st.CountAdmins() <= 1 { // don't allow demoting the last admin
-		newRole = "admin"
+	var in struct {
+		Role        *string  `json:"role"`
+		Password    string   `json:"password"`
+		DisplayName *string  `json:"display_name"`
+		Email       *string  `json:"email"`
+		Active      *bool    `json:"active"`
+		Groups      *[]int64 `json:"groups"`
 	}
-	s.st.SetUserRole(name, newRole)
+	readJSON(r, &in)
+	if in.Role != nil {
+		newRole := validRole(*in.Role)
+		if newRole != "admin" && u.IsAdmin() && s.st.CountAdmins() <= 1 { // never demote the last admin
+			newRole = "admin"
+		}
+		s.st.SetUserRole(name, newRole)
+	}
 	if pw := strings.TrimSpace(in.Password); pw != "" {
 		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
 		s.st.SetUserPassword(name, string(h))
+	}
+	if in.DisplayName != nil || in.Email != nil {
+		dn, em := u.DisplayName, u.Email
+		if in.DisplayName != nil {
+			dn = strings.TrimSpace(*in.DisplayName)
+		}
+		if in.Email != nil {
+			em = strings.TrimSpace(*in.Email)
+		}
+		s.st.SetUserProfile(name, dn, em)
+	}
+	if in.Active != nil {
+		active := *in.Active
+		if !active && (name == user || (u.IsAdmin() && s.st.CountAdmins() <= 1)) {
+			active = true // can't disable yourself or the last admin
+		}
+		s.st.SetUserActive(name, active)
+	}
+	if in.Groups != nil {
+		s.st.SetUserGroups(name, *in.Groups)
 	}
 	writeJSON(w, okJSON)
 }
@@ -631,8 +694,8 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	// All pointers: a nil field was omitted from the request → leave that setting
 	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
 	var in struct {
-		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText *string
-		FooterShowInfo, FooterShowVersion                                       *bool
+		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText, PwaIconUrl *string
+		FooterShowInfo, FooterShowVersion, PwaEnabled                                       *bool
 	}
 	readJSON(r, &in)
 	// Validate before writing anything so a bad field can't half-apply.
@@ -654,6 +717,10 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	if in.FooterText != nil && len([]rune(strings.TrimSpace(*in.FooterText))) > maxFooterTextRunes {
 		jsonError(w, http.StatusBadRequest, "底部信息过长")
+		return
+	}
+	if in.PwaIconUrl != nil && !validSiteLogoURL(strings.TrimSpace(*in.PwaIconUrl)) {
+		jsonError(w, http.StatusBadRequest, "无效的安装图标地址")
 		return
 	}
 	if in.OldBase != nil {
@@ -682,6 +749,12 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	if in.FooterShowVersion != nil {
 		s.st.SetSetting("footer_show_version", strconv.FormatBool(*in.FooterShowVersion))
+	}
+	if in.PwaEnabled != nil {
+		s.st.SetSetting("pwa_enabled", strconv.FormatBool(*in.PwaEnabled))
+	}
+	if in.PwaIconUrl != nil { // "" clears → follow site logo / built-in default logo
+		s.st.SetSetting("pwa_icon_url", strings.TrimSpace(*in.PwaIconUrl))
 	}
 	writeJSON(w, okJSON)
 }

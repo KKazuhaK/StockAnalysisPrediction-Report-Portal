@@ -55,6 +55,14 @@ func TestGzipMiddleware(t *testing.T) {
 		t.Error("images must not be gzipped")
 	}
 
+	reqPWAIcon := httptest.NewRequest("GET", "/pwa-icon", nil)
+	reqPWAIcon.Header.Set("Accept-Encoding", "gzip")
+	recPWAIcon := httptest.NewRecorder()
+	h.ServeHTTP(recPWAIcon, reqPWAIcon)
+	if recPWAIcon.Header().Get("Content-Encoding") == "gzip" {
+		t.Error("PWA icon endpoint must not be gzipped")
+	}
+
 	// static assets with a recognized extension (/assets/*.js etc) are no longer
 	// compressed HERE — spaHandler pre-compresses and serves them directly (see
 	// spa_test.go); this middleware must leave them untouched to avoid double

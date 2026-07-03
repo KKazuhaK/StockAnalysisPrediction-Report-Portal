@@ -174,11 +174,12 @@ func TestSiteSettings(t *testing.T) {
 
 	pub := get(s.apiSite, "/api/site")
 	if pub["siteTitle"] != "" || pub["siteLogoUrl"] != "" || pub["footerText"] != "" ||
-		pub["footerShowInfo"] != true || pub["footerShowVersion"] != true {
+		pub["footerShowInfo"] != true || pub["footerShowVersion"] != true ||
+		pub["pwaEnabled"] != true || pub["pwaIconUrl"] != "" {
 		t.Fatalf("default site settings = %v, want empty overrides", pub)
 	}
 
-	if rec := save(`{"siteTitle":" 智研平台 ","siteLogoUrl":"/brand/logo.png","footerText":"© 智研平台","footerShowInfo":false,"footerShowVersion":false}`); rec.Code != http.StatusOK {
+	if rec := save(`{"siteTitle":" 智研平台 ","siteLogoUrl":"/brand/logo.png","footerText":"© 智研平台","footerShowInfo":false,"footerShowVersion":false,"pwaEnabled":true,"pwaIconUrl":"/brand/app.png"}`); rec.Code != http.StatusOK {
 		t.Fatalf("save site settings: %d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := s.st.GetSetting("site_title", ""); got != "智研平台" {
@@ -193,15 +194,20 @@ func TestSiteSettings(t *testing.T) {
 	if settingBool(s.st.GetSetting("footer_show_info", ""), true) || settingBool(s.st.GetSetting("footer_show_version", ""), true) {
 		t.Errorf("footer visibility settings not saved")
 	}
+	if got := s.st.GetSetting("pwa_icon_url", ""); got != "/brand/app.png" {
+		t.Errorf("pwa_icon_url=%q", got)
+	}
 
 	admin := get(func(w http.ResponseWriter, r *http.Request) { s.apiAdminSettings(w, r, "admin") }, "/api/admin/settings")
 	if admin["siteTitle"] != "智研平台" || admin["siteLogoUrl"] != "/brand/logo.png" ||
-		admin["footerText"] != "© 智研平台" || admin["footerShowInfo"] != false || admin["footerShowVersion"] != false {
+		admin["footerText"] != "© 智研平台" || admin["footerShowInfo"] != false || admin["footerShowVersion"] != false ||
+		admin["pwaEnabled"] != true || admin["pwaIconUrl"] != "/brand/app.png" {
 		t.Errorf("admin settings missing site fields: %v", admin)
 	}
 	pub = get(s.apiSite, "/api/site")
 	if pub["siteTitle"] != "智研平台" || pub["siteLogoUrl"] != "/brand/logo.png" ||
-		pub["footerText"] != "© 智研平台" || pub["footerShowInfo"] != false || pub["footerShowVersion"] != false {
+		pub["footerText"] != "© 智研平台" || pub["footerShowInfo"] != false || pub["footerShowVersion"] != false ||
+		pub["pwaEnabled"] != true || pub["pwaIconUrl"] != "/brand/app.png" {
 		t.Errorf("public site settings = %v", pub)
 	}
 
@@ -220,14 +226,53 @@ func TestSiteSettings(t *testing.T) {
 		t.Errorf("invalid footer save half-applied visibility")
 	}
 
-	if rec := save(`{"siteTitle":"","siteLogoUrl":"","footerText":"","footerShowInfo":true,"footerShowVersion":true}`); rec.Code != http.StatusOK {
+	if rec := save(`{"siteTitle":"","siteLogoUrl":"","footerText":"","footerShowInfo":true,"footerShowVersion":true,"pwaIconUrl":""}`); rec.Code != http.StatusOK {
 		t.Fatalf("clear site settings: %d body=%s", rec.Code, rec.Body.String())
 	}
-	if s.st.GetSetting("site_title", "x") != "" || s.st.GetSetting("site_logo_url", "x") != "" || s.st.GetSetting("footer_text", "x") != "" {
+	if s.st.GetSetting("site_title", "x") != "" || s.st.GetSetting("site_logo_url", "x") != "" ||
+		s.st.GetSetting("footer_text", "x") != "" || s.st.GetSetting("pwa_icon_url", "x") != "" {
 		t.Errorf("clear did not empty site settings")
 	}
 	if !settingBool(s.st.GetSetting("footer_show_info", ""), false) || !settingBool(s.st.GetSetting("footer_show_version", ""), false) {
 		t.Errorf("clear did not restore footer visibility")
+	}
+}
+
+func TestPWAManifestAndIcon(t *testing.T) {
+	s := newV1Server(t)
+	s.st.SetSetting("site_title", "智研平台")
+
+	rec := httptest.NewRecorder()
+	s.pwaManifest(rec, httptest.NewRequest("GET", "/manifest.webmanifest", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manifest status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatalf("manifest JSON: %v", err)
+	}
+	if m["name"] != "智研平台" || m["display"] != "standalone" || m["start_url"] != "/" {
+		t.Errorf("manifest = %v", m)
+	}
+
+	rec = httptest.NewRecorder()
+	s.pwaIcon(rec, httptest.NewRequest("GET", "/pwa-icon", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "image/svg+xml") {
+		t.Fatalf("default icon status=%d type=%q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+
+	s.st.SetSetting("pwa_icon_url", "data:image/png;base64,aWNvbg==")
+	rec = httptest.NewRecorder()
+	s.pwaIcon(rec, httptest.NewRequest("GET", "/pwa-icon", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" || rec.Body.String() != "icon" {
+		t.Fatalf("data icon status=%d type=%q body=%q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+
+	s.st.SetSetting("pwa_enabled", "false")
+	rec = httptest.NewRecorder()
+	s.pwaManifest(rec, httptest.NewRequest("GET", "/manifest.webmanifest", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("disabled manifest status=%d, want 404", rec.Code)
 	}
 }
 

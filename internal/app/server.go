@@ -38,7 +38,9 @@ type Server struct {
 	st           *Store
 	names        *Names
 	pdf          *template.Template
-	batchRunning sync.Map // jobID -> struct{}; guards against launching a job twice in-process
+	batchRunning sync.Map   // jobID -> struct{}; guards against launching a job twice in-process
+	schedMu      sync.Mutex // serializes scheduleTick so concurrent ticks can't over-admit (ADR 0004)
+	appTok       *appTokens // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -53,7 +55,9 @@ func (w *statusRecorder) WriteHeader(code int) { w.status = code; w.ResponseWrit
 func logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if strings.HasPrefix(p, "/assets/") || strings.HasPrefix(p, "/api/") || p == "/healthz" || p == "/favicon.svg" || p == "/favicon.ico" {
+		if strings.HasPrefix(p, "/assets/") || strings.HasPrefix(p, "/app-assets/") || strings.HasPrefix(p, "/site-assets/") || strings.HasPrefix(p, "/api/") ||
+			p == "/healthz" || p == "/favicon.svg" || p == "/favicon.ico" || p == "/manifest.webmanifest" ||
+			p == "/pwa-icon" || p == "/sw.js" {
 			next.ServeHTTP(w, r) // SPA static assets / health checks / API (which have their own concise logs) are skipped here to avoid noise
 			return
 		}
@@ -88,7 +92,7 @@ func RunServer(cfgPath string) {
 		bar := strings.Repeat("=", 52)
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
-	s := &Server{cfg: cfg, st: st}
+	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute)}
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()
@@ -114,6 +118,8 @@ func RunServer(cfgPath string) {
 	})
 	mux.HandleFunc("GET /api/site", s.apiSite)            // public: brand title/logo for login + browser chrome
 	mux.HandleFunc("GET /api/openapi.json", s.apiOpenAPI) // public: OpenAPI 3.1 spec for the v1 machine API
+	mux.HandleFunc("GET /manifest.webmanifest", s.pwaManifest)
+	mux.HandleFunc("GET /pwa-icon", s.pwaIcon)
 
 	// ---- Dify machine API: Bearer token auth (kept unchanged; the workflow depends on it) ----
 	mux.HandleFunc("POST /api/reports", s.ingestReport)             // ingest
@@ -162,10 +168,17 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("DELETE /api/admin/types/{name}", s.requireAdminJSON(s.apiTypesDelete))
 	mux.HandleFunc("GET /api/admin/users", s.requireAdminJSON(s.apiAdminUsers))
 	mux.HandleFunc("POST /api/admin/users", s.requireAdminJSON(s.apiUserAdd))
+	mux.HandleFunc("POST /api/admin/users/bulk", s.requireAdminJSON(s.apiUsersBulk))
 	mux.HandleFunc("PUT /api/admin/users/{name}", s.requireAdminJSON(s.apiUserSave))
 	mux.HandleFunc("DELETE /api/admin/users/{name}", s.requireAdminJSON(s.apiUserDelete))
+	// Organizational user groups (labels; permissions still come from the role).
+	mux.HandleFunc("GET /api/admin/groups", s.requireAdminJSON(s.apiAdminGroups))
+	mux.HandleFunc("POST /api/admin/groups", s.requireAdminJSON(s.apiGroupAdd))
+	mux.HandleFunc("PUT /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupSave))
+	mux.HandleFunc("DELETE /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupDelete))
 	mux.HandleFunc("GET /api/admin/settings", s.requireAdminJSON(s.apiAdminSettings))
 	mux.HandleFunc("POST /api/admin/settings", s.requireAdminJSON(s.apiSettingsSave))
+	mux.HandleFunc("POST /api/admin/site-asset", s.requireAdminJSON(s.apiSiteAssetUpload))
 	mux.HandleFunc("POST /api/admin/legacy/import", s.requireAdminJSON(s.apiLegacyImportStart))
 	mux.HandleFunc("GET /api/admin/legacy/status", s.requireAdminJSON(s.apiLegacyImportStatus))
 	mux.HandleFunc("GET /api/admin/tokens", s.requireAdminJSON(s.apiAdminTokens))
@@ -184,11 +197,22 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/admin/batch/targets", s.requirePermJSON(PermRunBatch, s.apiBatchTargets))
 	mux.HandleFunc("POST /api/admin/batch/targets", s.requireAdminJSON(s.apiBatchTargetAdd))
 	mux.HandleFunc("DELETE /api/admin/batch/targets/{id}", s.requireAdminJSON(s.apiBatchTargetDelete))
+	mux.HandleFunc("GET /api/admin/batch/tickets", s.requirePermJSON(PermRunBatch, s.apiBatchTickets))
 	mux.HandleFunc("GET /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobs))
 	mux.HandleFunc("POST /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobCreate))
 	mux.HandleFunc("GET /api/admin/batch/jobs/{id}", s.requirePermJSON(PermRunBatch, s.apiBatchJobDetail))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/cancel", s.requirePermJSON(PermRunBatch, s.apiBatchJobCancel))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requirePermJSON(PermRunBatch, s.apiBatchJobRetry))
+	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/priority", s.requirePermJSON(PermRunBatch, s.apiBatchJobReprioritize))
+
+	// ---- Downloadable iframe apps (see docs/adr/0003-downloadable-apps.md) ----
+	// List/open is any-user; install/uninstall is admin; assets are served publicly.
+	mux.HandleFunc("GET /api/apps", s.requireUserJSON(s.apiApps))
+	mux.HandleFunc("POST /api/apps/{id}/token", s.requireUserJSON(s.apiAppToken))
+	mux.HandleFunc("POST /api/admin/apps/install", s.requireAdminJSON(s.apiAppInstall))
+	mux.HandleFunc("DELETE /api/admin/apps/{id}", s.requireAdminJSON(s.apiAppDelete))
+	mux.HandleFunc("GET /app-assets/{id}/{path...}", s.appAssets)
+	mux.HandleFunc("GET /site-assets/{name}", s.siteAsset)
 
 	// ---- Outbound event webhooks (extension point; see docs/adr/0002-extension-architecture.md) ----
 	mux.HandleFunc("GET /api/admin/webhooks", s.requireAdminJSON(s.apiWebhooks))
@@ -355,6 +379,20 @@ func (s *Server) currentUser(r *http.Request) string {
 	return s.verify(c.Value)
 }
 
+// currentActiveUser returns the logged-in user only if the account still exists and
+// is enabled, so disabling an account takes effect immediately — even for a session
+// whose cookie is still valid.
+func (s *Server) currentActiveUser(r *http.Request) string {
+	u := s.currentUser(r)
+	if u == "" {
+		return ""
+	}
+	if usr := s.st.GetUser(u); usr == nil || !usr.Active {
+		return ""
+	}
+	return u
+}
+
 func (s *Server) isAdmin(user string) bool {
 	u := s.st.GetUser(user)
 	return u != nil && can(u.Role, PermManage)
@@ -370,7 +408,7 @@ type handler func(http.ResponseWriter, *http.Request, string)
 
 func (s *Server) requireUser(h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u := s.currentUser(r)
+		u := s.currentActiveUser(r)
 		if u == "" {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
@@ -581,8 +619,14 @@ func repKind(r Rep) string {
 }
 
 // tokenOK validates the Bearer token in the request; need = the required scope (ingest|query), and a token with scope=all passes everything.
+// Besides persistent api_tokens it also accepts an ephemeral, scoped app-bridge
+// token (ADR 0003) — these are query-only, so ingest paths still fall through to
+// the DB check and reject them.
 func (s *Server) tokenOK(r *http.Request, need string) bool {
 	got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if s.appTok != nil && s.appTok.valid(got, need, time.Now()) {
+		return true
+	}
 	return s.st.TokenValid(got, need)
 }
 
@@ -634,17 +678,13 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 	s.names.EnsureOne(in.Symbol) // if this code has no name yet, do a background best-effort fetch from Tencent/Sina
 	// Identity key = symbol|date|category|subtype: the same type coming in again on the same day overwrites/updates it (run_id is just a batch label and does not participate in identity).
 	uid := firstNonEmpty(in.UID, in.Symbol+"|"+in.Date+"|"+kind+"|"+rtype)
-	html := in.BodyHTML
-	if html == "" && in.BodyMD != "" {
-		html = mdToHTML(in.BodyMD)
-	}
 	// Snapshot the as-of name: Dify-provided > current stocks name at ingest time.
 	// The report is immutable history, so a later rename/backdoor-listing won't relabel it.
 	name := firstNonEmpty(in.Name, s.names.Get(in.Symbol))
 	rep := Rep{
 		UID: uid, RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
 		RType: rtype, Title: in.Title, Source: in.Source, Time: firstNonEmpty(in.Time, in.Date),
-		MD: in.BodyMD, HTML: html,
+		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML),
 	}
 	created, err := s.st.UpsertReport(rep)
 	if err != nil {
@@ -770,7 +810,7 @@ func (s *Server) apiGetReport(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"uid": rep.UID, "run_id": rep.RunID, "symbol": rep.Symbol, "date": rep.Date,
 		"kind": rep.Kind, "subtype": rep.RType, "title": rep.Title, "source": rep.Source,
-		"body_md": rep.MD, "body_html": rep.HTML})
+		"body_md": rep.MD, "body_html": htmlOf(*rep)})
 }
 
 // apiDeleteReport retracts a report and its tracking items by uid. Bearer scope ingest. DELETE /api/report?uid=...
@@ -926,18 +966,30 @@ func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
 	w.Write([]byte(rep.MD))
 }
 
+// renderPDFHTML executes the PDF template for rep, deriving HTML from MD (htmlOf) when
+// the HTML column wasn't persisted — md-only reports don't store a redundant copy.
+func (s *Server) renderPDFHTML(rep *Rep) (string, error) {
+	data := *rep
+	data.HTML = htmlOf(data)
+	var buf strings.Builder
+	if err := s.pdf.ExecuteTemplate(&buf, "pdf.html", data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
 func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) {
 	rep := s.loadRep(r.PathValue("rid"))
 	if rep == nil {
 		http.Error(w, "报告不存在", 404)
 		return
 	}
-	var buf strings.Builder
-	if err := s.pdf.ExecuteTemplate(&buf, "pdf.html", rep); err != nil {
+	renderedHTML, err := s.renderPDFHTML(rep)
+	if err != nil {
 		http.Error(w, "render", 500)
 		return
 	}
-	pdf, err := htmlToPDF(buf.String())
+	pdf, err := htmlToPDF(renderedHTML)
 	if err == ErrNoWkhtmltopdf {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(503)

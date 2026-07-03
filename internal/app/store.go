@@ -127,6 +127,14 @@ func (s *Store) pkAuto() string {
 	return "INTEGER PRIMARY KEY AUTOINCREMENT"
 }
 
+// blobType returns the column type for opaque binary content (SQLite BLOB vs Postgres BYTEA).
+func (s *Store) blobType() string {
+	if s.driver == "postgres" {
+		return "BYTEA"
+	}
+	return "BLOB"
+}
+
 // likeOp returns the substring-match operator. Postgres LIKE is case-sensitive
 // while SQLite's is not, so on Postgres we use ILIKE to keep name/keyword search
 // case-insensitive (matches the SQLite behaviour users rely on).
@@ -196,11 +204,41 @@ func (s *Store) init() error {
 			id %s, job_id BIGINT, row_index INTEGER, inputs TEXT, status TEXT DEFAULT 'queued',
 			attempts INTEGER DEFAULT 0, run_id TEXT, error TEXT, started_at TEXT, finished_at TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id, status)`,
+		// Priority run queue (see docs/adr/0004-run-queue.md). A job's priority level
+		// lives in its own table (not a batch_jobs column) so the queue is an additive
+		// layer — no change to the existing table. enqueue time = batch_jobs.created_at.
+		`CREATE TABLE IF NOT EXISTS job_queue(job_id BIGINT PRIMARY KEY, priority TEXT DEFAULT 'normal')`,
 		// Outbound event webhooks (extension point; see docs/adr/0002-extension-architecture.md).
 		// events is a comma-separated subscription list; last_* columns give the admin delivery visibility.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS webhooks(
 			id %s, url TEXT, events TEXT, secret TEXT, active INTEGER DEFAULT 1,
 			created_at TEXT, last_status INTEGER DEFAULT 0, last_error TEXT, last_delivered_at TEXT)`, pk),
+		// Downloadable iframe apps (see docs/adr/0003-downloadable-apps.md). An app is
+		// a manifest (id/name/icon/version/entry/scopes) plus its self-contained
+		// frontend files, both stored here so install needs no writable filesystem.
+		// The host renders each app in a sandboxed iframe; it reaches /api/v1 only
+		// through a scoped token over a postMessage bridge.
+		`CREATE TABLE IF NOT EXISTS apps(
+			id TEXT PRIMARY KEY, name TEXT, icon TEXT, version TEXT, entry TEXT,
+			scopes TEXT, created_at TEXT)`,
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS app_files(
+			app_id TEXT, path TEXT, ctype TEXT, content %s, PRIMARY KEY(app_id, path))`, s.blobType()),
+		// Extended account attributes live in their own tables so the core `users`
+		// table is never altered (additive-only schema). A missing profile row means
+		// defaults: enabled, no display name/email. Groups are organizational labels
+		// (many-to-many); permissions still come from the role.
+		`CREATE TABLE IF NOT EXISTS user_profiles(
+			username TEXT PRIMARY KEY, display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT)`,
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS user_groups(
+			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER DEFAULT 0)`, pk),
+		`CREATE TABLE IF NOT EXISTS user_group_members(
+			group_id BIGINT, username TEXT, PRIMARY KEY(group_id, username))`,
+		`CREATE INDEX IF NOT EXISTS idx_ugm_user ON user_group_members(username)`,
+		// Priority "次票": a per-user quota of 加急 runs, allocated by group weight and
+		// refilled each period. State is lazy (no cron): a period rollover is detected
+		// from period_start on access. See docs/adr/0005-priority-tickets.md.
+		`CREATE TABLE IF NOT EXISTS priority_tickets(
+			username TEXT PRIMARY KEY, remaining INTEGER DEFAULT 0, period_start TEXT)`,
 	}
 	for _, st := range stmts {
 		if _, err := s.exec(st); err != nil {
@@ -212,32 +250,45 @@ func (s *Store) init() error {
 
 // ---------- Accounts ----------
 
+// userCols is the shared SELECT list joining a user with its profile (COALESCE so a
+// user without a profile row reads as enabled with empty display name/email).
+const userCols = `u.username,u.password_hash,u.role,
+	COALESCE(p.display_name,''),COALESCE(p.email,''),COALESCE(p.active,1),COALESCE(p.last_login,'')`
+
+func scanUser(scan func(...any) error) (User, error) {
+	var u User
+	var role, dn, email, last sql.NullString
+	var active sql.NullInt64
+	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last); err != nil {
+		return User{}, err
+	}
+	u.Role, u.DisplayName, u.Email, u.LastLogin = role.String, dn.String, email.String, last.String
+	u.Active = !active.Valid || active.Int64 != 0
+	return u, nil
+}
+
 func (s *Store) Users() []User {
-	rows, err := s.query("SELECT username,password_hash,role FROM users ORDER BY role, username")
+	rows, err := s.query("SELECT " + userCols + " FROM users u LEFT JOIN user_profiles p ON p.username=u.username ORDER BY u.role, u.username")
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 	var out []User
 	for rows.Next() {
-		var u User
-		var role sql.NullString
-		rows.Scan(&u.Username, &u.PasswordHash, &role)
-		u.Role = role.String
+		u, err := scanUser(rows.Scan)
+		if err != nil {
+			continue
+		}
 		out = append(out, u)
 	}
 	return out
 }
 
 func (s *Store) GetUser(name string) *User {
-	var u User
-	var role sql.NullString
-	err := s.queryRow("SELECT username,password_hash,role FROM users WHERE username=?", name).
-		Scan(&u.Username, &u.PasswordHash, &role)
+	u, err := scanUser(s.queryRow("SELECT "+userCols+" FROM users u LEFT JOIN user_profiles p ON p.username=u.username WHERE u.username=?", name).Scan)
 	if err != nil {
 		return nil
 	}
-	u.Role = role.String
 	return &u
 }
 
@@ -259,6 +310,7 @@ func (s *Store) SetUserRole(name, role string) error {
 }
 
 func (s *Store) DeleteUser(name string) error {
+	s.deleteUserExtras(name) // profile row + group memberships
 	_, err := s.exec("DELETE FROM users WHERE username=?", name)
 	return err
 }

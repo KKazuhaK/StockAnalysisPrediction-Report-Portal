@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Symbols demo</title>
+  <style>
+    :root { --accent: #1677ff; --bg: #fff; --text: #1f1f1f; --muted: #8c8c8c; --border: #f0f0f0; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 20px; background: var(--bg); color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    h2 { margin: 0 0 4px; }
+    p.sub { margin: 0 0 16px; color: var(--muted); }
+    .row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    input {
+      flex: 1; min-width: 160px; padding: 8px 12px; border: 1px solid var(--border);
+      border-radius: 8px; background: transparent; color: inherit; font-size: 14px;
+    }
+    button {
+      padding: 8px 16px; border: none; border-radius: 8px; background: var(--accent);
+      color: #fff; cursor: pointer; font-size: 14px;
+    }
+    button:disabled { opacity: .6; cursor: default; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; gap: 12px; }
+    li .code { font-weight: 600; }
+    li .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .empty { color: var(--muted); padding: 12px 0; }
+  </style>
+</head>
+<body>
+  <h2>🔎 Stocks with reports</h2>
+  <p class="sub">A demo app: it runs sandboxed and reads the portal API only through the host bridge (query scope).</p>
+  <div class="row">
+    <input id="q" placeholder="Filter by code or name…" />
+    <button id="go">Search</button>
+  </div>
+  <ul id="list"></ul>
+
+  <script>
+    // --- Tiny client over the host postMessage bridge (docs/adr/0003) ---
+    let seq = 0
+    const pending = {}
+    function apiGet(path) {
+      return new Promise((resolve, reject) => {
+        const reqId = ++seq
+        pending[reqId] = { resolve, reject }
+        parent.postMessage({ type: 'rp:api', reqId, method: 'GET', path }, '*')
+      })
+    }
+    window.addEventListener('message', (e) => {
+      const m = e.data || {}
+      if (m.type === 'rp:api:result' && pending[m.reqId]) {
+        const p = pending[m.reqId]; delete pending[m.reqId]
+        if (m.ok) p.resolve(m.data)
+        else p.reject(new Error(m.error || ('HTTP ' + m.status)))
+      } else if (m.type === 'rp:init' && m.theme) {
+        applyTheme(m.theme)
+      }
+    })
+    function applyTheme(th) {
+      const r = document.documentElement.style
+      if (th.colorPrimary) r.setProperty('--accent', th.colorPrimary)
+      if (th.colorBg) r.setProperty('--bg', th.colorBg)
+      if (th.colorText) { r.setProperty('--text', th.colorText); document.body.style.color = th.colorText }
+      if (th.colorBg) document.body.style.background = th.colorBg
+      r.setProperty('--border', th.dark ? '#303030' : '#f0f0f0')
+      r.setProperty('--muted', th.dark ? '#8c8c8c' : '#8c8c8c')
+    }
+
+    const list = document.getElementById('list')
+    const go = document.getElementById('go')
+    const q = document.getElementById('q')
+
+    async function search() {
+      go.disabled = true
+      list.innerHTML = '<li class="empty">Loading…</li>'
+      const term = q.value.trim()
+      try {
+        const data = await apiGet('/api/v1/symbols?limit=20' + (term ? '&q=' + encodeURIComponent(term) : ''))
+        const items = (data && data.items) || []
+        list.innerHTML = ''
+        if (!items.length) { list.innerHTML = '<li class="empty">No matching stocks.</li>'; return }
+        for (const s of items) {
+          const li = document.createElement('li')
+          const left = document.createElement('span')
+          left.innerHTML = '<span class="code">' + esc(s.symbol) + '</span> ' + esc(s.name || '')
+          const right = document.createElement('span')
+          right.className = 'meta'
+          right.textContent = (s.count || 0) + ' docs · ' + (s.latest || '')
+          li.appendChild(left); li.appendChild(right)
+          list.appendChild(li)
+        }
+      } catch (err) {
+        list.innerHTML = '<li class="empty">Error: ' + esc(err.message) + '</li>'
+      } finally {
+        go.disabled = false
+      }
+    }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])) }
+
+    go.onclick = search
+    q.addEventListener('keydown', (e) => { if (e.key === 'Enter') search() })
+    search()
+  </script>
+</body>
+</html>

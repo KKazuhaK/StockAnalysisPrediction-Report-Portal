@@ -39,6 +39,9 @@ func gzipEligible(p string) bool {
 	if strings.HasPrefix(p, "/report/") {
 		return false
 	}
+	if p == "/pwa-icon" {
+		return false
+	}
 	if strings.HasPrefix(p, "/api/") {
 		return true
 	}

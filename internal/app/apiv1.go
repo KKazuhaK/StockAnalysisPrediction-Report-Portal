@@ -158,10 +158,6 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.st.RegisterType(rtype, kind)
 	uid := deriveUID(in.Symbol, in.Date, rtype)
-	html := in.BodyHTML
-	if html == "" && in.BodyMD != "" {
-		html = mdToHTML(in.BodyMD)
-	}
 	// Freeze the as-of name onto this report row: an explicit payload name wins,
 	// otherwise resolve the current live name (rename-safe; earlier reports keep theirs).
 	name := in.Name
@@ -171,7 +167,7 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	created, err := s.st.UpsertReport(Rep{
 		UID: uid, RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
 		RType: rtype, Title: in.Title, Source: in.Source, Time: ingestInstant(in.Time),
-		MD: in.BodyMD, HTML: html,
+		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML),
 	})
 	if err != nil {
 		log.Printf("v1 ingest db error: %v", err)
@@ -253,7 +249,7 @@ func (s *Server) v1GetReport(w http.ResponseWriter, r *http.Request) {
 	}
 	m := s.v1RepJSON(*rep, true)
 	m["ok"] = true
-	m["body_html"] = rep.HTML
+	m["body_html"] = htmlOf(*rep)
 	writeJSON(w, m)
 }
 

@@ -13,7 +13,9 @@ type fakeProv struct {
 	fn func(map[string]string) (batch.RunResult, error)
 }
 
-func (p fakeProv) Run(_ context.Context, in map[string]string) (batch.RunResult, error) { return p.fn(in) }
+func (p fakeProv) Run(_ context.Context, in map[string]string) (batch.RunResult, error) {
+	return p.fn(in)
+}
 
 func seedTarget(t *testing.T, st *Store) int64 {
 	t.Helper()
@@ -33,7 +35,7 @@ func TestBatchJobLifecycleWithEngine(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
 	rows := []map[string]string{{"code": "a"}, {"code": "b"}, {"code": "c"}}
-	job, err := st.CreateBatchJob(tgt, 2, 1, "admin", rows)
+	job, err := st.CreateBatchJob(tgt, 2, 1, "admin", rows, "normal")
 	if err != nil {
 		t.Fatalf("CreateBatchJob: %v", err)
 	}
@@ -77,7 +79,8 @@ func TestBatchJobLifecycleWithEngine(t *testing.T) {
 func TestResetInFlightItemsRequeues(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
-	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}})
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}}, "normal")
+	st.MarkJobRunning(job) // the job had been admitted (running) before the crash
 	// simulate a crash mid-run: one item stuck running
 	items := st.BatchJobItems(job)
 	st.StartItem(items[0].ID)
@@ -99,7 +102,7 @@ func TestResetInFlightItemsRequeues(t *testing.T) {
 func TestCancelBatchJobStopsDispatch(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
-	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}, {"code": "c"}})
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}, {"code": "c"}}, "normal")
 	if err := st.CancelBatchJob(job); err != nil {
 		t.Fatalf("CancelBatchJob: %v", err)
 	}
@@ -129,7 +132,7 @@ func TestCancelBatchJobStopsDispatch(t *testing.T) {
 func TestRequeueFailedOnly(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
-	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}})
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"code": "a"}, {"code": "b"}}, "normal")
 	items := st.BatchJobItems(job)
 	st.FinishItem(items[0].ID, batch.Ok, 1, "r", "")
 	st.FinishItem(items[1].ID, batch.Failed, 1, "", "boom")
@@ -147,7 +150,7 @@ func TestRequeueFailedOnly(t *testing.T) {
 		t.Errorf("queued = %v, want only the failed row b", q)
 	}
 	j, _ := st.GetBatchJob(job)
-	if j.Status != "running" {
-		t.Errorf("status after requeue = %q, want running", j.Status)
+	if j.Status != "queued" {
+		t.Errorf("status after requeue = %q, want queued (re-enters the queue)", j.Status)
 	}
 }

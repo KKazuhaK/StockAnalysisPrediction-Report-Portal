@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
 )
 
 // This file is the batch orchestration layer: it ties the store, the engine, and
@@ -40,6 +41,99 @@ func (s *Server) clampConcurrency(requested int) int {
 		requested = max
 	}
 	return requested
+}
+
+// ---------- priority run queue (docs/adr/0004-run-queue.md) ----------
+
+// priorityRegistry is the queue's priority taxonomy. For now it is the built-in
+// default (加急 / 普通 / 其他); admin-configurable custom levels are a later step.
+func (s *Server) priorityRegistry() queue.Registry { return queue.DefaultRegistry() }
+
+// batchBudget is how many jobs may run at once across the whole queue (admin-set).
+// Default 1 — jobs run one at a time, ordered by priority, which is the original
+// "queue and run them one by one" ask.
+func (s *Server) batchBudget() int {
+	n, err := strconv.Atoi(s.st.GetSetting("batch_max_concurrent_jobs", "1"))
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
+}
+
+// batchReserved is how many slots to hold for the top (加急) tier. Clamped to
+// [0, budget-1] by the scheduler, so it only bites once the budget is raised.
+func (s *Server) batchReserved() int {
+	n, err := strconv.Atoi(s.st.GetSetting("batch_reserved_slots", "1"))
+	if err != nil || n < 0 {
+		return 1
+	}
+	return n
+}
+
+// ticketPeriodDays is how often 加急 tickets refill (admin-set; default weekly).
+func (s *Server) ticketPeriodDays() int {
+	n, err := strconv.Atoi(s.st.GetSetting("batch_ticket_period_days", "7"))
+	if err != nil || n < 1 {
+		return 7
+	}
+	return n
+}
+
+// urgentAllowed decides the effective priority for a submitted job: admins may use
+// 加急 freely; everyone else must spend a 加急 ticket, otherwise the job is
+// downgraded to 普通. Returns the effective priority and whether it was downgraded.
+func (s *Server) urgentAllowed(user, priority string) (string, bool) {
+	if priority != "urgent" || s.isAdmin(user) {
+		return priority, false
+	}
+	alloc := s.st.UserTicketAllocation(user)
+	if ok, _ := s.st.SpendTicket(user, alloc, s.ticketPeriodDays(), time.Now()); ok {
+		return priority, false
+	}
+	return "normal", true // out of 加急 tickets → runs as 普通
+}
+
+// parseEnqueueUnix parses a stored "2006-01-02 15:04:05" timestamp (local time) to
+// a unix second. A malformed/empty value sorts first (unix 0), which is harmless.
+func parseEnqueueUnix(ts string) int64 {
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", ts, time.Local)
+	if err != nil {
+		return 0
+	}
+	return t.Unix()
+}
+
+// queuedItems maps the currently-queued jobs to scheduler items (id + level +
+// aging key), used both by the scheduler and by the "N ahead" computation.
+func (s *Server) queuedItems() []queue.Item {
+	reg := s.priorityRegistry()
+	jobs := s.st.QueuedJobs()
+	items := make([]queue.Item, 0, len(jobs))
+	for _, j := range jobs {
+		items = append(items, queue.Item{ID: j.ID, Level: j.Priority, SchedKey: reg.SchedKey(j.Priority, parseEnqueueUnix(j.CreatedAt))})
+	}
+	return items
+}
+
+// scheduleTick admits as many queued jobs as the budget + reserved-slot rule allow,
+// highest priority first, and launches each. It is serialized by schedMu so two
+// callers can't over-admit; MarkJobRunning makes each admission atomic on top of
+// that. Called after a job is enqueued, after one finishes, and on startup.
+func (s *Server) scheduleTick() {
+	s.schedMu.Lock()
+	defer s.schedMu.Unlock()
+	items := s.queuedItems()
+	if len(items) == 0 {
+		return
+	}
+	reg := s.priorityRegistry()
+	running := s.st.RunningJobCount()
+	plan := queue.Plan{Budget: s.batchBudget(), Reserved: s.batchReserved()}
+	for _, it := range reg.Admit(items, running, plan) {
+		if s.st.MarkJobRunning(it.ID) {
+			s.launchJob(it.ID)
+		}
+	}
 }
 
 // buildProvider constructs the Provider for a job from its target's plugin
@@ -99,6 +193,7 @@ func (s *Server) launchJob(jobID int64) {
 				"succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed,
 			})
 		}
+		s.scheduleTick() // a slot just freed — admit the next queued job by priority
 	}()
 }
 
@@ -113,4 +208,5 @@ func (s *Server) resumeBatchJobs() {
 		log.Printf("batch resume: relaunching job %d", id)
 		s.launchJob(id)
 	}
+	s.scheduleTick() // admit any jobs that were left 'queued' when the server stopped
 }
