@@ -507,25 +507,28 @@ var defaultSeedTypes = []struct {
 	Ord     int
 	Summary bool
 }{
-	// 投资决策 (dept-1 single-stock analysis; 投资决策建议 is the decision summary)
+	// 投资决策 (dept-1 single-stock analysis; 投资决策建议 is the decision summary).
+	// 舆情分析 (dept-1 1-2) and 管理能力分析 (dept-1 1-5) are investment inputs, not 重组/深度研究.
 	{"汇总", "投资决策", 0, true},
 	{"投资决策建议", "投资决策", 10, true},
 	{"研报分析", "投资决策", 20, false},
 	{"行业分析", "投资决策", 30, false},
+	{"舆情分析", "投资决策", 35, false},
 	{"估值分析", "投资决策", 40, false},
 	{"财务分析", "投资决策", 50, false},
 	{"股权分析", "投资决策", 60, false},
+	{"管理能力分析", "投资决策", 65, false},
 	{"投资机会", "投资决策", 70, false},
-	// 深度研究 (DeepResearch-DS + management analysis)
+	// 深度研究 (DeepResearch-DS emits 综合深度研究 / 重组深度研究; 调研纪要 is manual)
 	{"综合深度研究", "深度研究", 0, true},
-	{"管理能力分析", "深度研究", 10, false},
+	{"重组深度研究", "深度研究", 10, false},
 	{"调研纪要", "深度研究", 20, false},
-	// 重组决策 (the 3-x 重组 series; 重组分析 is the 综合决策 summary; 舆情/事件/信号监测 are its sub-models)
-	{"重组分析", "重组决策", 0, true},
+	// 重组决策 (the 3-x 重组 series; 综合决策 is the 3-5 summary; the rest are its sub-models)
+	{"综合决策", "重组决策", 0, true},
 	{"重组基本面分析", "重组决策", 10, false},
-	{"重组交易分析", "重组决策", 20, false},
-	{"资本运作分析", "重组决策", 30, false},
-	{"舆情分析", "重组决策", 40, false},
+	{"交易分析", "重组决策", 20, false},
+	{"重组舆情分析", "重组决策", 30, false},
+	{"资本运作分析", "重组决策", 40, false},
 	{"事件监测", "重组决策", 50, false},
 	{"信号监测", "重组决策", 60, false},
 	// 技术分析 (Daily_Quote 缠论 / 技术分析)
