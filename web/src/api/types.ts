@@ -253,7 +253,14 @@ export interface SettingsResp {
   oldUser: string
   hasPass: boolean
   timezone: string // '' = follow system zone
+  siteTitle: string
+  siteLogoUrl: string
   newCount: number
+}
+
+export interface SiteSettings {
+  siteTitle: string
+  siteLogoUrl: string
 }
 
 export interface LegacyImportStatus {

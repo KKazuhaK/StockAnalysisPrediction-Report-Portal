@@ -16,11 +16,14 @@ import {
   Tabs,
   Tag,
   Typography,
+  Upload,
 } from 'antd'
-import { CloudSyncOutlined, DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
+import { CloudSyncOutlined, DeleteOutlined, PlusOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { LegacyImportStatus, SettingsResp, TokenRow } from '../../api/types'
+import { useSite } from '../../site'
+import { BrandIcon } from '../../components/icons'
 import Markdown from '../../components/Markdown'
 import { specToEndpoints, type ApiEndpoint, type ApiParam, type ApiError } from './openapiDoc'
 
@@ -381,31 +384,98 @@ function tzOptions(systemLabel: string) {
 function GeneralTab() {
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const [tz, setTz] = useState('')
+  const { refresh } = useSite()
+  const [form] = Form.useForm()
+  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    api.get<SettingsResp>('/api/admin/settings').then((r) => setTz(r.timezone || ''))
-  }, [])
+    api
+      .get<SettingsResp>('/api/admin/settings')
+      .then((r) =>
+        form.setFieldsValue({
+          siteTitle: r.siteTitle || '',
+          siteLogoUrl: r.siteLogoUrl || '',
+          timezone: r.timezone || '',
+        }),
+      )
+      .finally(() => setLoading(false))
+  }, [form])
 
   const save = async () => {
+    const v = await form.validateFields()
     setSaving(true)
     try {
-      await api.post('/api/admin/settings', { timezone: tz })
+      await api.post('/api/admin/settings', {
+        siteTitle: v.siteTitle || '',
+        siteLogoUrl: v.siteLogoUrl || '',
+        timezone: v.timezone || '',
+      })
+      await refresh()
       message.success(t('common.saved'))
     } finally {
       setSaving(false)
     }
   }
 
+  const uploadLogo = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      message.error(t('settings.logoTypeInvalid'))
+      return false
+    }
+    if (file.size > 256 * 1024) {
+      message.error(t('settings.logoTooLarge'))
+      return false
+    }
+    const reader = new FileReader()
+    reader.onload = () => form.setFieldsValue({ siteLogoUrl: String(reader.result || '') })
+    reader.onerror = () => message.error(t('settings.logoReadFailed'))
+    reader.readAsDataURL(file)
+    return false
+  }
+
+  if (loading) return <Spin />
+
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 480 }}>
-      <Form layout="vertical">
-        <Form.Item label={t('settings.timezone')} style={{ marginBottom: 8 }}>
+    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 560 }}>
+      <Form form={form} layout="vertical">
+        <Form.Item
+          name="siteTitle"
+          label={t('settings.siteTitle')}
+          rules={[{ max: 80, message: t('settings.siteTitleTooLong') }]}
+        >
+          <Input maxLength={80} showCount placeholder={t('brand')} />
+        </Form.Item>
+        <Form.Item name="siteLogoUrl" label={t('settings.logoUrl')} extra={t('settings.logoHint')}>
+          <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder={t('settings.logoPlaceholder')} />
+        </Form.Item>
+        <Space wrap style={{ marginBottom: 16 }}>
+          <Upload accept="image/*" showUploadList={false} beforeUpload={uploadLogo}>
+            <Button icon={<UploadOutlined />}>{t('settings.logoUpload')}</Button>
+          </Upload>
+          <Button icon={<DeleteOutlined />} onClick={() => form.setFieldsValue({ siteLogoUrl: '' })}>
+            {t('settings.logoClear')}
+          </Button>
+        </Space>
+        <Form.Item shouldUpdate noStyle>
+          {({ getFieldValue }) => {
+            const logo = String(getFieldValue('siteLogoUrl') || '').trim()
+            const title = String(getFieldValue('siteTitle') || '').trim() || t('brand')
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+                {logo ? (
+                  <img src={logo} alt="" style={{ width: 32, height: 32, objectFit: 'contain' }} />
+                ) : (
+                  <BrandIcon style={{ color: 'var(--ant-color-primary)', fontSize: 32 }} />
+                )}
+                <Typography.Text strong>{title}</Typography.Text>
+              </div>
+            )
+          }}
+        </Form.Item>
+        <Form.Item name="timezone" label={t('settings.timezone')} style={{ marginBottom: 8 }}>
           <Select
             showSearch
-            value={tz}
-            onChange={setTz}
             options={tzOptions(t('settings.timezoneSystem'))}
             style={{ width: '100%' }}
             filterOption={(input, opt) => (opt?.label ?? '').toLowerCase().includes(input.toLowerCase())}

@@ -21,15 +21,16 @@ import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, qs } from '../api/client'
 import type { HomeResp } from '../api/types'
+import { SiteLogo, useSite } from '../site'
 import Omnibox from '../components/Omnibox'
 import ReportCard from '../components/ReportCard'
-import { BrandIcon } from '../components/icons'
 import { linkIconComponent } from '../components/linkIcons'
 
 const { RangePicker } = DatePicker
 
 export default function HomePage() {
   const { t } = useTranslation()
+  const { title } = useSite()
   const { token } = theme.useToken()
   const [sp, setSp] = useSearchParams()
   const [data, setData] = useState<HomeResp | null>(null)
@@ -100,8 +101,8 @@ export default function HomePage() {
           level={3}
           style={{ marginBottom: 20, display: 'inline-flex', alignItems: 'center', gap: 10 }}
         >
-          <BrandIcon style={{ color: token.colorPrimary, fontSize: 28 }} />
-          {t('brand')}
+          <SiteLogo size={28} color={token.colorPrimary} />
+          {title}
         </Typography.Title>
         <div style={{ maxWidth: 640, margin: '0 auto' }}>
           <Omnibox initial={params.q} />

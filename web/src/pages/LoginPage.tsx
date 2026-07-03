@@ -6,10 +6,12 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth'
 import { usePrefs } from '../prefs'
 import { ApiError } from '../api/client'
-import { AutoIcon, BrandIcon, MoonIcon, SunIcon } from '../components/icons'
+import { SiteLogo, useSite } from '../site'
+import { AutoIcon, MoonIcon, SunIcon } from '../components/icons'
 
 export default function LoginPage() {
   const { t } = useTranslation()
+  const { title } = useSite()
   const { user, loading, login } = useAuth()
   const { mode, setMode, lang, setLang, langs } = usePrefs()
   const { token } = theme.useToken()
@@ -49,8 +51,8 @@ export default function LoginPage() {
               level={4}
               style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}
             >
-              <BrandIcon style={{ color: token.colorPrimary, fontSize: 22, flexShrink: 0 }} />
-              {t('login.title')}
+              <SiteLogo size={22} color={token.colorPrimary} />
+              {t('login.titleWithBrand', { title })}
             </Typography.Title>
             <Space style={{ justifyContent: 'flex-end' }} wrap>
               <Segmented

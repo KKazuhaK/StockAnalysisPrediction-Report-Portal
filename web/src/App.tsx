@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { App as AntdApp, ConfigProvider, Spin, theme } from 'antd'
 import { PrefsProvider, usePrefs } from './prefs'
 import { AuthProvider, useAuth } from './auth'
+import { SiteProvider } from './site'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
 
@@ -127,7 +128,9 @@ function Themed() {
 export default function App() {
   return (
     <PrefsProvider>
-      <Themed />
+      <SiteProvider>
+        <Themed />
+      </SiteProvider>
     </PrefsProvider>
   )
 }

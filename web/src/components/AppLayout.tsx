@@ -6,13 +6,15 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import { usePrefs } from '../prefs'
 import { useAuth } from '../auth'
+import { SiteLogo, useSite } from '../site'
 import Omnibox from './Omnibox'
-import { AutoIcon, BrandIcon, MoonIcon, SunIcon } from './icons'
+import { AutoIcon, MoonIcon, SunIcon } from './icons'
 
 const { Header, Content, Footer } = Layout
 
 export default function AppLayout() {
   const { t } = useTranslation()
+  const { title } = useSite()
   const { mode, setMode, lang, setLang, langs } = usePrefs()
   const { user, admin, can, logout } = useAuth()
   const navigate = useNavigate()
@@ -61,8 +63,8 @@ export default function AppLayout() {
             gap: 8,
           }}
         >
-          <BrandIcon style={{ color: token.colorPrimary, fontSize: 22 }} />
-          {!compact && t('brand')}
+          <SiteLogo size={22} color={token.colorPrimary} />
+          {!compact && title}
         </Link>
 
         {/* On mobile the search drops to its own full-width row (order:2) below the controls. */}
@@ -151,8 +153,8 @@ export default function AppLayout() {
       </Content>
 
       <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
-        <BrandIcon style={{ marginInlineEnd: 6 }} />
-        {t('brand')}
+        <SiteLogo size={14} style={{ marginInlineEnd: 6 }} />
+        {title}
         {ver && ` · ${ver.version} (${ver.commit})`}
       </Footer>
     </Layout>

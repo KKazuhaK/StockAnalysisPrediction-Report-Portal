@@ -151,6 +151,66 @@ func TestTimezoneSetting(t *testing.T) {
 	}
 }
 
+func TestSiteSettings(t *testing.T) {
+	s := newV1Server(t)
+	save := func(payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/admin/settings", strings.NewReader(payload))
+		rec := httptest.NewRecorder()
+		s.apiSettingsSave(rec, req, "admin")
+		return rec
+	}
+	get := func(h func(http.ResponseWriter, *http.Request), path string) map[string]any {
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+		var m map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+			t.Fatalf("%s not JSON: %v", path, err)
+		}
+		return m
+	}
+
+	pub := get(s.apiSite, "/api/site")
+	if pub["siteTitle"] != "" || pub["siteLogoUrl"] != "" {
+		t.Fatalf("default site settings = %v, want empty overrides", pub)
+	}
+
+	if rec := save(`{"siteTitle":" 智研平台 ","siteLogoUrl":"/brand/logo.png"}`); rec.Code != http.StatusOK {
+		t.Fatalf("save site settings: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := s.st.GetSetting("site_title", ""); got != "智研平台" {
+		t.Errorf("site_title=%q", got)
+	}
+	if got := s.st.GetSetting("site_logo_url", ""); got != "/brand/logo.png" {
+		t.Errorf("site_logo_url=%q", got)
+	}
+
+	admin := get(func(w http.ResponseWriter, r *http.Request) { s.apiAdminSettings(w, r, "admin") }, "/api/admin/settings")
+	if admin["siteTitle"] != "智研平台" || admin["siteLogoUrl"] != "/brand/logo.png" {
+		t.Errorf("admin settings missing site fields: %v", admin)
+	}
+	pub = get(s.apiSite, "/api/site")
+	if pub["siteTitle"] != "智研平台" || pub["siteLogoUrl"] != "/brand/logo.png" {
+		t.Errorf("public site settings = %v", pub)
+	}
+
+	if rec := save(`{"siteTitle":"不应保存","siteLogoUrl":"javascript:alert(1)"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid logo status=%d, want 400", rec.Code)
+	}
+	if got := s.st.GetSetting("site_title", ""); got != "智研平台" {
+		t.Errorf("invalid save half-applied title: %q", got)
+	}
+
+	if rec := save(`{"siteTitle":"","siteLogoUrl":""}`); rec.Code != http.StatusOK {
+		t.Fatalf("clear site settings: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if s.st.GetSetting("site_title", "x") != "" || s.st.GetSetting("site_logo_url", "x") != "" {
+		t.Errorf("clear did not empty site settings")
+	}
+}
+
 // panelLocation resolves the configured panel tz, falling back to the system
 // zone (time.Local) when unset or invalid.
 func TestPanelLocation(t *testing.T) {

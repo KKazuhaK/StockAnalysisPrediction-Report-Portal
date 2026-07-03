@@ -12,6 +12,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,11 @@ import (
 )
 
 var okJSON = map[string]any{"ok": true}
+
+const (
+	maxSiteTitleRunes = 80
+	maxSiteLogoBytes  = 512 * 1024
+)
 
 // jsonError writes a uniform JSON error response.
 func jsonError(w http.ResponseWriter, code int, msg string) {
@@ -90,6 +96,20 @@ func (s *Server) canQuery(r *http.Request) bool {
 		return true
 	}
 	return s.tokenOK(r, "query")
+}
+
+// ---------- Public site chrome ----------
+
+func (s *Server) siteSettingsJSON() map[string]any {
+	return map[string]any{
+		"siteTitle":   s.st.GetSetting("site_title", ""),
+		"siteLogoUrl": s.st.GetSetting("site_logo_url", ""),
+	}
+}
+
+// apiSite returns public brand settings used before login as well as in the app shell.
+func (s *Server) apiSite(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.siteSettingsJSON())
 }
 
 // ---------- Authentication ----------
@@ -579,13 +599,17 @@ func (s *Server) apiUserDelete(w http.ResponseWriter, r *http.Request, user stri
 // ---------- Admin: system settings (legacy portal credentials, used by the one-shot import) ----------
 
 func (s *Server) apiAdminSettings(w http.ResponseWriter, r *http.Request, user string) {
-	writeJSON(w, map[string]any{
+	out := map[string]any{
 		"oldBase":  s.st.GetSetting("old_base", ""),
 		"oldUser":  s.st.GetSetting("old_user", ""),
 		"hasPass":  s.st.GetSetting("old_pass", "") != "",
 		"timezone": s.st.GetSetting("timezone", ""), // "" = follow system zone
 		"newCount": s.st.CountNew(),
-	})
+	}
+	for k, v := range s.siteSettingsJSON() {
+		out[k] = v
+	}
+	writeJSON(w, out)
 }
 
 // apiTypesRecompute re-applies the subtype→大类 (类型管理) mapping to every stored
@@ -603,10 +627,10 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	// All pointers: a nil field was omitted from the request → leave that setting
 	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
 	var in struct {
-		OldBase, OldUser, OldPass, Timezone *string
+		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl *string
 	}
 	readJSON(r, &in)
-	// Validate the timezone before writing anything so a bad zone can't half-apply.
+	// Validate before writing anything so a bad field can't half-apply.
 	if in.Timezone != nil {
 		if tz := strings.TrimSpace(*in.Timezone); tz != "" {
 			if _, err := time.LoadLocation(tz); err != nil {
@@ -614,6 +638,14 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 				return
 			}
 		}
+	}
+	if in.SiteTitle != nil && len([]rune(strings.TrimSpace(*in.SiteTitle))) > maxSiteTitleRunes {
+		jsonError(w, http.StatusBadRequest, "站点标题过长")
+		return
+	}
+	if in.SiteLogoUrl != nil && !validSiteLogoURL(strings.TrimSpace(*in.SiteLogoUrl)) {
+		jsonError(w, http.StatusBadRequest, "无效的 Logo 地址")
+		return
 	}
 	if in.OldBase != nil {
 		s.st.SetSetting("old_base", strings.TrimSpace(*in.OldBase))
@@ -627,7 +659,39 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	if in.Timezone != nil { // "" clears → follow system zone
 		s.st.SetSetting("timezone", strings.TrimSpace(*in.Timezone))
 	}
+	if in.SiteTitle != nil { // "" clears → localized default brand title
+		s.st.SetSetting("site_title", strings.TrimSpace(*in.SiteTitle))
+	}
+	if in.SiteLogoUrl != nil { // "" clears → built-in SVG mark
+		s.st.SetSetting("site_logo_url", strings.TrimSpace(*in.SiteLogoUrl))
+	}
 	writeJSON(w, okJSON)
+}
+
+func validSiteLogoURL(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	if len(raw) > maxSiteLogoBytes {
+		return false
+	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "data:image/") {
+		meta, _, ok := strings.Cut(lower, ",")
+		return ok && strings.HasSuffix(meta, ";base64")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "http", "https":
+		return u.Host != ""
+	case "":
+		return strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") && !strings.Contains(raw, "\\")
+	default:
+		return false
+	}
 }
 
 // ---------- Admin: multiple tokens (Dify API auth) ----------
