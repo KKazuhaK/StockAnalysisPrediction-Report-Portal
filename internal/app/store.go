@@ -208,6 +208,11 @@ func (s *Store) init() error {
 		// lives in its own table (not a batch_jobs column) so the queue is an additive
 		// layer — no change to the existing table. enqueue time = batch_jobs.created_at.
 		`CREATE TABLE IF NOT EXISTS job_queue(job_id BIGINT PRIMARY KEY, priority TEXT DEFAULT 'normal')`,
+		// One-shot scheduling (定时运行, see docs/adr/0007-run-analysis-and-scheduling.md). A
+		// scheduled run is an ordinary status='queued' job PLUS a run_at here; queuedItems()
+		// hides it until run_at passes. Additive side table, same basis as created_at.
+		`CREATE TABLE IF NOT EXISTS job_schedule(job_id BIGINT PRIMARY KEY, run_at TEXT)`,
+		`CREATE INDEX IF NOT EXISTS idx_job_schedule_run_at ON job_schedule(run_at)`,
 		// Outbound event webhooks (extension point; see docs/adr/0002-extension-architecture.md).
 		// events is a comma-separated subscription list; last_* columns give the admin delivery visibility.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS webhooks(
