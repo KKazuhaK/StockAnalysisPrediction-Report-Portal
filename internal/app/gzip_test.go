@@ -12,12 +12,12 @@ import (
 func TestGzipMiddleware(t *testing.T) {
 	body := strings.Repeat("hello world ", 500) // compressible
 	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(body))
 	}))
 
-	// eligible path + Accept-Encoding gzip → compressed, decodes back to the original
-	req := httptest.NewRequest("GET", "/assets/index-abc.js", nil)
+	// /api/* + Accept-Encoding gzip → compressed, decodes back to the original
+	req := httptest.NewRequest("GET", "/api/reports", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -38,7 +38,7 @@ func TestGzipMiddleware(t *testing.T) {
 
 	// no Accept-Encoding → passthrough, uncompressed
 	rec2 := httptest.NewRecorder()
-	h.ServeHTTP(rec2, httptest.NewRequest("GET", "/assets/x.js", nil))
+	h.ServeHTTP(rec2, httptest.NewRequest("GET", "/api/reports", nil))
 	if rec2.Header().Get("Content-Encoding") == "gzip" {
 		t.Error("must not gzip when the client does not accept it")
 	}
@@ -54,6 +54,28 @@ func TestGzipMiddleware(t *testing.T) {
 	if rec3.Header().Get("Content-Encoding") == "gzip" {
 		t.Error("images must not be gzipped")
 	}
+
+	// static assets with a recognized extension (/assets/*.js etc) are no longer
+	// compressed HERE — spaHandler pre-compresses and serves them directly (see
+	// spa_test.go); this middleware must leave them untouched to avoid double
+	// compression.
+	reqAsset := httptest.NewRequest("GET", "/assets/index-abc.js", nil)
+	reqAsset.Header.Set("Accept-Encoding", "gzip")
+	rec4 := httptest.NewRecorder()
+	h.ServeHTTP(rec4, reqAsset)
+	if rec4.Header().Get("Content-Encoding") == "gzip" {
+		t.Error("static assets must be left to spaHandler's own precompressed-gzip serving, not double-compressed here")
+	}
+
+	// SPA route fallback (no extension) still compresses here — it's tiny and
+	// spaHandler just writes plain index.html bytes for these paths.
+	reqRoute := httptest.NewRequest("GET", "/stock/300750", nil)
+	reqRoute.Header.Set("Accept-Encoding", "gzip")
+	rec5 := httptest.NewRecorder()
+	h.ServeHTTP(rec5, reqRoute)
+	if rec5.Header().Get("Content-Encoding") != "gzip" {
+		t.Error("extensionless SPA routes should still be compressed by this middleware")
+	}
 }
 
 // A 304 (empty body) must pass through without a gzip body.
@@ -61,7 +83,7 @@ func TestGzipSkipsEmptyBody(t *testing.T) {
 	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotModified)
 	}))
-	req := httptest.NewRequest("GET", "/assets/x.js", nil)
+	req := httptest.NewRequest("GET", "/api/reports", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

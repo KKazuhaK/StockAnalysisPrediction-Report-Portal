@@ -1,0 +1,127 @@
+package app
+
+import (
+	"bytes"
+	"compress/gzip"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"testing/fstest"
+)
+
+func testDist() fstest.MapFS {
+	big := strings.Repeat("console.log('hi');", 20000) // compressible, large enough to matter
+	return fstest.MapFS{
+		"index.html":    {Data: []byte("<html>spa shell</html>")},
+		"assets/app.js": {Data: []byte(big)},
+		"favicon.svg":   {Data: []byte("<svg></svg>")},
+	}
+}
+
+// Large static assets under /assets/ are pre-compressed once at startup and served
+// directly (skipping per-request gzip CPU work), with an accurate Content-Length and
+// the correct Content-Type (lost otherwise, since we bypass http.FileServer's sniffing).
+func TestSpaServesPrecompressedGzipForEligibleAsset(t *testing.T) {
+	h := spaHandlerFS(testDist())
+	req := httptest.NewRequest("GET", "/assets/app.js", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", rec.Header().Get("Content-Encoding"))
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Errorf("Content-Type = %q, want javascript", ct)
+	}
+	wantLen := strconv.Itoa(rec.Body.Len())
+	if cl := rec.Header().Get("Content-Length"); cl != wantLen {
+		t.Errorf("Content-Length = %q, want %q (actual body size)", cl, wantLen)
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("Cache-Control = %q, want immutable (hashed asset)", cc)
+	}
+	gr, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	dec, _ := io.ReadAll(gr)
+	want := strings.Repeat("console.log('hi');", 20000)
+	if string(dec) != want {
+		t.Error("decompressed body does not match the original asset content")
+	}
+}
+
+// A client that doesn't advertise gzip support gets the plain bytes.
+func TestSpaServesPlainWhenClientDoesNotAcceptGzip(t *testing.T) {
+	h := spaHandlerFS(testDist())
+	req := httptest.NewRequest("GET", "/assets/app.js", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") == "gzip" {
+		t.Error("must not gzip when the client does not accept it")
+	}
+	want := strings.Repeat("console.log('hi');", 20000)
+	if rec.Body.String() != want {
+		t.Error("plain body does not match the original asset content")
+	}
+}
+
+// A Range request must fall back to plain (whole-file precompressed gzip breaks
+// byte-range semantics), so http.FileServer's Range handling stays correct.
+func TestSpaSkipsPrecompressedOnRangeRequest(t *testing.T) {
+	h := spaHandlerFS(testDist())
+	req := httptest.NewRequest("GET", "/assets/app.js", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Range", "bytes=0-99")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Header().Get("Content-Encoding") == "gzip" {
+		t.Error("must not serve precompressed gzip for a Range request")
+	}
+}
+
+// Unknown app routes (client-side React Router paths) fall back to index.html, unchanged.
+func TestSpaFallbackToIndexForUnknownRoute(t *testing.T) {
+	h := spaHandlerFS(testDist())
+	req := httptest.NewRequest("GET", "/stock/300750", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", rec.Header().Get("Content-Type"))
+	}
+	if rec.Body.String() != "<html>spa shell</html>" {
+		t.Error("fallback body does not match index.html")
+	}
+}
+
+// A non-hashed static file (no /assets/ prefix) still gets precompressed-gzip
+// serving (by extension), but must NOT get the immutable long-cache header.
+func TestSpaPrecompressedAssetOutsideAssetsDirHasNoImmutableCache(t *testing.T) {
+	h := spaHandlerFS(testDist())
+	req := httptest.NewRequest("GET", "/favicon.svg", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if cc := rec.Header().Get("Cache-Control"); strings.Contains(cc, "immutable") {
+		t.Errorf("Cache-Control = %q, favicon.svg is not content-hashed so must not be immutable", cc)
+	}
+	gr, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	dec, _ := io.ReadAll(gr)
+	if string(dec) != "<svg></svg>" {
+		t.Error("decompressed favicon does not match original")
+	}
+}

@@ -30,8 +30,11 @@ var gzipExt = map[string]bool{
 	".svg": true, ".map": true, ".txt": true, ".xml": true,
 }
 
-// gzipEligible decides by path whether a response is worth compressing, avoiding
-// already-compressed binaries (images/fonts) and the MD/PDF download routes.
+// gzipEligible decides by path whether a response is worth compressing here,
+// avoiding already-compressed binaries (images/fonts) and the MD/PDF download
+// routes. Real static files with a recognized extension (JS/CSS/...) are
+// excluded — spaHandler pre-compresses and serves those directly (see spa.go);
+// compressing them again here would double-gzip an already-gzipped body.
 func gzipEligible(p string) bool {
 	if strings.HasPrefix(p, "/report/") {
 		return false
@@ -39,11 +42,7 @@ func gzipEligible(p string) bool {
 	if strings.HasPrefix(p, "/api/") {
 		return true
 	}
-	ext := path.Ext(p)
-	if ext == "" { // SPA routes fall back to index.html (text/html)
-		return true
-	}
-	return gzipExt[ext]
+	return path.Ext(p) == "" // SPA routes falling back to index.html (text/html)
 }
 
 type gzipResponseWriter struct {
