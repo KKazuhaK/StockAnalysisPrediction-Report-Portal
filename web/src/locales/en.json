@@ -222,6 +222,7 @@
   "research.searchPlaceholder": "Search research topics…",
   "home.advanced": "Advanced search",
   "home.keyword": "Keyword / full text",
+  "home.category": "Category",
   "home.type": "Report type",
   "home.dateRange": "Date range",
   "home.source": "Source",

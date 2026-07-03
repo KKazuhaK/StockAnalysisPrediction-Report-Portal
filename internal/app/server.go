@@ -439,7 +439,7 @@ func (s *Server) filtersFrom(r *http.Request) (Filters, string, int, int) {
 	q := r.URL.Query()
 	f := Filters{
 		Q: strings.TrimSpace(q.Get("q")), Scope: q.Get("scope"), Symbol: q.Get("symbol"),
-		RType: q.Get("rtype"), DateFrom: q.Get("date_from"), DateTo: q.Get("date_to"),
+		RType: q.Get("rtype"), Kind: q.Get("kind"), DateFrom: q.Get("date_from"), DateTo: q.Get("date_to"),
 		Sort: q.Get("sort"),
 	}
 	src := q.Get("src")

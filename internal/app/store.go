@@ -444,6 +444,7 @@ func (s *Store) DiscoveredTypes() []string {
 // Filters holds the filter conditions for lists/grouping.
 type Filters struct {
 	Q, Scope, Symbol, RType string
+	Kind                    string // 大类 (top-level category) filter, matched against reports.kind
 	DateFrom, DateTo, Sort  string
 }
 
@@ -480,6 +481,10 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 	if f.RType != "" {
 		where = append(where, "r.rtype = ?")
 		args = append(args, f.RType)
+	}
+	if f.Kind != "" {
+		where = append(where, "r.kind = ?")
+		args = append(args, f.Kind)
 	}
 	if f.DateFrom != "" {
 		where = append(where, "r.rdate >= ?")
@@ -1059,6 +1064,12 @@ func (s *Store) RecomputeKinds() (int, error) {
 
 func (s *Store) NewTypes() []string {
 	return s.distinct("SELECT DISTINCT rtype FROM reports WHERE rtype<>'' ORDER BY rtype")
+}
+
+// ReportKinds returns the distinct 大类 (top-level categories) present across
+// reports — used to populate the home 大类 filter.
+func (s *Store) ReportKinds() []string {
+	return s.distinct("SELECT DISTINCT kind FROM reports WHERE kind<>'' ORDER BY kind")
 }
 
 // FreezeReportNames snapshots the current stocks-cache name onto each report that has no

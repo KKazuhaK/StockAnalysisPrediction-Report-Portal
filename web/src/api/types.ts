@@ -193,6 +193,7 @@ export interface HomeResp {
   pages: number
   size: number
   types: string[]
+  kinds: string[] // 大类 (top-level categories) for the home filter
   links: LinkItem[]
 }
 

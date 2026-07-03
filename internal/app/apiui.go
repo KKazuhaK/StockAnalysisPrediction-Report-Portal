@@ -188,11 +188,29 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 		hi = len(groups)
 	}
 	types := uniqSorted(s.st.NewTypes())
+	// 大类 filter options: the categories actually present, in the canonical
+	// pipeline order (kindOrder), with any non-standard kinds appended.
+	present := map[string]bool{}
+	for _, k := range s.st.ReportKinds() {
+		present[k] = true
+	}
+	kinds := make([]string, 0)
+	for _, k := range kindOrder {
+		if present[k] {
+			kinds = append(kinds, k)
+			delete(present, k)
+		}
+	}
+	for _, k := range s.st.ReportKinds() {
+		if present[k] {
+			kinds = append(kinds, k)
+		}
+	}
 	writeJSON(w, map[string]any{
 		"groups":   groupsJSON(groups[lo:hi]),
 		"newTotal": newTotal, "oldTotal": oldTotal, "totalRuns": totalRuns,
 		"page": page, "pages": pages, "size": size,
-		"types": types, "links": linksJSON(s.st.Links()),
+		"types": types, "kinds": kinds, "links": linksJSON(s.st.Links()),
 	})
 }
 

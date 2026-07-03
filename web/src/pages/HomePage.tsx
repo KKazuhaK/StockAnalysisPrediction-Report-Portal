@@ -8,7 +8,6 @@ import {
   Form,
   Input,
   Pagination,
-  Radio,
   Row,
   Select,
   Space,
@@ -40,10 +39,10 @@ export default function HomePage() {
   const params = useMemo(
     () => ({
       q: sp.get('q') || '',
+      kind: sp.get('kind') || '',
       rtype: sp.get('rtype') || '',
       date_from: sp.get('date_from') || '',
       date_to: sp.get('date_to') || '',
-      src: sp.get('src') || 'all',
       sort: sp.get('sort') || 'date_desc',
       size: sp.get('size') || '30',
       page: sp.get('page') || '1',
@@ -63,9 +62,9 @@ export default function HomePage() {
   useEffect(() => {
     form.setFieldsValue({
       q: params.q,
+      kind: params.kind || undefined,
       rtype: params.rtype || undefined,
       range: params.date_from && params.date_to ? [dayjs(params.date_from), dayjs(params.date_to)] : undefined,
-      src: params.src,
       sort: params.sort,
     })
   }, [params, form])
@@ -74,10 +73,10 @@ export default function HomePage() {
     const v = form.getFieldsValue()
     const next: Record<string, string> = { size: params.size, page: '1' }
     if (v.q) next.q = v.q
+    if (v.kind) next.kind = v.kind
     if (v.rtype) next.rtype = v.rtype
     if (v.range?.[0]) next.date_from = v.range[0].format('YYYY-MM-DD')
     if (v.range?.[1]) next.date_to = v.range[1].format('YYYY-MM-DD')
-    if (v.src && v.src !== 'all') next.src = v.src
     if (v.sort && v.sort !== 'date_desc') next.sort = v.sort
     setSp(next)
   }
@@ -91,6 +90,7 @@ export default function HomePage() {
     setSp({ ...Object.fromEntries(sp), page: String(page), size: String(size) })
   }
 
+  const kindOptions = (data?.kinds || []).map((x) => ({ value: x, label: x }))
   const typeOptions = (data?.types || []).map((x) => ({ value: x, label: x }))
 
   return (
@@ -147,6 +147,11 @@ export default function HomePage() {
                     </Form.Item>
                   </Col>
                   <Col xs={24} md={8}>
+                    <Form.Item name="kind" label={t('home.category')}>
+                      <Select allowClear showSearch options={kindOptions} placeholder={t('home.category')} />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={24} md={8}>
                     <Form.Item name="rtype" label={t('home.type')}>
                       <Select allowClear showSearch options={typeOptions} placeholder={t('home.type')} />
                     </Form.Item>
@@ -154,17 +159,6 @@ export default function HomePage() {
                   <Col xs={24} md={8}>
                     <Form.Item name="range" label={t('home.dateRange')}>
                       <RangePicker style={{ width: '100%' }} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item name="src" label={t('home.source')}>
-                      <Radio.Group
-                        optionType="button"
-                        options={[
-                          { value: 'all', label: t('src.all') },
-                          { value: 'new', label: t('src.new') },
-                        ]}
-                      />
                     </Form.Item>
                   </Col>
                   <Col xs={24} md={8}>
