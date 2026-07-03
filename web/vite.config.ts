@@ -20,6 +20,19 @@ export default defineConfig({
     outDir: '../internal/web/dist',
     emptyOutDir: false,
     chunkSizeWarningLimit: 1600,
+    rollupOptions: {
+      output: {
+        // Split the big, stable vendor libs into their own chunks so an app-code
+        // release doesn't invalidate them — the browser keeps antd/react cached
+        // across versions. Route-only deps (markdown, dnd-kit) are left to Rollup,
+        // which keeps them in the lazy route chunks that import them.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('/antd/') || id.includes('/@ant-design/') || id.includes('/rc-')) return 'antd'
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router') || id.includes('/scheduler/')) return 'react'
+        },
+      },
+    },
   },
   test: {
     // jsdom for component tests; explicit imports (no globals) keep tsc happy.

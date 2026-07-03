@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Button, Dropdown, Grid, Layout, Segmented, Select, Space, theme } from 'antd'
+import { Suspense, useEffect, useState } from 'react'
+import { Button, Dropdown, Grid, Layout, Segmented, Select, Space, Spin, theme } from 'antd'
 import { AppstoreOutlined, FileSearchOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -135,7 +135,9 @@ export default function AppLayout() {
       </Header>
 
       <Content style={{ padding: '24px 20px', maxWidth: 1240, width: '100%', margin: '0 auto' }}>
-        <Outlet />
+        <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
+          <Outlet />
+        </Suspense>
       </Content>
 
       <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
