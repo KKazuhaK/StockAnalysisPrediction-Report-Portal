@@ -155,6 +155,13 @@ export default function AppLayout() {
           <Dropdown
             trigger={['click']}
             menu={{
+              // Theme/language are laid out flat as inline groups (not sideways submenus):
+              // the account menu is pinned to the top-right, where a sideways submenu opens
+              // awkwardly leftward with a backwards ">" arrow. selectedKeys highlights the
+              // active theme + language; multiple lets both stay highlighted at once.
+              selectable: true,
+              multiple: true,
+              selectedKeys: [`theme:${mode}`, `lang:${lang}`],
               items: [
                 // On mobile the primary nav lives here (the standalone buttons are hidden).
                 ...(compact
@@ -166,26 +173,27 @@ export default function AppLayout() {
                     ]
                   : []),
                 {
-                  key: 'theme',
-                  icon: mode === 'light' ? <SunIcon /> : mode === 'dark' ? <MoonIcon /> : <AutoIcon />,
+                  type: 'group' as const,
+                  key: 'theme-group',
                   label: t('nav.theme'),
                   children: [
-                    { key: 'light', icon: <SunIcon />, label: t('theme.light'), onClick: () => setMode('light') },
-                    { key: 'dark', icon: <MoonIcon />, label: t('theme.dark'), onClick: () => setMode('dark') },
-                    { key: 'auto', icon: <AutoIcon />, label: t('theme.auto'), onClick: () => setMode('auto') },
+                    { key: 'theme:light', icon: <SunIcon />, label: t('theme.light'), onClick: () => setMode('light') },
+                    { key: 'theme:dark', icon: <MoonIcon />, label: t('theme.dark'), onClick: () => setMode('dark') },
+                    { key: 'theme:auto', icon: <AutoIcon />, label: t('theme.auto'), onClick: () => setMode('auto') },
                   ],
                 },
                 {
-                  key: 'language',
-                  icon: <GlobalOutlined />,
+                  type: 'group' as const,
+                  key: 'lang-group',
                   label: t('nav.language'),
                   children: langs.map((l) => ({
-                    key: l.code,
+                    key: `lang:${l.code}`,
+                    icon: <GlobalOutlined />,
                     label: l.label,
                     onClick: () => setLang(l.code),
                   })),
                 },
-                { type: 'divider' },
+                { type: 'divider' as const },
                 {
                   key: 'logout',
                   icon: <LogoutOutlined />,
@@ -227,7 +235,7 @@ export default function AppLayout() {
 
       {showFooter && (
         <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
-          <Space size={6} wrap style={{ justifyContent: 'center' }}>
+          <Space size={6} wrap align="center" style={{ justifyContent: 'center' }}>
             {showFooterInfo && (
               <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                 <SiteLogo size={14} style={{ marginInlineEnd: 6 }} />
