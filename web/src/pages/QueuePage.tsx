@@ -252,7 +252,12 @@ export default function QueuePage() {
       <Card
         title={t('queue.title')}
         extra={
-          <Space>
+          <Space wrap>
+            {summary?.my_priority && (
+              <span style={{ fontSize: 12 }}>
+                <Typography.Text type="secondary">{t('queue.myPriority')}</Typography.Text> {priorityTag(t, summary.my_priority)}
+              </span>
+            )}
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('queue.autoRefresh')}
             </Typography.Text>

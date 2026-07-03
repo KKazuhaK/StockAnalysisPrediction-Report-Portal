@@ -58,6 +58,24 @@ export default function HomePage() {
       .finally(() => setLoading(false))
   }, [params])
 
+  // Auto-refresh: silently refetch the current view (no spinner) when the tab regains
+  // focus, and on a gentle interval while visible — new reports appear without a manual
+  // reload, and switching back to the tab shows fresh data.
+  useEffect(() => {
+    const refetch = () => {
+      if (document.visibilityState !== 'visible') return
+      api.get<HomeResp>(`/api/home${qs(params)}`).then(setData).catch(() => {})
+    }
+    window.addEventListener('focus', refetch)
+    document.addEventListener('visibilitychange', refetch)
+    const id = setInterval(refetch, 60000)
+    return () => {
+      window.removeEventListener('focus', refetch)
+      document.removeEventListener('visibilitychange', refetch)
+      clearInterval(id)
+    }
+  }, [params])
+
   // Keep the form's initial values in sync with the URL
   useEffect(() => {
     form.setFieldsValue({

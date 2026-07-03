@@ -65,6 +65,7 @@ export interface BatchQueueSummary {
   scheduled: number // 定时 jobs not yet due
   budget: number // jobs allowed to run at once
   reserved: number // slots held for 加急
+  my_priority?: string // the caller's resolved default priority (urgent | normal | other)
 }
 
 export interface BatchJob {

@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
 import { Badge, Button, Dropdown, FloatButton, Grid, Layout, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, ReloadOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -214,17 +214,16 @@ export default function AppLayout() {
       {canRun && <RunAnalysisModal open={runOpen} onClose={() => setRunOpen(false)} />}
       {canRun && <QueueDrawer open={queueOpen} onClose={() => setQueueOpen(false)} />}
 
-      {/* Refresh is always available; back-to-top stacks above it once scrolled down. */}
-      <FloatButton.Group shape="circle" style={{ insetInlineEnd: 24, insetBlockEnd: 24 }}>
-        {showTop && (
-          <FloatButton
-            icon={<VerticalAlignTopOutlined />}
-            tooltip={t('nav.backTop')}
-            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          />
-        )}
-        <FloatButton icon={<ReloadOutlined />} tooltip={t('nav.refresh')} onClick={() => window.location.reload()} />
-      </FloatButton.Group>
+      {/* Back-to-top appears once scrolled down. Data refreshes automatically (queue
+          polls; the home list refetches on focus + interval), so no manual refresh. */}
+      {showTop && (
+        <FloatButton
+          icon={<VerticalAlignTopOutlined />}
+          tooltip={t('nav.backTop')}
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          style={{ insetInlineEnd: 24, insetBlockEnd: 24 }}
+        />
+      )}
 
       {showFooter && (
         <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>

@@ -548,11 +548,12 @@ func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user stri
 		}
 	}
 	writeJSON(w, map[string]any{
-		"waiting":   len(s.queuedItems()), // due, awaiting admission (excludes not-yet-due)
-		"running":   s.st.RunningJobCount(),
-		"scheduled": scheduled,
-		"budget":    s.batchBudget(),
-		"reserved":  s.batchReserved(),
+		"waiting":     len(s.queuedItems()), // due, awaiting admission (excludes not-yet-due)
+		"running":     s.st.RunningJobCount(),
+		"scheduled":   scheduled,
+		"budget":      s.batchBudget(),
+		"reserved":    s.batchReserved(),
+		"my_priority": s.resolvePriority(user, ""), // the caller's resolved default priority (ADR 0007)
 	})
 }
 

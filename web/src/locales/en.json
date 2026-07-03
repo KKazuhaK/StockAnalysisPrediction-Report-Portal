@@ -36,6 +36,7 @@
   "queue.colProgress": "Progress / position",
   "queue.doneToday": "Done today",
   "queue.autoRefresh": "Auto-refresh",
+  "queue.myPriority": "Your priority:",
   "queue.search": "Search workflow / target / user",
   "queue.viewReport": "View report",
   "queue.reschedule": "Reschedule",

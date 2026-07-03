@@ -36,6 +36,7 @@
   "queue.colProgress": "进度 / 位置",
   "queue.doneToday": "今日完成",
   "queue.autoRefresh": "自动刷新",
+  "queue.myPriority": "你的优先级：",
   "queue.search": "搜索 工作流 / 标的 / 提交人",
   "queue.viewReport": "查看报告",
   "queue.reschedule": "改时间",
