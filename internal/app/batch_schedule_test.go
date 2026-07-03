@@ -1,6 +1,66 @@
 package app
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// runAtDue: empty and past/malformed run_at are due; a future run_at is not.
+func TestRunAtDue(t *testing.T) {
+	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.Local)
+	cases := []struct {
+		runAt string
+		due   bool
+	}{
+		{"", true},                     // unscheduled → run ASAP
+		{"2026-07-04 11:59:59", true},  // past
+		{"2026-07-04 12:00:00", true},  // exactly now
+		{"2026-07-04 12:00:01", false}, // future
+		{"not-a-timestamp", true},      // malformed → don't strand the job
+	}
+	for _, c := range cases {
+		if got := runAtDue(c.runAt, now); got != c.due {
+			t.Errorf("runAtDue(%q) = %v, want %v", c.runAt, got, c.due)
+		}
+	}
+}
+
+// normalizeRunAt accepts the canonical local format or RFC3339 and returns the
+// canonical form; garbage is rejected.
+func TestNormalizeRunAt(t *testing.T) {
+	if v, ok := normalizeRunAt("2026-07-04 09:00:00"); !ok || v != "2026-07-04 09:00:00" {
+		t.Errorf("canonical: got %q ok=%v", v, ok)
+	}
+	if v, ok := normalizeRunAt("garbage"); ok || v != "" {
+		t.Errorf("garbage should be rejected, got %q ok=%v", v, ok)
+	}
+	// RFC3339 is accepted and reduced to the canonical local basis.
+	if v, ok := normalizeRunAt("2026-07-04T09:00:00Z"); !ok || v == "" {
+		t.Errorf("RFC3339 should be accepted, got %q ok=%v", v, ok)
+	}
+}
+
+// queuedItems hides a job whose run_at is still in the future, so the scheduler
+// (and the "N ahead" count) never sees a not-yet-due 定时 job.
+func TestQueuedItemsHidesFutureScheduledJobs(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	due, err := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"x": "1"}}, "normal")
+	if err != nil {
+		t.Fatalf("create due: %v", err)
+	}
+	future, err := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"x": "2"}}, "normal")
+	if err != nil {
+		t.Fatalf("create future: %v", err)
+	}
+	st.ScheduleJob(due, time.Now().Add(-time.Hour).Format("2006-01-02 15:04:05"))   // past → due
+	st.ScheduleJob(future, time.Now().Add(time.Hour).Format("2006-01-02 15:04:05")) // future → hidden
+
+	items := (&Server{st: st}).queuedItems()
+	if len(items) != 1 || items[0].ID != due {
+		t.Fatalf("queuedItems = %+v, want only the due job %d", items, due)
+	}
+}
 
 // A one-shot schedule (定时运行) is stored as a job_schedule row on an ordinary
 // queued job: run_at round-trips through GetBatchJob and QueuedJobs, reschedules,

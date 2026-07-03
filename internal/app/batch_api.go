@@ -324,7 +324,22 @@ func jobJSON(j BatchJob) map[string]any {
 		"concurrency": j.Concurrency, "max_retries": j.MaxRetries,
 		"total": j.Total, "succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed,
 		"created_by": j.CreatedBy, "created_at": j.CreatedAt, "started_at": j.StartedAt, "finished_at": j.FinishedAt,
+		"run_at": j.RunAt, // one-shot scheduled start ("" = ASAP; ADR 0007)
 	}
+}
+
+// normalizeRunAt validates a one-shot schedule time and returns it in the canonical
+// local "2006-01-02 15:04:05" basis (the same the aging clock uses). It accepts that
+// format or RFC3339, so the client can send either. ok=false on an unparseable value.
+func normalizeRunAt(v string) (string, bool) {
+	const layout = "2006-01-02 15:04:05"
+	if t, err := time.ParseInLocation(layout, v, time.Local); err == nil {
+		return t.Format(layout), true
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t.Local().Format(layout), true
+	}
+	return "", false
 }
 
 func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user string) {
@@ -354,6 +369,7 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		Concurrency int                 `json:"concurrency"`
 		MaxRetries  int                 `json:"max_retries"`
 		Priority    string              `json:"priority"`
+		RunAt       string              `json:"run_at"` // one-shot 定时运行; "" = run now
 		Rows        []map[string]string `json:"rows"`
 	}
 	if err := readJSON(r, &in); err != nil {
@@ -370,6 +386,16 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 	if len(in.Rows) == 0 {
 		jsonError(w, http.StatusBadRequest, "no rows to run")
 		return
+	}
+	// Validate the optional schedule up front so a bad time never leaves an orphan job.
+	runAt := ""
+	if in.RunAt != "" {
+		rt, ok := normalizeRunAt(in.RunAt)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "bad run_at")
+			return
+		}
+		runAt = rt
 	}
 	tgt, ok := s.st.GetTarget(in.TargetID)
 	if !ok {
@@ -397,8 +423,11 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.scheduleTick() // enqueued — admit now if the budget allows, else it waits in the queue
-	writeJSON(w, map[string]any{"ok": true, "job_id": jobID, "concurrency": conc, "priority": priority, "downgraded": downgraded})
+	if runAt != "" {
+		s.st.ScheduleJob(jobID, runAt) // hidden from admission until run_at passes
+	}
+	s.scheduleTick() // admit now if due + budget allows, else it waits (or waits for its schedule)
+	writeJSON(w, map[string]any{"ok": true, "job_id": jobID, "concurrency": conc, "priority": priority, "downgraded": downgraded, "run_at": runAt})
 }
 
 // apiBatchTickets reports the caller's 加急 ticket balance for the run form. Admins
@@ -485,4 +514,80 @@ func (s *Server) apiBatchJobReprioritize(w http.ResponseWriter, r *http.Request,
 	}
 	s.scheduleTick()
 	writeJSON(w, map[string]any{"ok": true, "priority": in.Priority})
+}
+
+// apiBatchQueue is a lightweight queue summary for the home banner + drawer:
+// waiting (due but not yet admitted), running, scheduled (定时, not yet due), and
+// the concurrency budget. Not-yet-due jobs count as scheduled, never as waiting.
+func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user string) {
+	now := time.Now()
+	scheduled := 0
+	for _, j := range s.st.QueuedJobs() {
+		if !runAtDue(j.RunAt, now) {
+			scheduled++
+		}
+	}
+	writeJSON(w, map[string]any{
+		"waiting":   len(s.queuedItems()), // due, awaiting admission (excludes not-yet-due)
+		"running":   s.st.RunningJobCount(),
+		"scheduled": scheduled,
+		"budget":    s.batchBudget(),
+		"reserved":  s.batchReserved(),
+	})
+}
+
+// apiBatchJobDelete removes a terminal job (finished/cancelled) and its rows. An
+// active job (queued/running/cancelling) must be cancelled first — this only
+// clears history, it never stops a run.
+func (s *Server) apiBatchJobDelete(w http.ResponseWriter, r *http.Request, user string) {
+	id := pathID(r, "id")
+	job, ok := s.st.GetBatchJob(id)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != "finished" && job.Status != "cancelled" {
+		jsonError(w, http.StatusConflict, "cancel the job before deleting it")
+		return
+	}
+	if err := s.st.DeleteBatchJob(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, okJSON)
+}
+
+// apiBatchJobSchedule sets or clears a queued job's one-shot start time (改时间 /
+// 立即运行). An empty run_at clears the schedule so it runs on the next tick. Only
+// a still-queued job can be (re)scheduled.
+func (s *Server) apiBatchJobSchedule(w http.ResponseWriter, r *http.Request, user string) {
+	id := pathID(r, "id")
+	job, ok := s.st.GetBatchJob(id)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if job.Status != "queued" {
+		jsonError(w, http.StatusConflict, "only a queued job can be rescheduled")
+		return
+	}
+	var in struct {
+		RunAt string `json:"run_at"`
+	}
+	readJSON(r, &in)
+	runAt := ""
+	if in.RunAt != "" {
+		rt, ok := normalizeRunAt(in.RunAt)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "bad run_at")
+			return
+		}
+		runAt = rt
+	}
+	if err := s.st.ScheduleJob(id, runAt); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.scheduleTick() // cleared/now-due → admit; still future → stays hidden
+	writeJSON(w, map[string]any{"ok": true, "run_at": runAt})
 }
