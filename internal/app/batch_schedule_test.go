@@ -3,6 +3,8 @@ package app
 import (
 	"testing"
 	"time"
+
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
 )
 
 // runAtDue: empty and past/malformed run_at are due; a future run_at is not.
@@ -37,6 +39,29 @@ func TestNormalizeRunAt(t *testing.T) {
 	// RFC3339 is accepted and reduced to the canonical local basis.
 	if v, ok := normalizeRunAt("2026-07-04T09:00:00Z"); !ok || v == "" {
 		t.Errorf("RFC3339 should be accepted, got %q ok=%v", v, ok)
+	}
+}
+
+// A due 定时 job ages from its run_at (its arrival time), not from created_at, so
+// it takes a fair position instead of jumping ahead of later immediate submissions.
+func TestScheduledJobAgesFromRunAt(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	jid, err := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"x": "1"}}, "normal")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const past = "2000-01-01 00:00:00" // due (far past), but far from created_at (~now)
+	st.ScheduleJob(jid, past)
+
+	items := (&Server{st: st}).queuedItems()
+	if len(items) != 1 {
+		t.Fatalf("want 1 due item, got %d", len(items))
+	}
+	// SchedKey must be derived from run_at, not the (near-now) created_at.
+	want := queue.DefaultRegistry().SchedKey("normal", parseEnqueueUnix(past))
+	if items[0].SchedKey != want {
+		t.Fatalf("SchedKey = %d, want %d (aged from run_at, not created_at)", items[0].SchedKey, want)
 	}
 }
 

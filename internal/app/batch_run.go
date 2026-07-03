@@ -180,7 +180,14 @@ func (s *Server) queuedItems() []queue.Item {
 		if !runAtDue(j.RunAt, now) {
 			continue
 		}
-		items = append(items, queue.Item{ID: j.ID, Level: j.Priority, SchedKey: reg.SchedKey(j.Priority, parseEnqueueUnix(j.CreatedAt))})
+		// A 定时 job "arrives" in the queue at its run_at, so it ages from then — not
+		// from when it was created — otherwise a long-scheduled job would unfairly jump
+		// ahead of runs submitted after it (ADR 0007). Immediate jobs age from created_at.
+		enqueue := j.CreatedAt
+		if j.RunAt != "" {
+			enqueue = j.RunAt
+		}
+		items = append(items, queue.Item{ID: j.ID, Level: j.Priority, SchedKey: reg.SchedKey(j.Priority, parseEnqueueUnix(enqueue))})
 	}
 	return items
 }
