@@ -19,8 +19,12 @@ body {
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
-/* markdown body typography (works with antd Typography) */
+/* markdown body typography (works with antd Typography).
+   --md-fs / --md-fw are set by the reading pages from the reader prefs (the "Aa"
+   popover); headings/tables/code are all em-relative so they scale off the base. */
 .md-body {
+  font-size: var(--md-fs, 15px);
+  font-weight: var(--md-fw, 400);
   line-height: 1.75;
   word-break: break-word;
 }

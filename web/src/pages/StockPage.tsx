@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Col, Empty, Grid, Result, Row, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -6,7 +6,9 @@ import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { StockResp } from '../api/types'
 import Markdown from '../components/Markdown'
+import ReaderControls from '../components/ReaderControls'
 import TimelinePanel from '../components/TimelinePanel'
+import { useReaderPrefs } from '../reader'
 import { exportReportPdf } from '../lib/exportPdf'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
 
@@ -17,6 +19,8 @@ export default function StockPage() {
   const navigate = useNavigate()
   const screens = Grid.useBreakpoint()
   const isMobile = !screens.md
+  const { fontSize, fontWeight, wide } = useReaderPrefs()
+  const readerVars = { '--md-fs': `${fontSize}px`, '--md-fw': String(fontWeight) } as CSSProperties
   const [data, setData] = useState<StockResp | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -88,6 +92,7 @@ export default function StockPage() {
           </Space>
           {rep && (
             <Space>
+              <ReaderControls />
               <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
                 {t('stock.exportMd')}
               </Button>
@@ -110,15 +115,18 @@ export default function StockPage() {
         </Space>
 
         <Row gutter={[20, 16]}>
-          {/* Timeline — vertical scroll box on desktop, horizontal chip strip on mobile */}
-          <Col xs={24} md={6}>
+          {/* Timeline — vertical scroll box on desktop, horizontal chip strip on mobile.
+              It only holds a date + count, so it narrows on wider screens (and further
+              in wide mode) to hand that width to the reading column. Kept a touch wider
+              at the md breakpoint (768–992) so the date never wraps on small laptops. */}
+          <Col xs={24} md={wide ? 5 : 6} lg={wide ? 4 : 5}>
             <Card size="small" title={t('stock.timeline')} styles={{ body: { paddingTop: 16 } }}>
               <TimelinePanel nodes={data.timeline} selected={data.selDate} onSelect={setDate} horizontal={isMobile} />
             </Card>
           </Col>
 
           {/* Main content area */}
-          <Col xs={24} md={18}>
+          <Col xs={24} md={wide ? 19 : 18} lg={wide ? 20 : 19}>
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
               {data.kinds.length > 1 && (
                 <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
@@ -141,7 +149,7 @@ export default function StockPage() {
                   />
                 </div>
               )}
-              <Card styles={{ body: { paddingTop: 8 } }} title={rep?.title}>
+              <Card styles={{ body: { paddingTop: 8 } }} title={rep?.title} style={readerVars}>
                 {rep && isInstant(rep.time) && (
                   <Typography.Text
                     type="secondary"

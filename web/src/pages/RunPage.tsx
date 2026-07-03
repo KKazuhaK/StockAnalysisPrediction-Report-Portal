@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Empty, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { RunResp } from '../api/types'
 import Markdown from '../components/Markdown'
+import ReaderControls from '../components/ReaderControls'
+import { useReaderPrefs } from '../reader'
 import { exportReportPdf } from '../lib/exportPdf'
 
 export default function RunPage() {
@@ -13,6 +15,8 @@ export default function RunPage() {
   const { key = '' } = useParams()
   const [sp, setSp] = useSearchParams()
   const navigate = useNavigate()
+  const { fontSize, fontWeight } = useReaderPrefs()
+  const readerVars = { '--md-fs': `${fontSize}px`, '--md-fw': String(fontWeight) } as CSSProperties
   const [data, setData] = useState<RunResp | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -76,6 +80,7 @@ export default function RunPage() {
           </Space>
           {rep && (
             <Space>
+              <ReaderControls />
               <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
                 {t('stock.exportMd')}
               </Button>
@@ -108,7 +113,7 @@ export default function RunPage() {
             />
           </div>
         )}
-        <Card title={rep?.title}>
+        <Card title={rep?.title} style={readerVars}>
           {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
         </Card>
       </Space>

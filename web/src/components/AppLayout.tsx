@@ -5,6 +5,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import { usePrefs } from '../prefs'
+import { useReaderPrefs } from '../reader'
 import { useAuth } from '../auth'
 import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
@@ -24,6 +25,10 @@ export default function AppLayout() {
   const screens = Grid.useBreakpoint()
   const compact = !screens.md // phone / small tablet
   const onHome = loc.pathname === '/'
+  // Reading routes in "wide" mode get a roomier page than the default 1240 cap.
+  const { wide } = useReaderPrefs()
+  const onReader = /^\/(stock|run)\//.test(loc.pathname)
+  const contentMaxWidth = onReader && wide ? 1600 : 1240
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
@@ -150,7 +155,7 @@ export default function AppLayout() {
         </Space>
       </Header>
 
-      <Content style={{ padding: '24px 20px', maxWidth: 1240, width: '100%', margin: '0 auto' }}>
+      <Content style={{ padding: '24px 20px', maxWidth: contentMaxWidth, width: '100%', margin: '0 auto', transition: 'max-width 0.2s ease' }}>
         <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
           <Outlet />
         </Suspense>
