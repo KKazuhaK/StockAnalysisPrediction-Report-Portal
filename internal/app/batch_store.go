@@ -363,6 +363,25 @@ func (s *Store) LiveJobCounts(jobID int64) (queued, running, succeeded, partial,
 	return
 }
 
+// AllJobsFirstInputs returns each job's first row's inputs (raw JSON string), so a
+// job list can show what a run is about (e.g. its 标的) without a per-job query.
+func (s *Store) AllJobsFirstInputs() map[int64]string {
+	out := map[int64]string{}
+	rows, err := s.query("SELECT job_id, inputs FROM batch_items WHERE row_index=0")
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var inputs sql.NullString
+		if rows.Scan(&id, &inputs) == nil {
+			out[id] = inputs.String
+		}
+	}
+	return out
+}
+
 func (s *Store) BatchJobItems(jobID int64) []BatchItem {
 	rows, err := s.query(`SELECT id,job_id,row_index,inputs,status,attempts,run_id,error,started_at,finished_at
 		FROM batch_items WHERE job_id=? ORDER BY row_index`, jobID)

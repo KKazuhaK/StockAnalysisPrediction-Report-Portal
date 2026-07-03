@@ -73,6 +73,8 @@ export interface BatchJob {
   status: string
   priority?: string // queue priority level (urgent | normal | other)
   run_at?: string // one-shot scheduled start ("" = ASAP)
+  scheduled?: boolean // queued but not yet due (定时, waiting for run_at)
+  inputs?: string // first row's inputs as a JSON string (for a 标的 label)
   ahead?: number // for a queued job: how many are ahead of it in the queue
   concurrency: number
   max_retries: number

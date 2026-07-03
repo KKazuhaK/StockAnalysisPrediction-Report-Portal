@@ -27,6 +27,7 @@ const AppsHub = lazyRetry(() => import('./pages/AppsHub'))
 const AppView = lazyRetry(() => import('./pages/AppView'))
 const AppsAdminPage = lazyRetry(() => import('./pages/manage/AppsAdminPage'))
 const BatchConsole = lazyRetry(() => import('./pages/BatchConsole'))
+const QueuePage = lazyRetry(() => import('./pages/QueuePage'))
 
 function FullSpin() {
   return (
@@ -79,6 +80,14 @@ function AppRoutes() {
           element={
             <RequirePerm perm="run_batch">
               <BatchConsole />
+            </RequirePerm>
+          }
+        />
+        <Route
+          path="/queue"
+          element={
+            <RequirePerm perm="run_batch">
+              <QueuePage />
             </RequirePerm>
           }
         />

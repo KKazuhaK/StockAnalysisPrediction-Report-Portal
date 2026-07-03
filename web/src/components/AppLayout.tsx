@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Button, Dropdown, Grid, Layout, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UserOutlined } from '@ant-design/icons'
+import { Badge, Button, Dropdown, Grid, Layout, Space, Spin, Tooltip, theme } from 'antd'
+import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -11,6 +11,8 @@ import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
 import Omnibox from './Omnibox'
 import RunAnalysisModal from './RunAnalysisModal'
+import QueueDrawer from './QueueDrawer'
+import type { BatchQueueSummary } from '../api/types'
 import { AutoIcon, MoonIcon, SunIcon } from './icons'
 
 const { Header, Content, Footer } = Layout
@@ -32,9 +34,20 @@ export default function AppLayout() {
   const contentMaxWidth = onReader && wide ? 1600 : 1240
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
   const [runOpen, setRunOpen] = useState(false)
+  const [queueOpen, setQueueOpen] = useState(false)
+  const [queue, setQueue] = useState<BatchQueueSummary | null>(null)
+  const canRun = can('run_batch')
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
+  // Light poll for the header queue badge (the drawer refreshes faster when open).
+  useEffect(() => {
+    if (!canRun) return
+    const load = () => api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
+    load()
+    const id = setInterval(load, 12000)
+    return () => clearInterval(id)
+  }, [canRun, queueOpen])
   const footerText = settings.footerText || title
   const footerHtml = settings.footerText ? sanitizeFooterHtml(settings.footerText) : ''
   const showFooterInfo = settings.footerShowInfo
@@ -92,7 +105,7 @@ export default function AppLayout() {
         </div>
 
         <Space size={compact ? 6 : 10} wrap style={{ flexShrink: 0, marginLeft: compact ? 'auto' : 0 }}>
-          {can('run_batch') && (
+          {canRun && (
             // The primary action keeps its label even on mobile (unlike the other
             // nav buttons, which collapse to icons when compact).
             <Button
@@ -103,6 +116,15 @@ export default function AppLayout() {
             >
               {t('nav.runAnalysis')}
             </Button>
+          )}
+          {canRun && (
+            // Queue glance with a live badge (everything not yet done: running + waiting
+            // + scheduled). Icon-only on mobile.
+            <Badge count={(queue?.running ?? 0) + (queue?.waiting ?? 0) + (queue?.scheduled ?? 0)} size="small" offset={[-2, 2]}>
+              <Button icon={<UnorderedListOutlined />} onClick={() => setQueueOpen(true)} title={t('nav.queue')}>
+                {!compact && t('nav.queue')}
+              </Button>
+            </Badge>
           )}
           {/* On mobile these fold into the account menu below to keep the header light. */}
           {!compact && (
@@ -179,7 +201,8 @@ export default function AppLayout() {
         </Suspense>
       </Content>
 
-      {can('run_batch') && <RunAnalysisModal open={runOpen} onClose={() => setRunOpen(false)} />}
+      {canRun && <RunAnalysisModal open={runOpen} onClose={() => setRunOpen(false)} />}
+      {canRun && <QueueDrawer open={queueOpen} onClose={() => setQueueOpen(false)} />}
 
       {showFooter && (
         <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>

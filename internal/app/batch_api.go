@@ -351,9 +351,12 @@ func normalizeRunAt(v string) (string, bool) {
 
 func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user string) {
 	waiting := s.queuedItems() // for the live "N ahead" of each queued job
+	firstInputs := s.st.AllJobsFirstInputs()
+	now := time.Now()
 	out := make([]map[string]any, 0)
 	for _, j := range s.st.ListBatchJobs() {
 		m := jobJSON(j)
+		m["inputs"] = firstInputs[j.ID] // first row's inputs (JSON string) for a "标的" label
 		// A running job's stored counts are only written at finish; fill live counts
 		// so the console shows real-time progress.
 		if j.Status == "running" || j.Status == "cancelling" {
@@ -361,7 +364,13 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 			m["succeeded"], m["partial"], m["failed"] = succeeded, partial, failed
 		}
 		if j.Status == "queued" {
-			m["ahead"] = queue.Ahead(itemByID(waiting, j.ID), waiting)
+			// A not-yet-due 定时 job is "scheduled", not "waiting"; flag it so the UI can
+			// distinguish, and don't show an ahead count for it.
+			if runAtDue(j.RunAt, now) {
+				m["ahead"] = queue.Ahead(itemByID(waiting, j.ID), waiting)
+			} else {
+				m["scheduled"] = true
+			}
 		}
 		out = append(out, m)
 	}
