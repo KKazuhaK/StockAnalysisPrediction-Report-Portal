@@ -239,6 +239,10 @@ func (s *Store) init() error {
 		`CREATE TABLE IF NOT EXISTS user_group_members(
 			group_id BIGINT, username TEXT, PRIMARY KEY(group_id, username))`,
 		`CREATE INDEX IF NOT EXISTS idx_ugm_user ON user_group_members(username)`,
+		// A group's default run priority (定时/优先级 resolution, ADR 0007). Additive
+		// side table (not a user_groups column) so weight (加急次票) and priority stay
+		// separate concerns. A member's effective default = highest across their groups.
+		`CREATE TABLE IF NOT EXISTS group_priority(group_id BIGINT PRIMARY KEY, priority TEXT)`,
 		// Priority "次票": a per-user quota of 加急 runs, allocated by group weight and
 		// refilled each period. State is lazy (no cron): a period rollover is detected
 		// from period_start on access. See docs/adr/0005-priority-tickets.md.

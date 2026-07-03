@@ -214,9 +214,10 @@ func (s *Server) apiBatchMarketInstall(w http.ResponseWriter, r *http.Request, u
 func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user string) {
 	writeJSON(w, map[string]any{
 		"max_concurrency":    s.batchMaxConcurrency(),
-		"max_jobs":           s.batchBudget(),      // queue budget: jobs running at once (ADR 0004)
-		"reserved_slots":     s.batchReserved(),    // slots held for the urgent tier
-		"ticket_period_days": s.ticketPeriodDays(), // how often 加急 tickets refill (ADR 0005)
+		"max_jobs":           s.batchBudget(),        // queue budget: jobs running at once (ADR 0004)
+		"reserved_slots":     s.batchReserved(),      // slots held for the urgent tier
+		"ticket_period_days": s.ticketPeriodDays(),   // how often 加急 tickets refill (ADR 0005)
+		"default_priority":   s.runDefaultPriority(), // fallback priority for no-group runs (ADR 0007)
 		"market_index_url":   s.marketIndexURL(),
 	})
 }
@@ -227,11 +228,17 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		MaxJobs          int    `json:"max_jobs"`
 		ReservedSlots    int    `json:"reserved_slots"`
 		TicketPeriodDays int    `json:"ticket_period_days"`
+		DefaultPriority  string `json:"default_priority"`
 		MarketIndexURL   string `json:"market_index_url"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
+	}
+	// Only a registered, non-reserved tier may be the no-group default (加急 stays
+	// ticket-gated, so it can't be a silent default).
+	if p := s.groupPriorityValid(in.DefaultPriority); p != "" {
+		s.st.SetSetting("run_default_priority", p)
 	}
 	if in.MaxConcurrency >= 1 {
 		s.st.SetSetting("batch_max_concurrency", strconv.Itoa(in.MaxConcurrency))
@@ -376,9 +383,9 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	if in.Priority == "" {
-		in.Priority = "normal"
-	}
+	// No explicit choice → resolve from the submitter's group default / system
+	// default; an explicit value (incl. 加急) is kept as-is (ADR 0007).
+	in.Priority = s.resolvePriority(user, in.Priority)
 	if !s.priorityRegistry().Has(in.Priority) {
 		jsonError(w, http.StatusBadRequest, "unknown priority")
 		return

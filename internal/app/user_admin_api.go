@@ -11,7 +11,7 @@ import (
 func userGroupsJSON(gs []UserGroup) []map[string]any {
 	out := make([]map[string]any, 0, len(gs))
 	for _, g := range gs {
-		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "description": g.Description, "weight": g.Weight, "members": g.Members})
+		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "description": g.Description, "weight": g.Weight, "priority": g.Priority, "members": g.Members})
 	}
 	return out
 }
@@ -25,6 +25,7 @@ func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Weight      int    `json:"weight"`
+		Priority    string `json:"priority"`
 	}
 	readJSON(r, &in)
 	name := strings.TrimSpace(in.Name)
@@ -37,6 +38,7 @@ func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusBadRequest, "group name already exists")
 		return
 	}
+	s.st.SetGroupPriority(id, s.groupPriorityValid(in.Priority))
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -45,6 +47,7 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Weight      int    `json:"weight"`
+		Priority    string `json:"priority"`
 	}
 	readJSON(r, &in)
 	name := strings.TrimSpace(in.Name)
@@ -52,10 +55,12 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 		jsonError(w, http.StatusBadRequest, "group name required")
 		return
 	}
-	if err := s.st.UpdateUserGroup(pathID(r, "id"), name, strings.TrimSpace(in.Description), clampWeight(in.Weight)); err != nil {
+	id := pathID(r, "id")
+	if err := s.st.UpdateUserGroup(id, name, strings.TrimSpace(in.Description), clampWeight(in.Weight)); err != nil {
 		jsonError(w, http.StatusBadRequest, "group name already exists")
 		return
 	}
+	s.st.SetGroupPriority(id, s.groupPriorityValid(in.Priority))
 	writeJSON(w, okJSON)
 }
 

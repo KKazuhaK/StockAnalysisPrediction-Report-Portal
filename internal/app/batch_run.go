@@ -93,6 +93,55 @@ func (s *Server) urgentAllowed(user, priority string) (string, bool) {
 	return "normal", true // out of 加急 tickets → runs as 普通
 }
 
+// runDefaultPriority is the system-wide fallback priority for a run whose
+// submitter is in no group with a default (admin setting; ADR 0007).
+func (s *Server) runDefaultPriority() string {
+	p := s.st.GetSetting("run_default_priority", "normal")
+	if !s.priorityRegistry().Has(p) {
+		return "normal"
+	}
+	return p
+}
+
+// groupPriorityValid returns p if it is a usable group default (a registered,
+// non-reserved tier), else "". 加急 (the reserved tier) is never a group default —
+// it stays ticket-gated via explicit escalation only.
+func (s *Server) groupPriorityValid(p string) string {
+	if p == "" {
+		return ""
+	}
+	reg := s.priorityRegistry()
+	if reg.Has(p) && !reg.Get(p).Reserved {
+		return p
+	}
+	return ""
+}
+
+// resolvePriority decides a run's priority when the caller didn't force one:
+// explicit > highest of the submitter's group defaults > system default. An
+// explicit value (including an 加急 escalation) always wins; 加急 ticket gating
+// happens afterwards in urgentAllowed. This one function is the extension point
+// for future priority sources (ADR 0007).
+func (s *Server) resolvePriority(user, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	reg := s.priorityRegistry()
+	best, bestVal := "", 0
+	for _, p := range s.st.UserGroupPriorities(user) {
+		if !reg.Has(p) {
+			continue
+		}
+		if v := reg.Get(p).Value; best == "" || v < bestVal { // lower Value = higher priority
+			best, bestVal = p, v
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return s.runDefaultPriority()
+}
+
 // parseEnqueueUnix parses a stored "2006-01-02 15:04:05" timestamp (local time) to
 // a unix second. A malformed/empty value sorts first (unix 0), which is harmless.
 func parseEnqueueUnix(ts string) int64 {

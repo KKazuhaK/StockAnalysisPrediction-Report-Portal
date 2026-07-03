@@ -1,5 +1,7 @@
 package app
 
+import "database/sql"
+
 // User-admin persistence: extended profile attributes (display name / email /
 // active / last login) and organizational groups. Groups are labels only —
 // permissions still come from the role. The `users` table is never altered; these
@@ -11,8 +13,9 @@ type UserGroup struct {
 	Name        string
 	Description string
 	Created     string
-	Weight      int // 加急 tickets granted per period to each member (see docs/adr/0005-priority-tickets.md)
-	Members     int // member count, filled by ListUserGroups
+	Weight      int    // 加急 tickets granted per period to each member (see docs/adr/0005-priority-tickets.md)
+	Priority    string // default run priority for members (non-urgent tier; see docs/adr/0007); "" = none
+	Members     int    // member count, filled by ListUserGroups
 }
 
 // ---------- profile ----------
@@ -59,18 +62,53 @@ func (s *Store) UpdateUserGroup(id int64, name, description string, weight int) 
 	return err
 }
 
-// DeleteUserGroup removes a group and all of its memberships.
+// DeleteUserGroup removes a group and all of its memberships (+ its priority row).
 func (s *Store) DeleteUserGroup(id int64) error {
 	s.exec("DELETE FROM user_group_members WHERE group_id=?", id)
+	s.exec("DELETE FROM group_priority WHERE group_id=?", id)
 	_, err := s.exec("DELETE FROM user_groups WHERE id=?", id)
 	return err
 }
 
-// ListUserGroups returns all groups with their member counts, by name.
+// SetGroupPriority sets a group's default run priority (ADR 0007). An empty
+// priority clears it (the group contributes no default).
+func (s *Store) SetGroupPriority(groupID int64, priority string) error {
+	if priority == "" {
+		_, err := s.exec("DELETE FROM group_priority WHERE group_id=?", groupID)
+		return err
+	}
+	_, err := s.exec(`INSERT INTO group_priority(group_id,priority) VALUES(?,?)
+		ON CONFLICT(group_id) DO UPDATE SET priority=excluded.priority`, groupID, priority)
+	return err
+}
+
+// UserGroupPriorities returns the (non-empty) default priorities of the groups a
+// user belongs to. The caller ranks them; the highest wins (ADR 0007).
+func (s *Store) UserGroupPriorities(username string) []string {
+	rows, err := s.query(`SELECT gp.priority FROM user_group_members m
+		JOIN group_priority gp ON gp.group_id=m.group_id
+		WHERE m.username=? AND COALESCE(gp.priority,'')<>''`, username)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p sql.NullString
+		if rows.Scan(&p) == nil && p.String != "" {
+			out = append(out, p.String)
+		}
+	}
+	return out
+}
+
+// ListUserGroups returns all groups with their member counts + default priority, by name.
 func (s *Store) ListUserGroups() []UserGroup {
-	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''), COALESCE(g.weight,0), COUNT(m.username)
-		FROM user_groups g LEFT JOIN user_group_members m ON m.group_id=g.id
-		GROUP BY g.id, g.name, g.description, g.created_at, g.weight ORDER BY g.name`)
+	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''), COALESCE(g.weight,0), COALESCE(gp.priority,''), COUNT(m.username)
+		FROM user_groups g
+		LEFT JOIN user_group_members m ON m.group_id=g.id
+		LEFT JOIN group_priority gp ON gp.group_id=g.id
+		GROUP BY g.id, g.name, g.description, g.created_at, g.weight, gp.priority ORDER BY g.name`)
 	if err != nil {
 		return nil
 	}
@@ -78,7 +116,7 @@ func (s *Store) ListUserGroups() []UserGroup {
 	var out []UserGroup
 	for rows.Next() {
 		var g UserGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &g.Weight, &g.Members); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &g.Weight, &g.Priority, &g.Members); err != nil {
 			continue
 		}
 		out = append(out, g)
