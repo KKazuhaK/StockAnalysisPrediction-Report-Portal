@@ -5,7 +5,13 @@ import type { SiteSettings } from './api/types'
 import { BrandIcon } from './components/icons'
 
 const DEFAULT_FAVICON = '/favicon.svg'
-const DEFAULT_SETTINGS: SiteSettings = { siteTitle: '', siteLogoUrl: '' }
+const DEFAULT_SETTINGS: SiteSettings = {
+  siteTitle: '',
+  siteLogoUrl: '',
+  footerText: '',
+  footerShowInfo: true,
+  footerShowVersion: true,
+}
 
 interface SiteCtx {
   settings: SiteSettings
@@ -20,6 +26,9 @@ function normalizeSettings(s?: Partial<SiteSettings> | null): SiteSettings {
   return {
     siteTitle: (s?.siteTitle ?? '').trim(),
     siteLogoUrl: (s?.siteLogoUrl ?? '').trim(),
+    footerText: (s?.footerText ?? '').trim(),
+    footerShowInfo: s?.footerShowInfo !== false,
+    footerShowVersion: s?.footerShowVersion !== false,
   }
 }
 

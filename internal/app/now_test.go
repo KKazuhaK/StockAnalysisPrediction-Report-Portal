@@ -173,11 +173,12 @@ func TestSiteSettings(t *testing.T) {
 	}
 
 	pub := get(s.apiSite, "/api/site")
-	if pub["siteTitle"] != "" || pub["siteLogoUrl"] != "" {
+	if pub["siteTitle"] != "" || pub["siteLogoUrl"] != "" || pub["footerText"] != "" ||
+		pub["footerShowInfo"] != true || pub["footerShowVersion"] != true {
 		t.Fatalf("default site settings = %v, want empty overrides", pub)
 	}
 
-	if rec := save(`{"siteTitle":" 智研平台 ","siteLogoUrl":"/brand/logo.png"}`); rec.Code != http.StatusOK {
+	if rec := save(`{"siteTitle":" 智研平台 ","siteLogoUrl":"/brand/logo.png","footerText":"© 智研平台","footerShowInfo":false,"footerShowVersion":false}`); rec.Code != http.StatusOK {
 		t.Fatalf("save site settings: %d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := s.st.GetSetting("site_title", ""); got != "智研平台" {
@@ -186,13 +187,21 @@ func TestSiteSettings(t *testing.T) {
 	if got := s.st.GetSetting("site_logo_url", ""); got != "/brand/logo.png" {
 		t.Errorf("site_logo_url=%q", got)
 	}
+	if got := s.st.GetSetting("footer_text", ""); got != "© 智研平台" {
+		t.Errorf("footer_text=%q", got)
+	}
+	if settingBool(s.st.GetSetting("footer_show_info", ""), true) || settingBool(s.st.GetSetting("footer_show_version", ""), true) {
+		t.Errorf("footer visibility settings not saved")
+	}
 
 	admin := get(func(w http.ResponseWriter, r *http.Request) { s.apiAdminSettings(w, r, "admin") }, "/api/admin/settings")
-	if admin["siteTitle"] != "智研平台" || admin["siteLogoUrl"] != "/brand/logo.png" {
+	if admin["siteTitle"] != "智研平台" || admin["siteLogoUrl"] != "/brand/logo.png" ||
+		admin["footerText"] != "© 智研平台" || admin["footerShowInfo"] != false || admin["footerShowVersion"] != false {
 		t.Errorf("admin settings missing site fields: %v", admin)
 	}
 	pub = get(s.apiSite, "/api/site")
-	if pub["siteTitle"] != "智研平台" || pub["siteLogoUrl"] != "/brand/logo.png" {
+	if pub["siteTitle"] != "智研平台" || pub["siteLogoUrl"] != "/brand/logo.png" ||
+		pub["footerText"] != "© 智研平台" || pub["footerShowInfo"] != false || pub["footerShowVersion"] != false {
 		t.Errorf("public site settings = %v", pub)
 	}
 
@@ -203,11 +212,22 @@ func TestSiteSettings(t *testing.T) {
 		t.Errorf("invalid save half-applied title: %q", got)
 	}
 
-	if rec := save(`{"siteTitle":"","siteLogoUrl":""}`); rec.Code != http.StatusOK {
+	longFooter := `{"footerText":"` + strings.Repeat("x", maxFooterTextRunes+1) + `","footerShowInfo":true}`
+	if rec := save(longFooter); rec.Code != http.StatusBadRequest {
+		t.Errorf("long footer status=%d, want 400", rec.Code)
+	}
+	if settingBool(s.st.GetSetting("footer_show_info", ""), true) {
+		t.Errorf("invalid footer save half-applied visibility")
+	}
+
+	if rec := save(`{"siteTitle":"","siteLogoUrl":"","footerText":"","footerShowInfo":true,"footerShowVersion":true}`); rec.Code != http.StatusOK {
 		t.Fatalf("clear site settings: %d body=%s", rec.Code, rec.Body.String())
 	}
-	if s.st.GetSetting("site_title", "x") != "" || s.st.GetSetting("site_logo_url", "x") != "" {
+	if s.st.GetSetting("site_title", "x") != "" || s.st.GetSetting("site_logo_url", "x") != "" || s.st.GetSetting("footer_text", "x") != "" {
 		t.Errorf("clear did not empty site settings")
+	}
+	if !settingBool(s.st.GetSetting("footer_show_info", ""), false) || !settingBool(s.st.GetSetting("footer_show_version", ""), false) {
+		t.Errorf("clear did not restore footer visibility")
 	}
 }
 

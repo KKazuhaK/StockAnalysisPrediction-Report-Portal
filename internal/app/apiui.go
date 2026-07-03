@@ -24,8 +24,9 @@ import (
 var okJSON = map[string]any{"ok": true}
 
 const (
-	maxSiteTitleRunes = 80
-	maxSiteLogoBytes  = 512 * 1024
+	maxSiteTitleRunes  = 80
+	maxFooterTextRunes = 1000
+	maxSiteLogoBytes   = 512 * 1024
 )
 
 // jsonError writes a uniform JSON error response.
@@ -102,8 +103,11 @@ func (s *Server) canQuery(r *http.Request) bool {
 
 func (s *Server) siteSettingsJSON() map[string]any {
 	return map[string]any{
-		"siteTitle":   s.st.GetSetting("site_title", ""),
-		"siteLogoUrl": s.st.GetSetting("site_logo_url", ""),
+		"siteTitle":         s.st.GetSetting("site_title", ""),
+		"siteLogoUrl":       s.st.GetSetting("site_logo_url", ""),
+		"footerText":        s.st.GetSetting("footer_text", ""),
+		"footerShowInfo":    settingBool(s.st.GetSetting("footer_show_info", ""), true),
+		"footerShowVersion": settingBool(s.st.GetSetting("footer_show_version", ""), true),
 	}
 }
 
@@ -627,7 +631,8 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	// All pointers: a nil field was omitted from the request → leave that setting
 	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
 	var in struct {
-		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl *string
+		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText *string
+		FooterShowInfo, FooterShowVersion                                       *bool
 	}
 	readJSON(r, &in)
 	// Validate before writing anything so a bad field can't half-apply.
@@ -645,6 +650,10 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	if in.SiteLogoUrl != nil && !validSiteLogoURL(strings.TrimSpace(*in.SiteLogoUrl)) {
 		jsonError(w, http.StatusBadRequest, "无效的 Logo 地址")
+		return
+	}
+	if in.FooterText != nil && len([]rune(strings.TrimSpace(*in.FooterText))) > maxFooterTextRunes {
+		jsonError(w, http.StatusBadRequest, "底部信息过长")
 		return
 	}
 	if in.OldBase != nil {
@@ -665,7 +674,27 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	if in.SiteLogoUrl != nil { // "" clears → built-in SVG mark
 		s.st.SetSetting("site_logo_url", strings.TrimSpace(*in.SiteLogoUrl))
 	}
+	if in.FooterText != nil { // "" clears → use the site title as footer text
+		s.st.SetSetting("footer_text", strings.TrimSpace(*in.FooterText))
+	}
+	if in.FooterShowInfo != nil {
+		s.st.SetSetting("footer_show_info", strconv.FormatBool(*in.FooterShowInfo))
+	}
+	if in.FooterShowVersion != nil {
+		s.st.SetSetting("footer_show_version", strconv.FormatBool(*in.FooterShowVersion))
+	}
 	writeJSON(w, okJSON)
+}
+
+func settingBool(raw string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
 
 func validSiteLogoURL(raw string) bool {
