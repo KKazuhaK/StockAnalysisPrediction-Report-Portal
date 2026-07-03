@@ -40,6 +40,15 @@ export interface MarketPlugin {
   installed: boolean
 }
 
+// A Dify workflow input field, discovered via /parameters (docs/adr/0006-dify-native.md).
+export interface DifyInput {
+  variable: string
+  label?: string
+  type?: string
+  required?: boolean
+  options?: string[]
+}
+
 export interface BatchTarget {
   id: number
   plugin_slug: string

@@ -107,6 +107,13 @@ func RunServer(cfgPath string) {
 		log.Printf("seeded %d default report types", n)
 	}
 
+	// Bundled Dify adapter (docs/adr/0006-dify-native.md): a marker plugin every Dify
+	// target references, so admins configure a workflow by pasting its API key — no
+	// manifest import needed.
+	if _, ok := st.GetPlugin(difyPluginSlug); !ok {
+		st.UpsertPlugin(difyPluginSlug, "Dify Workflow", "1.0.0", "{}", "bundled")
+	}
+
 	s.resumeBatchJobs() // requeue items left in-flight by a restart and relaunch running jobs
 
 	mux := http.NewServeMux()
@@ -196,6 +203,9 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/batch/config", s.requireAdminJSON(s.apiBatchConfigSave))
 	mux.HandleFunc("GET /api/admin/batch/targets", s.requirePermJSON(PermRunBatch, s.apiBatchTargets))
 	mux.HandleFunc("POST /api/admin/batch/targets", s.requireAdminJSON(s.apiBatchTargetAdd))
+	// Dify-native config (docs/adr/0006-dify-native.md): probe a workflow by key, then save it.
+	mux.HandleFunc("POST /api/admin/batch/dify/probe", s.requireAdminJSON(s.apiBatchDifyProbe))
+	mux.HandleFunc("POST /api/admin/batch/dify/targets", s.requireAdminJSON(s.apiBatchDifyTargetAdd))
 	mux.HandleFunc("DELETE /api/admin/batch/targets/{id}", s.requireAdminJSON(s.apiBatchTargetDelete))
 	mux.HandleFunc("GET /api/admin/batch/tickets", s.requirePermJSON(PermRunBatch, s.apiBatchTickets))
 	mux.HandleFunc("GET /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobs))

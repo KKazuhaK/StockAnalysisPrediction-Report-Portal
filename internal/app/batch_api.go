@@ -260,6 +260,14 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 // job-create form can render the right fields.
 func (s *Server) targetJSON(t BatchTarget) map[string]any {
 	m := map[string]any{"id": t.ID, "plugin_slug": t.PluginSlug, "name": t.Name, "created_at": t.Created}
+	// Dify-native target: inputs come from the workflow's discovered fields, not a
+	// manifest (docs/adr/0006-dify-native.md).
+	if t.PluginSlug == difyPluginSlug {
+		m["plugin_name"] = "Dify Workflow"
+		m["dify"] = true
+		m["inputs"] = difyInputsJSON(t.Config)
+		return m
+	}
 	if p, ok := s.st.GetPlugin(t.PluginSlug); ok {
 		m["plugin_name"] = p.Name
 		if mf, err := batch.Compile([]byte(p.Spec)); err == nil {

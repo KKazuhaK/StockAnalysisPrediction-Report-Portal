@@ -144,6 +144,11 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	if !ok {
 		return nil, fmt.Errorf("target %d not found", job.TargetID)
 	}
+	// Dify-native target (the default): talk to Dify directly via the typed client
+	// (docs/adr/0006-dify-native.md). The generic manifest below is the advanced path.
+	if tgt.PluginSlug == difyPluginSlug {
+		return buildDifyProvider(tgt.Config)
+	}
 	plug, ok := s.st.GetPlugin(tgt.PluginSlug)
 	if !ok {
 		return nil, fmt.Errorf("plugin %q not found", tgt.PluginSlug)

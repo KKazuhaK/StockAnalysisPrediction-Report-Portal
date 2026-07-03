@@ -58,7 +58,7 @@ type runError struct {
 	transient bool
 }
 
-func (e *runError) Error() string  { return e.msg }
+func (e *runError) Error() string   { return e.msg }
 func (e *runError) Transient() bool { return e.transient }
 
 func transientErr(format string, a ...any) error {
