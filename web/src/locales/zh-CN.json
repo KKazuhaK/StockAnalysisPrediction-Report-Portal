@@ -7,6 +7,8 @@
   "apps.empty": "暂无可用应用",
   "apps.batchDesc": "挂机批量跑工作流，逐条看成败、可重跑失败项",
   "nav.logout": "退出",
+  "nav.theme": "主题",
+  "nav.language": "语言",
   "nav.links": "入口管理",
   "nav.types": "类型管理",
   "nav.users": "账号管理",

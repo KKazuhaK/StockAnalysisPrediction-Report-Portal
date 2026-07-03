@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Col, Empty, Grid, Result, Row, Segmented, Space, Spin, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Col, Empty, Grid, Result, Row, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -109,7 +109,7 @@ export default function StockPage() {
           )}
         </Space>
 
-        <Row gutter={20}>
+        <Row gutter={[20, 16]}>
           {/* Timeline — vertical scroll box on desktop, horizontal chip strip on mobile */}
           <Col xs={24} md={6}>
             <Card size="small" title={t('stock.timeline')} styles={{ body: { paddingTop: 16 } }}>
@@ -121,7 +121,7 @@ export default function StockPage() {
           <Col xs={24} md={18}>
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
               {data.kinds.length > 1 && (
-                <div style={{ overflowX: 'auto' }}>
+                <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
                   <Segmented
                     value={data.selKind}
                     onChange={(v) => setKind(String(v))}
@@ -129,26 +129,19 @@ export default function StockPage() {
                   />
                 </div>
               )}
-              <Card
-                styles={{
-                  body: { paddingTop: 8 },
-                  // Tabs bring their own baseline; drop the card-head border to avoid a double line.
-                  header: data.subtabs.length > 1 ? { borderBottom: 'none' } : {},
-                }}
-                tabList={undefined}
-                title={
-                  data.subtabs.length > 1 ? (
-                    <Tabs
-                      activeKey={data.selRID}
-                      onChange={setRid}
-                      items={data.subtabs.map((s) => ({ key: s.rid, label: s.label }))}
-                      style={{ marginBottom: -16 }}
-                    />
-                  ) : (
-                    rep?.title
-                  )
-                }
-              >
+              {data.subtabs.length > 1 && (
+                // Report-type strip: a horizontal-scroll Segmented (same pattern as the
+                // category strip above) so it swipes smoothly on mobile instead of
+                // dragging the whole page.
+                <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
+                  <Segmented
+                    value={data.selRID}
+                    onChange={(v) => setRid(String(v))}
+                    options={data.subtabs.map((s) => ({ label: s.label, value: s.rid }))}
+                  />
+                </div>
+              )}
+              <Card styles={{ body: { paddingTop: 8 } }} title={rep?.title}>
                 {rep && isInstant(rep.time) && (
                   <Typography.Text
                     type="secondary"

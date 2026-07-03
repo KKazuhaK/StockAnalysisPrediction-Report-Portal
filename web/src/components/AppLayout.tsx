@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Button, Dropdown, Grid, Layout, Segmented, Select, Space, Spin, theme } from 'antd'
-import { AppstoreOutlined, FileSearchOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
+import { Button, Dropdown, Grid, Layout, Space, Spin, theme } from 'antd'
+import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -40,6 +40,10 @@ export default function AppLayout() {
           gap: compact ? 8 : 16,
           height: 'auto',
           minHeight: 64,
+          // antd's Header sets line-height:64px, which children inherit as a 64px line
+          // box — that stretched the wrapped mobile rows and the search box, adding
+          // uneven whitespace. Reset it so items size to their content.
+          lineHeight: 'normal',
           padding: compact ? '8px 12px' : '0 20px',
           background: token.colorBgContainer,
           borderBottom: `1px solid ${token.colorBorderSecondary}`,
@@ -71,22 +75,6 @@ export default function AppLayout() {
         </div>
 
         <Space size={compact ? 6 : 10} wrap style={{ flexShrink: 0, marginLeft: compact ? 'auto' : 0 }}>
-          <Segmented
-            value={mode}
-            onChange={(v) => setMode(v as any)}
-            options={[
-              { value: 'light', icon: <SunIcon />, title: t('theme.light') },
-              { value: 'dark', icon: <MoonIcon />, title: t('theme.dark') },
-              { value: 'auto', icon: <AutoIcon />, title: t('theme.auto') },
-            ]}
-          />
-          <Select
-            size="middle"
-            value={lang}
-            onChange={setLang}
-            style={{ width: compact ? 104 : 116 }}
-            options={langs.map((l) => ({ value: l.code, label: l.label }))}
-          />
           <Button
             icon={<FileSearchOutlined />}
             onClick={() => navigate('/research')}
@@ -113,8 +101,30 @@ export default function AppLayout() {
             </Button>
           )}
           <Dropdown
+            trigger={['click']}
             menu={{
               items: [
+                {
+                  key: 'theme',
+                  icon: mode === 'light' ? <SunIcon /> : mode === 'dark' ? <MoonIcon /> : <AutoIcon />,
+                  label: t('nav.theme'),
+                  children: [
+                    { key: 'light', icon: <SunIcon />, label: t('theme.light'), onClick: () => setMode('light') },
+                    { key: 'dark', icon: <MoonIcon />, label: t('theme.dark'), onClick: () => setMode('dark') },
+                    { key: 'auto', icon: <AutoIcon />, label: t('theme.auto'), onClick: () => setMode('auto') },
+                  ],
+                },
+                {
+                  key: 'language',
+                  icon: <GlobalOutlined />,
+                  label: t('nav.language'),
+                  children: langs.map((l) => ({
+                    key: l.code,
+                    label: l.label,
+                    onClick: () => setLang(l.code),
+                  })),
+                },
+                { type: 'divider' },
                 {
                   key: 'logout',
                   icon: <LogoutOutlined />,

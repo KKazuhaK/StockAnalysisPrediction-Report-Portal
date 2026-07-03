@@ -7,6 +7,8 @@
   "apps.empty": "No apps available",
   "apps.batchDesc": "Run a workflow over many rows — see per-row results and re-run failures",
   "nav.logout": "Log out",
+  "nav.theme": "Theme",
+  "nav.language": "Language",
   "nav.links": "Links",
   "nav.types": "Types",
   "nav.users": "Users",

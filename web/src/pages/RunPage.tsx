@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Empty, Result, Space, Spin, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Empty, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, DownloadOutlined, FilePdfOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -97,24 +97,18 @@ export default function RunPage() {
           )}
         </Space>
 
-        <Card
-          styles={{
-            // Tabs bring their own baseline; drop the card-head border to avoid a double line.
-            header: data.tabs.length > 1 ? { borderBottom: 'none' } : {},
-          }}
-          title={
-            data.tabs.length > 1 ? (
-              <Tabs
-                activeKey={data.selRID}
-                onChange={(rid) => setSp({ r: rid })}
-                items={data.tabs.map((s) => ({ key: s.rid, label: s.label }))}
-                style={{ marginBottom: -16 }}
-              />
-            ) : (
-              rep?.title
-            )
-          }
-        >
+        {data.tabs.length > 1 && (
+          // Report-type strip: a horizontal-scroll Segmented so it swipes smoothly on
+          // mobile instead of dragging the whole page.
+          <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
+            <Segmented
+              value={data.selRID}
+              onChange={(v) => setSp({ r: String(v) })}
+              options={data.tabs.map((s) => ({ label: s.label, value: s.rid }))}
+            />
+          </div>
+        )}
+        <Card title={rep?.title}>
           {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
         </Card>
       </Space>
