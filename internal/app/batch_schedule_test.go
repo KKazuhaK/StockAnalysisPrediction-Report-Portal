@@ -1,10 +1,9 @@
 package app
 
 import (
+	"math"
 	"testing"
 	"time"
-
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
 )
 
 // runAtDue: empty and past/malformed run_at are due; a future run_at is not.
@@ -42,26 +41,66 @@ func TestNormalizeRunAt(t *testing.T) {
 	}
 }
 
-// A due 定时 job ages from its run_at (its arrival time), not from created_at, so
-// it takes a fair position instead of jumping ahead of later immediate submissions.
-func TestScheduledJobAgesFromRunAt(t *testing.T) {
+// jobFactors normalizes base/age/fair; with the default 24h age window a 12h wait is
+// age 0.5, base 50 is 0.5, and an unseen user is fair 1.
+func TestJobFactorsNormalization(t *testing.T) {
+	srv := &Server{st: newTestStore(t)}
+	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.Local)
+	j := BatchJob{ID: 1, Priority: "50", CreatedBy: "u",
+		CreatedAt: now.Add(-12 * time.Hour).Format("2006-01-02 15:04:05")}
+	f := srv.jobFactors(j, now, map[string]float64{})
+	if f.Base != 0.5 {
+		t.Errorf("base = %v, want 0.5", f.Base)
+	}
+	if math.Abs(f.Age-0.5) > 1e-9 {
+		t.Errorf("age = %v, want 0.5", f.Age)
+	}
+	if f.Fair != 1 {
+		t.Errorf("fair = %v, want 1 (no recent usage)", f.Fair)
+	}
+	if f.Urgent {
+		t.Error("urgent should be false for a numeric base")
+	}
+}
+
+// A due 定时 job ages from its run_at (its arrival time), not from created_at, so it
+// takes a fair position instead of jumping ahead of later immediate submissions.
+func TestJobFactorsAgesFromRunAt(t *testing.T) {
+	srv := &Server{st: newTestStore(t)}
+	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.Local)
+	// Created just now, but scheduled 48h in the past → aging from run_at saturates the
+	// age factor to 1 (aging from the near-now created_at would give ~0).
+	j := BatchJob{ID: 1, Priority: "50", CreatedBy: "u",
+		CreatedAt: now.Format("2006-01-02 15:04:05"),
+		RunAt:     now.Add(-48 * time.Hour).Format("2006-01-02 15:04:05")}
+	if f := srv.jobFactors(j, now, nil); f.Age != 1 {
+		t.Fatalf("age = %v, want 1 (aged from run_at, not created_at)", f.Age)
+	}
+}
+
+// A heavier recent user has a lower fair factor: userUsage decays each of their runs
+// and jobFactors turns the tally into 2^(-usage), so more recent runs → smaller fair.
+func TestFairShareFavoursLighterUser(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
-	jid, err := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"x": "1"}}, "normal")
-	if err != nil {
-		t.Fatalf("create: %v", err)
+	// "heavy" submits three runs; "light" none.
+	for i := 0; i < 3; i++ {
+		if _, err := st.CreateBatchJob(tgt, 1, 0, "heavy", []map[string]string{{"x": "1"}}, "50"); err != nil {
+			t.Fatalf("create: %v", err)
+		}
 	}
-	const past = "2000-01-01 00:00:00" // due (far past), but far from created_at (~now)
-	st.ScheduleJob(jid, past)
+	srv := &Server{st: st}
+	now := time.Now()
+	usage := srv.userUsage(now)
+	j := BatchJob{Priority: "50", CreatedAt: now.Format("2006-01-02 15:04:05")}
 
-	items := (&Server{st: st}).queuedItems()
-	if len(items) != 1 {
-		t.Fatalf("want 1 due item, got %d", len(items))
+	heavy := srv.jobFactors(func() BatchJob { j.CreatedBy = "heavy"; return j }(), now, usage).Fair
+	light := srv.jobFactors(func() BatchJob { j.CreatedBy = "light"; return j }(), now, usage).Fair
+	if !(light > heavy) {
+		t.Fatalf("light user fair (%v) should exceed heavy user fair (%v)", light, heavy)
 	}
-	// SchedKey must be derived from run_at, not the (near-now) created_at.
-	want := queue.DefaultRegistry().SchedKey("normal", parseEnqueueUnix(past))
-	if items[0].SchedKey != want {
-		t.Fatalf("SchedKey = %d, want %d (aged from run_at, not created_at)", items[0].SchedKey, want)
+	if light != 1 {
+		t.Errorf("an unseen user should be fair 1, got %v", light)
 	}
 }
 
@@ -70,11 +109,11 @@ func TestScheduledJobAgesFromRunAt(t *testing.T) {
 func TestQueuedItemsHidesFutureScheduledJobs(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
-	due, err := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"x": "1"}}, "normal")
+	due, err := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"x": "1"}}, "50")
 	if err != nil {
 		t.Fatalf("create due: %v", err)
 	}
-	future, err := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"x": "2"}}, "normal")
+	future, err := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"x": "2"}}, "50")
 	if err != nil {
 		t.Fatalf("create future: %v", err)
 	}
@@ -94,7 +133,7 @@ func TestQueuedItemsHidesFutureScheduledJobs(t *testing.T) {
 func TestJobScheduleRoundTripAndDelete(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
-	jobID, err := st.CreateBatchJob(tgt, 1, 0, "kazuha", []map[string]string{{"symbol": "600519"}}, "normal")
+	jobID, err := st.CreateBatchJob(tgt, 1, 0, "kazuha", []map[string]string{{"symbol": "600519"}}, "50")
 	if err != nil {
 		t.Fatalf("CreateBatchJob: %v", err)
 	}

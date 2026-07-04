@@ -7,6 +7,7 @@ import {
   Drawer,
   Empty,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Progress,
@@ -31,7 +32,7 @@ import { useTranslation } from 'react-i18next'
 import type { Dayjs } from 'dayjs'
 import { api } from '../api/client'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchQueueSummary, BatchTarget } from '../api/types'
-import { fmtInputs, isTerminal, priorityOptions, priorityTag, statusTag } from '../lib/batchUi'
+import { BASE_MAX, fmtInputs, isTerminal, isUrgent, priorityNum, priorityTag, statusTag } from '../lib/batchUi'
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
@@ -178,11 +179,20 @@ export default function QueuePage() {
         ),
     },
     {
+      // A queued non-urgent job gets an inline base-priority editor (插队); 加急 and
+      // non-queued jobs show a static tag (ADR 0008).
       title: t('batch.priorityLabel'),
       width: 116,
       render: (_: unknown, j) =>
-        j.status === 'queued' && !j.scheduled ? (
-          <Select size="small" style={{ width: 96 }} value={j.priority || 'normal'} onChange={(p) => reprioritize(j.id, p)} options={priorityOptions(t)} />
+        j.status === 'queued' && !j.scheduled && !isUrgent(j.priority) ? (
+          <InputNumber
+            size="small"
+            min={0}
+            max={BASE_MAX}
+            style={{ width: 76 }}
+            value={priorityNum(j.priority)}
+            onChange={(v) => reprioritize(j.id, String(v ?? 50))}
+          />
         ) : (
           priorityTag(t, j.priority)
         ),
@@ -253,9 +263,9 @@ export default function QueuePage() {
         title={t('queue.title')}
         extra={
           <Space wrap>
-            {summary?.my_priority && (
+            {summary?.my_priority != null && (
               <span style={{ fontSize: 12 }}>
-                <Typography.Text type="secondary">{t('queue.myPriority')}</Typography.Text> {priorityTag(t, summary.my_priority)}
+                <Typography.Text type="secondary">{t('queue.myPriority')}</Typography.Text> {priorityTag(t, String(summary.my_priority))}
               </span>
             )}
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>

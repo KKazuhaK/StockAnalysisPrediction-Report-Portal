@@ -172,10 +172,11 @@ func (s *Store) CreateBatchJob(targetID int64, concurrency, maxRetries int, crea
 	return jobID, nil
 }
 
-// QueuedJobs lists jobs waiting to be admitted (status 'queued'), with their
-// priority and enqueue time (created_at), for the scheduler and the queue view.
+// QueuedJobs lists jobs waiting to be admitted (status 'queued'), with their priority,
+// submitter, and enqueue time (created_at), for the scheduler and the queue view. The
+// submitter feeds the fair-share factor (docs/adr/0008-multifactor-priority.md).
 func (s *Store) QueuedJobs() []BatchJob {
-	rows, err := s.query(`SELECT b.id, COALESCE(q.priority,'normal'), b.created_at, COALESCE(sc.run_at,'')
+	rows, err := s.query(`SELECT b.id, COALESCE(q.priority,'normal'), COALESCE(b.created_by,''), b.created_at, COALESCE(sc.run_at,'')
 		FROM batch_jobs b
 		LEFT JOIN job_queue q ON q.job_id=b.id
 		LEFT JOIN job_schedule sc ON sc.job_id=b.id
@@ -187,10 +188,37 @@ func (s *Store) QueuedJobs() []BatchJob {
 	var out []BatchJob
 	for rows.Next() {
 		var j BatchJob
-		var priority, createdAt, runAt sql.NullString
-		rows.Scan(&j.ID, &priority, &createdAt, &runAt)
-		j.Status, j.Priority, j.CreatedAt, j.RunAt = "queued", priority.String, createdAt.String, runAt.String
+		var priority, createdBy, createdAt, runAt sql.NullString
+		rows.Scan(&j.ID, &priority, &createdBy, &createdAt, &runAt)
+		j.Status, j.Priority, j.CreatedBy, j.CreatedAt, j.RunAt = "queued", priority.String, createdBy.String, createdAt.String, runAt.String
 		out = append(out, j)
+	}
+	return out
+}
+
+// JobActivity is one run's (submitter, created_at) — the raw input to the fair-share
+// factor. created_at is the stored local "2006-01-02 15:04:05" string; the caller
+// parses and time-decays it (docs/adr/0008-multifactor-priority.md).
+type JobActivity struct {
+	User, CreatedAt string
+}
+
+// RecentJobActivity returns every batch job created at or after `since` (a stored
+// "2006-01-02 15:04:05" timestamp), for the fair-share usage tally. The string bound
+// sorts correctly because the timestamp format is zero-padded and lexicographic.
+func (s *Store) RecentJobActivity(since string) []JobActivity {
+	rows, err := s.query(`SELECT COALESCE(created_by,''), COALESCE(created_at,'')
+		FROM batch_jobs WHERE created_at>=? ORDER BY created_at`, since)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []JobActivity
+	for rows.Next() {
+		var a JobActivity
+		if rows.Scan(&a.User, &a.CreatedAt) == nil {
+			out = append(out, a)
+		}
 	}
 	return out
 }

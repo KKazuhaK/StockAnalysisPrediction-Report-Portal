@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
@@ -43,11 +45,89 @@ func (s *Server) clampConcurrency(requested int) int {
 	return requested
 }
 
-// ---------- priority run queue (docs/adr/0004-run-queue.md) ----------
+// ---------- multifactor run queue (docs/adr/0008-multifactor-priority.md) ----------
 
-// priorityRegistry is the queue's priority taxonomy. For now it is the built-in
-// default (加急 / 普通 / 其他); admin-configurable custom levels are a later step.
-func (s *Server) priorityRegistry() queue.Registry { return queue.DefaultRegistry() }
+// baseMax is the top of the base-priority scale: base priorities are numbers in
+// [0, baseMax], normalized to [0,1] as the base factor.
+const baseMax = 100
+
+// clampBase keeps a base priority within [0, baseMax].
+func clampBase(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > baseMax {
+		return baseMax
+	}
+	return n
+}
+
+// parsePriority interprets a stored priority string as (base 0..100, urgent). "urgent"
+// is the 加急 escalation; a bare number is the base priority; the legacy tier names map
+// on read (normal→50, other→20) so pre-0008 rows keep working.
+func parsePriority(p string) (base int, urgent bool) {
+	switch strings.TrimSpace(p) {
+	case "urgent":
+		return 0, true
+	case "normal", "":
+		return 50, false
+	case "other":
+		return 20, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(p))
+	if err != nil {
+		return 50, false
+	}
+	return clampBase(n), false
+}
+
+// normalizePriorityInput canonicalizes a client-supplied priority to its stored form:
+// "urgent" (加急) or a clamped base number as a string. ok=false rejects garbage.
+func normalizePriorityInput(p string) (string, bool) {
+	p = strings.TrimSpace(p)
+	if p == "urgent" {
+		return "urgent", true
+	}
+	if n, err := strconv.Atoi(p); err == nil {
+		return strconv.Itoa(clampBase(n)), true
+	}
+	return "", false
+}
+
+// settingFloat reads a non-negative float admin setting, falling back to def.
+func (s *Server) settingFloat(key string, def float64) float64 {
+	if v, err := strconv.ParseFloat(s.st.GetSetting(key, ""), 64); err == nil && v >= 0 {
+		return v
+	}
+	return def
+}
+
+// prioWeights are the multifactor priority weights (Slurm's PriorityWeight*), admin-set.
+// Default 1000 each so base/age/fair contribute comparably before tuning.
+func (s *Server) prioWeights() queue.Weights {
+	return queue.Weights{
+		Base: s.settingFloat("batch_prio_w_base", 1000),
+		Age:  s.settingFloat("batch_prio_w_age", 1000),
+		Fair: s.settingFloat("batch_prio_w_fair", 1000),
+	}
+}
+
+// prioAgeHours is the wait time at which the age factor saturates to 1 (anti-starvation).
+func (s *Server) prioAgeHours() float64 {
+	if h := s.settingFloat("batch_prio_age_hours", 24); h > 0 {
+		return h
+	}
+	return 24
+}
+
+// prioFairHalflifeHours is the fair-share usage half-life: a user's recent runs decay
+// by half every this-many hours.
+func (s *Server) prioFairHalflifeHours() float64 {
+	if h := s.settingFloat("batch_prio_fair_halflife_hours", 168); h > 0 {
+		return h
+	}
+	return 168
+}
 
 // batchBudget is how many jobs may run at once across the whole queue (admin-set).
 // Default 1 — jobs run one at a time, ordered by priority, which is the original
@@ -79,10 +159,10 @@ func (s *Server) ticketPeriodDays() int {
 	return n
 }
 
-// urgentAllowed decides the effective priority for a submitted job: admins may use
-// 加急 freely; everyone else must spend a 加急 ticket, otherwise the job is
-// downgraded to 普通. Returns the effective priority and whether it was downgraded.
-func (s *Server) urgentAllowed(user, priority string) (string, bool) {
+// urgentAllowed gates a submitted 加急 run: admins use it freely; everyone else must
+// spend a 加急 ticket, otherwise the run falls back to its resolved base priority.
+// Returns the effective stored priority string and whether it was downgraded.
+func (s *Server) urgentAllowed(user, priority string, base int) (string, bool) {
 	if priority != "urgent" || s.isAdmin(user) {
 		return priority, false
 	}
@@ -90,53 +170,51 @@ func (s *Server) urgentAllowed(user, priority string) (string, bool) {
 	if ok, _ := s.st.SpendTicket(user, alloc, s.ticketPeriodDays(), time.Now()); ok {
 		return priority, false
 	}
-	return "normal", true // out of 加急 tickets → runs as 普通
+	return strconv.Itoa(base), true // out of 加急 tickets → runs at its base priority
 }
 
-// runDefaultPriority is the system-wide fallback priority for a run whose
-// submitter is in no group with a default (admin setting; ADR 0007).
-func (s *Server) runDefaultPriority() string {
-	p := s.st.GetSetting("run_default_priority", "normal")
-	if !s.priorityRegistry().Has(p) {
-		return "normal"
-	}
-	return p
+// runDefaultPriority is the system-wide fallback base priority (0..100) for a run
+// whose submitter is in no group with a default (admin setting; ADR 0008).
+func (s *Server) runDefaultPriority() int {
+	base, _ := parsePriority(s.st.GetSetting("run_default_priority", "50"))
+	return base
 }
 
-// groupPriorityValid returns p if it is a usable group default (a registered,
-// non-reserved tier), else "". 加急 (the reserved tier) is never a group default —
-// it stays ticket-gated via explicit escalation only.
+// groupPriorityValid normalizes a group default priority to its stored base-number
+// string, or "" to clear/reject it. 加急 is never a group default — it stays
+// ticket-gated via explicit escalation only (ADR 0008).
 func (s *Server) groupPriorityValid(p string) string {
+	p = strings.TrimSpace(p)
 	if p == "" {
 		return ""
 	}
-	reg := s.priorityRegistry()
-	if reg.Has(p) && !reg.Get(p).Reserved {
-		return p
+	// Legacy tier names normalize to their base number; 加急 and garbage are rejected.
+	switch p {
+	case "urgent":
+		return ""
+	case "normal":
+		return "50"
+	case "other":
+		return "20"
 	}
-	return ""
+	n, err := strconv.Atoi(p)
+	if err != nil {
+		return ""
+	}
+	return strconv.Itoa(clampBase(n))
 }
 
-// resolvePriority decides a run's priority when the caller didn't force one:
-// explicit > highest of the submitter's group defaults > system default. An
-// explicit value (including an 加急 escalation) always wins; 加急 ticket gating
-// happens afterwards in urgentAllowed. This one function is the extension point
-// for future priority sources (ADR 0007).
-func (s *Server) resolvePriority(user, explicit string) string {
-	if explicit != "" {
-		return explicit
-	}
-	reg := s.priorityRegistry()
-	best, bestVal := "", 0
+// resolveBasePriority is a run's base priority (0..100) when the caller didn't force an
+// explicit value: the highest of the submitter's group defaults, else the system
+// default. This numeric knob replaces the old 普通/其他 tiers (ADR 0008).
+func (s *Server) resolveBasePriority(user string) int {
+	best := -1
 	for _, p := range s.st.UserGroupPriorities(user) {
-		if !reg.Has(p) {
-			continue
-		}
-		if v := reg.Get(p).Value; best == "" || v < bestVal { // lower Value = higher priority
-			best, bestVal = p, v
+		if b, urgent := parsePriority(p); !urgent && b > best {
+			best = b
 		}
 	}
-	if best != "" {
+	if best >= 0 {
 		return best
 	}
 	return s.runDefaultPriority()
@@ -167,27 +245,65 @@ func runAtDue(runAt string, now time.Time) bool {
 	return !t.After(now)
 }
 
-// queuedItems maps the currently-queued jobs to scheduler items (id + level +
-// aging key), used both by the scheduler and by the "N ahead" computation. A
-// job scheduled for the future is hidden until its run_at passes, so it is never
-// admitted early nor counted as waiting.
+// userUsage returns each user's decayed recent run count for the fair-share factor:
+// Σ over the user's recent jobs of 0.5^(job_age_hours / halflife). A heavy recent user
+// accumulates usage, so their fair factor 2^(-usage) shrinks toward 0 (ADR 0008). The
+// scan is bounded to ~8 half-lives, past which a job's contribution is negligible.
+func (s *Server) userUsage(now time.Time) map[string]float64 {
+	halflife := s.prioFairHalflifeHours()
+	since := now.Add(-time.Duration(halflife * 8 * float64(time.Hour))).Format("2006-01-02 15:04:05")
+	usage := map[string]float64{}
+	for _, a := range s.st.RecentJobActivity(since) {
+		ageHours := now.Sub(time.Unix(parseEnqueueUnix(a.CreatedAt), 0)).Hours()
+		if ageHours < 0 {
+			ageHours = 0
+		}
+		usage[a.User] += math.Exp2(-ageHours / halflife)
+	}
+	return usage
+}
+
+// jobFactors computes a queued job's normalized priority factors at `now`. usage is the
+// precomputed decayed-usage map (see userUsage); an absent user has usage 0 → fair 1.
+func (s *Server) jobFactors(j BatchJob, now time.Time, usage map[string]float64) queue.Factors {
+	base, urgent := parsePriority(j.Priority)
+	// A 定时 job "arrives" at its run_at, so it ages from then — not from when it was
+	// created — otherwise a long-scheduled job would unfairly jump ahead of runs
+	// submitted after it (ADR 0007). Immediate jobs age from created_at.
+	enqueue := j.CreatedAt
+	if j.RunAt != "" {
+		enqueue = j.RunAt
+	}
+	wait := now.Sub(time.Unix(parseEnqueueUnix(enqueue), 0)).Seconds()
+	age := wait / (s.prioAgeHours() * 3600)
+	if age < 0 {
+		age = 0
+	} else if age > 1 {
+		age = 1
+	}
+	return queue.Factors{
+		Base:   float64(base) / baseMax,
+		Age:    age,
+		Fair:   math.Exp2(-usage[j.CreatedBy]),
+		Urgent: urgent,
+	}
+}
+
+// queuedItems maps the currently-queued jobs to scored scheduler items, used both by
+// the scheduler and by the "N ahead" computation. A job scheduled for the future is
+// hidden until its run_at passes, so it is never admitted early nor counted as waiting.
 func (s *Server) queuedItems() []queue.Item {
-	reg := s.priorityRegistry()
 	now := time.Now()
+	w := s.prioWeights()
+	usage := s.userUsage(now)
 	jobs := s.st.QueuedJobs()
 	items := make([]queue.Item, 0, len(jobs))
 	for _, j := range jobs {
 		if !runAtDue(j.RunAt, now) {
 			continue
 		}
-		// A 定时 job "arrives" in the queue at its run_at, so it ages from then — not
-		// from when it was created — otherwise a long-scheduled job would unfairly jump
-		// ahead of runs submitted after it (ADR 0007). Immediate jobs age from created_at.
-		enqueue := j.CreatedAt
-		if j.RunAt != "" {
-			enqueue = j.RunAt
-		}
-		items = append(items, queue.Item{ID: j.ID, Level: j.Priority, SchedKey: reg.SchedKey(j.Priority, parseEnqueueUnix(enqueue))})
+		f := s.jobFactors(j, now, usage)
+		items = append(items, queue.Item{ID: j.ID, Score: w.Score(f), Urgent: f.Urgent})
 	}
 	return items
 }
@@ -215,10 +331,9 @@ func (s *Server) scheduleTick() {
 	if len(items) == 0 {
 		return
 	}
-	reg := s.priorityRegistry()
 	running := s.st.RunningJobCount()
 	plan := queue.Plan{Budget: s.batchBudget(), Reserved: s.batchReserved()}
-	for _, it := range reg.Admit(items, running, plan) {
+	for _, it := range queue.Admit(items, running, plan) {
 		if s.st.MarkJobRunning(it.ID) {
 			s.launchJob(it.ID)
 		}

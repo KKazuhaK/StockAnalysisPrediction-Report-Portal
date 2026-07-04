@@ -65,14 +65,14 @@ export interface BatchQueueSummary {
   scheduled: number // 定时 jobs not yet due
   budget: number // jobs allowed to run at once
   reserved: number // slots held for 加急
-  my_priority?: string // the caller's resolved default priority (urgent | normal | other)
+  my_priority?: number // the caller's resolved base priority (0..100, ADR 0008)
 }
 
 export interface BatchJob {
   id: number
   target_id: number
   status: string
-  priority?: string // queue priority level (urgent | normal | other)
+  priority?: string // "urgent" (加急) or a base number 0..100 as a string (ADR 0008)
   run_at?: string // one-shot scheduled start ("" = ASAP)
   scheduled?: boolean // queued but not yet due (定时, waiting for run_at)
   inputs?: string // first row's inputs as a JSON string (for a 标的 label)
@@ -263,7 +263,7 @@ export interface UserGroupRow {
   name: string
   description?: string
   weight: number // 加急 tickets granted per period to each member (ADR 0005)
-  priority?: string // default run priority for members (non-urgent tier; ADR 0007)
+  priority?: string // default base run priority 0..100 for members (as a string; ADR 0008)
   members: number // member count
 }
 

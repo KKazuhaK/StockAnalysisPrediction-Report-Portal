@@ -212,13 +212,20 @@ func (s *Server) apiBatchMarketInstall(w http.ResponseWriter, r *http.Request, u
 // ---------- config (admin) ----------
 
 func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user string) {
+	pw := s.prioWeights()
 	writeJSON(w, map[string]any{
 		"max_concurrency":    s.batchMaxConcurrency(),
 		"max_jobs":           s.batchBudget(),        // queue budget: jobs running at once (ADR 0004)
-		"reserved_slots":     s.batchReserved(),      // slots held for the urgent tier
+		"reserved_slots":     s.batchReserved(),      // slots held for 加急 (ADR 0004)
 		"ticket_period_days": s.ticketPeriodDays(),   // how often 加急 tickets refill (ADR 0005)
-		"default_priority":   s.runDefaultPriority(), // fallback priority for no-group runs (ADR 0007)
-		"market_index_url":   s.marketIndexURL(),
+		"default_priority":   s.runDefaultPriority(), // base priority (0..100) for no-group runs (ADR 0008)
+		// Multifactor priority weights + factor tuning (ADR 0008).
+		"prio_w_base":              pw.Base,
+		"prio_w_age":               pw.Age,
+		"prio_w_fair":              pw.Fair,
+		"prio_age_hours":           s.prioAgeHours(),
+		"prio_fair_halflife_hours": s.prioFairHalflifeHours(),
+		"market_index_url":         s.marketIndexURL(),
 	})
 }
 
@@ -229,14 +236,21 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		ReservedSlots    int    `json:"reserved_slots"`
 		TicketPeriodDays int    `json:"ticket_period_days"`
 		DefaultPriority  string `json:"default_priority"`
-		MarketIndexURL   string `json:"market_index_url"`
+		// Multifactor priority tuning; pointers so an omitted field is left unchanged
+		// (a weight of 0 is meaningful — it disables that factor). See ADR 0008.
+		PrioWBase             *float64 `json:"prio_w_base"`
+		PrioWAge              *float64 `json:"prio_w_age"`
+		PrioWFair             *float64 `json:"prio_w_fair"`
+		PrioAgeHours          *float64 `json:"prio_age_hours"`
+		PrioFairHalflifeHours *float64 `json:"prio_fair_halflife_hours"`
+		MarketIndexURL        string   `json:"market_index_url"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	// Only a registered, non-reserved tier may be the no-group default (加急 stays
-	// ticket-gated, so it can't be a silent default).
+	// The no-group default is a base number (0..100); 加急 stays ticket-gated, so it
+	// can't be a silent default (groupPriorityValid rejects it).
 	if p := s.groupPriorityValid(in.DefaultPriority); p != "" {
 		s.st.SetSetting("run_default_priority", p)
 	}
@@ -252,6 +266,16 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	if in.TicketPeriodDays >= 1 {
 		s.st.SetSetting("batch_ticket_period_days", strconv.Itoa(in.TicketPeriodDays))
 	}
+	setFloat := func(key string, v *float64, min float64) {
+		if v != nil && *v >= min {
+			s.st.SetSetting(key, strconv.FormatFloat(*v, 'f', -1, 64))
+		}
+	}
+	setFloat("batch_prio_w_base", in.PrioWBase, 0) // 0 disables the factor
+	setFloat("batch_prio_w_age", in.PrioWAge, 0)
+	setFloat("batch_prio_w_fair", in.PrioWFair, 0)
+	setFloat("batch_prio_age_hours", in.PrioAgeHours, 0.0001) // must be > 0 (divisor)
+	setFloat("batch_prio_fair_halflife_hours", in.PrioFairHalflifeHours, 0.0001)
 	if in.MarketIndexURL != "" {
 		s.st.SetSetting("batch_market_index_url", in.MarketIndexURL)
 	}
@@ -392,12 +416,17 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	// No explicit choice → resolve from the submitter's group default / system
-	// default; an explicit value (incl. 加急) is kept as-is (ADR 0007).
-	in.Priority = s.resolvePriority(user, in.Priority)
-	if !s.priorityRegistry().Has(in.Priority) {
-		jsonError(w, http.StatusBadRequest, "unknown priority")
-		return
+	// Resolve the stored priority: an explicit 加急 escalates (ticket-gated below); an
+	// explicit base number is honored; otherwise it resolves from the submitter's group
+	// default / the system default (ADR 0008). base is the fallback if 加急 is denied.
+	base := s.resolveBasePriority(user)
+	stored := strconv.Itoa(base)
+	if in.Priority != "" {
+		if b, urgent := parsePriority(in.Priority); urgent {
+			stored = "urgent"
+		} else {
+			base, stored = b, strconv.Itoa(b)
+		}
 	}
 	if len(in.Rows) == 0 {
 		jsonError(w, http.StatusBadRequest, "no rows to run")
@@ -436,8 +465,8 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
-	// 加急 costs a ticket for non-admins; out of tickets → runs as 普通.
-	priority, downgraded := s.urgentAllowed(user, in.Priority)
+	// 加急 costs a ticket for non-admins; out of tickets → runs at its base priority.
+	priority, downgraded := s.urgentAllowed(user, stored, base)
 	jobID, err := s.st.CreateBatchJob(in.TargetID, conc, maxRetries, user, in.Rows, priority)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -524,16 +553,20 @@ func (s *Server) apiBatchJobReprioritize(w http.ResponseWriter, r *http.Request,
 	var in struct {
 		Priority string `json:"priority"`
 	}
-	if err := readJSON(r, &in); err != nil || !s.priorityRegistry().Has(in.Priority) {
-		jsonError(w, http.StatusBadRequest, "unknown priority")
+	norm, ok := "", false
+	if err := readJSON(r, &in); err == nil {
+		norm, ok = normalizePriorityInput(in.Priority)
+	}
+	if !ok {
+		jsonError(w, http.StatusBadRequest, "bad priority")
 		return
 	}
-	if err := s.st.SetJobPriority(id, in.Priority); err != nil {
+	if err := s.st.SetJobPriority(id, norm); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.scheduleTick()
-	writeJSON(w, map[string]any{"ok": true, "priority": in.Priority})
+	writeJSON(w, map[string]any{"ok": true, "priority": norm})
 }
 
 // apiBatchQueue is a lightweight queue summary for the home banner + drawer:
@@ -553,7 +586,7 @@ func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user stri
 		"scheduled":   scheduled,
 		"budget":      s.batchBudget(),
 		"reserved":    s.batchReserved(),
-		"my_priority": s.resolvePriority(user, ""), // the caller's resolved default priority (ADR 0007)
+		"my_priority": s.resolveBasePriority(user), // the caller's resolved base priority (0..100, ADR 0008)
 	})
 }
 
