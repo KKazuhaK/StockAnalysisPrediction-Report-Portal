@@ -387,7 +387,7 @@ func (s *Server) v1Tracking(w http.ResponseWriter, r *http.Request) {
 	items := s.st.QueryTracking(symbol, strings.TrimSpace(q.Get("status")), limit)
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, map[string]any{"id": it.ID, "report_uid": it.ReportUID, "itype": it.IType,
+		out = append(out, map[string]any{"id": it.ID, "report_uid": it.ReportRID, "itype": it.IType,
 			"content": it.Content, "status": it.Status, "review_point": it.ReviewPoint, "created_at": it.Created})
 	}
 	writeJSON(w, map[string]any{"ok": true, "symbol": symbol, "count": len(out), "has": len(out) > 0, "items": out})
