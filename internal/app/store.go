@@ -422,6 +422,14 @@ func (s *Store) DeleteTypeConfig(name string) error {
 	return err
 }
 
+// ClearTypeConfigs removes every type configuration row, returning the page to
+// its first-run state before defaults are re-seeded. Report data is untouched;
+// a type that still has reports reappears as an unconfigured (discovered) entry.
+func (s *Store) ClearTypeConfigs() error {
+	_, err := s.exec("DELETE FROM type_config")
+	return err
+}
+
 // DiscoveredTypes returns all types that have appeared in the data (new + old) merged with the configured ones.
 func (s *Store) DiscoveredTypes() []string {
 	seen := map[string]bool{}

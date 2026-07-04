@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { App, AutoComplete, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, Typography } from 'antd'
-import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons'
+import { DeleteOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { TypeGroup, TypeRow, TypesResp } from '../../api/types'
@@ -16,6 +16,7 @@ export default function TypesPage() {
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const [reclassifying, setReclassifying] = useState(false)
+  const [restoring, setRestoring] = useState(false)
   const [addForm] = Form.useForm()
 
   const load = () =>
@@ -84,6 +85,19 @@ export default function TypesPage() {
       load()
     } finally {
       setReclassifying(false)
+    }
+  }
+
+  // Wipe this page's type config and re-seed the shipped first-run defaults.
+  // Custom types are removed; stored report data is untouched.
+  const restoreDefaults = async () => {
+    setRestoring(true)
+    try {
+      const r = await api.post<{ restored: number }>('/api/admin/types/restore-defaults', {})
+      message.success(t('types.restoreDefaultsDone', { n: r.restored }))
+      load()
+    } finally {
+      setRestoring(false)
     }
   }
 
@@ -160,6 +174,11 @@ export default function TypesPage() {
         <Popconfirm title={t('types.reclassifyConfirm')} onConfirm={reclassify}>
           <Button icon={<ReloadOutlined />} loading={reclassifying}>
             {t('types.reclassify')}
+          </Button>
+        </Popconfirm>
+        <Popconfirm title={t('types.restoreDefaultsConfirm')} onConfirm={restoreDefaults}>
+          <Button icon={<RollbackOutlined />} loading={restoring}>
+            {t('types.restoreDefaults')}
           </Button>
         </Popconfirm>
         {selected.length > 0 && (

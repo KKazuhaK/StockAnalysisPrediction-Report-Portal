@@ -544,6 +544,17 @@ func (s *Server) apiTypesDelete(w http.ResponseWriter, r *http.Request, user str
 	writeJSON(w, okJSON)
 }
 
+// apiTypesRestoreDefaults wipes the type configuration and re-seeds the shipped
+// first-run defaults — the "恢复默认" button. The page returns to exactly the set
+// the program generates on first run; admin-added custom types are removed.
+// Report data is untouched: a type that still has reports reappears as an
+// unconfigured (discovered) entry. Returns how many defaults were seeded.
+func (s *Server) apiTypesRestoreDefaults(w http.ResponseWriter, r *http.Request, user string) {
+	s.st.ClearTypeConfigs()
+	n := seedDefaultTypes(s.st)
+	writeJSON(w, map[string]any{"ok": true, "restored": n})
+}
+
 // ---------- Admin: accounts ----------
 
 // userJSON is the enriched account row the admin UI renders.
