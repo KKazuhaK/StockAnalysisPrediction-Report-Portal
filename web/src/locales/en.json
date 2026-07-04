@@ -1,7 +1,6 @@
 {
   "brand": "Research Portal",
   "nav.manage": "Manage",
-  "nav.research": "Research",
   "nav.runAnalysis": "Run analysis",
   "run.title": "Run analysis",
   "run.workflow": "Workflow",
@@ -224,8 +223,6 @@
   "login.submit": "Sign in",
   "login.error": "Wrong username or password",
   "home.searchPlaceholder": "Type a code or name — pick a suggestion, or Enter to search all…",
-  "research.subtitle": "Thematic / free-form deep research not tied to a single ticker",
-  "research.searchPlaceholder": "Search research topics…",
   "home.advanced": "Advanced search",
   "home.keyword": "Keyword / full text",
   "home.category": "Category",

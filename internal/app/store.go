@@ -1099,44 +1099,6 @@ type OldRaw struct {
 	StockCode  string `json:"stockCode"`
 }
 
-// ResearchReports lists the symbol-less (topic / free-form Q&A) reports — deep
-// research not tied to a fixed ticker — newest first, with optional title search
-// and pagination. Returns the page and the total match count. Reads the unified
-// reports table (legacy reports were migrated there), so RIDs are n<rowid>.
-func (s *Store) ResearchReports(q string, limit, offset int) ([]Rep, int) {
-	where := "(symbol IS NULL OR symbol='')"
-	var args []any
-	if q != "" {
-		where += " AND title " + s.likeOp() + " ?"
-		args = append(args, "%"+q+"%")
-	}
-	var total int
-	s.queryRow("SELECT COUNT(*) FROM reports WHERE "+where, args...).Scan(&total)
-	if limit <= 0 || limit > 200 {
-		limit = 30
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	rows, err := s.query("SELECT rowid,title,rtype,rdate,source,sent_at FROM reports WHERE "+
-		where+" ORDER BY rdate DESC, sent_at DESC LIMIT ? OFFSET ?", append(args, limit, offset)...)
-	if err != nil {
-		return nil, total
-	}
-	defer rows.Close()
-	var out []Rep
-	for rows.Next() {
-		var id int64
-		var title, rt, rd, src, tm sql.NullString
-		rows.Scan(&id, &title, &rt, &rd, &src, &tm)
-		out = append(out, Rep{
-			RID: fmt.Sprintf("n%d", id), Src: "new", Title: title.String,
-			RType: rt.String, Date: rd.String, Source: src.String, Time: tm.String,
-		})
-	}
-	return out, total
-}
-
 // ---------- Entry buttons ----------
 
 func (s *Store) Links() []Link {

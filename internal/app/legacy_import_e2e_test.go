@@ -79,9 +79,11 @@ func TestLegacyImportE2E(t *testing.T) {
 		t.Errorf("legacy|102 = title%q src%q md%q sym%q", title, src, md, sym)
 	}
 
-	// The two symbol-less reports surface as deep-research (reads the reports table now).
-	if _, total := st.ResearchReports("", 10, 0); total != 2 {
-		t.Errorf("ResearchReports total = %d, want 2 symbol-less", total)
+	// The two symbol-less (topic) reports were imported into the reports table.
+	var symbolless int
+	st.queryRow("SELECT COUNT(*) FROM reports WHERE symbol IS NULL OR symbol=''").Scan(&symbolless)
+	if symbolless != 2 {
+		t.Errorf("symbol-less reports = %d, want 2", symbolless)
 	}
 
 	// And a code report shows up under its symbol.

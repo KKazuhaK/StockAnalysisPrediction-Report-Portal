@@ -15,7 +15,6 @@ import LoginPage from './pages/LoginPage'
 const HomePage = lazyRetry(() => import('./pages/HomePage'))
 const StockPage = lazyRetry(() => import('./pages/StockPage'))
 const RunPage = lazyRetry(() => import('./pages/RunPage'))
-const ResearchPage = lazyRetry(() => import('./pages/ResearchPage'))
 const ManageLayout = lazyRetry(() => import('./pages/manage/ManageLayout'))
 const LinksPage = lazyRetry(() => import('./pages/manage/LinksPage'))
 const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
@@ -69,7 +68,6 @@ function AppRoutes() {
         }
       >
         <Route path="/" element={<HomePage />} />
-        <Route path="/research" element={<ResearchPage />} />
         <Route path="/stock/:symbol" element={<StockPage />} />
         <Route path="/run/:key" element={<RunPage />} />
         {/* The apps hub and installed iframe apps are open to any logged-in user;

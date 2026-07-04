@@ -1,7 +1,6 @@
 {
   "brand": "研报门户",
   "nav.manage": "管理",
-  "nav.research": "深度研究",
   "nav.runAnalysis": "运行分析",
   "run.title": "运行分析",
   "run.workflow": "工作流",
@@ -224,8 +223,6 @@
   "login.submit": "登录",
   "login.error": "用户名或密码错误",
   "home.searchPlaceholder": "输入代码或名字，选建议进入 / 回车全量搜索…",
-  "research.subtitle": "不针对单一标的的专题 / 问答式深度研究",
-  "research.searchPlaceholder": "搜索深度研究主题…",
   "home.advanced": "高级搜索",
   "home.keyword": "关键字 / 全文",
   "home.category": "大类",

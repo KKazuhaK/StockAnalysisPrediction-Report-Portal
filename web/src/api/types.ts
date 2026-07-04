@@ -170,22 +170,6 @@ export interface Group {
   members: GroupMember[]
 }
 
-export interface ResearchItem {
-  rid: string
-  title: string
-  rtype: string
-  date: string
-  source: string
-}
-
-export interface ResearchResp {
-  items: ResearchItem[]
-  total: number
-  page: number
-  pages: number
-  size: number
-}
-
 export interface HomeResp {
   groups: Group[]
   newTotal: number

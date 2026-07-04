@@ -1,7 +1,6 @@
 {
   "brand": "研報門戶",
   "nav.manage": "管理",
-  "nav.research": "深度研究",
   "nav.runAnalysis": "執行分析",
   "run.title": "執行分析",
   "run.workflow": "工作流",
@@ -224,8 +223,6 @@
   "login.submit": "登入",
   "login.error": "使用者名稱或密碼錯誤",
   "home.searchPlaceholder": "輸入程式碼或名字，選建議進入 / 回車全量搜尋…",
-  "research.subtitle": "不針對單一標的的專題 / 問答式深度研究",
-  "research.searchPlaceholder": "搜尋深度研究主題…",
   "home.advanced": "高階搜尋",
   "home.keyword": "關鍵字 / 全文",
   "home.category": "大類",

@@ -157,7 +157,6 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/login", s.apiLogin)
 	mux.HandleFunc("POST /api/logout", s.apiLogout)
 	mux.HandleFunc("GET /api/home", s.requireUserJSON(s.apiHome))
-	mux.HandleFunc("GET /api/research", s.requireUserJSON(s.apiResearch)) // 深度研究: symbol-less topic reports
 	mux.HandleFunc("GET /api/stock/{symbol}", s.requireUserJSON(s.apiStock))
 	mux.HandleFunc("GET /api/run/{key}", s.requireUserJSON(s.apiRun))
 	mux.HandleFunc("GET /api/repbody", s.requireUserJSON(s.apiRepBody))

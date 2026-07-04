@@ -214,29 +214,6 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 	})
 }
 
-// apiResearch lists symbol-less deep-research / topic reports (free-form Q&A not
-// tied to a ticker), searchable by title and paginated.
-func (s *Server) apiResearch(w http.ResponseWriter, r *http.Request, user string) {
-	q := r.URL.Query()
-	size, _ := strconv.Atoi(q.Get("size"))
-	if size != 15 && size != 30 && size != 50 {
-		size = 30
-	}
-	page, _ := strconv.Atoi(q.Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	reps, total := s.st.ResearchReports(strings.TrimSpace(q.Get("q")), size, (page-1)*size)
-	items := make([]map[string]any, 0, len(reps))
-	for _, rep := range reps {
-		items = append(items, map[string]any{
-			"rid": rep.RID, "title": rep.Title, "rtype": rep.RType, "date": rep.Date, "time": rep.Time, "source": rep.Source,
-		})
-	}
-	pages := int(math.Max(1, math.Ceil(float64(total)/float64(size))))
-	writeJSON(w, map[string]any{"items": items, "total": total, "page": page, "pages": pages, "size": size})
-}
-
 func groupsJSON(gs []Group) []map[string]any {
 	out := make([]map[string]any, 0, len(gs))
 	for _, g := range gs {

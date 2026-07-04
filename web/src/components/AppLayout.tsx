@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
 import { Badge, Button, Dropdown, FloatButton, Grid, Layout, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, FileSearchOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -139,9 +139,6 @@ export default function AppLayout() {
           {/* On mobile these fold into the account menu below to keep the header light. */}
           {!compact && (
             <>
-              <Button icon={<FileSearchOutlined />} onClick={() => navigate('/research')} title={t('nav.research')}>
-                {t('nav.research')}
-              </Button>
               <Button icon={<AppstoreOutlined />} onClick={() => navigate('/apps')} title={t('nav.apps')}>
                 {t('nav.apps')}
               </Button>
@@ -166,7 +163,6 @@ export default function AppLayout() {
                 // On mobile the primary nav lives here (the standalone buttons are hidden).
                 ...(compact
                   ? [
-                      { key: 'research', icon: <FileSearchOutlined />, label: t('nav.research'), onClick: () => navigate('/research') },
                       { key: 'apps', icon: <AppstoreOutlined />, label: t('nav.apps'), onClick: () => navigate('/apps') },
                       ...(admin ? [{ key: 'manage', icon: <SettingOutlined />, label: t('nav.manage'), onClick: () => navigate('/manage') }] : []),
                       { type: 'divider' as const },
