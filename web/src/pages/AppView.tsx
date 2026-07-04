@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Space, Spin, Typography, theme } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { usePrefs } from '../prefs'
 import type { AppTokenResp } from '../api/types'
-import { API_MESSAGE, API_RESULT, INIT_MESSAGE, reqIdOf, validateApiRequest } from '../lib/appBridge'
+import { API_MESSAGE, API_RESULT, INIT_MESSAGE, THEME_MESSAGE, reqIdOf, validateApiRequest, type ThemePayload } from '../lib/appBridge'
 
 // AppView hosts one installed app inside a sandboxed iframe and mediates its API
 // access. The iframe (sandbox="allow-scripts", so a null origin) can reach the
@@ -22,6 +22,22 @@ export default function AppView() {
   const sessionRef = useRef<AppTokenResp | null>(null)
   const [meta, setMeta] = useState<AppTokenResp | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  // The theme snapshot handed to the app on load and re-sent on every change, so it
+  // can match the host's light/dark and colours without any API access.
+  const themePayload = useMemo<ThemePayload>(
+    () => ({
+      dark,
+      colorPrimary: tk.colorPrimary,
+      colorBg: tk.colorBgContainer,
+      colorText: tk.colorText,
+      colorBorder: tk.colorBorderSecondary,
+      colorBgLayout: tk.colorBgLayout,
+      borderRadius: tk.borderRadius,
+    }),
+    [dark, tk.colorPrimary, tk.colorBgContainer, tk.colorText, tk.colorBorderSecondary, tk.colorBgLayout, tk.borderRadius],
+  )
 
   // (Re)mint a scoped bridge token for this app. Returns the fresh session or null.
   const mint = useCallback(async (): Promise<AppTokenResp | null> => {
@@ -67,7 +83,15 @@ export default function AppView() {
         return
       }
       const call = (token: string) =>
-        fetch(v.path, { headers: { Authorization: `Bearer ${token}` }, credentials: 'same-origin' })
+        fetch(v.path, {
+          method: v.method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...(v.method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
+          },
+          credentials: 'same-origin',
+          body: v.method !== 'GET' && v.body !== undefined ? JSON.stringify(v.body) : undefined,
+        })
       try {
         let res = await call(s.token)
         if (res.status === 401) {
@@ -101,14 +125,18 @@ export default function AppView() {
     return () => window.removeEventListener('message', onMessage)
   }, [handleApi])
 
-  // On load, hand the app a minimal init payload (theme tokens) so it can match the
-  // host's light/dark and primary colour without any API access.
+  // On load, hand the app the current theme so it can match the host from the start.
   const onLoad = () => {
-    iframeRef.current?.contentWindow?.postMessage(
-      { type: INIT_MESSAGE, theme: { dark, colorPrimary: tk.colorPrimary, colorBg: tk.colorBgContainer, colorText: tk.colorText } },
-      '*',
-    )
+    setLoaded(true)
+    iframeRef.current?.contentWindow?.postMessage({ type: INIT_MESSAGE, theme: themePayload }, '*')
   }
+
+  // Re-post the theme whenever it changes (e.g. the user toggles light/dark while the
+  // app is open) so the app can follow live. Only after load, when the frame exists.
+  useEffect(() => {
+    if (!loaded) return
+    iframeRef.current?.contentWindow?.postMessage({ type: THEME_MESSAGE, theme: themePayload }, '*')
+  }, [loaded, themePayload])
 
   if (error) {
     return (

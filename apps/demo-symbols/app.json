@@ -2,7 +2,7 @@
   "id": "demo-symbols",
   "name": "Symbols demo",
   "icon": "🔎",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "entry": "index.html",
   "scopes": ["query"]
 }

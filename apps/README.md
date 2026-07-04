@@ -4,8 +4,10 @@ Runtime-installable, sandboxed iframe apps for the portal. See the design in
 [docs/adr/0003-downloadable-apps.md](../docs/adr/0003-downloadable-apps.md).
 
 An **app** is a `.zip` bundle: an `app.json` manifest plus self-contained frontend
-files. An admin installs it under **Manage → Apps**; it then appears as a card in
-the **Apps** hub for every user and opens inside a sandboxed `<iframe>`.
+files. An admin installs it under **Manage → Apps** — either by uploading the `.zip`
+or one-click from the **App market** (a GitHub-hosted [`index.json`](index.json)) —
+and it then appears as a card in the **Apps** hub for every user and opens inside a
+sandboxed `<iframe>`.
 
 ## Manifest (`app.json`)
 
@@ -16,9 +18,13 @@ the **Apps** hub for every user and opens inside a sandboxed `<iframe>`.
   "icon": "🔎",             // optional emoji shown on the card
   "version": "1.0.0",
   "entry": "index.html",    // HTML entry point inside the bundle
-  "scopes": ["query"]       // API scopes; only "query" is granted in phase 1
+  "scopes": ["query"]       // API scopes: "query" (read) and/or "ingest" (write)
 }
 ```
+
+An admin sees the requested scopes and approves them at install (the permission
+prompt). `query` grants `GET /api/v1/*`; `ingest` additionally grants `POST`/`DELETE`
+report writes. The catch-all `all` scope is never granted to an app.
 
 ## Talking to the portal (the bridge)
 
@@ -29,19 +35,20 @@ granted scopes and performs the `/api/v1` call with a short-lived scoped token t
 iframe never sees.
 
 ```js
-// request  →  host
+// request  →  host   (a write needs the "ingest" scope + a body)
 parent.postMessage({ type: 'rp:api', reqId: 1, method: 'GET', path: '/api/v1/symbols?limit=20' }, '*')
+parent.postMessage({ type: 'rp:api', reqId: 2, method: 'POST', path: '/api/v1/reports', body: { /* … */ } }, '*')
 
 // host  →  app
 window.addEventListener('message', (e) => {
   const m = e.data
-  if (m.type === 'rp:api:result' && m.reqId === 1) { /* m.ok, m.status, m.data */ }
-  if (m.type === 'rp:init') { /* m.theme = { dark, colorPrimary, colorBg, colorText } */ }
+  if (m.type === 'rp:api:result') { /* m.reqId, m.ok, m.status, m.data */ }
+  // rp:init arrives once on load; rp:theme re-arrives on every theme change, so the
+  // app can follow the host's light/dark live. m.theme = { dark, colorPrimary, colorBg,
+  // colorText, colorBorder, colorBgLayout, borderRadius }
+  if (m.type === 'rp:init' || m.type === 'rp:theme') { applyTheme(m.theme) }
 })
 ```
-
-Phase 1 grants read-only access (`GET /api/v1/*`, `query` scope). Write scopes and
-an install-time permission prompt are phase 2.
 
 ## The demo
 

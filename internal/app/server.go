@@ -193,12 +193,10 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("DELETE /api/admin/tokens/{id}", s.requireAdminJSON(s.apiTokenDelete))
 
 	// ---- Batch-run feature (see docs/adr/0001-batch-run-engine.md) ----
-	// Plugin market + targets + config are admin-only (PermManage); running jobs is PermRunBatch.
+	// Executor manifests + targets + config are admin-only (PermManage); running jobs is PermRunBatch.
 	mux.HandleFunc("GET /api/admin/batch/plugins", s.requireAdminJSON(s.apiBatchPlugins))
 	mux.HandleFunc("POST /api/admin/batch/plugins/import", s.requireAdminJSON(s.apiBatchPluginImport))
 	mux.HandleFunc("DELETE /api/admin/batch/plugins/{slug}", s.requireAdminJSON(s.apiBatchPluginDelete))
-	mux.HandleFunc("GET /api/admin/batch/market", s.requireAdminJSON(s.apiBatchMarket))
-	mux.HandleFunc("POST /api/admin/batch/market/install", s.requireAdminJSON(s.apiBatchMarketInstall))
 	mux.HandleFunc("GET /api/admin/batch/config", s.requireAdminJSON(s.apiBatchConfigGet))
 	mux.HandleFunc("POST /api/admin/batch/config", s.requireAdminJSON(s.apiBatchConfigSave))
 	mux.HandleFunc("GET /api/admin/batch/targets", s.requirePermJSON(PermRunBatch, s.apiBatchTargets))
@@ -223,6 +221,8 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/apps", s.requireUserJSON(s.apiApps))
 	mux.HandleFunc("POST /api/apps/{id}/token", s.requireUserJSON(s.apiAppToken))
 	mux.HandleFunc("POST /api/admin/apps/install", s.requireAdminJSON(s.apiAppInstall))
+	mux.HandleFunc("GET /api/admin/apps/market", s.requireAdminJSON(s.apiAppMarket))
+	mux.HandleFunc("POST /api/admin/apps/market/install", s.requireAdminJSON(s.apiAppMarketInstall))
 	mux.HandleFunc("DELETE /api/admin/apps/{id}", s.requireAdminJSON(s.apiAppDelete))
 	mux.HandleFunc("GET /app-assets/{id}/{path...}", s.appAssets)
 	mux.HandleFunc("GET /site-assets/{name}", s.siteAsset)

@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { validateApiRequest, reqIdOf, API_MESSAGE } from './appBridge'
 
 const q = ['query']
+const qi = ['query', 'ingest']
 
 describe('validateApiRequest', () => {
   it('accepts a GET under /api/v1/ with the query scope', () => {
     const r = validateApiRequest({ type: API_MESSAGE, reqId: 1, path: '/api/v1/symbols?q=abc' }, q)
-    expect(r).toEqual({ ok: true, method: 'GET', path: '/api/v1/symbols?q=abc' })
+    expect(r).toEqual({ ok: true, method: 'GET', path: '/api/v1/symbols?q=abc', body: undefined })
   })
 
   it('defaults the method to GET', () => {
@@ -14,9 +15,23 @@ describe('validateApiRequest', () => {
     expect(r.ok).toBe(true)
   })
 
-  it('refuses non-GET methods (phase 1 is read-only)', () => {
-    for (const method of ['POST', 'DELETE', 'PATCH', 'PUT']) {
+  it('refuses writes without the ingest scope (query alone is read-only)', () => {
+    for (const method of ['POST', 'DELETE']) {
       const r = validateApiRequest({ type: API_MESSAGE, reqId: 1, method, path: '/api/v1/reports' }, q)
+      expect(r.ok).toBe(false)
+    }
+  })
+
+  it('allows POST/DELETE under /api/v1/ with the ingest scope, passing the body', () => {
+    const r = validateApiRequest({ type: API_MESSAGE, reqId: 1, method: 'POST', path: '/api/v1/reports', body: { a: 1 } }, qi)
+    expect(r).toEqual({ ok: true, method: 'POST', path: '/api/v1/reports', body: { a: 1 } })
+    const d = validateApiRequest({ type: API_MESSAGE, reqId: 1, method: 'DELETE', path: '/api/v1/reports/5' }, qi)
+    expect(d.ok).toBe(true)
+  })
+
+  it('refuses PATCH/PUT even with the ingest scope (write surface is POST/DELETE only)', () => {
+    for (const method of ['PATCH', 'PUT']) {
+      const r = validateApiRequest({ type: API_MESSAGE, reqId: 1, method, path: '/api/v1/reports' }, qi)
       expect(r.ok).toBe(false)
     }
   })

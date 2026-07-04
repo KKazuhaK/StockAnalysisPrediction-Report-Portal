@@ -5,11 +5,12 @@ import (
 	"time"
 )
 
-// appTokenScopes is the set of API scopes the iframe bridge may grant an app in
-// this phase. Only read/query access is exposed; write scopes (ingest, …) are
-// deferred to the install-time permission prompt in phase 2 of
-// docs/adr/0003-downloadable-apps.md, so an installed app can never mutate data.
-var appTokenScopes = map[string]bool{"query": true}
+// appTokenScopes is the set of API scopes the iframe bridge may grant an app.
+// Phase 2 (docs/adr/0003-downloadable-apps.md) adds the write scope `ingest`
+// alongside read-only `query`; an admin approves the app's declared scopes at
+// install (the install-time permission prompt). The catch-all `all` scope is
+// deliberately absent — an app can never exceed query+ingest.
+var appTokenScopes = map[string]bool{"query": true, "ingest": true}
 
 // grantableScopes filters an app's requested scopes down to the ones this phase
 // permits (deduplicated). An app that declares only unsupported scopes gets none.

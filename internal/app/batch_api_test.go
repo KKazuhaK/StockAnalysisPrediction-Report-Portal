@@ -120,30 +120,3 @@ func TestBatchPluginImportRejectsInvalid(t *testing.T) {
 		t.Errorf("invalid manifest → %d, want 400 (%s)", rec.Code, rec.Body.String())
 	}
 }
-
-// Installing from the market fetches the index + manifest from the configured repo.
-func TestBatchMarketInstall(t *testing.T) {
-	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/index.json":
-			io.WriteString(w, `{"plugins":[{"slug":"p","name":"P","version":"1.0.0","path":"p.json"}]}`)
-		case "/p.json":
-			io.WriteString(w, batchTestSpec)
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	defer market.Close()
-
-	srv := batchServer(t)
-	srv.st.SetSetting("batch_market_index_url", market.URL+"/index.json")
-	post(t, srv.apiBatchMarketInstall, `{"slug":"p"}`)
-
-	p, ok := srv.st.GetPlugin("p")
-	if !ok {
-		t.Fatal("plugin not installed from market")
-	}
-	if p.Source != "market" || p.Version != "1.0.0" {
-		t.Errorf("installed plugin = {source:%q version:%q}, want market/1.0.0", p.Source, p.Version)
-	}
-}

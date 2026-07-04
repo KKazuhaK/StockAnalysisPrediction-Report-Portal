@@ -47,6 +47,12 @@ trigger.
    fallback catalogue; when GitHub is unreachable, admins sideload a manifest file
    via manual import.
 
+   > **Update (2026-07-04):** the separate *plugin market* has been **retired** to
+   > avoid two parallel "markets". There is now exactly one GitHub market — the
+   > **App market** (ADR 0003 phase 2). Dify is bundled (ADR 0006), and the manifest
+   > interpreter's escape hatch for non-Dify backends survives as an admin **manual
+   > import** ("custom executor"), no longer surfaced as a user-facing "plugin".
+
 5. **Concurrency is chosen per job by the operator, capped by the admin.** The
    operator sets a per-job concurrency (1 = strictly sequential, N = N at a time)
    when launching a batch. An admin sets a global maximum (`batch_max_concurrency`

@@ -1,12 +1,9 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -84,131 +81,6 @@ func (s *Server) apiBatchPluginDelete(w http.ResponseWriter, r *http.Request, us
 	writeJSON(w, okJSON)
 }
 
-// ---------- market (GitHub) ----------
-
-type marketEntry struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
-	Path        string `json:"path"` // manifest path relative to the index URL
-	URL         string `json:"url"`  // absolute manifest URL (overrides Path when set)
-}
-
-func fetchBytes(ctx context.Context, rawURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-}
-
-func (s *Server) marketIndexURL() string {
-	return s.st.GetSetting("batch_market_index_url", defaultMarketIndexURL)
-}
-
-func (s *Server) fetchMarket(ctx context.Context) ([]marketEntry, error) {
-	raw, err := fetchBytes(ctx, s.marketIndexURL())
-	if err != nil {
-		return nil, err
-	}
-	var idx struct {
-		Plugins []marketEntry `json:"plugins"`
-	}
-	if err := json.Unmarshal(raw, &idx); err != nil {
-		return nil, fmt.Errorf("index is not valid JSON: %w", err)
-	}
-	return idx.Plugins, nil
-}
-
-func (s *Server) apiBatchMarket(w http.ResponseWriter, r *http.Request, user string) {
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-	defer cancel()
-	entries, err := s.fetchMarket(ctx)
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, "fetch market failed: "+err.Error())
-		return
-	}
-	installed := map[string]bool{}
-	for _, p := range s.st.ListPlugins() {
-		installed[p.Slug] = true
-	}
-	out := make([]map[string]any, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, map[string]any{
-			"slug": e.Slug, "name": e.Name, "version": e.Version,
-			"description": e.Description, "installed": installed[e.Slug],
-		})
-	}
-	writeJSON(w, map[string]any{"index_url": s.marketIndexURL(), "plugins": out})
-}
-
-// apiBatchMarketInstall fetches one manifest from the configured GitHub market and
-// installs it (validated by the interpreter first).
-func (s *Server) apiBatchMarketInstall(w http.ResponseWriter, r *http.Request, user string) {
-	var in struct {
-		Slug string `json:"slug"`
-	}
-	if err := readJSON(r, &in); err != nil || in.Slug == "" {
-		jsonError(w, http.StatusBadRequest, "slug is required")
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-	defer cancel()
-	entries, err := s.fetchMarket(ctx)
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, "fetch market failed: "+err.Error())
-		return
-	}
-	var entry *marketEntry
-	for i := range entries {
-		if entries[i].Slug == in.Slug {
-			entry = &entries[i]
-			break
-		}
-	}
-	if entry == nil {
-		jsonError(w, http.StatusNotFound, "plugin not found in market")
-		return
-	}
-	manifestURL := entry.URL
-	if manifestURL == "" {
-		base, err := url.Parse(s.marketIndexURL())
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "bad market index url")
-			return
-		}
-		ref, err := url.Parse(entry.Path)
-		if err != nil {
-			jsonError(w, http.StatusBadGateway, "bad manifest path")
-			return
-		}
-		manifestURL = base.ResolveReference(ref).String()
-	}
-	raw, err := fetchBytes(ctx, manifestURL)
-	if err != nil {
-		jsonError(w, http.StatusBadGateway, "fetch manifest failed: "+err.Error())
-		return
-	}
-	if _, err := batch.Compile(raw); err != nil {
-		jsonError(w, http.StatusBadGateway, "manifest is invalid: "+err.Error())
-		return
-	}
-	if err := s.st.UpsertPlugin(entry.Slug, entry.Name, entry.Version, string(raw), "market"); err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "slug": entry.Slug})
-}
-
 // ---------- config (admin) ----------
 
 func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user string) {
@@ -225,7 +97,6 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 		"prio_w_fair":              pw.Fair,
 		"prio_age_hours":           s.prioAgeHours(),
 		"prio_fair_halflife_hours": s.prioFairHalflifeHours(),
-		"market_index_url":         s.marketIndexURL(),
 	})
 }
 
@@ -243,7 +114,6 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		PrioWFair             *float64 `json:"prio_w_fair"`
 		PrioAgeHours          *float64 `json:"prio_age_hours"`
 		PrioFairHalflifeHours *float64 `json:"prio_fair_halflife_hours"`
-		MarketIndexURL        string   `json:"market_index_url"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -276,9 +146,6 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	setFloat("batch_prio_w_fair", in.PrioWFair, 0)
 	setFloat("batch_prio_age_hours", in.PrioAgeHours, 0.0001) // must be > 0 (divisor)
 	setFloat("batch_prio_fair_halflife_hours", in.PrioFairHalflifeHours, 0.0001)
-	if in.MarketIndexURL != "" {
-		s.st.SetSetting("batch_market_index_url", in.MarketIndexURL)
-	}
 	// A raised budget may let queued jobs start right away.
 	s.scheduleTick()
 	writeJSON(w, okJSON)

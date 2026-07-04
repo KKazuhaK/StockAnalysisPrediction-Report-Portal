@@ -4,12 +4,29 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 )
+
+// multipartBundle builds a multipart/form-data request carrying a "bundle" file.
+func multipartBundle(t *testing.T, url string, raw []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("bundle", "app.zip")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw.Write(raw)
+	mw.Close()
+	req := httptest.NewRequest("POST", url, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	return req
+}
 
 // makeZip builds an in-memory zip from path→content.
 func makeZip(t *testing.T, files map[string]string) []byte {
@@ -70,8 +87,8 @@ func TestParseAppBundleRejects(t *testing.T) {
 	}
 }
 
-// The token endpoint mints a query-scoped bearer that /api/v1 accepts for reads
-// but not for writes.
+// The token endpoint mints a bearer carrying exactly the app's declared, supported
+// scopes; /api/v1 then accepts it for those scopes (phase 2: query + ingest).
 func TestAppTokenEndpoint(t *testing.T) {
 	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "k"}, appTok: newAppTokens(30 * 60 * 1e9)}
 	if err := s.st.InstallApp(App{ID: "hello", Name: "Hello", Entry: "index.html", Scopes: []string{"query", "ingest"}}, map[string]AppFile{
@@ -97,9 +114,9 @@ func TestAppTokenEndpoint(t *testing.T) {
 	if out.Token == "" {
 		t.Fatal("empty token")
 	}
-	// ingest was requested but must be filtered out this phase.
-	if len(out.Scopes) != 1 || out.Scopes[0] != "query" {
-		t.Fatalf("scopes = %v, want [query]", out.Scopes)
+	// The app declared query+ingest; both are supported and thus granted.
+	if len(out.Scopes) != 2 || !contains(out.Scopes, "query") || !contains(out.Scopes, "ingest") {
+		t.Fatalf("scopes = %v, want [query ingest]", out.Scopes)
 	}
 
 	authed := httptest.NewRequest("GET", "/api/v1/reports", nil)
@@ -107,8 +124,79 @@ func TestAppTokenEndpoint(t *testing.T) {
 	if !s.tokenOK(authed, "query") {
 		t.Fatal("minted token should pass query scope")
 	}
+	if !s.tokenOK(authed, "ingest") {
+		t.Fatal("minted token should pass ingest scope (phase 2)")
+	}
+}
+
+// An app that declares only read access is never granted a write scope, even if a
+// buggy caller asks for ingest downstream.
+func TestAppTokenEndpointReadOnlyApp(t *testing.T) {
+	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "k"}, appTok: newAppTokens(30 * 60 * 1e9)}
+	if err := s.st.InstallApp(App{ID: "ro", Name: "RO", Entry: "index.html", Scopes: []string{"query"}}, map[string]AppFile{
+		"index.html": {Ctype: "text/html", Content: []byte("x")},
+	}); err != nil {
+		t.Fatalf("InstallApp: %v", err)
+	}
+	req := httptest.NewRequest("POST", "/api/apps/ro/token", nil)
+	req.SetPathValue("id", "ro")
+	rec := httptest.NewRecorder()
+	s.apiAppToken(rec, req, "user")
+	var out struct {
+		Token  string   `json:"token"`
+		Scopes []string `json:"scopes"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if len(out.Scopes) != 1 || out.Scopes[0] != "query" {
+		t.Fatalf("scopes = %v, want [query]", out.Scopes)
+	}
+	authed := httptest.NewRequest("POST", "/api/v1/reports", nil)
+	authed.Header.Set("Authorization", "Bearer "+out.Token)
 	if s.tokenOK(authed, "ingest") {
-		t.Fatal("minted token must NOT pass ingest scope")
+		t.Fatal("a query-only app must NOT pass ingest scope")
+	}
+}
+
+// install?preview=1 parses the bundle and returns its manifest (scopes) WITHOUT
+// persisting — it drives the install-time permission prompt for manual uploads.
+func TestAppInstallPreview(t *testing.T) {
+	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "k"}}
+	raw := makeZip(t, map[string]string{
+		"app.json":   `{"id":"prev","name":"Prev","version":"1.0.0","entry":"index.html","scopes":["query","ingest"]}`,
+		"index.html": "<h1>x</h1>",
+	})
+
+	rec := httptest.NewRecorder()
+	s.apiAppInstall(rec, multipartBundle(t, "/api/admin/apps/install?preview=1", raw), "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview → %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Preview bool `json:"preview"`
+		App     struct {
+			ID     string   `json:"id"`
+			Scopes []string `json:"scopes"`
+		} `json:"app"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if !out.Preview || out.App.ID != "prev" {
+		t.Fatalf("preview response = %s", rec.Body.String())
+	}
+	if len(out.App.Scopes) != 2 || !contains(out.App.Scopes, "ingest") {
+		t.Fatalf("scopes = %v, want query+ingest", out.App.Scopes)
+	}
+	if _, ok := s.st.GetApp("prev"); ok {
+		t.Fatal("preview must NOT persist the app")
+	}
+
+	// A real install (no preview) does persist.
+	rec2 := httptest.NewRecorder()
+	s.apiAppInstall(rec2, multipartBundle(t, "/api/admin/apps/install", raw), "admin")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("install → %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if _, ok := s.st.GetApp("prev"); !ok {
+		t.Fatal("install should persist the app")
 	}
 }
 

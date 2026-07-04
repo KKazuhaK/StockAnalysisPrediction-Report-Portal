@@ -350,3 +350,25 @@ export interface AppTokenResp {
   scopes: string[]
   expires_in: number
 }
+
+// One entry in the GitHub-hosted app market index.
+export interface AppMarketEntry {
+  id: string
+  name: string
+  icon?: string
+  version?: string
+  description?: string
+  scopes?: string[]
+  installed?: boolean
+}
+
+export interface AppMarketResp {
+  index_url: string
+  apps: AppMarketEntry[]
+}
+
+// The parse-only response from install?preview=1 (drives the permission prompt).
+export interface AppPreviewResp {
+  preview: boolean
+  app: AppSummary
+}
