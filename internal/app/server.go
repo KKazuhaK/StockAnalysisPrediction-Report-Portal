@@ -524,9 +524,12 @@ var defaultSeedTypes = []struct {
 	{"股权分析", "投资决策", 60, false},
 	{"管理能力分析", "投资决策", 65, false},
 	{"投资机会", "投资决策", 70, false},
-	// 深度研究 (DeepResearch-DS emits 综合深度研究 / 重组深度研究; 调研纪要 is manual)
+	// 深度研究 (DeepResearch-DS emits 综合深度研究 / 重组深度研究 for single-stock queries,
+	// and 专题研究 for non-single-stock queries — macro/industry/strategy/M&A/multi-company
+	// comparison, identified by title instead of a stock symbol; 调研纪要 is manual)
 	{"综合深度研究", "深度研究", 0, true},
 	{"重组深度研究", "深度研究", 10, false},
+	{"专题研究", "深度研究", 15, false},
 	{"调研纪要", "深度研究", 20, false},
 	// 重组决策 (the 3-x 重组 series; 综合决策 is the 3-5 summary; the rest are its sub-models)
 	{"综合决策", "重组决策", 0, true},
@@ -679,8 +682,8 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if in.Symbol == "" || in.Date == "" {
-		http.Error(w, "symbol and date required", http.StatusBadRequest)
+	if in.Date == "" || (in.Symbol == "" && in.Title == "") {
+		http.Error(w, "date and (symbol or title) required", http.StatusBadRequest)
 		return
 	}
 	rtype := firstNonEmpty(in.Subtype, in.RType)
@@ -695,7 +698,9 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 	s.st.RegisterType(rtype, kind)
 	s.names.EnsureOne(in.Symbol) // if this code has no name yet, do a background best-effort fetch from Tencent/Sina
 	// Identity key = symbol|date|category|subtype: the same type coming in again on the same day overwrites/updates it (run_id is just a batch label and does not participate in identity).
-	uid := firstNonEmpty(in.UID, in.Symbol+"|"+in.Date+"|"+kind+"|"+rtype)
+	// Thematic reports (no single home stock) have no symbol — fall back to the title so
+	// different topics on the same day don't collide into one uid.
+	uid := firstNonEmpty(in.UID, firstNonEmpty(in.Symbol, in.Title)+"|"+in.Date+"|"+kind+"|"+rtype)
 	// Snapshot the as-of name: Dify-provided > current stocks name at ingest time.
 	// The report is immutable history, so a later rename/backdoor-listing won't relabel it.
 	name := firstNonEmpty(in.Name, s.names.Get(in.Symbol))
