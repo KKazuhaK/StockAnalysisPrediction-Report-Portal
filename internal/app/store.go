@@ -735,10 +735,12 @@ func (s *Store) GetByUID(uid string) *Rep {
 		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String}
 }
 
-// TrackingItem is a structured assumption/tracking item.
+// TrackingItem is a structured assumption/tracking item. ReportUID is the internal
+// composite key of the parent report; ReportRID is that report's numeric id (rid),
+// exposed by the v1 API.
 type TrackingItem struct {
-	ID                                                              int64
-	ReportUID, Symbol, IType, Content, Status, ReviewPoint, Created string
+	ID                                                                         int64
+	ReportUID, ReportRID, Symbol, IType, Content, Status, ReviewPoint, Created string
 }
 
 // SetTracking overwrites a report's tracking items (on re-run, clears then writes to stay consistent with the latest body).
@@ -762,17 +764,20 @@ func (s *Store) SetTracking(reportUID, symbol string, items []TrackingItem) erro
 
 // QueryTracking queries a symbol's assumption/tracking items (optionally filtered by status, newest first by default).
 func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
-	where := []string{"symbol=?"}
+	where := []string{"t.symbol=?"}
 	args := []any{symbol}
 	if status != "" {
-		where = append(where, "status=?")
+		where = append(where, "t.status=?")
 		args = append(args, status)
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.query(fmt.Sprintf(`SELECT id,report_uid,symbol,itype,content,status,review_point,created_at
-		FROM tracking_items WHERE %s ORDER BY created_at DESC, id DESC LIMIT %d`, strings.Join(where, " AND "), limit), args...)
+	// Join the parent report to expose its numeric id (rid). reports.uid is
+	// UNIQUE-indexed, so this is one index seek per row (the result is LIMIT-capped).
+	rows, err := s.query(fmt.Sprintf(`SELECT t.id,t.report_uid,r.rowid,t.symbol,t.itype,t.content,t.status,t.review_point,t.created_at
+		FROM tracking_items t LEFT JOIN reports r ON r.uid=t.report_uid
+		WHERE %s ORDER BY t.created_at DESC, t.id DESC LIMIT %d`, strings.Join(where, " AND "), limit), args...)
 	if err != nil {
 		return nil
 	}
@@ -781,9 +786,13 @@ func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
 	for rows.Next() {
 		var t TrackingItem
 		var uid, sym, it, c, st, rp, cr sql.NullString
-		rows.Scan(&t.ID, &uid, &sym, &it, &c, &st, &rp, &cr)
+		var rowid sql.NullInt64
+		rows.Scan(&t.ID, &uid, &rowid, &sym, &it, &c, &st, &rp, &cr)
 		t.ReportUID, t.Symbol, t.IType, t.Content, t.Status, t.ReviewPoint, t.Created =
 			uid.String, sym.String, it.String, c.String, st.String, rp.String, cr.String
+		if rowid.Valid {
+			t.ReportRID = fmt.Sprintf("n%d", rowid.Int64)
+		}
 		out = append(out, t)
 	}
 	return out

@@ -195,6 +195,34 @@ func TestV1ReportIdentityIsRid(t *testing.T) {
 	}
 }
 
+// The tracking endpoint reports its parent by the same numeric report id (rid) the
+// report API speaks — not the internal composite uid.
+func TestV1TrackingReportUIDIsRid(t *testing.T) {
+	s := newV1Server(t)
+	ing := httptest.NewRequest("POST", "/api/v1/reports", strings.NewReader(
+		`{"symbol":"600519","date":"2026-07-01","subtype":"汇总","body_md":"# hi","tracking":[{"itype":"assumption","content":"H2 +20%"}]}`))
+	ing.Header.Set("Authorization", "Bearer tok-all")
+	irec := httptest.NewRecorder()
+	s.v1Ingest(irec, ing)
+	var im map[string]any
+	json.Unmarshal(irec.Body.Bytes(), &im)
+	rid, _ := im["uid"].(string)
+
+	req := httptest.NewRequest("GET", "/api/v1/tracking?symbol=600519", nil)
+	req.Header.Set("Authorization", "Bearer tok-all")
+	rec := httptest.NewRecorder()
+	s.v1Tracking(rec, req)
+	var m map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &m)
+	items, _ := m["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("tracking items = %v, want 1", m["items"])
+	}
+	if got := items[0].(map[string]any)["report_uid"]; got != rid {
+		t.Errorf("tracking report_uid = %v, want the rid %s (not the composite uid)", got, rid)
+	}
+}
+
 // v1GetReport still returns a rendered body_html for md-only reports even though it
 // isn't persisted — the API contract for external consumers doesn't change.
 func TestV1GetReportDerivesHTMLOnRead(t *testing.T) {
