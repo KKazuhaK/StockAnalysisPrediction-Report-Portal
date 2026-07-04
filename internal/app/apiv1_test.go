@@ -79,8 +79,11 @@ func TestV1IngestContract(t *testing.T) {
 		t.Fatalf("ingest status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	m := decode(rec)
-	if m["ok"] != true || m["uid"] != "300750|2026-07-02|汇总" || m["created"] != true {
-		t.Errorf("ingest body = %v, want ok:true uid:300750|2026-07-02|汇总 created:true", m)
+	uid, _ := m["uid"].(string)
+	// The v1 API speaks the numeric report id (rid, "n123") as "uid"; the composite
+	// symbol|date|rtype stays the internal dedup key and is never exposed.
+	if m["ok"] != true || m["created"] != true || !strings.HasPrefix(uid, "n") || strings.Contains(uid, "|") {
+		t.Errorf("ingest body = %v, want ok:true created:true uid:<rid like n1>", m)
 	}
 	// re-ingest same identity → created:false
 	if m := decode(do(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总"}`, "Bearer tok-all")); m["created"] != false {
@@ -149,6 +152,46 @@ func TestV1IngestDoesNotPersistDerivedHTML(t *testing.T) {
 	}
 	if rep3.MD != "# hi" {
 		t.Errorf("stored MD = %q, want %q", rep3.MD, "# hi")
+	}
+}
+
+// The v1 API's report identity is the numeric rid ("n123"): ingest returns it as
+// "uid", and GET/{id} resolves it — while the internal composite uid still works for
+// back-compat. The field/route name stays "uid" so external callers (Dify) don't change.
+func TestV1ReportIdentityIsRid(t *testing.T) {
+	s := newV1Server(t)
+	get := func(id string) (*httptest.ResponseRecorder, map[string]any) {
+		req := httptest.NewRequest("GET", "/api/v1/reports/"+id, nil)
+		req.SetPathValue("uid", id)
+		req.Header.Set("Authorization", "Bearer tok-all")
+		rec := httptest.NewRecorder()
+		s.v1GetReport(rec, req)
+		var m map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &m)
+		return rec, m
+	}
+
+	ing := httptest.NewRequest("POST", "/api/v1/reports", strings.NewReader(
+		`{"symbol":"600519","date":"2026-07-01","subtype":"汇总","body_md":"# hi"}`))
+	ing.Header.Set("Authorization", "Bearer tok-all")
+	irec := httptest.NewRecorder()
+	s.v1Ingest(irec, ing)
+	var im map[string]any
+	json.Unmarshal(irec.Body.Bytes(), &im)
+	rid, _ := im["uid"].(string)
+	if !strings.HasPrefix(rid, "n") || strings.Contains(rid, "|") {
+		t.Fatalf("ingest uid = %q, want a numeric rid (nN)", rid)
+	}
+
+	// Fetch by the returned rid → the response's uid echoes the rid.
+	rec, m := get(rid)
+	if rec.Code != http.StatusOK || m["uid"] != rid || m["symbol"] != "600519" {
+		t.Fatalf("get by rid = %d %v, want 200 uid:%s symbol:600519", rec.Code, m, rid)
+	}
+
+	// Back-compat: the internal composite uid still resolves.
+	if rec, _ := get(deriveUID("600519", "2026-07-01", "汇总")); rec.Code != http.StatusOK {
+		t.Fatalf("back-compat get by composite uid = %d, want 200", rec.Code)
 	}
 }
 

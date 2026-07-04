@@ -933,10 +933,10 @@ func (s *Store) NewBySymbol(symbol string) ([]Rep, error) {
 }
 
 func (s *Store) GetNew(rowid int64) (*Rep, error) {
-	var title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
+	var uid, title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
 	err := s.queryRow(
-		"SELECT title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE rowid=?", rowid).
-		Scan(&title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
+		"SELECT uid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE rowid=?", rowid).
+		Scan(&uid, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -944,7 +944,7 @@ func (s *Store) GetNew(rowid int64) (*Rep, error) {
 		return nil, err
 	}
 	return &Rep{
-		RID: fmt.Sprintf("n%d", rowid), Src: "new", Title: title.String, Symbol: sym.String, Name: name.String,
+		RID: fmt.Sprintf("n%d", rowid), Src: "new", UID: uid.String, Title: title.String, Symbol: sym.String, Name: name.String,
 		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
 		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String,
 	}, nil
