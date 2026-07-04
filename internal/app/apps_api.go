@@ -85,6 +85,13 @@ func (s *Server) apiAppInstall(w http.ResponseWriter, r *http.Request, user stri
 		jsonError(w, http.StatusBadRequest, "invalid bundle: "+err.Error())
 		return
 	}
+	// preview=1 parses the bundle and returns its manifest (notably the scopes it
+	// requests) without persisting, so the admin UI can show an install-time
+	// permission prompt before committing to the install.
+	if r.URL.Query().Get("preview") == "1" {
+		writeJSON(w, map[string]any{"preview": true, "app": appJSON(app)})
+		return
+	}
 	if err := s.st.InstallApp(app, files); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

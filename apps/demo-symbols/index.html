@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Symbols demo</title>
   <style>
-    :root { --accent: #1677ff; --bg: #fff; --text: #1f1f1f; --muted: #8c8c8c; --border: #f0f0f0; }
+    :root { --accent: #1677ff; --bg: #fff; --text: #1f1f1f; --muted: #8c8c8c; --border: #f0f0f0; --radius: 8px; }
     * { box-sizing: border-box; }
     body {
       margin: 0; padding: 20px; background: var(--bg); color: var(--text);
@@ -16,15 +16,15 @@
     .row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     input {
       flex: 1; min-width: 160px; padding: 8px 12px; border: 1px solid var(--border);
-      border-radius: 8px; background: transparent; color: inherit; font-size: 14px;
+      border-radius: var(--radius); background: transparent; color: inherit; font-size: 14px;
     }
     button {
-      padding: 8px 16px; border: none; border-radius: 8px; background: var(--accent);
+      padding: 8px 16px; border: none; border-radius: var(--radius); background: var(--accent);
       color: #fff; cursor: pointer; font-size: 14px;
     }
     button:disabled { opacity: .6; cursor: default; }
     ul { list-style: none; margin: 0; padding: 0; }
-    li { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; gap: 12px; }
+    li { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; display: flex; justify-content: space-between; gap: 12px; }
     li .code { font-weight: 600; }
     li .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
     .empty { color: var(--muted); padding: 12px 0; }
@@ -56,18 +56,20 @@
         const p = pending[m.reqId]; delete pending[m.reqId]
         if (m.ok) p.resolve(m.data)
         else p.reject(new Error(m.error || ('HTTP ' + m.status)))
-      } else if (m.type === 'rp:init' && m.theme) {
+      } else if ((m.type === 'rp:init' || m.type === 'rp:theme') && m.theme) {
+        // rp:init arrives once on load; rp:theme re-arrives whenever the host's
+        // light/dark or colours change, so the app follows the theme live.
         applyTheme(m.theme)
       }
     })
     function applyTheme(th) {
       const r = document.documentElement.style
       if (th.colorPrimary) r.setProperty('--accent', th.colorPrimary)
-      if (th.colorBg) r.setProperty('--bg', th.colorBg)
+      if (th.colorBg) { r.setProperty('--bg', th.colorBg); document.body.style.background = th.colorBg }
       if (th.colorText) { r.setProperty('--text', th.colorText); document.body.style.color = th.colorText }
-      if (th.colorBg) document.body.style.background = th.colorBg
-      r.setProperty('--border', th.dark ? '#303030' : '#f0f0f0')
-      r.setProperty('--muted', th.dark ? '#8c8c8c' : '#8c8c8c')
+      r.setProperty('--border', th.colorBorder || (th.dark ? '#303030' : '#f0f0f0'))
+      r.setProperty('--muted', '#8c8c8c')
+      if (typeof th.borderRadius === 'number') r.setProperty('--radius', th.borderRadius + 'px')
     }
 
     const list = document.getElementById('list')

@@ -1,0 +1,13 @@
+{
+  "apps": [
+    {
+      "id": "demo-symbols",
+      "name": "Symbols demo",
+      "icon": "🔎",
+      "version": "1.1.0",
+      "description": "Lists stocks with reports; a reference app showing the sandboxed iframe + query-scope bridge and the live theme handshake.",
+      "scopes": ["query"],
+      "path": "demo-symbols.zip"
+    }
+  ]
+}

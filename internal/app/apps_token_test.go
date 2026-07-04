@@ -30,13 +30,26 @@ func TestAppTokens(t *testing.T) {
 	}
 }
 
-// Only read/query scope may be granted in this phase; write scopes are dropped.
+// query + ingest are grantable (ADR 0003 phase 2); unsupported scopes (webhooks,
+// all) are still dropped, and duplicates are collapsed.
 func TestGrantableScopes(t *testing.T) {
 	g := grantableScopes([]string{"query", "ingest", "webhooks", "query"})
-	if len(g) != 1 || g[0] != "query" {
-		t.Fatalf("grantableScopes = %v, want [query]", g)
+	if len(g) != 2 || !contains(g, "query") || !contains(g, "ingest") {
+		t.Fatalf("grantableScopes = %v, want [query ingest]", g)
+	}
+	if got := grantableScopes([]string{"all"}); len(got) != 0 {
+		t.Fatalf("the all scope must never be grantable to an app, got %v", got)
 	}
 	if len(grantableScopes(nil)) != 0 {
 		t.Fatal("nil scopes should grant nothing")
 	}
+}
+
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }

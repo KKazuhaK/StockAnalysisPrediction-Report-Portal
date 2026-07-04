@@ -4,7 +4,10 @@
 
 Accepted — 2026-07-03. **Phase 1 implemented** 2026-07-03 (app registry +
 `.zip` install, sandboxed-iframe hub, postMessage → `/api/v1` scoped-token bridge,
-demo app under `apps/demo-symbols`).
+demo app under `apps/demo-symbols`). **Phase 2 implemented** 2026-07-04 (GitHub
+**App market** with one-click install, `ingest` write scope + install-time
+permission prompt, and a live theme handshake). This also made the App market the
+portal's *single* market — the batch plugin market was retired (see ADR 0001 update).
 
 ## Context
 
@@ -82,10 +85,14 @@ free, genuinely "download and install", and realistic for a small self-hosted to
    (`POST /api/apps/{id}/token`, held by the host, never handed to the iframe), and
    the `apps/demo-symbols` app. Proves the core chain: empty hub → install → a card
    appears → open it → it reads the API through the bridge.
-2. **Phase 2 (paused 2026-07-03):** a GitHub app market (download like plugins),
-   write scopes with an install-time permission prompt, and a richer theme
-   handshake into the iframe. Deferred by product decision — Phase 1 covers the
-   in-house need; revisit when third-party/community distribution is wanted.
+2. **Phase 2 (done 2026-07-04):** a GitHub app market (`apps/index.json` catalogue,
+   `GET /api/admin/apps/market` + `POST …/market/install`, mirroring the batch
+   fetcher but installing a `.zip` through the existing `parseAppBundle`), the
+   `ingest` write scope (bridge allows scoped POST/DELETE under `/api/v1/`; server
+   `tokenOK` stays authoritative) with an install-time permission prompt
+   (`ScopePermissionModal`, driven by `install?preview=1` for uploads and the index
+   entry for market installs), and a live theme handshake (`rp:theme` re-posted on
+   change). One market only — the batch plugin market was removed.
 3. **Phase 3 (paused):** polish, a small developer SDK, and docs.
 
 ## Appendix — layering

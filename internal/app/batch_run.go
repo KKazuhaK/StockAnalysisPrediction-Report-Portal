@@ -23,8 +23,6 @@ import (
 // difyRunTimeout bounds a single blocking workflow run. Dify runs can take minutes.
 const difyRunTimeout = 10 * time.Minute
 
-const defaultMarketIndexURL = "https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/main/plugins/index.json"
-
 // batchMaxConcurrency is the admin-set ceiling a per-job concurrency is clamped to.
 func (s *Server) batchMaxConcurrency() int {
 	n, err := strconv.Atoi(s.st.GetSetting("batch_max_concurrency", "10"))
