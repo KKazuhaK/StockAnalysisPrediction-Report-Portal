@@ -37,3 +37,4 @@ internal/web/dist/*
 .claude/
 .codex/
 .cursor/
+CLAUDE.md
