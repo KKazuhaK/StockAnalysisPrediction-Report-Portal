@@ -76,7 +76,9 @@ export default function ReaderControls() {
 
   return (
     <Popover content={content} title={t('reader.title')} trigger="click" placement="bottomRight">
-      <Button icon={<FontSizeOutlined />} title={t('reader.title')} aria-label={t('reader.title')} />
+      <Button icon={<FontSizeOutlined />} size="small">
+        {t('reader.title')}
+      </Button>
     </Popover>
   )
 }

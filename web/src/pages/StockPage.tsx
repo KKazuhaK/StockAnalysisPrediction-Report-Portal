@@ -92,7 +92,6 @@ export default function StockPage() {
           </Space>
           {rep && (
             <Space wrap>
-              <ReaderControls />
               <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
                 {t('stock.exportMd')}
               </Button>
@@ -140,7 +139,12 @@ export default function StockPage() {
                   />
                 </div>
               )}
-              <Card styles={{ body: { paddingTop: 8 } }} title={rep?.title} style={readerVars}>
+              <Card
+                styles={{ body: { paddingTop: 8 } }}
+                title={rep?.title}
+                extra={rep ? <ReaderControls /> : undefined}
+                style={readerVars}
+              >
                 {rep && isInstant(rep.time) && (
                   <Typography.Text
                     type="secondary"
