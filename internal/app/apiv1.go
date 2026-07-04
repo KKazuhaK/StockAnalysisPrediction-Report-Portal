@@ -209,16 +209,17 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		}
 		s.st.SetTracking(uid, in.Symbol, items)
 	}
-	log.Printf("v1 ingest %s %s created=%v", in.Symbol, in.Date, created)
-	s.fireEvent(EventReportIngested, map[string]any{
-		"uid": uid, "symbol": in.Symbol, "name": name, "date": in.Date,
-		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source, "created": created,
-	})
-	// Echo the numeric report id (rid) as "uid" — the same value the read API returns.
+	// Resolve the report's numeric id (rid) — the value the v1 API and the webhook
+	// event speak as "uid"; the composite symbol|date|rtype stays the internal dedup key.
 	rid := ""
 	if rep := s.st.GetByUID(uid); rep != nil {
 		rid = rep.RID
 	}
+	log.Printf("v1 ingest %s %s created=%v", in.Symbol, in.Date, created)
+	s.fireEvent(EventReportIngested, map[string]any{
+		"uid": rid, "symbol": in.Symbol, "name": name, "date": in.Date,
+		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source, "created": created,
+	})
 	writeJSON(w, map[string]any{"ok": true, "uid": rid, "created": created})
 }
 
