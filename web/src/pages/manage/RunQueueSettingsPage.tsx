@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Card, InputNumber, Select, Space, Typography } from 'antd'
+import { App, Button, Card, Divider, InputNumber, Space, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 
-// Standalone 运行/队列 settings (docs/adr/0007): the queue budget, reserved slots,
-// 加急 ticket period, max concurrency, and the no-group default priority. These
-// govern the whole run system (home 单次运行 + CSV 批量), so they live apart from
-// the 批量任务 tab (which is just targets + CSV).
+// Standalone 运行/队列 settings (docs/adr/0007 + 0008): the queue budget, reserved
+// slots, 加急 ticket period, max concurrency, the no-group default base priority, and
+// the Slurm-style multifactor priority weights. These govern the whole run system
+// (home 单次运行 + CSV 批量), so they live apart from the 批量任务 tab (targets + CSV).
 export default function RunQueueSettingsPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -14,7 +14,12 @@ export default function RunQueueSettingsPage() {
   const [maxJobs, setMaxJobs] = useState(1)
   const [reservedSlots, setReservedSlots] = useState(1)
   const [ticketPeriod, setTicketPeriod] = useState(7)
-  const [defaultPriority, setDefaultPriority] = useState('normal')
+  const [defaultPriority, setDefaultPriority] = useState(50)
+  const [wBase, setWBase] = useState(1000)
+  const [wAge, setWAge] = useState(1000)
+  const [wFair, setWFair] = useState(1000)
+  const [ageHours, setAgeHours] = useState(24)
+  const [fairHalflife, setFairHalflife] = useState(168)
 
   const load = () =>
     api
@@ -23,14 +28,24 @@ export default function RunQueueSettingsPage() {
         max_jobs: number
         reserved_slots: number
         ticket_period_days: number
-        default_priority: string
+        default_priority: number
+        prio_w_base: number
+        prio_w_age: number
+        prio_w_fair: number
+        prio_age_hours: number
+        prio_fair_halflife_hours: number
       }>('/api/admin/batch/config')
       .then((r) => {
         setMaxConcurrency(r.max_concurrency)
         setMaxJobs(r.max_jobs)
         setReservedSlots(r.reserved_slots)
         setTicketPeriod(r.ticket_period_days)
-        setDefaultPriority(r.default_priority || 'normal')
+        setDefaultPriority(r.default_priority ?? 50)
+        setWBase(r.prio_w_base)
+        setWAge(r.prio_w_age)
+        setWFair(r.prio_w_fair)
+        setAgeHours(r.prio_age_hours)
+        setFairHalflife(r.prio_fair_halflife_hours)
       })
   useEffect(() => {
     load()
@@ -42,48 +57,84 @@ export default function RunQueueSettingsPage() {
       max_jobs: maxJobs,
       reserved_slots: reservedSlots,
       ticket_period_days: ticketPeriod,
-      default_priority: defaultPriority,
+      default_priority: String(defaultPriority),
+      prio_w_base: wBase,
+      prio_w_age: wAge,
+      prio_w_fair: wFair,
+      prio_age_hours: ageHours,
+      prio_fair_halflife_hours: fairHalflife,
     })
     message.success(t('common.saved'))
     load()
   }
 
+  const row = (label: string, hint: string, control: React.ReactNode) => (
+    <Space wrap>
+      <span style={{ display: 'inline-block', minWidth: 96 }}>{label}</span>
+      {control}
+      <Typography.Text type="secondary">{hint}</Typography.Text>
+    </Space>
+  )
+
   return (
     <Card title={t('batch.admin.settings')}>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        <Space wrap>
-          <span>{t('batch.admin.maxJobs')}</span>
-          <InputNumber min={1} max={50} value={maxJobs} onChange={(v) => setMaxJobs(v || 1)} />
-          <Typography.Text type="secondary">{t('batch.admin.maxJobsHint')}</Typography.Text>
-        </Space>
-        <Space wrap>
-          <span>{t('batch.admin.reservedSlots')}</span>
-          <InputNumber min={0} max={Math.max(0, maxJobs - 1)} value={reservedSlots} onChange={(v) => setReservedSlots(v ?? 0)} />
-          <Typography.Text type="secondary">{t('batch.admin.reservedSlotsHint')}</Typography.Text>
-        </Space>
-        <Space wrap>
-          <span>{t('batch.admin.defaultPriority')}</span>
-          <Select
-            value={defaultPriority}
-            onChange={setDefaultPriority}
-            style={{ width: 140 }}
-            options={[
-              { value: 'normal', label: t('batch.priority.normal') },
-              { value: 'other', label: t('batch.priority.other') },
-            ]}
-          />
-          <Typography.Text type="secondary">{t('batch.admin.defaultPriorityHint')}</Typography.Text>
-        </Space>
-        <Space wrap>
-          <span>{t('batch.admin.ticketPeriod')}</span>
-          <InputNumber min={1} max={365} value={ticketPeriod} onChange={(v) => setTicketPeriod(v || 7)} addonAfter={t('batch.admin.days')} />
-          <Typography.Text type="secondary">{t('batch.admin.ticketPeriodHint')}</Typography.Text>
-        </Space>
-        <Space wrap>
-          <span>{t('batch.admin.maxConcurrency')}</span>
-          <InputNumber min={1} max={100} value={maxConcurrency} onChange={(v) => setMaxConcurrency(v || 1)} />
-          <Typography.Text type="secondary">{t('batch.admin.maxConcurrencyHint')}</Typography.Text>
-        </Space>
+        {row(
+          t('batch.admin.maxJobs'),
+          t('batch.admin.maxJobsHint'),
+          <InputNumber min={1} max={50} value={maxJobs} onChange={(v) => setMaxJobs(v || 1)} />,
+        )}
+        {row(
+          t('batch.admin.reservedSlots'),
+          t('batch.admin.reservedSlotsHint'),
+          <InputNumber min={0} max={Math.max(0, maxJobs - 1)} value={reservedSlots} onChange={(v) => setReservedSlots(v ?? 0)} />,
+        )}
+        {row(
+          t('batch.admin.defaultPriority'),
+          t('batch.admin.defaultPriorityHint'),
+          <InputNumber min={0} max={100} value={defaultPriority} onChange={(v) => setDefaultPriority(v ?? 50)} />,
+        )}
+        {row(
+          t('batch.admin.ticketPeriod'),
+          t('batch.admin.ticketPeriodHint'),
+          <InputNumber min={1} max={365} value={ticketPeriod} onChange={(v) => setTicketPeriod(v || 7)} addonAfter={t('batch.admin.days')} />,
+        )}
+        {row(
+          t('batch.admin.maxConcurrency'),
+          t('batch.admin.maxConcurrencyHint'),
+          <InputNumber min={1} max={100} value={maxConcurrency} onChange={(v) => setMaxConcurrency(v || 1)} />,
+        )}
+
+        <Divider style={{ margin: '4px 0' }} orientation="left" plain>
+          {t('batch.admin.prioWeightsTitle')}
+        </Divider>
+        <Typography.Text type="secondary">{t('batch.admin.prioWeightsHint')}</Typography.Text>
+        {row(
+          t('batch.admin.wBase'),
+          t('batch.admin.wBaseHint'),
+          <InputNumber min={0} step={100} value={wBase} onChange={(v) => setWBase(v ?? 0)} />,
+        )}
+        {row(
+          t('batch.admin.wAge'),
+          t('batch.admin.wAgeHint'),
+          <InputNumber min={0} step={100} value={wAge} onChange={(v) => setWAge(v ?? 0)} />,
+        )}
+        {row(
+          t('batch.admin.wFair'),
+          t('batch.admin.wFairHint'),
+          <InputNumber min={0} step={100} value={wFair} onChange={(v) => setWFair(v ?? 0)} />,
+        )}
+        {row(
+          t('batch.admin.ageHours'),
+          t('batch.admin.ageHoursHint'),
+          <InputNumber min={1} max={8760} value={ageHours} onChange={(v) => setAgeHours(v || 24)} addonAfter={t('batch.admin.hours')} />,
+        )}
+        {row(
+          t('batch.admin.fairHalflife'),
+          t('batch.admin.fairHalflifeHint'),
+          <InputNumber min={1} max={8760} value={fairHalflife} onChange={(v) => setFairHalflife(v || 168)} addonAfter={t('batch.admin.hours')} />,
+        )}
+
         <Button type="primary" onClick={save}>
           {t('common.save')}
         </Button>

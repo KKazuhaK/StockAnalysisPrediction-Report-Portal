@@ -7,8 +7,8 @@ import (
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
-// The submit-time policy: admins get 加急 free; others spend a ticket and are
-// downgraded to 普通 once their allowance runs out; 普通 never spends.
+// The submit-time policy: admins get 加急 free; others spend a ticket and fall back
+// to their base priority once their allowance runs out; a base run never spends.
 func TestUrgentAllowedSpendsTickets(t *testing.T) {
 	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "x"}}
 	s.st.UpsertUser(User{Username: "admin", PasswordHash: "x", Role: "admin"})
@@ -16,23 +16,23 @@ func TestUrgentAllowedSpendsTickets(t *testing.T) {
 	g, _ := s.st.CreateUserGroup("G", "", 2)
 	s.st.SetUserGroups("op", []int64{g})
 
-	// Admin: unlimited urgent, no ticket spent.
-	if p, d := s.urgentAllowed("admin", "urgent"); p != "urgent" || d {
+	// Admin: unlimited urgent, no ticket spent (base is irrelevant for admins).
+	if p, d := s.urgentAllowed("admin", "urgent", 50); p != "urgent" || d {
 		t.Fatalf("admin urgent = %q downgraded=%v, want urgent/false", p, d)
 	}
 
-	// Operator: two urgent runs succeed, the third downgrades to normal.
+	// Operator: two urgent runs succeed, the third falls back to its base priority.
 	for i := 1; i <= 2; i++ {
-		if p, d := s.urgentAllowed("op", "urgent"); p != "urgent" || d {
+		if p, d := s.urgentAllowed("op", "urgent", 50); p != "urgent" || d {
 			t.Fatalf("op urgent #%d = %q downgraded=%v, want urgent/false", i, p, d)
 		}
 	}
-	if p, d := s.urgentAllowed("op", "urgent"); p != "normal" || !d {
-		t.Fatalf("op urgent #3 = %q downgraded=%v, want normal/true", p, d)
+	if p, d := s.urgentAllowed("op", "urgent", 50); p != "50" || !d {
+		t.Fatalf("op urgent #3 = %q downgraded=%v, want 50/true", p, d)
 	}
-	// 普通 is never charged.
-	if p, d := s.urgentAllowed("op", "normal"); p != "normal" || d {
-		t.Fatalf("op normal = %q downgraded=%v, want normal/false", p, d)
+	// A non-urgent priority is never charged and passes through unchanged.
+	if p, d := s.urgentAllowed("op", "50", 50); p != "50" || d {
+		t.Fatalf("op base = %q downgraded=%v, want 50/false", p, d)
 	}
 }
 

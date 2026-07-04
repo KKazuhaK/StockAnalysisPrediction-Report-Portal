@@ -3,6 +3,7 @@ import {
   App,
   Button,
   Card,
+  Checkbox,
   Drawer,
   Input,
   InputNumber,
@@ -28,6 +29,7 @@ import {
 import { api } from '../api/client'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchTarget, BatchTickets } from '../api/types'
 import { csvToRows, toCSV } from '../lib/csv'
+import { BASE_MAX, isUrgent, priorityNum, priorityTag } from '../lib/batchUi'
 
 const ITEM_STATUS_COLOR: Record<string, string> = {
   queued: 'default',
@@ -44,21 +46,10 @@ const JOB_STATUS_COLOR: Record<string, string> = {
   finished: 'success',
 }
 
-// Queue priority tiers (mirror queue.DefaultRegistry on the backend). Highest first.
-const PRIORITY_LEVELS = ['urgent', 'normal', 'other'] as const
-const PRIORITY_COLOR: Record<string, string> = { urgent: 'red', normal: 'blue', other: 'default' }
+// priorityTag / priorityNum / isUrgent / BASE_MAX come from lib/batchUi (ADR 0008).
 
 function statusTag(t: TFunction, s: string, colors: Record<string, string>) {
   return <Tag color={colors[s] || 'default'}>{t(`batch.status.${s}`)}</Tag>
-}
-
-function priorityTag(t: TFunction, p?: string) {
-  const level = p || 'normal'
-  return <Tag color={PRIORITY_COLOR[level] || 'default'}>{t(`batch.priority.${level}`)}</Tag>
-}
-
-function priorityOptions(t: TFunction) {
-  return PRIORITY_LEVELS.map((p) => ({ value: p, label: t(`batch.priority.${p}`) }))
 }
 
 function isTerminal(status: string) {
@@ -232,7 +223,8 @@ export default function BatchConsole() {
   const [targetId, setTargetId] = useState<number | undefined>()
   const [concurrency, setConcurrency] = useState(3)
   const [maxRetries, setMaxRetries] = useState(2)
-  const [priority, setPriority] = useState<string>('normal')
+  const [urgent, setUrgent] = useState(false)
+  const [basePriority, setBasePriority] = useState(50)
   const [tickets, setTickets] = useState<BatchTickets | null>(null)
   const [csvText, setCsvText] = useState('')
   const [jobs, setJobs] = useState<BatchJob[]>([])
@@ -256,8 +248,8 @@ export default function BatchConsole() {
   // 加急 needs a ticket (unless unlimited/admin); disable it when the balance is 0.
   const urgentDisabled = tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
   useEffect(() => {
-    if (urgentDisabled && priority === 'urgent') setPriority('normal')
-  }, [urgentDisabled, priority])
+    if (urgentDisabled && urgent) setUrgent(false)
+  }, [urgentDisabled, urgent])
 
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputKeys = useMemo(() => (target?.inputs || []).map((i) => i.key), [target])
@@ -278,7 +270,7 @@ export default function BatchConsole() {
         target_id: targetId,
         concurrency,
         max_retries: maxRetries,
-        priority,
+        priority: urgent ? 'urgent' : String(basePriority),
         rows,
       })
       message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
@@ -304,17 +296,19 @@ export default function BatchConsole() {
     { title: '#', dataIndex: 'id', width: 64 },
     { title: t('batch.col.status'), dataIndex: 'status', width: 96, render: (s: string) => statusTag(t, s, JOB_STATUS_COLOR) },
     {
-      // Queued jobs get an inline priority picker (插队); others show a static tag.
+      // Queued non-urgent jobs get an inline base-priority editor (插队); 加急 and
+      // non-queued jobs show a static tag (ADR 0008).
       title: t('batch.priorityLabel'),
       width: 116,
       render: (_: unknown, j: BatchJob) =>
-        j.status === 'queued' ? (
-          <Select
+        j.status === 'queued' && !isUrgent(j.priority) ? (
+          <InputNumber
             size="small"
-            style={{ width: 96 }}
-            value={j.priority || 'normal'}
-            onChange={(p) => reprioritize(j.id, p)}
-            options={priorityOptions(t)}
+            min={0}
+            max={BASE_MAX}
+            style={{ width: 76 }}
+            value={priorityNum(j.priority)}
+            onChange={(v) => reprioritize(j.id, String(v ?? 50))}
           />
         ) : (
           priorityTag(t, j.priority)
@@ -376,12 +370,10 @@ export default function BatchConsole() {
               <span>{t('batch.maxRetries')}：</span>
               <InputNumber min={0} max={5} value={maxRetries} onChange={(v) => setMaxRetries(v ?? 0)} />
               <span>{t('batch.priorityLabel')}：</span>
-              <Select
-                style={{ minWidth: 120 }}
-                value={priority}
-                onChange={setPriority}
-                options={priorityOptions(t).map((o) => (o.value === 'urgent' ? { ...o, disabled: urgentDisabled } : o))}
-              />
+              <InputNumber min={0} max={BASE_MAX} value={basePriority} onChange={(v) => setBasePriority(v ?? 50)} disabled={urgent} />
+              <Checkbox checked={urgent} disabled={urgentDisabled} onChange={(e) => setUrgent(e.target.checked)}>
+                {t('run.urgent')}
+              </Checkbox>
               {tickets && !tickets.unlimited && (
                 <Tag color={(tickets.remaining ?? 0) > 0 ? 'gold' : 'default'} icon={<ThunderboltOutlined />}>
                   {t('batch.ticketsLeft', { n: tickets.remaining ?? 0, total: tickets.allocation ?? 0 })}

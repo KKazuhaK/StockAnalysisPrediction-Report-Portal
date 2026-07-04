@@ -1,74 +1,40 @@
-// Package queue is the portal's priority run-queue scheduler: it orders waiting
-// runs by priority with bounded aging, keeps a reserved slot for the top tier, and
-// admits work against a global concurrency budget — non-preemptively (a running
-// job is never interrupted). See docs/adr/0004-run-queue.md.
+// Package queue is the portal's run-queue scheduler: it scores waiting runs with a
+// Slurm-style multifactor priority, keeps a reserved slot for 加急, and admits work
+// against a global concurrency budget — non-preemptively (a running job is never
+// interrupted). See docs/adr/0008-multifactor-priority.md.
 //
-// This package is pure (no I/O, the clock is injected via enqueue timestamps) so
-// the scheduling policy is unit-testable in isolation; internal/app wires it to the
-// store and the batch engine.
+// This package is pure (no I/O, no clock): internal/app computes each run's
+// normalized factors (it owns the clock, usage history, and settings) and this
+// package combines them into a score and does the admission.
 package queue
 
-// Level is one priority tier. Value orders tiers for display/tie-break (lower =
-// higher priority). Offset is the aging concession in seconds: a larger Offset
-// means the tier yields to higher tiers for that many seconds of waiting before its
-// own wait time takes over — so the Offset *delta* between two tiers is the maximum
-// time the lower one is overtaken, i.e. its starvation cap. Reserved marks the top
-// tier that gets a dedicated worker slot.
-type Level struct {
-	Name     string
-	Value    int
-	Offset   int64
-	Reserved bool
+// Weights are the multifactor priority weights (Slurm's PriorityWeight*). Each is
+// applied to a factor normalized to [0,1].
+type Weights struct {
+	Base float64 // configured base priority (per group / system default)
+	Age  float64 // waiting time (anti-starvation)
+	Fair float64 // fair-share: recent usage vs the pack
 }
 
-// Registry is a set of priority levels keyed by name, plus a fallback used for
-// unknown level strings (always the lowest priority, so bad data can never jump
-// the queue).
-type Registry struct {
-	byName   map[string]Level
-	fallback Level
+// Factors are one run's normalized priority factors, each in [0,1], plus the 加急
+// flag which grants a dominating boost + a reserved slot.
+type Factors struct {
+	Base   float64
+	Age    float64
+	Fair   float64
+	Urgent bool
 }
 
-// NewRegistry builds a registry from the given levels. The fallback for unknown
-// names is a synthetic lowest-priority tier (huge offset, not reserved).
-func NewRegistry(levels []Level) Registry {
-	r := Registry{byName: make(map[string]Level, len(levels))}
-	for _, l := range levels {
-		r.byName[l.Name] = l
+// urgentBoost dominates any non-urgent score, so a 加急 run outranks every normal
+// run regardless of weights, while age/base/fair still order 加急 runs among
+// themselves. It is far larger than any achievable weighted factor sum.
+const urgentBoost = 1e9
+
+// Score combines the weighted factors into one priority; higher is admitted sooner.
+func (w Weights) Score(f Factors) float64 {
+	s := w.Base*f.Base + w.Age*f.Age + w.Fair*f.Fair
+	if f.Urgent {
+		s += urgentBoost
 	}
-	// Unknown levels sort dead last and never get the reserved slot.
-	r.fallback = Level{Name: "", Value: 1 << 30, Offset: 1 << 40, Reserved: false}
-	return r
-}
-
-// DefaultRegistry is the seed taxonomy from ADR 0004: 加急 / 普通 / 其他.
-func DefaultRegistry() Registry {
-	return NewRegistry([]Level{
-		{Name: "urgent", Value: 10, Offset: 0, Reserved: true},            // 加急: jumps the queue, reserved slot
-		{Name: "normal", Value: 100, Offset: 30 * 60, Reserved: false},    // 普通: yields to urgent for ≤30min
-		{Name: "other", Value: 200, Offset: 2 * 60 * 60, Reserved: false}, // 其他: yields for ≤2h
-	})
-}
-
-// Get returns the named level, or the fallback for an unknown name.
-func (r Registry) Get(name string) Level {
-	if l, ok := r.byName[name]; ok {
-		return l
-	}
-	return r.fallback
-}
-
-// Has reports whether a level name is registered.
-func (r Registry) Has(name string) bool {
-	_, ok := r.byName[name]
-	return ok
-}
-
-// SchedKey is the item's fixed, sortable scheduling key: enqueue time shifted by
-// the level's aging offset. Dequeue picks the smallest key. Because the key is a
-// pure function of enqueue time, aging needs no background timer — a lower tier's
-// older enqueue time eventually beats a higher tier's newer one, bounded by the
-// offset delta.
-func (r Registry) SchedKey(level string, enqueuedAtUnix int64) int64 {
-	return enqueuedAtUnix + r.Get(level).Offset
+	return s
 }

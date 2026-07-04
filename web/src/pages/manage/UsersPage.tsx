@@ -33,6 +33,7 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
+import { priorityNum } from '../../lib/batchUi'
 import type { Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
 
 // A deterministic avatar colour from a name, so each user reads distinctly.
@@ -388,13 +389,15 @@ function GroupsDrawer({
   const openForm = (g: UserGroupRow | 'new') => {
     setEdit(g)
     if (g === 'new') form.setFieldsValue({ name: '', description: '', weight: 0, priority: undefined })
-    else form.setFieldsValue({ name: g.name, description: g.description, weight: g.weight, priority: g.priority || undefined })
+    else form.setFieldsValue({ name: g.name, description: g.description, weight: g.weight, priority: g.priority ? Number(g.priority) : undefined })
   }
   const save = async () => {
     const v = await form.validateFields()
+    // priority is a base number 0..100; the API stores it as a string (ADR 0008).
+    const body = { ...v, priority: v.priority == null || v.priority === '' ? '' : String(v.priority) }
     try {
-      if (edit === 'new') await api.post('/api/admin/groups', v)
-      else await api.put(`/api/admin/groups/${(edit as UserGroupRow).id}`, v)
+      if (edit === 'new') await api.post('/api/admin/groups', body)
+      else await api.put(`/api/admin/groups/${(edit as UserGroupRow).id}`, body)
       setEdit(null)
       onChanged()
       message.success(t('common.saved'))
@@ -431,7 +434,7 @@ function GroupsDrawer({
                         {t('users.weightN', { n: g.weight })}
                       </Tag>
                     )}
-                    {g.priority && <Tag color="blue">{t(`batch.priority.${g.priority}`)}</Tag>}
+                    {g.priority && <Tag color="blue">{t('users.priorityTag', { n: priorityNum(g.priority) })}</Tag>}
                   </Space>
                   {g.description && (
                     <div>
@@ -473,14 +476,7 @@ function GroupsDrawer({
             <InputNumber min={0} max={999} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="priority" label={t('users.priority')} extra={t('users.priorityHint')}>
-            <Select
-              allowClear
-              placeholder={t('users.prioritySystemDefault')}
-              options={[
-                { value: 'normal', label: t('batch.priority.normal') },
-                { value: 'other', label: t('batch.priority.other') },
-              ]}
-            />
+            <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder={t('users.prioritySystemDefault')} />
           </Form.Item>
         </Form>
       </Modal>
