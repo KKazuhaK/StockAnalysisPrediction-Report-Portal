@@ -80,7 +80,6 @@ export default function RunPage() {
           </Space>
           {rep && (
             <Space wrap>
-              <ReaderControls />
               <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
                 {t('stock.exportMd')}
               </Button>
@@ -103,7 +102,7 @@ export default function RunPage() {
             />
           </div>
         )}
-        <Card title={rep?.title} style={readerVars}>
+        <Card title={rep?.title} extra={rep ? <ReaderControls /> : undefined} style={readerVars}>
           {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
         </Card>
       </Space>
