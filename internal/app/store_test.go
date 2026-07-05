@@ -12,6 +12,10 @@ func newTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
+	// Close the DB before t.TempDir's RemoveAll runs (cleanups are LIFO). Otherwise the
+	// still-open sqlite connection (and its -wal/-shm files) races the directory removal,
+	// which intermittently fails on Linux with "directory not empty".
+	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
 
