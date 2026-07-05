@@ -1,20 +1,20 @@
 package app
 
 import (
-	"path/filepath"
 	"testing"
 )
 
-// newTestStore opens a fresh sqlite Store backed by a temp-dir file.
+// newTestStore opens a fresh in-memory sqlite Store. In-memory (rather than a temp-dir
+// file) means there's no directory for t.TempDir to RemoveAll while the just-closed
+// sqlite connection is still releasing its files — a race that flaked on Linux CI with
+// "directory not empty". OpenStore sets MaxOpenConns=1, so every query shares the one
+// connection's in-memory database, and separate stores stay isolated.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	st, err := OpenStore("sqlite", filepath.Join(t.TempDir(), "test.db"))
+	st, err := OpenStore("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	// Close the DB before t.TempDir's RemoveAll runs (cleanups are LIFO). Otherwise the
-	// still-open sqlite connection (and its -wal/-shm files) races the directory removal,
-	// which intermittently fails on Linux with "directory not empty".
 	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
