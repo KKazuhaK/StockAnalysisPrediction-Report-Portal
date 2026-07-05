@@ -19,7 +19,11 @@ const ManageLayout = lazyRetry(() => import('./pages/manage/ManageLayout'))
 const LinksPage = lazyRetry(() => import('./pages/manage/LinksPage'))
 const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
 const UsersPage = lazyRetry(() => import('./pages/manage/UsersPage'))
-const SettingsPage = lazyRetry(() => import('./pages/manage/SettingsPage'))
+const SiteSettingsPage = lazyRetry(() => import('./pages/manage/SiteSettingsPage'))
+const AnnouncementPage = lazyRetry(() => import('./pages/manage/AnnouncementPage'))
+const TokensPage = lazyRetry(() => import('./pages/manage/TokensPage'))
+const ApiDocPage = lazyRetry(() => import('./pages/manage/ApiDocPage'))
+const LegacyImportPage = lazyRetry(() => import('./pages/manage/LegacyImportPage'))
 const BatchAdminPage = lazyRetry(() => import('./pages/manage/BatchAdminPage'))
 const RunQueueSettingsPage = lazyRetry(() => import('./pages/manage/RunQueueSettingsPage'))
 const WebhooksPage = lazyRetry(() => import('./pages/manage/WebhooksPage'))
@@ -98,15 +102,21 @@ function AppRoutes() {
             </AdminOnly>
           }
         >
-          <Route index element={<Navigate to="links" replace />} />
+          <Route index element={<Navigate to="site" replace />} />
+          <Route path="site" element={<SiteSettingsPage />} />
+          <Route path="announcement" element={<AnnouncementPage />} />
           <Route path="links" element={<LinksPage />} />
           <Route path="types" element={<TypesPage />} />
           <Route path="users" element={<UsersPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="tokens" element={<TokensPage />} />
           <Route path="batch" element={<BatchAdminPage />} />
           <Route path="runqueue" element={<RunQueueSettingsPage />} />
           <Route path="apps" element={<AppsAdminPage />} />
           <Route path="webhooks" element={<WebhooksPage />} />
+          <Route path="apidoc" element={<ApiDocPage />} />
+          <Route path="legacy" element={<LegacyImportPage />} />
+          {/* Back-compat: the old catch-all Settings tab split into these pages. */}
+          <Route path="settings" element={<Navigate to="/manage/site" replace />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
