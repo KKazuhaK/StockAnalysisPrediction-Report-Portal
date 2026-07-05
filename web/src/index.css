@@ -22,6 +22,8 @@ body {
 /* markdown body typography (works with antd Typography).
    --md-fs / --md-fw are set by the reading pages from the reader prefs (the "Aa"
    popover); headings/tables/code are all em-relative so they scale off the base. */
+/* Reading theme. Colors come from antd's semantic CSS variables (cssVar mode), so the
+   accents shift correctly between light and dark; each has a neutral/blue fallback. */
 .md-body {
   font-size: var(--md-fs, 15px);
   font-weight: var(--md-fw, 400);
@@ -30,21 +32,46 @@ body {
 }
 .md-body h1,
 .md-body h2,
-.md-body h3 {
-  margin: 1.2em 0 0.6em;
+.md-body h3,
+.md-body h4 {
+  margin: 1.3em 0 0.6em;
   font-weight: 600;
+  line-height: 1.35;
 }
 .md-body h1 {
   font-size: 1.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 2px solid var(--ant-color-primary, #1677ff);
 }
 .md-body h2 {
   font-size: 1.35em;
+  padding-bottom: 0.24em;
+  border-bottom: 1px solid var(--ant-color-primary-border, rgba(22, 119, 255, 0.4));
 }
 .md-body h3 {
   font-size: 1.15em;
+  color: var(--ant-color-primary-text, #1677ff);
+}
+.md-body h4 {
+  font-size: 1.02em;
+  color: var(--ant-color-text-secondary, #666);
 }
 .md-body p {
   margin: 0.6em 0;
+}
+.md-body a {
+  color: var(--ant-color-link, #1677ff);
+  text-decoration: none;
+}
+.md-body a:hover {
+  text-decoration: underline;
+}
+.md-body ul,
+.md-body ol {
+  padding-left: 1.6em;
+}
+.md-body li::marker {
+  color: var(--ant-color-primary, #1677ff);
 }
 .md-body table {
   border-collapse: collapse;
@@ -54,34 +81,49 @@ body {
 }
 .md-body th,
 .md-body td {
-  border: 1px solid var(--rp-border, rgba(128, 128, 128, 0.35));
-  padding: 6px 10px;
+  border: 1px solid var(--ant-color-border-secondary, rgba(128, 128, 128, 0.3));
+  padding: 7px 11px;
   text-align: left;
 }
 .md-body th {
-  background: rgba(128, 128, 128, 0.1);
+  background: var(--ant-color-primary-bg, rgba(22, 119, 255, 0.08));
+  font-weight: 600;
+}
+.md-body tbody tr:nth-child(even) {
+  background: var(--ant-color-fill-quaternary, rgba(128, 128, 128, 0.04));
 }
 .md-body pre {
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--ant-color-fill-tertiary, rgba(128, 128, 128, 0.12));
+  border: 1px solid var(--ant-color-border-secondary, rgba(128, 128, 128, 0.25));
+  border-left: 3px solid var(--ant-color-primary, #1677ff);
   padding: 12px 14px;
   border-radius: 8px;
   overflow: auto;
 }
 .md-body code {
-  background: rgba(128, 128, 128, 0.14);
+  color: var(--ant-color-error-text, #cf1322);
+  background: var(--ant-color-error-bg, rgba(255, 77, 79, 0.1));
   padding: 0.12em 0.4em;
   border-radius: 4px;
   font-size: 0.9em;
 }
 .md-body pre code {
+  color: var(--ant-color-text, inherit);
   background: none;
   padding: 0;
 }
 .md-body blockquote {
-  margin: 0.8em 0;
-  padding: 0.2em 1em;
-  border-left: 3px solid var(--rp-border, rgba(128, 128, 128, 0.4));
-  color: rgba(128, 128, 128, 1);
+  margin: 0.9em 0;
+  padding: 0.4em 1em;
+  border-left: 4px solid var(--ant-color-primary, #1677ff);
+  border-radius: 0 8px 8px 0;
+  background: var(--ant-color-primary-bg, rgba(22, 119, 255, 0.06));
+  color: var(--ant-color-text-secondary, rgba(128, 128, 128, 1));
+}
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--ant-color-border, rgba(128, 128, 128, 0.3));
+  margin: 1.5em 0;
 }
 .md-body .katex-display {
   overflow-x: auto;
