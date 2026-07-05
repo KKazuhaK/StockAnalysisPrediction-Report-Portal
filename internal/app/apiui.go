@@ -583,6 +583,7 @@ func (s *Server) apiTypesDelete(w http.ResponseWriter, r *http.Request, user str
 func (s *Server) apiTypesRestoreDefaults(w http.ResponseWriter, r *http.Request, user string) {
 	s.st.ClearTypeConfigs()
 	n := seedDefaultTypes(s.st)
+	seedDefaultKindColors(s.st) // also restore the shipped kind → color mapping
 	writeJSON(w, map[string]any{"ok": true, "restored": n})
 }
 
