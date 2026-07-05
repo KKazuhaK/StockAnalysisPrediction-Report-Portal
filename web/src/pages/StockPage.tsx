@@ -17,8 +17,12 @@ export default function StockPage() {
   const { symbol = '' } = useParams()
   const [sp, setSp] = useSearchParams()
   const navigate = useNavigate()
-  const { fontSize, fontWeight } = useReaderPrefs()
+  const { fontSize, fontWeight, wide } = useReaderPrefs()
   const readerVars = { '--md-fs': `${fontSize}px`, '--md-fw': String(fontWeight) } as CSSProperties
+  // Optimal reading width the centered column fluidly grows up to, then caps at (so it
+  // fills small screens but never runs to unreadable line lengths on ultra-wide ones);
+  // "wide" mode opts into a roomier cap for those who want to use the extra space.
+  const layoutVars = { '--rp-doc-max': wide ? '1440px' : '1080px' } as CSSProperties
   const [data, setData] = useState<StockResp | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -69,7 +73,7 @@ export default function StockPage() {
 
   return (
     <Spin spinning={loading}>
-      <div className="rp-reader">
+      <div className="rp-reader" style={layoutVars}>
         {/* Narrow: the timeline is a horizontal strip on top (container query in index.css). */}
         <div className="rp-reader__strip">
           <Card size="small" title={t('stock.timeline')} styles={{ body: { paddingTop: 12 } }}>

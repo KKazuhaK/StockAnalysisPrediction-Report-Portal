@@ -15,8 +15,10 @@ export default function RunPage() {
   const { key = '' } = useParams()
   const [sp, setSp] = useSearchParams()
   const navigate = useNavigate()
-  const { fontSize, fontWeight } = useReaderPrefs()
+  const { fontSize, fontWeight, wide } = useReaderPrefs()
   const readerVars = { '--md-fs': `${fontSize}px`, '--md-fw': String(fontWeight) } as CSSProperties
+  // Same optimal reading width as the stock page: fill up to the cap, then center.
+  const docMax = wide ? 1440 : 1080
   const [data, setData] = useState<RunResp | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -60,7 +62,7 @@ export default function RunPage() {
 
   return (
     <Spin spinning={loading}>
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: docMax, margin: '0 auto' }}>
         <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
           <Space size={12} wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>

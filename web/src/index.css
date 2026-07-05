@@ -170,7 +170,7 @@ body {
 }
 .rp-reader__doc {
   min-width: 0;
-  max-width: 1040px;
+  max-width: var(--rp-doc-max, 1080px);
   margin: 0 auto;
 }
 /* Roomy enough (≥1280 → the centered column is ≥900) → the reading column (header + tabs
@@ -193,7 +193,7 @@ body {
     width: 180px;
   }
   .rp-reader__doc {
-    width: min(100% - 380px, 1120px);
+    width: min(100% - 380px, var(--rp-doc-max, 1080px));
     max-width: none;
     margin: 0 auto;
   }
