@@ -164,8 +164,9 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Symbol = strings.TrimSpace(in.Symbol)
-	if in.Symbol == "" {
-		v1err(w, http.StatusBadRequest, "missing_param", "symbol is required")
+	in.Title = strings.TrimSpace(in.Title)
+	if in.Symbol == "" && in.Title == "" {
+		v1err(w, http.StatusBadRequest, "missing_param", "symbol or title is required")
 		return
 	}
 	if !validReportDate(in.Date) {
@@ -185,7 +186,9 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		kind = runKind([]string{rtype})
 	}
 	s.st.RegisterType(rtype, kind)
-	uid := deriveUID(in.Symbol, in.Date, rtype)
+	// Thematic reports (no single home stock) have no symbol — fall back to the title so
+	// different topics on the same day don't collide into one uid.
+	uid := deriveUID(firstNonEmpty(in.Symbol, in.Title), in.Date, rtype)
 	// Freeze the as-of name onto this report row: an explicit payload name wins,
 	// otherwise resolve the current live name (rename-safe; earlier reports keep theirs).
 	name := in.Name
