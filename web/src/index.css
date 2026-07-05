@@ -22,6 +22,10 @@ body {
 /* markdown body typography (works with antd Typography).
    --md-fs / --md-fw are set by the reading pages from the reader prefs (the "Aa"
    popover); headings/tables/code are all em-relative so they scale off the base. */
+/* Reading theme — modeled on the md-viewer notes style (left-barred headings, blue
+   accents, dark code blocks, tinted blockquotes/tables), recolored through antd's
+   semantic CSS variables so it adapts to light and dark. Code blocks stay dark in
+   both themes (VS Code style), as in the reference. */
 .md-body {
   font-size: var(--md-fs, 15px);
   font-weight: var(--md-fw, 400);
@@ -30,58 +34,104 @@ body {
 }
 .md-body h1,
 .md-body h2,
-.md-body h3 {
-  margin: 1.2em 0 0.6em;
+.md-body h3,
+.md-body h4 {
+  margin: 1.4em 0 0.55em;
   font-weight: 600;
+  line-height: 1.3;
 }
 .md-body h1 {
-  font-size: 1.6em;
+  font-size: 1.55em;
+  padding-bottom: 0.35em;
+  border-bottom: 2px solid var(--ant-color-border, rgba(128, 128, 128, 0.25));
 }
 .md-body h2 {
-  font-size: 1.35em;
+  font-size: 1.3em;
+  padding-left: 0.6em;
+  border-left: 4px solid var(--ant-color-primary, #1677ff);
 }
 .md-body h3 {
-  font-size: 1.15em;
+  font-size: 1.14em;
+  color: var(--ant-color-text-secondary, #4a5568);
+}
+.md-body h4 {
+  font-size: 1em;
+  color: var(--ant-color-text-secondary, #4a5568);
 }
 .md-body p {
   margin: 0.6em 0;
+}
+.md-body ul,
+.md-body ol {
+  padding-left: 1.5em;
+}
+.md-body li + li {
+  margin-top: 0.35em;
+}
+.md-body a {
+  color: var(--ant-color-link, #1677ff);
+  text-decoration: underline;
+  text-decoration-color: var(--ant-color-primary-border, rgba(22, 119, 255, 0.4));
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+.md-body a:hover {
+  text-decoration-color: var(--ant-color-primary, #1677ff);
 }
 .md-body table {
   border-collapse: collapse;
   width: 100%;
   margin: 1em 0;
   font-size: 0.92em;
+  border: 1px solid var(--ant-color-border-secondary, rgba(128, 128, 128, 0.3));
 }
 .md-body th,
 .md-body td {
-  border: 1px solid var(--rp-border, rgba(128, 128, 128, 0.35));
-  padding: 6px 10px;
+  border: 1px solid var(--ant-color-border-secondary, rgba(128, 128, 128, 0.3));
+  padding: 7px 11px;
   text-align: left;
+  vertical-align: top;
 }
 .md-body th {
-  background: rgba(128, 128, 128, 0.1);
+  background: var(--ant-color-primary-bg, rgba(22, 119, 255, 0.08));
+  font-weight: 600;
 }
-.md-body pre {
-  background: rgba(128, 128, 128, 0.12);
-  padding: 12px 14px;
-  border-radius: 8px;
-  overflow: auto;
+.md-body tbody tr:nth-child(even) td {
+  background: var(--ant-color-fill-quaternary, rgba(128, 128, 128, 0.04));
 }
 .md-body code {
-  background: rgba(128, 128, 128, 0.14);
-  padding: 0.12em 0.4em;
-  border-radius: 4px;
+  color: var(--ant-color-primary-text, #1677ff);
+  background: var(--ant-color-primary-bg, rgba(22, 119, 255, 0.1));
+  padding: 0.1em 0.4em;
+  border-radius: 5px;
   font-size: 0.9em;
 }
+.md-body pre {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 12px 15px;
+  border-radius: 12px;
+  overflow: auto;
+}
 .md-body pre code {
+  color: inherit;
   background: none;
   padding: 0;
+  font-size: 0.92em;
 }
 .md-body blockquote {
-  margin: 0.8em 0;
-  padding: 0.2em 1em;
-  border-left: 3px solid var(--rp-border, rgba(128, 128, 128, 0.4));
-  color: rgba(128, 128, 128, 1);
+  margin: 0.9em 0;
+  padding: 0.6em 1em;
+  border-left: 4px solid var(--ant-color-primary-border, rgba(22, 119, 255, 0.5));
+  border-radius: 0 10px 10px 0;
+  background: var(--ant-color-primary-bg, rgba(22, 119, 255, 0.06));
+  color: var(--ant-color-text-secondary, rgba(128, 128, 128, 1));
+}
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--ant-color-border, rgba(128, 128, 128, 0.3));
+  margin: 1.5em 0;
 }
 .md-body .katex-display {
   overflow-x: auto;
