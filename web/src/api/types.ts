@@ -294,8 +294,14 @@ export interface SettingsResp {
   footerShowVersion: boolean
   pwaEnabled: boolean
   pwaIconUrl: string
+  announcementEnabled: boolean
+  announcementLevel: AnnouncementLevel
+  announcementTitle: string
+  announcementContent: string
   newCount: number
 }
+
+export type AnnouncementLevel = 'notice' | 'success' | 'warning' | 'error'
 
 export interface SiteSettings {
   siteTitle: string
@@ -305,6 +311,10 @@ export interface SiteSettings {
   footerShowVersion: boolean
   pwaEnabled: boolean
   pwaIconUrl: string
+  announcementEnabled: boolean
+  announcementLevel: AnnouncementLevel
+  announcementTitle: string
+  announcementContent: string
 }
 
 export interface LegacyImportStatus {

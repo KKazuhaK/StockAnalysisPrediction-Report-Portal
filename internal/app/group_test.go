@@ -88,3 +88,37 @@ func TestKindOrderHasRestructuringDecision(t *testing.T) {
 		t.Errorf("kindOrder = %v, want it to contain 重组决策", kindOrder)
 	}
 }
+
+// The browse/search feed shows one card per stock (its most recent run), not one
+// per (stock, day) — collapseLatestBySymbol drops older-date duplicates. Thematic
+// (symbol-less) groups are all kept; the full per-day history stays on the stock page.
+func TestCollapseLatestBySymbol(t *testing.T) {
+	name := func(string) string { return "麦加芯彩" }
+	reps := []Rep{
+		{RID: "n1", Src: "new", Symbol: "603062", Date: "2026-07-05", RType: "投资决策建议", Time: "2026-07-05 00:50"},
+		{RID: "n2", Src: "new", Symbol: "603062", Date: "2026-07-01", RType: "估值分析", Time: "2026-07-01 09:44"},
+		{RID: "n3", Src: "new", Symbol: "689009", Date: "2026-07-05", RType: "投资决策建议", Time: "2026-07-05 00:37"},
+		{RID: "n4", Src: "new", Symbol: "", Date: "2026-07-04", RType: "专题研究", Title: "CPO行业深度研究", Time: "2026-07-04 10:00"},
+		{RID: "n5", Src: "new", Symbol: "", Date: "2026-07-03", RType: "专题研究", Title: "AI算力研究", Time: "2026-07-03 10:00"},
+	}
+	col := collapseLatestBySymbol(buildGroups(reps, name))
+	if len(col) != 4 { // 603062 (latest), 689009, + 2 thematic
+		t.Fatalf("want 4 groups after collapse, got %d", len(col))
+	}
+	var g603 *Group
+	topics := 0
+	for i := range col {
+		if col[i].Symbol == "603062" {
+			g603 = &col[i]
+		}
+		if col[i].Symbol == "" {
+			topics++
+		}
+	}
+	if g603 == nil || g603.Date != "2026-07-05" {
+		t.Fatalf("603062 collapsed group should be the 2026-07-05 run, got %+v", g603)
+	}
+	if topics != 2 {
+		t.Fatalf("both thematic groups should be kept, got %d", topics)
+	}
+}

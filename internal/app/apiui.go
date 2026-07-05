@@ -24,9 +24,11 @@ import (
 var okJSON = map[string]any{"ok": true}
 
 const (
-	maxSiteTitleRunes  = 80
-	maxFooterTextRunes = 1000
-	maxSiteLogoBytes   = 1024 * 1024
+	maxSiteTitleRunes           = 80
+	maxFooterTextRunes          = 1000
+	maxAnnouncementTitleRunes   = 160
+	maxAnnouncementContentRunes = 2000
+	maxSiteLogoBytes            = 1024 * 1024
 )
 
 // jsonError writes a uniform JSON error response.
@@ -103,13 +105,17 @@ func (s *Server) canQuery(r *http.Request) bool {
 
 func (s *Server) siteSettingsJSON() map[string]any {
 	return map[string]any{
-		"siteTitle":         s.st.GetSetting("site_title", ""),
-		"siteLogoUrl":       s.st.GetSetting("site_logo_url", ""),
-		"footerText":        s.st.GetSetting("footer_text", ""),
-		"footerShowInfo":    settingBool(s.st.GetSetting("footer_show_info", ""), true),
-		"footerShowVersion": settingBool(s.st.GetSetting("footer_show_version", ""), true),
-		"pwaEnabled":        settingBool(s.st.GetSetting("pwa_enabled", ""), true),
-		"pwaIconUrl":        s.st.GetSetting("pwa_icon_url", ""),
+		"siteTitle":           s.st.GetSetting("site_title", ""),
+		"siteLogoUrl":         s.st.GetSetting("site_logo_url", ""),
+		"footerText":          s.st.GetSetting("footer_text", ""),
+		"footerShowInfo":      settingBool(s.st.GetSetting("footer_show_info", ""), true),
+		"footerShowVersion":   settingBool(s.st.GetSetting("footer_show_version", ""), true),
+		"pwaEnabled":          settingBool(s.st.GetSetting("pwa_enabled", ""), true),
+		"pwaIconUrl":          s.st.GetSetting("pwa_icon_url", ""),
+		"announcementEnabled": settingBool(s.st.GetSetting("announcement_enabled", ""), false),
+		"announcementLevel":   normalizeAnnouncementLevel(s.st.GetSetting("announcement_level", "notice")),
+		"announcementTitle":   s.st.GetSetting("announcement_title", ""),
+		"announcementContent": s.st.GetSetting("announcement_content", ""),
 	}
 }
 
@@ -177,6 +183,9 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 	// oldTotal stays 0: legacy reports were migrated into the reports table and now
 	// come back via SearchNew above (the live old-portal read path is gone).
 	groups := buildGroups(reps, s.names.Get)
+	// Browse/search feed shows one card per stock (its latest run); the full per-date
+	// history stays on the stock detail page. Thematic (symbol-less) reports are unaffected.
+	groups = collapseLatestBySymbol(groups)
 	totalRuns := len(groups)
 	pages := int(math.Max(1, math.Ceil(float64(totalRuns)/float64(size))))
 	lo := (page - 1) * size
@@ -701,7 +710,8 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
 	var in struct {
 		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText, PwaIconUrl *string
-		FooterShowInfo, FooterShowVersion, PwaEnabled                                       *bool
+		AnnouncementLevel, AnnouncementTitle, AnnouncementContent                           *string
+		FooterShowInfo, FooterShowVersion, PwaEnabled, AnnouncementEnabled                  *bool
 	}
 	readJSON(r, &in)
 	// Validate before writing anything so a bad field can't half-apply.
@@ -723,6 +733,18 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	if in.FooterText != nil && len([]rune(strings.TrimSpace(*in.FooterText))) > maxFooterTextRunes {
 		jsonError(w, http.StatusBadRequest, "底部信息过长")
+		return
+	}
+	if in.AnnouncementLevel != nil && !validAnnouncementLevel(strings.TrimSpace(*in.AnnouncementLevel)) {
+		jsonError(w, http.StatusBadRequest, "无效的公告级别")
+		return
+	}
+	if in.AnnouncementTitle != nil && len([]rune(strings.TrimSpace(*in.AnnouncementTitle))) > maxAnnouncementTitleRunes {
+		jsonError(w, http.StatusBadRequest, "公告标题过长")
+		return
+	}
+	if in.AnnouncementContent != nil && len([]rune(strings.TrimSpace(*in.AnnouncementContent))) > maxAnnouncementContentRunes {
+		jsonError(w, http.StatusBadRequest, "公告内容过长")
 		return
 	}
 	if in.PwaIconUrl != nil && !validSiteLogoURL(strings.TrimSpace(*in.PwaIconUrl)) {
@@ -762,7 +784,36 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	if in.PwaIconUrl != nil { // "" clears → follow site logo / built-in default logo
 		s.st.SetSetting("pwa_icon_url", strings.TrimSpace(*in.PwaIconUrl))
 	}
+	if in.AnnouncementEnabled != nil {
+		s.st.SetSetting("announcement_enabled", strconv.FormatBool(*in.AnnouncementEnabled))
+	}
+	if in.AnnouncementLevel != nil {
+		s.st.SetSetting("announcement_level", normalizeAnnouncementLevel(*in.AnnouncementLevel))
+	}
+	if in.AnnouncementTitle != nil {
+		s.st.SetSetting("announcement_title", strings.TrimSpace(*in.AnnouncementTitle))
+	}
+	if in.AnnouncementContent != nil {
+		s.st.SetSetting("announcement_content", strings.TrimSpace(*in.AnnouncementContent))
+	}
 	writeJSON(w, okJSON)
+}
+
+func validAnnouncementLevel(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "notice", "success", "warning", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeAnnouncementLevel(raw string) string {
+	level := strings.ToLower(strings.TrimSpace(raw))
+	if validAnnouncementLevel(level) && level != "" {
+		return level
+	}
+	return "notice"
 }
 
 func settingBool(raw string, def bool) bool {

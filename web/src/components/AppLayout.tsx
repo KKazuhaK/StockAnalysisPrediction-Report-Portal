@@ -12,6 +12,7 @@ import { sanitizeFooterHtml } from '../lib/footerHtml'
 import Omnibox from './Omnibox'
 import RunAnalysisModal from './RunAnalysisModal'
 import QueueDrawer from './QueueDrawer'
+import SiteAnnouncement from './SiteAnnouncement'
 import type { BatchQueueSummary } from '../api/types'
 import { AutoIcon, MoonIcon, SunIcon } from './icons'
 
@@ -210,6 +211,7 @@ export default function AppLayout() {
       </Header>
 
       <Content style={{ padding: '24px 20px', maxWidth: contentMaxWidth, width: '100%', margin: '0 auto', transition: 'max-width 0.2s ease' }}>
+        <SiteAnnouncement style={{ marginBottom: 24 }} />
         <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
           <Outlet />
         </Suspense>
