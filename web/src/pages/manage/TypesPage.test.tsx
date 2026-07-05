@@ -65,13 +65,9 @@ describe('TypesPage — kind colors', () => {
     const tag = await screen.findByText('投资决策')
     expect(tag.className).toContain('blue')
 
-    // The color Select next to the tag shows the current value and posts on change.
-    const select = document.querySelector('.ant-select-selection-item')
-    expect(select?.textContent).toBe('blue')
-
-    fireEvent.mouseDown(document.querySelector('.ant-select-selector')!)
-    const [volcanoOption] = await screen.findAllByText('volcano')
-    fireEvent.click(volcanoOption)
+    // The swatch trigger opens a palette; picking a swatch posts immediately and closes it.
+    fireEvent.click(screen.getByRole('button', { name: 'types.kindColor' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'volcano' }))
 
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith('/api/admin/kind-colors', { kind: '投资决策', color: 'volcano' }),

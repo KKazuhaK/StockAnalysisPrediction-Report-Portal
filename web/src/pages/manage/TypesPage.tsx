@@ -8,14 +8,14 @@ import {
   Input,
   Modal,
   Popconfirm,
-  Select,
+  Popover,
   Space,
   Table,
   Tag,
   Tooltip,
   Typography,
 } from 'antd'
-import { DeleteOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined, SaveOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { TypeGroup, TypeRow, TypesResp } from '../../api/types'
@@ -37,14 +37,93 @@ const TAG_COLORS = [
   'geekblue',
   'purple',
 ]
-const TAG_COLOR_OPTIONS = TAG_COLORS.map((c) => ({
-  value: c,
-  label: (
-    <Tag color={c === 'default' ? undefined : c} style={{ marginInlineEnd: 0 }}>
-      {c}
-    </Tag>
-  ),
-}))
+
+// Representative hex for each preset (Tag itself only exposes the named token,
+// not a hex, and we need a solid fill for the swatch dots below).
+const SWATCH_HEX: Record<string, string> = {
+  magenta: '#eb2f96',
+  red: '#f5222d',
+  volcano: '#fa541c',
+  orange: '#fa8c16',
+  gold: '#faad14',
+  lime: '#a0d911',
+  green: '#52c41a',
+  cyan: '#13c2c2',
+  blue: '#1677ff',
+  geekblue: '#2f54eb',
+  purple: '#722ed1',
+}
+
+function ColorSwatch({ color, size, selected }: { color: string; size: number; selected?: boolean }) {
+  const hex = SWATCH_HEX[color]
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        flexShrink: 0,
+        background: hex || '#fff',
+        border: hex ? 'none' : '1px solid #d9d9d9',
+        boxShadow: selected ? `0 0 0 2px #fff, 0 0 0 4px ${hex || '#8c8c8c'}` : undefined,
+      }}
+    />
+  )
+}
+
+// Compact swatch-grid color picker: a small dot button that opens a palette of
+// dot buttons on click, replacing a plain <Select> of color-name Tags (which
+// visually doubled up as nested pills-in-a-list).
+function KindColorPicker({ color, onChange }: { color: string; onChange: (color: string) => void }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  return (
+    <Popover
+      trigger="click"
+      open={open}
+      onOpenChange={setOpen}
+      placement="bottomLeft"
+      content={
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, width: 168 }}>
+          {TAG_COLORS.map((c) => (
+            <Tooltip key={c} title={c}>
+              <button
+                type="button"
+                aria-label={c}
+                onClick={() => {
+                  onChange(c)
+                  setOpen(false)
+                }}
+                style={{ padding: 2, border: 'none', background: 'none', cursor: 'pointer', lineHeight: 0 }}
+              >
+                <ColorSwatch color={c} size={20} selected={c === color} />
+              </button>
+            </Tooltip>
+          ))}
+        </div>
+      }
+    >
+      <button
+        type="button"
+        aria-label={t('types.kindColor')}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 5,
+          padding: '3px 7px',
+          border: '1px solid #d9d9d9',
+          borderRadius: 6,
+          background: '#fff',
+          cursor: 'pointer',
+        }}
+      >
+        <ColorSwatch color={color} size={14} />
+        <DownOutlined style={{ fontSize: 9, color: '#8c8c8c' }} />
+      </button>
+    </Popover>
+  )
+}
 
 export default function TypesPage() {
   const { t } = useTranslation()
@@ -245,15 +324,7 @@ export default function TypesPage() {
               <Tag color={colors[g.kind] || 'default'} style={{ fontSize: 13 }}>
                 {g.kind}
               </Tag>
-              <Tooltip title={t('types.kindColor')}>
-                <Select
-                  size="small"
-                  style={{ width: 110 }}
-                  value={colors[g.kind] || 'default'}
-                  options={TAG_COLOR_OPTIONS}
-                  onChange={(color) => saveColor(g.kind, color)}
-                />
-              </Tooltip>
+              <KindColorPicker color={colors[g.kind] || 'default'} onChange={(color) => saveColor(g.kind, color)} />
             </Space>
             <SortableWrapper ids={groupNames} onReorder={(names) => reorderGroup(g.kind, names)}>
               <Table<TypeRow>
