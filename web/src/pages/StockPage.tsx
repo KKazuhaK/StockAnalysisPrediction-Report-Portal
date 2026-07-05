@@ -115,9 +115,8 @@ export default function StockPage() {
             </Card>
           </Col>
 
-          {/* Main content area. On large screens a right spacer (equal to the timeline)
-              is added below so the reading column sits centered instead of shoved right. */}
-          <Col xs={24} md={wide ? 19 : 18} lg={wide ? 16 : 14}>
+          {/* Main content area */}
+          <Col xs={24} md={wide ? 19 : 18} lg={wide ? 20 : 19}>
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
               {data.kinds.length > 1 && (
                 <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
@@ -159,10 +158,6 @@ export default function StockPage() {
               </Card>
             </Space>
           </Col>
-
-          {/* Right gutter (large screens only) mirroring the timeline so the reading
-              column is centered. Hidden below lg, where the two columns use the full row. */}
-          <Col xs={0} md={0} lg={wide ? 4 : 5} />
         </Row>
       </Space>
     </Spin>
