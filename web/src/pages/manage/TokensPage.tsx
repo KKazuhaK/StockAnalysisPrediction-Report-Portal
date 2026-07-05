@@ -79,6 +79,7 @@ export default function TokensPage() {
         loading={loading}
         dataSource={tokens}
         pagination={false}
+        scroll={{ x: 'max-content' }}
         rowSelection={{ selectedRowKeys: selected, onChange: (keys) => setSelected(keys as number[]) }}
         columns={[
           { title: t('settings.tokenName'), dataIndex: 'name', render: (n: string) => n || '—' },

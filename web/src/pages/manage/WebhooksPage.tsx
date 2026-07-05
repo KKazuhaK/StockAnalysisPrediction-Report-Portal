@@ -104,7 +104,7 @@ export default function WebhooksPage() {
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text type="secondary">{t('webhook.hint')}</Typography.Text>
-        <Table rowKey="id" size="small" dataSource={hooks} columns={cols} pagination={false} />
+        <Table rowKey="id" size="small" dataSource={hooks} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
       </Space>
 
       <Modal title={t('webhook.add')} open={open} onOk={submit} onCancel={() => setOpen(false)} destroyOnClose>

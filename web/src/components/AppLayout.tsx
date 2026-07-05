@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Badge, Button, Dropdown, FloatButton, Grid, Layout, Space, Spin, Tooltip, theme } from 'antd'
+import { Badge, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Space, Spin, Tooltip, theme } from 'antd'
 import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +17,15 @@ import type { BatchQueueSummary } from '../api/types'
 import { AutoIcon, MoonIcon, SunIcon } from './icons'
 
 const { Header, Content, Footer } = Layout
+
+// Compact labels for the language segmented control (full names are too wide for 3
+// equal segments); unknown languages fall back to their code.
+function shortLang(code: string): string {
+  if (code === 'zh-CN') return '简'
+  if (code === 'zh-TW') return '繁'
+  if (code === 'en') return 'EN'
+  return code
+}
 
 export default function AppLayout() {
   const { t } = useTranslation()
@@ -41,6 +50,7 @@ export default function AppLayout() {
   const [queueOpen, setQueueOpen] = useState(false)
   const [queue, setQueue] = useState<BatchQueueSummary | null>(null)
   const [showTop, setShowTop] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
   const canRun = can('run_batch')
 
   // Show back-to-top once the window has scrolled past ~one screen. Self-controlled
@@ -122,7 +132,7 @@ export default function AppLayout() {
         {/* On mobile the search drops to its own full-width row (order:2) below the controls.
             On the home page there is no header search, so don't force that empty row —
             otherwise the phantom line pushes the control row off-center in the header. */}
-        <div style={{ flex: 1, minWidth: compact && !onHome ? '100%' : 0, order: compact ? 2 : 0, display: 'flex' }}>
+        <div style={{ flex: onHome ? '0 0 auto' : 1, minWidth: compact && !onHome ? '100%' : 0, order: compact ? 2 : 0, display: 'flex' }}>
           {!onHome && (
             <div style={{ width: '100%', maxWidth: compact ? undefined : 420 }}>
               <Omnibox size="middle" />
@@ -130,7 +140,7 @@ export default function AppLayout() {
           )}
         </div>
 
-        <Space size={compact ? 6 : 10} wrap style={{ flexShrink: 0, marginLeft: compact ? 'auto' : 0 }}>
+        <Space size={compact ? 6 : 10} wrap style={{ flexShrink: 0, marginLeft: 'auto' }}>
           {canRun && (
             // The primary action keeps its label even on mobile (unlike the other
             // nav buttons, which collapse to icons when compact).
@@ -165,63 +175,89 @@ export default function AppLayout() {
               )}
             </>
           )}
-          <Dropdown
-            trigger={['click']}
-            menu={{
-              // Theme/language are laid out flat as inline groups (not sideways submenus):
-              // the account menu is pinned to the top-right, where a sideways submenu opens
-              // awkwardly leftward with a backwards ">" arrow. selectedKeys highlights the
-              // active theme + language; multiple lets both stay highlighted at once.
-              selectable: true,
-              multiple: true,
-              selectedKeys: [`theme:${mode}`, `lang:${lang}`],
-              items: [
-                // On mobile the primary nav lives here (the standalone buttons are hidden).
-                ...(compact
-                  ? [
-                      { key: 'apps', icon: <AppstoreOutlined />, label: t('nav.apps'), onClick: () => navigate('/apps') },
-                      ...(admin ? [{ key: 'manage', icon: <SettingOutlined />, label: t('nav.manage'), onClick: () => navigate('/manage') }] : []),
-                      { type: 'divider' as const },
-                    ]
-                  : []),
-                {
-                  type: 'group' as const,
-                  key: 'theme-group',
-                  label: t('nav.theme'),
-                  children: [
-                    { key: 'theme:light', icon: <SunIcon />, label: t('theme.light'), onClick: () => setMode('light') },
-                    { key: 'theme:dark', icon: <MoonIcon />, label: t('theme.dark'), onClick: () => setMode('dark') },
-                    { key: 'theme:auto', icon: <AutoIcon />, label: t('theme.auto'), onClick: () => setMode('auto') },
-                  ],
-                },
-                {
-                  type: 'group' as const,
-                  key: 'lang-group',
-                  label: t('nav.language'),
-                  children: langs.map((l) => ({
-                    key: `lang:${l.code}`,
-                    icon: <GlobalOutlined />,
-                    label: l.label,
-                    onClick: () => setLang(l.code),
-                  })),
-                },
-                { type: 'divider' as const },
-                {
-                  key: 'logout',
-                  icon: <LogoutOutlined />,
-                  label: t('nav.logout'),
-                  onClick: async () => {
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            open={accountOpen}
+            onOpenChange={setAccountOpen}
+            styles={{ body: { padding: 8 } }}
+            content={
+              <div style={{ width: 240, maxWidth: '80vw' }}>
+                {/* On mobile the primary nav folds in here (the header buttons are hidden). */}
+                {compact && (
+                  <>
+                    <Button
+                      type="text"
+                      block
+                      icon={<AppstoreOutlined />}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
+                      onClick={() => {
+                        setAccountOpen(false)
+                        navigate('/apps')
+                      }}
+                    >
+                      {t('nav.apps')}
+                    </Button>
+                    {admin && (
+                      <Button
+                        type="text"
+                        block
+                        icon={<SettingOutlined />}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
+                        onClick={() => {
+                          setAccountOpen(false)
+                          navigate('/manage')
+                        }}
+                      >
+                        {t('nav.manage')}
+                      </Button>
+                    )}
+                    <Divider style={{ margin: '8px 0' }} />
+                  </>
+                )}
+                <div style={{ fontSize: 12, color: token.colorTextTertiary, margin: '2px 4px 6px' }}>{t('nav.theme')}</div>
+                <Segmented
+                  block
+                  value={mode}
+                  onChange={(v) => setMode(v as 'light' | 'dark' | 'auto')}
+                  options={[
+                    { value: 'light', label: t('theme.light'), icon: <SunIcon /> },
+                    { value: 'dark', label: t('theme.dark'), icon: <MoonIcon /> },
+                    { value: 'auto', label: t('theme.auto'), icon: <AutoIcon /> },
+                  ]}
+                />
+                <div style={{ fontSize: 12, color: token.colorTextTertiary, margin: '12px 4px 6px' }}>
+                  <GlobalOutlined style={{ marginInlineEnd: 6 }} />
+                  {t('nav.language')}
+                </div>
+                <Segmented
+                  block
+                  value={lang}
+                  onChange={(v) => setLang(String(v))}
+                  options={langs.map((l) => ({ value: l.code, label: shortLang(l.code) }))}
+                />
+                <Divider style={{ margin: '10px 0 8px' }} />
+                <Button
+                  type="text"
+                  block
+                  danger
+                  icon={<LogoutOutlined />}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
+                  onClick={async () => {
+                    setAccountOpen(false)
                     await logout()
                     navigate('/login')
-                  },
-                },
-              ],
-            }}
+                  }}
+                >
+                  {t('nav.logout')}
+                </Button>
+              </div>
+            }
           >
             <Button type="text" icon={<UserOutlined />} title={name || user || undefined}>
               {!compact && (name || user)}
             </Button>
-          </Dropdown>
+          </Popover>
         </Space>
       </Header>
 

@@ -162,7 +162,7 @@ export default function BatchAdminPage() {
                   </Button>
                 </div>
                 {targets.length === 0 && <Typography.Text type="secondary">{t('batch.dify.targetsHint')}</Typography.Text>}
-                <Table rowKey="id" size="small" dataSource={targets} columns={targetCols} pagination={false} />
+                <Table rowKey="id" size="small" dataSource={targets} columns={targetCols} pagination={false} scroll={{ x: 'max-content' }} />
               </Space>
             ),
           },
@@ -179,7 +179,7 @@ export default function BatchAdminPage() {
                 {customPlugins.length === 0 ? (
                   <Typography.Text type="secondary">{t('batch.admin.advancedPluginsHint')}</Typography.Text>
                 ) : (
-                  <Table rowKey="slug" size="small" dataSource={customPlugins} columns={pluginCols} pagination={false} />
+                  <Table rowKey="slug" size="small" dataSource={customPlugins} columns={pluginCols} pagination={false} scroll={{ x: 'max-content' }} />
                 )}
               </Space>
             ),

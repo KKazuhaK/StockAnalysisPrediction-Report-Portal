@@ -197,7 +197,7 @@ export default function AppsAdminPage() {
       >
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('apps.adminHint')}</Typography.Text>
-          <Table rowKey="id" size="small" dataSource={apps} columns={cols} pagination={false} />
+          <Table rowKey="id" size="small" dataSource={apps} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
         </Space>
       </Card>
 
@@ -220,7 +220,7 @@ export default function AppsAdminPage() {
           {market === null ? null : market.length === 0 ? (
             <Empty description={t('apps.marketEmpty')} />
           ) : (
-            <Table rowKey="id" size="small" dataSource={market} columns={marketCols} pagination={false} />
+            <Table rowKey="id" size="small" dataSource={market} columns={marketCols} pagination={false} scroll={{ x: 'max-content' }} />
           )}
         </Space>
       </Card>

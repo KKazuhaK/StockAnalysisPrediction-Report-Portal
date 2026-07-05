@@ -306,6 +306,7 @@ export default function UsersPage() {
         dataSource={filtered}
         columns={cols}
         pagination={false}
+        scroll={{ x: 'max-content' }}
         rowSelection={{ selectedRowKeys: selected, onChange: (keys) => setSelected(keys as string[]) }}
       />
 

@@ -43,6 +43,7 @@ function EndpointCard({ e }: { e: ApiEndpoint }) {
           <Table<ApiParam>
             size="small"
             pagination={false}
+            scroll={{ x: 'max-content' }}
             rowKey={(p) => `${p.in}:${p.name}`}
             dataSource={e.params}
             columns={[
@@ -78,6 +79,7 @@ function EndpointCard({ e }: { e: ApiEndpoint }) {
           <Table<ApiError>
             size="small"
             pagination={false}
+            scroll={{ x: 'max-content' }}
             rowKey={(er) => String(er.code)}
             dataSource={e.errors}
             columns={[
