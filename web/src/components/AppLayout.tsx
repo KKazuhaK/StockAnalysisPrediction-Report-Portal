@@ -55,16 +55,22 @@ export default function AppLayout() {
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
-  // Publish the real (wrap-aware) header height so the /manage sticky rail can offset by
-  // it instead of assuming a fixed 64px — the header grows taller when it wraps on mobile.
+  // Publish the real (wrap-aware) header height so the /manage sticky rail offsets by it
+  // instead of assuming a fixed 64px. A ResizeObserver (not just a window-resize listener)
+  // keeps it accurate whenever the header itself changes height — wrap/unwrap, font load,
+  // content change — so the rail's top never drifts from a stale value.
   useEffect(() => {
-    const measure = () => {
-      const el = document.getElementById('rp-app-header')
-      if (el) document.documentElement.style.setProperty('--rp-header-h', `${el.offsetHeight}px`)
+    const el = document.getElementById('rp-app-header')
+    if (!el) return
+    const set = () => document.documentElement.style.setProperty('--rp-header-h', `${el.offsetHeight}px`)
+    set()
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', set)
+      return () => window.removeEventListener('resize', set)
     }
-    measure()
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
+    const ro = new ResizeObserver(set)
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
   // Light poll for the header queue badge (the drawer refreshes faster when open).
   useEffect(() => {
