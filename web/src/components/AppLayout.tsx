@@ -32,10 +32,11 @@ export default function AppLayout() {
   // The admin console runs full-bleed (its own left rail wants the whole width) and
   // suppresses the reader-facing announcement banner, which is noise for an operator.
   const onManage = loc.pathname === '/manage' || loc.pathname.startsWith('/manage/')
-  // Reading routes in "wide" mode get a roomier page than the default 1240 cap.
+  // Reading routes are roomier than the default 1240 cap so the reader can center a
+  // comfortably-wide column with the timeline in the left gutter; "wide" mode widens more.
   const { wide } = useReaderPrefs()
   const onReader = /^\/(stock|run)\//.test(loc.pathname)
-  const contentMaxWidth = onReader && wide ? 1600 : 1240
+  const contentMaxWidth = onReader ? (wide ? 1760 : 1440) : 1240
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
   const [runOpen, setRunOpen] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)

@@ -170,25 +170,31 @@ body {
 }
 .rp-reader__doc {
   min-width: 0;
+  max-width: 1040px;
+  margin: 0 auto;
 }
-/* Roomy enough → the timeline sits in a fixed left column and the reading column (which
-   holds the header, tabs, and report, so the export buttons line up with its right edge)
-   fills the rest. Narrower → the timeline collapses to a horizontal strip on top and the
-   reading column spans the full width. */
-@container (min-width: 900px) {
+/* Roomy enough (≥1280 → the centered column is ≥900) → the reading column (header + tabs
+   + report, so the export buttons line up with its right edge) is centered on the page and
+   the timeline floats in the left gutter beside it, using space that would otherwise be
+   empty. Narrower → the timeline collapses to a horizontal strip on top and the reading
+   column spans the full width. */
+@container (min-width: 1280px) {
   .rp-reader__strip {
     display: none;
   }
   .rp-reader__body {
-    display: flex;
-    gap: 20px;
-    align-items: flex-start;
+    position: relative;
   }
   .rp-reader__rail {
     display: block;
-    flex: 0 0 210px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 180px;
   }
   .rp-reader__doc {
-    flex: 1 1 auto;
+    width: min(100% - 380px, 1120px);
+    max-width: none;
+    margin: 0 auto;
   }
 }
