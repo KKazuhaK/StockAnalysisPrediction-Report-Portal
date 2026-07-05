@@ -308,6 +308,7 @@
   "links.hint": "Drag the handle to reorder",
   "types.label": "Display name (tab)",
   "types.kind": "Category",
+  "types.kindColor": "Category color",
   "types.summary": "Summary",
   "types.addName": "New type name",
   "types.save": "Save page",

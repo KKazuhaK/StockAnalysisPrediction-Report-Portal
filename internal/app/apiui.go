@@ -221,6 +221,7 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 		"newTotal": newTotal, "oldTotal": oldTotal, "totalRuns": totalRuns,
 		"page": page, "pages": pages, "size": size,
 		"types": types, "kinds": kinds, "links": linksJSON(s.st.Links()),
+		"kindColors": s.st.KindColors(),
 	})
 }
 
@@ -484,7 +485,27 @@ func (s *Server) apiAdminTypes(w http.ResponseWriter, r *http.Request, user stri
 	// also type a brand-new category via the AutoComplete on the client).
 	kinds := append([]string{}, presets...)
 	kinds = append(kinds, custom...)
-	writeJSON(w, map[string]any{"groups": groups, "kinds": kinds})
+	writeJSON(w, map[string]any{"groups": groups, "kinds": kinds, "colors": s.st.KindColors()})
+}
+
+// apiKindColorSave upserts the antd Tag color for one kind (大类), used by the
+// color picker next to each kind-group header on the Types Management page.
+func (s *Server) apiKindColorSave(w http.ResponseWriter, r *http.Request, user string) {
+	var in struct {
+		Kind  string
+		Color string
+	}
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	kind := strings.TrimSpace(in.Kind)
+	if kind == "" {
+		jsonError(w, http.StatusBadRequest, "kind required")
+		return
+	}
+	s.st.SetKindColor(kind, strings.TrimSpace(in.Color))
+	writeJSON(w, okJSON)
 }
 
 func (s *Server) apiTypesSave(w http.ResponseWriter, r *http.Request, user string) {

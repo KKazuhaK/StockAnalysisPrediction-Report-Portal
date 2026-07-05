@@ -212,7 +212,7 @@ export default function HomePage() {
           <Row gutter={[16, 16]}>
             {data?.groups.map((g) => (
               <Col key={g.key} xs={24} sm={12} lg={8} xl={6}>
-                <ReportCard g={g} />
+                <ReportCard g={g} kindColors={data.kindColors} />
               </Col>
             ))}
           </Row>

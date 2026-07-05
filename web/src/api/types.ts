@@ -181,6 +181,7 @@ export interface HomeResp {
   types: string[]
   kinds: string[] // 大类 (top-level categories) for the home filter
   links: LinkItem[]
+  kindColors: Record<string, string> // 大类 → antd Tag preset color, admin-configured
 }
 
 export interface TimelineNode {
@@ -241,6 +242,7 @@ export interface TypeGroup {
 export interface TypesResp {
   groups: TypeGroup[]
   kinds: string[]
+  colors: Record<string, string> // 大类 → antd Tag preset color, admin-configured
 }
 
 export interface Role {

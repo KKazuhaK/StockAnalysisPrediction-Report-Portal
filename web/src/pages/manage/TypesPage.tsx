@@ -1,16 +1,57 @@
 import { useEffect, useState } from 'react'
-import { App, AutoComplete, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tag, Typography } from 'antd'
+import {
+  App,
+  AutoComplete,
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from 'antd'
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { TypeGroup, TypeRow, TypesResp } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
 
+// antd's Tag preset colors (https://ant.design/components/tag) — "default" maps
+// to no color prop (the neutral grey Tag).
+const TAG_COLORS = [
+  'default',
+  'magenta',
+  'red',
+  'volcano',
+  'orange',
+  'gold',
+  'lime',
+  'green',
+  'cyan',
+  'blue',
+  'geekblue',
+  'purple',
+]
+const TAG_COLOR_OPTIONS = TAG_COLORS.map((c) => ({
+  value: c,
+  label: (
+    <Tag color={c === 'default' ? undefined : c} style={{ marginInlineEnd: 0 }}>
+      {c}
+    </Tag>
+  ),
+}))
+
 export default function TypesPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [groups, setGroups] = useState<TypeGroup[]>([])
   const [kinds, setKinds] = useState<string[]>([])
+  const [colors, setColors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [open, setOpen] = useState(false)
@@ -25,8 +66,14 @@ export default function TypesPage() {
       .then((r) => {
         setGroups(r.groups || [])
         setKinds(r.kinds || [])
+        setColors(r.colors || {})
       })
       .finally(() => setLoading(false))
+
+  const saveColor = async (kind: string, color: string) => {
+    setColors((c) => ({ ...c, [kind]: color }))
+    await api.post('/api/admin/kind-colors', { kind, color })
+  }
 
   useEffect(() => {
     load()
@@ -194,9 +241,20 @@ export default function TypesPage() {
         const groupNames = g.rows.map((r) => r.name)
         return (
           <div key={g.kind}>
-            <Tag color="blue" style={{ marginBottom: 8, fontSize: 13 }}>
-              {g.kind}
-            </Tag>
+            <Space align="center" style={{ marginBottom: 8 }}>
+              <Tag color={colors[g.kind] || 'default'} style={{ fontSize: 13 }}>
+                {g.kind}
+              </Tag>
+              <Tooltip title={t('types.kindColor')}>
+                <Select
+                  size="small"
+                  style={{ width: 110 }}
+                  value={colors[g.kind] || 'default'}
+                  options={TAG_COLOR_OPTIONS}
+                  onChange={(color) => saveColor(g.kind, color)}
+                />
+              </Tooltip>
+            </Space>
             <SortableWrapper ids={groupNames} onReorder={(names) => reorderGroup(g.kind, names)}>
               <Table<TypeRow>
                 rowKey="name"

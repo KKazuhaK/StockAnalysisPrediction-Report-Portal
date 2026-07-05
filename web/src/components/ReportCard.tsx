@@ -5,15 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type { Group } from '../api/types'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
 
-const KIND_COLORS: Record<string, string> = {
-  重组决策: 'volcano',
-  投资决策: 'blue',
-  深度研究: 'geekblue',
-  技术分析: 'purple',
-  事件监测: 'gold',
-}
-
-export default function ReportCard({ g }: { g: Group }) {
+export default function ReportCard({ g, kindColors }: { g: Group; kindColors?: Record<string, string> }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const isNew = g.src === 'new'
@@ -56,7 +48,7 @@ export default function ReportCard({ g }: { g: Group }) {
 
         <Space size={[6, 6]} wrap>
           {(g.kinds?.length ? g.kinds : [g.kind]).filter(Boolean).map((k) => (
-            <Tag key={k} color={KIND_COLORS[k] || 'default'} style={{ marginInlineEnd: 0 }}>
+            <Tag key={k} color={kindColors?.[k] || 'default'} style={{ marginInlineEnd: 0 }}>
               {k}
             </Tag>
           ))}

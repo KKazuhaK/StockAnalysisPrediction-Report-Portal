@@ -107,6 +107,11 @@ func RunServer(cfgPath string) {
 		log.Printf("seeded %d default report types", n)
 	}
 
+	if len(st.KindColors()) == 0 { // on first run, seed the shipped kind→color mapping (admin-editable afterward)
+		n := seedDefaultKindColors(st)
+		log.Printf("seeded %d default kind colors", n)
+	}
+
 	// Bundled Dify adapter (docs/adr/0006-dify-native.md): a marker plugin every Dify
 	// target references, so admins configure a workflow by pasting its API key — no
 	// manifest import needed.
@@ -174,6 +179,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/types/recompute", s.requireAdminJSON(s.apiTypesRecompute))
 	mux.HandleFunc("POST /api/admin/types/restore-defaults", s.requireAdminJSON(s.apiTypesRestoreDefaults))
 	mux.HandleFunc("DELETE /api/admin/types/{name}", s.requireAdminJSON(s.apiTypesDelete))
+	mux.HandleFunc("POST /api/admin/kind-colors", s.requireAdminJSON(s.apiKindColorSave))
 	mux.HandleFunc("GET /api/admin/users", s.requireAdminJSON(s.apiAdminUsers))
 	mux.HandleFunc("POST /api/admin/users", s.requireAdminJSON(s.apiUserAdd))
 	mux.HandleFunc("POST /api/admin/users/bulk", s.requireAdminJSON(s.apiUsersBulk))
@@ -550,6 +556,28 @@ func seedDefaultTypes(st *Store) int {
 		st.UpsertTypeConfig(t.Name, t.Kind, "", t.Ord, t.Summary)
 	}
 	return len(defaultSeedTypes)
+}
+
+// defaultKindColors is the shipped kind→antd-Tag-color mapping (first run only),
+// matching the pipeline kinds in kindOrder. Admins can change any of these
+// afterward on the Types Management page.
+var defaultKindColors = []struct {
+	Kind  string
+	Color string
+}{
+	{"重组决策", "volcano"},
+	{"投资决策", "blue"},
+	{"深度研究", "geekblue"},
+	{"技术分析", "purple"},
+	{"事件监测", "gold"},
+}
+
+// seedDefaultKindColors registers the default kind colors (first run only) and returns the count.
+func seedDefaultKindColors(st *Store) int {
+	for _, c := range defaultKindColors {
+		st.SetKindColor(c.Kind, c.Color)
+	}
+	return len(defaultKindColors)
 }
 
 func (s *Server) orderAndDefault(members []Rep) ([]Rep, string) {

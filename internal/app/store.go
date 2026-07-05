@@ -172,6 +172,9 @@ func (s *Store) init() error {
 		// Auto-registered on ingest, editable in the admin backend; replaces runKind guessing (runKind only serves as the fallback default for new types).
 		`CREATE TABLE IF NOT EXISTS type_config(
 			name TEXT PRIMARY KEY, kind TEXT, ord INTEGER DEFAULT 0, is_summary INTEGER DEFAULT 0, label TEXT)`,
+		// Admin-configurable antd Tag preset color per top-level kind (大类), replacing a
+		// previously-hardcoded frontend map. Kinds with no row here fall back to "default" client-side.
+		`CREATE TABLE IF NOT EXISTS kind_config(kind TEXT PRIMARY KEY, color TEXT)`,
 		// Login accounts (config.yaml only seeds on first startup, managed via the web UI afterwards). role can be extended with more roles.
 		`CREATE TABLE IF NOT EXISTS users(
 			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user')`,
@@ -427,6 +430,31 @@ func (s *Store) DeleteTypeConfig(name string) error {
 // a type that still has reports reappears as an unconfigured (discovered) entry.
 func (s *Store) ClearTypeConfigs() error {
 	_, err := s.exec("DELETE FROM type_config")
+	return err
+}
+
+// KindColors returns the admin-configured antd Tag preset color for each top-level
+// kind (大类), keyed by kind name. A kind absent from the map has no configured
+// color; callers fall back to "default".
+func (s *Store) KindColors() map[string]string {
+	m := map[string]string{}
+	rows, err := s.query("SELECT kind,color FROM kind_config")
+	if err != nil {
+		return m
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, color sql.NullString
+		rows.Scan(&kind, &color)
+		m[kind.String] = color.String
+	}
+	return m
+}
+
+// SetKindColor upserts the Tag color for one kind.
+func (s *Store) SetKindColor(kind, color string) error {
+	_, err := s.exec(`INSERT INTO kind_config(kind,color) VALUES(?,?)
+		ON CONFLICT(kind) DO UPDATE SET color=excluded.color`, kind, color)
 	return err
 }
 

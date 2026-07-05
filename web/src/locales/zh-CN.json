@@ -308,6 +308,7 @@
   "links.hint": "拖动行首手柄可调整顺序",
   "types.label": "显示名（tab 改名）",
   "types.kind": "大类",
+  "types.kindColor": "分类颜色",
   "types.summary": "汇总",
   "types.addName": "新类型名",
   "types.save": "保存本页",
