@@ -33,15 +33,19 @@
       },
       "IngestRequest": {
         "type": "object",
-        "required": ["symbol", "date", "subtype"],
+        "required": ["date", "subtype"],
+        "anyOf": [
+          { "required": ["symbol"] },
+          { "required": ["title"] }
+        ],
         "properties": {
-          "symbol": { "type": "string", "description": "股票代码，如 300750。", "examples": ["300750"] },
+          "symbol": { "type": "string", "description": "股票代码，如 300750。专题/主题类报告（无单一对应个股）可留空，但此时 title 必填，作为身份键的替代锚点。", "examples": ["300750"] },
           "date": { "type": "string", "description": "报告日期，YYYY-MM-DD（严格校验）。", "examples": ["2026-07-02"] },
           "subtype": { "type": "string", "description": "小类，如 汇总/财务分析。参与身份键。", "examples": ["汇总"] },
           "rtype": { "type": "string", "description": "subtype 的别名（subtype 缺失时用）。" },
           "kind": { "type": "string", "description": "大类，如 投资决策/深度研究/重组决策/事件监测/其他。为空则按注册表→runKind 推断。不参与身份键。" },
           "name": { "type": "string", "description": "入库当时公司名快照。为空则取当时现名。历史不可变。" },
-          "title": { "type": "string" },
+          "title": { "type": "string", "description": "报告标题。symbol 为空时（专题/主题类报告）必填，替代 symbol 参与身份键，避免同日不同主题互相覆盖。" },
           "source": { "type": "string", "description": "来源/作者，可按此过滤查询。" },
           "run_id": { "type": "string", "description": "批次/生成轮次标签，不参与身份键。" },
           "time": { "type": "string", "description": "报告时刻，UTC RFC3339（如 2026-07-03T06:14:22Z）。省略或非法时服务端盖当前 UTC 时刻；仅当传入为合法 RFC3339 才采用（如 GET /api/v1/now 的 utc）。不参与身份键，仅用于同日排序与显示。" },
