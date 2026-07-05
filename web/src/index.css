@@ -151,3 +151,44 @@ body {
 .rp-announcement.ant-alert-with-description .ant-alert-message {
   margin-bottom: 2px;
 }
+
+/* ── Stock reading layout (StockPage) ──────────────────────────────────────────
+   A container query on the available width, not the viewport, so it also reacts to
+   the reader "wide" mode changing the page max-width. Wide enough: the timeline
+   floats in the left gutter next to a centered, comfortably-wide reading column
+   (it uses margin that would otherwise be empty, so the article keeps its width and
+   stays centered). Narrower: the timeline collapses to a horizontal strip on top and
+   the reading column goes full width. */
+.rp-reader {
+  container-type: inline-size;
+}
+.rp-reader__strip {
+  margin-bottom: 16px;
+}
+.rp-reader__rail {
+  display: none;
+}
+.rp-reader__doc {
+  max-width: 920px;
+  margin: 0 auto;
+}
+@container (min-width: 1160px) {
+  .rp-reader__strip {
+    display: none;
+  }
+  .rp-reader__body {
+    position: relative;
+  }
+  .rp-reader__rail {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 210px;
+  }
+  .rp-reader__doc {
+    width: min(100% - 440px, 980px);
+    max-width: none;
+    margin: 0 auto;
+  }
+}

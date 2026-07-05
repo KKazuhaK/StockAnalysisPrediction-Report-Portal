@@ -261,16 +261,23 @@ export default function AppLayout() {
         </Space>
       </Header>
 
+      {/* The announcement lives in its own fixed-width band (not inside the Content whose
+          max-width flexes with reader "wide" mode), so it never resizes or slides when
+          you enter/leave a wide reading page. */}
+      {!onManage && (
+        <div style={{ maxWidth: 1240, width: '100%', margin: '0 auto', padding: '0 20px' }}>
+          <SiteAnnouncement style={{ marginTop: 24, marginBottom: 0 }} />
+        </div>
+      )}
+
       <Content
         style={{
           padding: onManage ? 0 : '24px 20px',
           maxWidth: onManage ? 'none' : contentMaxWidth,
           width: '100%',
           margin: '0 auto',
-          transition: 'max-width 0.2s ease',
         }}
       >
-        {!onManage && <SiteAnnouncement style={{ marginBottom: 14 }} />}
         <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
           <Outlet />
         </Suspense>

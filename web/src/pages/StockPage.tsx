@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { Button, Card, Col, Empty, Grid, Result, Row, Segmented, Space, Spin, Tag, Typography } from 'antd'
+import { Button, Card, Empty, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -17,9 +17,7 @@ export default function StockPage() {
   const { symbol = '' } = useParams()
   const [sp, setSp] = useSearchParams()
   const navigate = useNavigate()
-  const screens = Grid.useBreakpoint()
-  const isMobile = !screens.md
-  const { fontSize, fontWeight, wide } = useReaderPrefs()
+  const { fontSize, fontWeight } = useReaderPrefs()
   const readerVars = { '--md-fs': `${fontSize}px`, '--md-fw': String(fontWeight) } as CSSProperties
   const [data, setData] = useState<StockResp | null>(null)
   const [loading, setLoading] = useState(true)
@@ -104,61 +102,68 @@ export default function StockPage() {
           )}
         </Space>
 
-        <Row gutter={[20, 16]}>
-          {/* Timeline — vertical scroll box on desktop, horizontal chip strip on mobile.
-              It only holds a date + count, so it narrows on wider screens (and further
-              in wide mode) to hand that width to the reading column. Kept a touch wider
-              at the md breakpoint (768–992) so the date never wraps on small laptops. */}
-          <Col xs={24} md={wide ? 5 : 6} lg={wide ? 4 : 5}>
-            <Card size="small" title={t('stock.timeline')} styles={{ body: { paddingTop: 16 } }}>
-              <TimelinePanel nodes={data.timeline} selected={data.selDate} onSelect={setDate} horizontal={isMobile} />
+        {/* Reader layout (see .rp-reader in index.css). A container query decides:
+            wide enough → the timeline floats in the left gutter beside a centered reading
+            column; narrower → it collapses to a horizontal date strip on top. Either way
+            the article stays centered and keeps its width. */}
+        <div className="rp-reader">
+          <div className="rp-reader__strip">
+            <Card size="small" title={t('stock.timeline')} styles={{ body: { paddingTop: 12 } }}>
+              <TimelinePanel nodes={data.timeline} selected={data.selDate} onSelect={setDate} horizontal />
             </Card>
-          </Col>
+          </div>
 
-          {/* Main content area */}
-          <Col xs={24} md={wide ? 19 : 18} lg={wide ? 20 : 19}>
-            <Space direction="vertical" size={12} style={{ width: '100%' }}>
-              {data.kinds.length > 1 && (
-                <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
-                  <Segmented
-                    value={data.selKind}
-                    onChange={(v) => setKind(String(v))}
-                    options={data.kinds.map((k) => ({ label: k, value: k }))}
-                  />
-                </div>
-              )}
-              {data.subtabs.length > 1 && (
-                // Report-type strip: a horizontal-scroll Segmented (same pattern as the
-                // category strip above) so it swipes smoothly on mobile instead of
-                // dragging the whole page.
-                <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
-                  <Segmented
-                    value={data.selRID}
-                    onChange={(v) => setRid(String(v))}
-                    options={data.subtabs.map((s) => ({ label: s.label, value: s.rid }))}
-                  />
-                </div>
-              )}
-              <Card
-                styles={{ body: { paddingTop: 8 } }}
-                title={rep?.title}
-                extra={rep ? <ReaderControls /> : undefined}
-                style={readerVars}
-              >
-                {rep && isInstant(rep.time) && (
-                  <Typography.Text
-                    type="secondary"
-                    title={formatReportDateTime(rep.time)}
-                    style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
-                  >
-                    <ClockCircleOutlined /> {formatReportDateTime(rep.time)}
-                  </Typography.Text>
-                )}
-                {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
+          <div className="rp-reader__body">
+            <div className="rp-reader__rail">
+              <Card size="small" title={t('stock.timeline')} styles={{ body: { paddingTop: 16 } }}>
+                <TimelinePanel nodes={data.timeline} selected={data.selDate} onSelect={setDate} horizontal={false} />
               </Card>
-            </Space>
-          </Col>
-        </Row>
+            </div>
+
+            <div className="rp-reader__doc">
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                {data.kinds.length > 1 && (
+                  <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
+                    <Segmented
+                      value={data.selKind}
+                      onChange={(v) => setKind(String(v))}
+                      options={data.kinds.map((k) => ({ label: k, value: k }))}
+                    />
+                  </div>
+                )}
+                {data.subtabs.length > 1 && (
+                  // Report-type strip: a horizontal-scroll Segmented (same pattern as the
+                  // category strip above) so it swipes smoothly on mobile instead of
+                  // dragging the whole page.
+                  <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
+                    <Segmented
+                      value={data.selRID}
+                      onChange={(v) => setRid(String(v))}
+                      options={data.subtabs.map((s) => ({ label: s.label, value: s.rid }))}
+                    />
+                  </div>
+                )}
+                <Card
+                  styles={{ body: { paddingTop: 8 } }}
+                  title={rep?.title}
+                  extra={rep ? <ReaderControls /> : undefined}
+                  style={readerVars}
+                >
+                  {rep && isInstant(rep.time) && (
+                    <Typography.Text
+                      type="secondary"
+                      title={formatReportDateTime(rep.time)}
+                      style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
+                    >
+                      <ClockCircleOutlined /> {formatReportDateTime(rep.time)}
+                    </Typography.Text>
+                  )}
+                  {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
+                </Card>
+              </Space>
+            </div>
+          </div>
+        </div>
       </Space>
     </Spin>
   )
