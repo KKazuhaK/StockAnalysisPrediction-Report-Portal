@@ -83,6 +83,11 @@ body {
   border-left: 3px solid var(--rp-border, rgba(128, 128, 128, 0.4));
   color: rgba(128, 128, 128, 1);
 }
+.md-body .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25em 0;
+}
 .md-body img {
   max-width: 100%;
 }

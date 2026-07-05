@@ -98,20 +98,18 @@ export default function AnnouncementPage() {
             const title = String(getFieldValue('announcementTitle') || '').trim()
             const content = String(getFieldValue('announcementContent') || '').trim()
             if (!enabled || (!title && !content)) return null
+            const previewTitle = title ? <Typography.Text style={{ fontWeight: 700 }}>{title}</Typography.Text> : undefined
+            const previewContent = content ? (
+              <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line', lineHeight: 1.5 }}>
+                {content}
+              </Typography.Text>
+            ) : undefined
             return (
               <Alert
                 showIcon
                 type={announcementAlertType(getFieldValue('announcementLevel'))}
-                message={
-                  <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', lineHeight: 1.35 }}>
-                    {title && <Typography.Text strong>{title}</Typography.Text>}
-                    {content && (
-                      <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line' }}>
-                        {content}
-                      </Typography.Text>
-                    )}
-                  </span>
-                }
+                message={previewTitle || previewContent}
+                description={previewTitle ? previewContent : undefined}
                 style={{ borderRadius: 8, paddingBlock: 8, marginBottom: 20 }}
               />
             )

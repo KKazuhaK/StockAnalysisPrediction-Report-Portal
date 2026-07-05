@@ -11,8 +11,11 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8790',
       '/app-assets': 'http://localhost:8790', // installed iframe apps' static files (ADR 0003)
+      '/site-assets': 'http://localhost:8790',
       '/report': 'http://localhost:8790',
       '/healthz': 'http://localhost:8790',
+      '/manifest.webmanifest': 'http://localhost:8790',
+      '/pwa-icon': 'http://localhost:8790',
     },
   },
   build: {

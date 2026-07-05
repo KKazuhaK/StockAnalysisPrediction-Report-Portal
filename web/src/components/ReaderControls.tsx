@@ -76,7 +76,7 @@ export default function ReaderControls() {
 
   return (
     <Popover content={content} title={t('reader.title')} trigger="click" placement="bottomRight">
-      <Button icon={<FontSizeOutlined />} size="small">
+      <Button icon={<FontSizeOutlined />} style={{ height: 42, paddingBlock: 8, paddingInline: 14 }}>
         {t('reader.title')}
       </Button>
     </Popover>

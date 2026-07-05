@@ -29,11 +29,13 @@ func (s *Server) pwaManifest(w http.ResponseWriter, r *http.Request) {
 		"name":             title,
 		"short_name":       shortManifestName(title),
 		"description":      title,
+		"id":               "/",
 		"start_url":        "/",
 		"scope":            "/",
 		"display":          "standalone",
 		"background_color": "#ffffff",
 		"theme_color":      "#1677ff",
+		"prefer_related_applications": false,
 		"icons": []map[string]string{
 			{"src": "/pwa-icon", "sizes": "192x192", "purpose": "any maskable"},
 			{"src": "/pwa-icon", "sizes": "512x512", "purpose": "any maskable"},

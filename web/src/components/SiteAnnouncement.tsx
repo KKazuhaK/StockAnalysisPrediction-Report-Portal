@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { Alert, Button, Checkbox, Modal, Space, Typography } from 'antd'
+import { Alert, Button, Space, Modal, Typography } from 'antd'
 import type { AlertProps } from 'antd'
 import { useTranslation } from 'react-i18next'
+import { useLocation } from 'react-router-dom'
 import { useSite } from '../site'
 import type { AnnouncementLevel } from '../api/types'
 
-const DISMISSED_KEY = 'report-portal.site-announcement.dismissed'
 const POPUP_DISMISSED_KEY = 'report-portal.site-announcement.popup.dismissed'
-const POPUP_SEEN_KEY = 'report-portal.site-announcement.popup.seen'
 
 const ALERT_TYPES: Record<AnnouncementLevel, AlertProps['type']> = {
   notice: 'info',
@@ -45,24 +44,9 @@ function writeStorage(key: string, value: string) {
   }
 }
 
-function readSession(key: string) {
-  try {
-    return window.sessionStorage.getItem(key) || ''
-  } catch {
-    return ''
-  }
-}
-
-function writeSession(key: string, value: string) {
-  try {
-    window.sessionStorage.setItem(key, value)
-  } catch {
-    // Ignore private-mode/storage failures; the popup can still close for this render.
-  }
-}
-
 export default function SiteAnnouncement({ style }: { style?: CSSProperties }) {
   const { t } = useTranslation()
+  const loc = useLocation()
   const { settings } = useSite()
   const title = settings.announcementTitle.trim()
   const content = settings.announcementContent.trim()
@@ -71,71 +55,50 @@ export default function SiteAnnouncement({ style }: { style?: CSSProperties }) {
     if (!enabled) return ''
     return hashAnnouncement(JSON.stringify({ level: settings.announcementLevel, title, content }))
   }, [content, enabled, settings.announcementLevel, title])
-  const [dismissed, setDismissed] = useState(() => readStorage(DISMISSED_KEY))
   const [popupDismissed, setPopupDismissed] = useState(() => readStorage(POPUP_DISMISSED_KEY))
-  const [popupSeen, setPopupSeen] = useState(() => readSession(POPUP_SEEN_KEY))
   const [popupOpen, setPopupOpen] = useState(false)
-  const [popupDontShowAgain, setPopupDontShowAgain] = useState(false)
 
   useEffect(() => {
-    setDismissed(readStorage(DISMISSED_KEY))
     const storedPopup = readStorage(POPUP_DISMISSED_KEY)
-    const seenPopup = readSession(POPUP_SEEN_KEY)
     setPopupDismissed(storedPopup)
-    setPopupSeen(seenPopup)
-    setPopupDontShowAgain(false)
-    setPopupOpen(enabled && settings.announcementPopup && storedPopup !== announcementKey && seenPopup !== announcementKey)
-  }, [announcementKey, enabled, settings.announcementPopup])
+    setPopupOpen(loc.pathname === '/' && enabled && settings.announcementPopup && storedPopup !== announcementKey)
+  }, [announcementKey, enabled, loc.key, loc.pathname, settings.announcementPopup])
 
   if (!enabled) return null
 
-  const closeBanner = () => {
-    writeStorage(DISMISSED_KEY, announcementKey)
-    setDismissed(announcementKey)
-  }
-  const closePopup = () => {
-    if (popupDontShowAgain) {
+  const closePopup = (dontShowAgain = false) => {
+    if (dontShowAgain) {
       writeStorage(POPUP_DISMISSED_KEY, announcementKey)
       setPopupDismissed(announcementKey)
     }
-    writeSession(POPUP_SEEN_KEY, announcementKey)
-    setPopupSeen(announcementKey)
     setPopupOpen(false)
   }
-  const message = (
-    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', lineHeight: 1.35 }}>
-      {title && <Typography.Text strong>{title}</Typography.Text>}
-      {content && (
-        <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line' }}>
-          {content}
-        </Typography.Text>
-      )}
-    </span>
-  )
-  const showBanner = dismissed !== announcementKey
+  const message = title ? <Typography.Text style={{ fontWeight: 700 }}>{title}</Typography.Text> : undefined
+  const description = content ? (
+    <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line', lineHeight: 1.5 }}>
+      {content}
+    </Typography.Text>
+  ) : undefined
 
   return (
     <>
-      {showBanner && (
-        <Alert
-          showIcon
-          closable
-          type={announcementAlertType(settings.announcementLevel)}
-          message={message}
-          onClose={closeBanner}
-          style={{ borderRadius: 8, paddingBlock: 8, ...style }}
-        />
-      )}
+      <Alert
+        showIcon
+        type={announcementAlertType(settings.announcementLevel)}
+        message={message || description}
+        description={message ? description : undefined}
+        style={{ borderRadius: 8, paddingBlock: 8, ...style }}
+      />
       <Modal
-        open={popupOpen && popupDismissed !== announcementKey && popupSeen !== announcementKey}
-        title={title || t('announcement.popupTitle')}
-        onCancel={closePopup}
+        open={popupOpen && popupDismissed !== announcementKey}
+        title={<Typography.Text style={{ fontWeight: 700 }}>{title || t('announcement.popupTitle')}</Typography.Text>}
+        onCancel={() => closePopup(false)}
         footer={
-          <Space style={{ width: '100%', justifyContent: 'space-between' }} wrap>
-            <Checkbox checked={popupDontShowAgain} onChange={(e) => setPopupDontShowAgain(e.target.checked)}>
+          <Space style={{ width: '100%', justifyContent: 'flex-end' }} wrap>
+            <Button onClick={() => closePopup(true)}>
               {t('announcement.dontShowAgain')}
-            </Checkbox>
-            <Button type="primary" onClick={closePopup}>
+            </Button>
+            <Button type="primary" onClick={() => closePopup(false)}>
               {t('announcement.gotIt')}
             </Button>
           </Space>

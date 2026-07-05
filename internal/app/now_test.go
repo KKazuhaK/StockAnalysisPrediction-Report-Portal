@@ -278,7 +278,8 @@ func TestPWAManifestAndIcon(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
 		t.Fatalf("manifest JSON: %v", err)
 	}
-	if m["name"] != "智研平台" || m["display"] != "standalone" || m["start_url"] != "/" {
+	if m["name"] != "智研平台" || m["display"] != "standalone" || m["start_url"] != "/" ||
+		m["id"] != "/" || m["prefer_related_applications"] != false {
 		t.Errorf("manifest = %v", m)
 	}
 
