@@ -106,6 +106,7 @@ export default function AnnouncementPage() {
             ) : undefined
             return (
               <Alert
+                className="rp-announcement"
                 showIcon
                 type={announcementAlertType(getFieldValue('announcementLevel'))}
                 message={previewTitle || previewContent}

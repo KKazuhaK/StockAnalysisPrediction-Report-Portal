@@ -16,6 +16,11 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }))
 
+// The footer shows the build version; stub the fetch.
+vi.mock('../../api/client', () => ({
+  api: { get: () => Promise.resolve({ version: '9.9.9' }) },
+}))
+
 const COLLAPSE_KEY = 'rp.manage.sider.collapsed'
 
 describe('ManageLayout — grouped rail', () => {

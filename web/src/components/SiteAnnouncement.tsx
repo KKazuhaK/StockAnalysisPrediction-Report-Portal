@@ -83,6 +83,7 @@ export default function SiteAnnouncement({ style }: { style?: CSSProperties }) {
   return (
     <>
       <Alert
+        className="rp-announcement"
         showIcon
         type={announcementAlertType(settings.announcementLevel)}
         message={message || description}

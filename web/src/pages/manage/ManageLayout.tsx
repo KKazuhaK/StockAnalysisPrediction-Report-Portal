@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Button, Menu, theme } from 'antd'
+import { Suspense, useEffect, useState } from 'react'
+import { Button, Menu, Spin, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   ApiOutlined,
@@ -18,6 +18,7 @@ import {
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { api } from '../../api/client'
 
 const COLLAPSE_KEY = 'rp.manage.sider.collapsed'
 const NARROW_QUERY = '(max-width: 767px)'
@@ -50,7 +51,12 @@ export default function ManageLayout() {
       return false
     }
   })
+  const [ver, setVer] = useState('')
   const active = loc.pathname.split('/')[2] || 'site'
+
+  useEffect(() => {
+    api.get<{ version: string }>('/api/version').then((r) => setVer(r.version)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     let mq: MediaQueryList
@@ -157,10 +163,19 @@ export default function ManageLayout() {
           />
         </div>
         {!narrow && (
-          <div style={{ flex: '0 0 auto', borderTop: `1px solid ${token.colorBorderSecondary}`, padding: 8 }}>
+          <div
+            style={{
+              flex: '0 0 auto',
+              borderTop: `1px solid ${token.colorBorderSecondary}`,
+              padding: 8,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              justifyContent: collapsed ? 'center' : 'space-between',
+            }}
+          >
             <Button
               type="text"
-              block
               aria-label={t('nav.collapse')}
               onClick={toggle}
               icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
@@ -168,11 +183,21 @@ export default function ManageLayout() {
             >
               {!collapsed && <span style={{ marginInlineStart: 8 }}>{t('nav.collapse')}</span>}
             </Button>
+            {!collapsed && ver && (
+              <Typography.Text
+                type="secondary"
+                style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', paddingInlineEnd: 4 }}
+              >
+                v{ver}
+              </Typography.Text>
+            )}
           </div>
         )}
       </div>
       <div style={{ flex: '1 1 auto', minWidth: 0, padding: narrow ? '16px' : '20px 24px' }}>
-        <Outlet />
+        <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
+          <Outlet />
+        </Suspense>
       </div>
     </div>
   )

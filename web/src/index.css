@@ -91,3 +91,9 @@ body {
 .md-body img {
   max-width: 100%;
 }
+
+/* Announcement banner/preview: antd top-aligns the icon when a description is present,
+   which leaves it floating in the top-left. Center it against the title+text block. */
+.rp-announcement.ant-alert-with-description {
+  align-items: center;
+}

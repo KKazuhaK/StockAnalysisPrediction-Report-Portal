@@ -254,7 +254,7 @@ export default function AppLayout() {
         />
       )}
 
-      {showFooter && (
+      {showFooter && !onManage && (
         <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
           <Space size={6} wrap align="center" style={{ justifyContent: 'center' }}>
             {showFooterInfo && (

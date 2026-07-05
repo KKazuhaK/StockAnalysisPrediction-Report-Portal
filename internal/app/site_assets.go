@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -72,7 +73,13 @@ func (s *Server) siteAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	raw, err := os.ReadFile(filepath.Join(s.siteAssetsDir(), name))
+	path := filepath.Join(s.siteAssetsDir(), name)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	info, err := os.Stat(path)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -82,12 +89,15 @@ func (s *Server) siteAsset(w http.ResponseWriter, r *http.Request) {
 		mime = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", mime)
-	w.Header().Set("Cache-Control", "no-cache")
+	// Cache the logo/icon (a stable URL whose bytes rarely change) so it doesn't
+	// re-download and flicker on every page load. ServeContent revalidates against the
+	// file mtime (If-Modified-Since), so a re-upload is picked up once max-age lapses.
+	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if strings.HasSuffix(strings.ToLower(name), ".svg") {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	}
-	w.Write(raw)
+	http.ServeContent(w, r, name, info.ModTime(), bytes.NewReader(raw))
 }
 
 func (s *Server) siteAssetsDir() string {
