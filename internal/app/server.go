@@ -566,7 +566,7 @@ var defaultKindColors = []struct {
 	Color string
 }{
 	{"重组决策", "volcano"},
-	{"投资决策", "blue"},
+	{"投资决策", "green"},
 	{"深度研究", "geekblue"},
 	{"技术分析", "purple"},
 	{"事件监测", "gold"},

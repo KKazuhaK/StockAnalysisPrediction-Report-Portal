@@ -97,3 +97,7 @@ body {
 .rp-announcement.ant-alert-with-description {
   align-items: center;
 }
+/* Tighten the gap between the announcement title and its body a touch. */
+.rp-announcement.ant-alert-with-description .ant-alert-message {
+  margin-bottom: 2px;
+}

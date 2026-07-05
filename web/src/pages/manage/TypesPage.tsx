@@ -64,9 +64,11 @@ function ColorSwatch({ color, size, selected }: { color: string; size: number; s
         height: size,
         borderRadius: '50%',
         flexShrink: 0,
-        background: hex || '#fff',
-        border: hex ? 'none' : '1px solid #d9d9d9',
-        boxShadow: selected ? `0 0 0 2px #fff, 0 0 0 4px ${hex || '#8c8c8c'}` : undefined,
+        background: hex || 'var(--ant-color-fill-tertiary)',
+        border: hex ? 'none' : '1px solid var(--ant-color-border)',
+        boxShadow: selected
+          ? `0 0 0 2px var(--ant-color-bg-container), 0 0 0 4px ${hex || 'var(--ant-color-text-tertiary)'}`
+          : undefined,
       }}
     />
   )
@@ -112,14 +114,14 @@ function KindColorPicker({ color, onChange }: { color: string; onChange: (color:
           alignItems: 'center',
           gap: 5,
           padding: '3px 7px',
-          border: '1px solid #d9d9d9',
+          border: '1px solid var(--ant-color-border)',
           borderRadius: 6,
-          background: '#fff',
+          background: 'var(--ant-color-bg-container)',
           cursor: 'pointer',
         }}
       >
         <ColorSwatch color={color} size={14} />
-        <DownOutlined style={{ fontSize: 9, color: '#8c8c8c' }} />
+        <DownOutlined style={{ fontSize: 9, color: 'var(--ant-color-text-tertiary)' }} />
       </button>
     </Popover>
   )
