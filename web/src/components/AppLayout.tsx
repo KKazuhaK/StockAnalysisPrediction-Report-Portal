@@ -29,6 +29,9 @@ export default function AppLayout() {
   const screens = Grid.useBreakpoint()
   const compact = !screens.md // phone / small tablet
   const onHome = loc.pathname === '/'
+  // The admin console runs full-bleed (its own left rail wants the whole width) and
+  // suppresses the reader-facing announcement banner, which is noise for an operator.
+  const onManage = loc.pathname === '/manage' || loc.pathname.startsWith('/manage/')
   // Reading routes in "wide" mode get a roomier page than the default 1240 cap.
   const { wide } = useReaderPrefs()
   const onReader = /^\/(stock|run)\//.test(loc.pathname)
@@ -51,6 +54,17 @@ export default function AppLayout() {
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
+  // Publish the real (wrap-aware) header height so the /manage sticky rail can offset by
+  // it instead of assuming a fixed 64px — the header grows taller when it wraps on mobile.
+  useEffect(() => {
+    const measure = () => {
+      const el = document.getElementById('rp-app-header')
+      if (el) document.documentElement.style.setProperty('--rp-header-h', `${el.offsetHeight}px`)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
   // Light poll for the header queue badge (the drawer refreshes faster when open).
   useEffect(() => {
     if (!canRun) return
@@ -68,6 +82,7 @@ export default function AppLayout() {
   return (
     <Layout style={{ minHeight: '100vh', background: token.colorBgLayout }}>
       <Header
+        id="rp-app-header"
         style={{
           position: 'sticky',
           top: 0,
@@ -210,8 +225,16 @@ export default function AppLayout() {
         </Space>
       </Header>
 
-      <Content style={{ padding: '24px 20px', maxWidth: contentMaxWidth, width: '100%', margin: '0 auto', transition: 'max-width 0.2s ease' }}>
-        <SiteAnnouncement style={{ marginBottom: 14 }} />
+      <Content
+        style={{
+          padding: onManage ? 0 : '24px 20px',
+          maxWidth: onManage ? 'none' : contentMaxWidth,
+          width: '100%',
+          margin: '0 auto',
+          transition: 'max-width 0.2s ease',
+        }}
+      >
+        {!onManage && <SiteAnnouncement style={{ marginBottom: 14 }} />}
         <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
           <Outlet />
         </Suspense>

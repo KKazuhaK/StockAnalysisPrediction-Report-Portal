@@ -7,7 +7,7 @@ const navigate = vi.fn()
 // The layout reads the active key off the path and navigates on menu click.
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigate,
-  useLocation: () => ({ pathname: '/manage/links' }),
+  useLocation: () => ({ pathname: '/manage/site' }),
   Outlet: () => null,
 }))
 
@@ -16,10 +16,15 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }))
 
-describe('ManageLayout — grouped nav', () => {
-  beforeEach(() => navigate.mockReset())
+const COLLAPSE_KEY = 'rp.manage.sider.collapsed'
 
-  it('renders section group headers, not a flat tab bar', () => {
+describe('ManageLayout — grouped rail', () => {
+  beforeEach(() => {
+    navigate.mockReset()
+    localStorage.removeItem(COLLAPSE_KEY)
+  })
+
+  it('renders section group headers (no Maintenance group after legacy import removal)', () => {
     render(<ManageLayout />)
     for (const header of [
       'nav.group.site',
@@ -27,22 +32,30 @@ describe('ManageLayout — grouped nav', () => {
       'nav.group.access',
       'nav.group.batch',
       'nav.group.integrations',
-      'nav.group.maintenance',
     ]) {
       expect(screen.getByText(header)).toBeTruthy()
     }
+    expect(screen.queryByText('nav.group.maintenance')).toBeNull()
   })
 
-  it('exposes the pages that used to be buried under Settings as top-level items', () => {
+  it('exposes the pages that used to be buried under Settings; legacy import is gone', () => {
     render(<ManageLayout />)
-    for (const leaf of ['settings.general', 'nav.announcement', 'settings.tokens', 'settings.apidoc', 'settings.legacyTab']) {
+    for (const leaf of ['settings.general', 'nav.announcement', 'settings.tokens', 'settings.apidoc']) {
       expect(screen.getByText(leaf)).toBeTruthy()
     }
+    expect(screen.queryByText('settings.legacyTab')).toBeNull()
   })
 
   it('navigates to the sub-route when a menu item is clicked', () => {
     render(<ManageLayout />)
     fireEvent.click(screen.getByText('nav.webhooks'))
     expect(navigate).toHaveBeenCalledWith('/manage/webhooks')
+  })
+
+  it('collapses the rail and persists the choice', () => {
+    render(<ManageLayout />)
+    expect(localStorage.getItem(COLLAPSE_KEY)).toBeNull()
+    fireEvent.click(screen.getByText('nav.collapse'))
+    expect(localStorage.getItem(COLLAPSE_KEY)).toBe('1')
   })
 })

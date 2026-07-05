@@ -23,7 +23,6 @@ const SiteSettingsPage = lazyRetry(() => import('./pages/manage/SiteSettingsPage
 const AnnouncementPage = lazyRetry(() => import('./pages/manage/AnnouncementPage'))
 const TokensPage = lazyRetry(() => import('./pages/manage/TokensPage'))
 const ApiDocPage = lazyRetry(() => import('./pages/manage/ApiDocPage'))
-const LegacyImportPage = lazyRetry(() => import('./pages/manage/LegacyImportPage'))
 const BatchAdminPage = lazyRetry(() => import('./pages/manage/BatchAdminPage'))
 const RunQueueSettingsPage = lazyRetry(() => import('./pages/manage/RunQueueSettingsPage'))
 const WebhooksPage = lazyRetry(() => import('./pages/manage/WebhooksPage'))
@@ -114,7 +113,6 @@ function AppRoutes() {
           <Route path="apps" element={<AppsAdminPage />} />
           <Route path="webhooks" element={<WebhooksPage />} />
           <Route path="apidoc" element={<ApiDocPage />} />
-          <Route path="legacy" element={<LegacyImportPage />} />
           {/* Back-compat: the old catch-all Settings tab split into these pages. */}
           <Route path="settings" element={<Navigate to="/manage/site" replace />} />
         </Route>

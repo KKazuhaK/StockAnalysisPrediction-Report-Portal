@@ -4,7 +4,6 @@ import {
   Avatar,
   Button,
   Card,
-  Drawer,
   Dropdown,
   Empty,
   Form,
@@ -16,6 +15,7 @@ import {
   Space,
   Switch,
   Table,
+  Tabs,
   Tag,
   Tooltip,
   Typography,
@@ -27,7 +27,6 @@ import {
   KeyOutlined,
   PlusOutlined,
   SearchOutlined,
-  TeamOutlined,
   ThunderboltOutlined,
   UsergroupAddOutlined,
 } from '@ant-design/icons'
@@ -64,7 +63,6 @@ export default function UsersPage() {
   const [selected, setSelected] = useState<string[]>([])
   const [editUser, setEditUser] = useState<UserRow | 'new' | null>(null)
   const [pwUser, setPwUser] = useState<string | null>(null)
-  const [groupsOpen, setGroupsOpen] = useState(false)
   const [form] = Form.useForm()
   const [pwForm] = Form.useForm()
 
@@ -238,7 +236,7 @@ export default function UsersPage() {
     load()
   }
 
-  return (
+  const accounts = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
         <Space wrap>
@@ -267,14 +265,9 @@ export default function UsersPage() {
             options={groups.map((g) => ({ value: g.id, label: g.name }))}
           />
         </Space>
-        <Space>
-          <Button icon={<TeamOutlined />} onClick={() => setGroupsOpen(true)}>
-            {t('users.manageGroups')}
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
-            {t('users.add')}
-          </Button>
-        </Space>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
+          {t('users.add')}
+        </Button>
       </Space>
 
       {selected.length > 0 && (
@@ -364,23 +357,23 @@ export default function UsersPage() {
           </Form.Item>
         </Form>
       </Modal>
-
-      <GroupsDrawer open={groupsOpen} onClose={() => setGroupsOpen(false)} groups={groups} onChanged={load} />
     </Space>
+  )
+
+  return (
+    <Tabs
+      defaultActiveKey="accounts"
+      items={[
+        { key: 'accounts', label: t('users.tabAccounts'), children: accounts },
+        { key: 'groups', label: t('users.tabGroups'), children: <GroupsPanel groups={groups} onChanged={load} /> },
+      ]}
+    />
   )
 }
 
-function GroupsDrawer({
-  open,
-  onClose,
-  groups,
-  onChanged,
-}: {
-  open: boolean
-  onClose: () => void
-  groups: UserGroupRow[]
-  onChanged: () => void
-}) {
+// Groups list + editor, shown as the "groups" sub-tab of the users page (it used to
+// be a Drawer opened from a toolbar button). Weight / priority feed the run queue.
+function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged: () => void }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [edit, setEdit] = useState<UserGroupRow | 'new' | null>(null)
@@ -411,13 +404,12 @@ function GroupsDrawer({
   }
 
   return (
-    <Drawer title={t('users.groupsTitle')} width={420} open={open} onClose={onClose}
-      extra={
-        <Button type="primary" size="small" icon={<UsergroupAddOutlined />} onClick={() => openForm('new')}>
+    <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button type="primary" icon={<UsergroupAddOutlined />} onClick={() => openForm('new')}>
           {t('users.addGroup')}
         </Button>
-      }
-    >
+      </div>
       {groups.length === 0 ? (
         <Empty description={t('users.noGroups')} />
       ) : (
@@ -480,6 +472,6 @@ function GroupsDrawer({
           </Form.Item>
         </Form>
       </Modal>
-    </Drawer>
+    </Space>
   )
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Space, Table, Tag, Typography, Upload } from 'antd'
+import { Alert, App, Button, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, DeleteOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -147,36 +147,45 @@ export default function BatchAdminPage() {
   ]
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card
-        title={t('batch.admin.targets')}
-        extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openTarget}>
-            {t('batch.dify.newTarget')}
-          </Button>
-        }
-      >
-        {targets.length === 0 && <Typography.Text type="secondary">{t('batch.dify.targetsHint')}</Typography.Text>}
-        <Table rowKey="id" size="small" dataSource={targets} columns={targetCols} pagination={false} style={{ marginTop: targets.length ? 0 : 12 }} />
-      </Card>
-
-      {/* Advanced: custom (non-Dify) manifest plugins */}
-      <Card
-        title={<Typography.Text type="secondary">{t('batch.admin.advancedPlugins')}</Typography.Text>}
-        extra={
-          <Upload accept=".json" showUploadList={false} beforeUpload={importFile}>
-            <Button size="small" icon={<UploadOutlined />}>
-              {t('batch.admin.importManifest')}
-            </Button>
-          </Upload>
-        }
-      >
-        {customPlugins.length === 0 ? (
-          <Typography.Text type="secondary">{t('batch.admin.advancedPluginsHint')}</Typography.Text>
-        ) : (
-          <Table rowKey="slug" size="small" dataSource={customPlugins} columns={pluginCols} pagination={false} />
-        )}
-      </Card>
+    <>
+      <Tabs
+        defaultActiveKey="targets"
+        items={[
+          {
+            key: 'targets',
+            label: t('batch.admin.targets'),
+            children: (
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={openTarget}>
+                    {t('batch.dify.newTarget')}
+                  </Button>
+                </div>
+                {targets.length === 0 && <Typography.Text type="secondary">{t('batch.dify.targetsHint')}</Typography.Text>}
+                <Table rowKey="id" size="small" dataSource={targets} columns={targetCols} pagination={false} />
+              </Space>
+            ),
+          },
+          {
+            key: 'plugins',
+            label: t('batch.admin.advancedPlugins'),
+            children: (
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Upload accept=".json" showUploadList={false} beforeUpload={importFile}>
+                    <Button icon={<UploadOutlined />}>{t('batch.admin.importManifest')}</Button>
+                  </Upload>
+                </div>
+                {customPlugins.length === 0 ? (
+                  <Typography.Text type="secondary">{t('batch.admin.advancedPluginsHint')}</Typography.Text>
+                ) : (
+                  <Table rowKey="slug" size="small" dataSource={customPlugins} columns={pluginCols} pagination={false} />
+                )}
+              </Space>
+            ),
+          },
+        ]}
+      />
 
       {/* New Dify workflow target */}
       <Modal
@@ -230,6 +239,6 @@ export default function BatchAdminPage() {
           )}
         </Form>
       </Modal>
-    </Space>
+    </>
   )
 }

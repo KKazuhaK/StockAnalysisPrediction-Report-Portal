@@ -24,3 +24,22 @@ if (typeof window !== 'undefined' && !window.localStorage) {
   }
   Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
 }
+
+// jsdom has no matchMedia; antd's responsive hooks (Grid.useBreakpoint, used by Tabs /
+// Table / Row) call it on mount. Install an inert, never-matching implementation so
+// components that rely on it render under test.
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {}, // deprecated, but antd's observer still calls it
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  })
+}
