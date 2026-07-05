@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Button, Menu, Spin, Typography, theme } from 'antd'
+import { Button, Menu, Spin, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   ApiOutlined,
@@ -51,11 +51,11 @@ export default function ManageLayout() {
       return false
     }
   })
-  const [ver, setVer] = useState('')
+  const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
   const active = loc.pathname.split('/')[2] || 'site'
 
   useEffect(() => {
-    api.get<{ version: string }>('/api/version').then((r) => setVer(r.version)).catch(() => {})
+    api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -184,12 +184,22 @@ export default function ManageLayout() {
               {!collapsed && <span style={{ marginInlineStart: 8 }}>{t('nav.collapse')}</span>}
             </Button>
             {!collapsed && ver && (
-              <Typography.Text
-                type="secondary"
-                style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', paddingInlineEnd: 4 }}
+              <Tooltip
+                title={
+                  <div style={{ lineHeight: 1.6, fontWeight: 600 }}>
+                    <div>{ver.version}</div>
+                    <div>commit: {ver.commit}</div>
+                    <div>built: {ver.buildDate}</div>
+                  </div>
+                }
               >
-                v{ver}
-              </Typography.Text>
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', cursor: 'help', paddingInlineEnd: 4 }}
+                >
+                  {ver.version}
+                </Typography.Text>
+              </Tooltip>
             )}
           </div>
         )}

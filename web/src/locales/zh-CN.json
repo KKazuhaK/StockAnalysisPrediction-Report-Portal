@@ -231,7 +231,7 @@
   "webhook.never": "从未",
   "webhook.event.report.ingested": "报告入库",
   "webhook.event.batch.job.finished": "批量任务完成",
-  "theme.auto": "跟随系统",
+  "theme.auto": "自动",
   "theme.light": "浅色",
   "theme.dark": "深色",
   "login.title": "登录研报门户",
