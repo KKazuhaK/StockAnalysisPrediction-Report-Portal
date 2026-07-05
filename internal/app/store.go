@@ -1103,19 +1103,6 @@ func (s *Store) FreezeReportNames() (int64, error) {
 	return res.RowsAffected()
 }
 
-// ---------- Legacy import support (disposable) ----------
-
-// OldRaw is a raw record from the old API /api/reports (used by the one-shot legacy import).
-type OldRaw struct {
-	ID         int64  `json:"id"`
-	Title      string `json:"title"`
-	Category   string `json:"category"`
-	Author     string `json:"author"`
-	Time       string `json:"time"`
-	ReportDate string `json:"reportDate"`
-	StockCode  string `json:"stockCode"`
-}
-
 // ---------- Entry buttons ----------
 
 func (s *Store) Links() []Link {

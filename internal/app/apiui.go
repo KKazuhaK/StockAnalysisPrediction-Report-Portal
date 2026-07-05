@@ -679,7 +679,9 @@ func (s *Server) apiUserDelete(w http.ResponseWriter, r *http.Request, user stri
 	writeJSON(w, okJSON)
 }
 
-// ---------- Admin: system settings (legacy portal credentials, used by the one-shot import) ----------
+// ---------- Admin: system settings ----------
+// old_base/old_user/old_pass persist as inert settings after the legacy importer was
+// removed (the old portal is fully retired); they have no remaining consumer.
 
 func (s *Server) apiAdminSettings(w http.ResponseWriter, r *http.Request, user string) {
 	out := map[string]any{

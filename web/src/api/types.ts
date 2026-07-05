@@ -319,18 +319,6 @@ export interface SiteSettings {
   announcementContent: string
 }
 
-export interface LegacyImportStatus {
-  running: boolean
-  imported: number
-  skipped: number
-  failed: number
-  aborted: boolean
-  error: string
-  count: number
-  started: string
-  finished: string
-}
-
 export interface TokenRow {
   id: number
   token: string

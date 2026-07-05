@@ -65,16 +65,6 @@ func main() {
 			}
 			fmt.Printf("freeze-names: %d rows frozen\n", n)
 			return
-		case "import-legacy": // report-portal import-legacy — resumable one-shot pull of all legacy reports (incl. body) into the store, then old system can be retired
-			imported, skipped, failed, failedIDs, err := app.RunLegacyImport(configPath(), log.Printf)
-			fmt.Printf("legacy import: imported=%d skipped=%d failed=%d\n", imported, skipped, failed)
-			if len(failedIDs) > 0 {
-				fmt.Printf("failed ids (re-run to retry): %v\n", failedIDs)
-			}
-			if err != nil {
-				log.Fatalf("legacy import stopped: %v", err)
-			}
-			return
 		}
 	}
 	app.RunServer(configPath())
