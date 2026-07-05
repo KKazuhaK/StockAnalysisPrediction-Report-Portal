@@ -18,7 +18,7 @@ vi.mock('react-i18next', () => ({
 
 // The footer shows the build version; stub the fetch.
 vi.mock('../../api/client', () => ({
-  api: { get: () => Promise.resolve({ version: '9.9.9' }) },
+  api: { get: () => Promise.resolve({ version: 'v9.9.9', commit: 'abc1234', buildDate: '2026-01-01T00:00:00Z' }) },
 }))
 
 const COLLAPSE_KEY = 'rp.manage.sider.collapsed'

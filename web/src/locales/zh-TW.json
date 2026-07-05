@@ -231,7 +231,7 @@
   "webhook.never": "從未",
   "webhook.event.report.ingested": "報告入庫",
   "webhook.event.batch.job.finished": "批次任務完成",
-  "theme.auto": "跟隨系統",
+  "theme.auto": "自動",
   "theme.light": "淺色",
   "theme.dark": "深色",
   "login.title": "登入研報門戶",

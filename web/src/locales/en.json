@@ -231,7 +231,7 @@
   "webhook.never": "Never",
   "webhook.event.report.ingested": "Report ingested",
   "webhook.event.batch.job.finished": "Batch job finished",
-  "theme.auto": "System",
+  "theme.auto": "Auto",
   "theme.light": "Light",
   "theme.dark": "Dark",
   "login.title": "Sign in",

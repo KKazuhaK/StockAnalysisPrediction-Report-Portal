@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Badge, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Space, Spin, Tooltip, theme } from 'antd'
+import { Badge, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
 import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -17,15 +17,6 @@ import type { BatchQueueSummary } from '../api/types'
 import { AutoIcon, MoonIcon, SunIcon } from './icons'
 
 const { Header, Content, Footer } = Layout
-
-// Compact labels for the language segmented control (full names are too wide for 3
-// equal segments); unknown languages fall back to their code.
-function shortLang(code: string): string {
-  if (code === 'zh-CN') return '简'
-  if (code === 'zh-TW') return '繁'
-  if (code === 'en') return 'EN'
-  return code
-}
 
 export default function AppLayout() {
   const { t } = useTranslation()
@@ -230,11 +221,14 @@ export default function AppLayout() {
                   <GlobalOutlined style={{ marginInlineEnd: 6 }} />
                   {t('nav.language')}
                 </div>
-                <Segmented
-                  block
+                <Select
                   value={lang}
-                  onChange={(v) => setLang(String(v))}
-                  options={langs.map((l) => ({ value: l.code, label: shortLang(l.code) }))}
+                  onChange={(v) => setLang(v)}
+                  style={{ width: '100%' }}
+                  // Render the dropdown inside the popover so picking an option doesn't
+                  // count as an outside click and close the account panel.
+                  getPopupContainer={(trigger) => trigger.parentElement as HTMLElement}
+                  options={langs.map((l) => ({ value: l.code, label: l.label }))}
                 />
                 <Divider style={{ margin: '10px 0 8px' }} />
                 <Button
