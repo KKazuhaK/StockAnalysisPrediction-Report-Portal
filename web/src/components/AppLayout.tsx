@@ -262,10 +262,9 @@ export default function AppLayout() {
         </Space>
       </Header>
 
-      {/* The announcement lives in its own fixed-width band (not inside the Content whose
-          max-width flexes with reader "wide" mode), so it never resizes or slides when
-          you enter/leave a wide reading page. */}
-      {!onManage && (
+      {/* The announcement shows only on the home page, in its own fixed-width band (not
+          inside the Content whose max-width flexes with reader "wide" mode). */}
+      {onHome && (
         <div style={{ maxWidth: 1240, width: '100%', margin: '0 auto', padding: '0 20px' }}>
           <SiteAnnouncement style={{ marginTop: 24, marginBottom: 0 }} />
         </div>
