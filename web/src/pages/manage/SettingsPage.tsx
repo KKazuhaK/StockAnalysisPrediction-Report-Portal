@@ -1,9 +1,11 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import {
   App,
+  Alert,
   Button,
   Card,
   DatePicker,
+  Divider,
   Form,
   Input,
   Modal,
@@ -25,10 +27,12 @@ import { api } from '../../api/client'
 import type { LegacyImportStatus, SettingsResp, TokenRow } from '../../api/types'
 import { useSite } from '../../site'
 import { BrandIcon } from '../../components/icons'
+import { announcementAlertType } from '../../components/SiteAnnouncement'
 import Markdown from '../../components/Markdown'
 import { specToEndpoints, type ApiEndpoint, type ApiParam, type ApiError } from './openapiDoc'
 
 const SCOPE_COLORS: Record<string, string> = { all: 'gold', ingest: 'blue', query: 'green' }
+const ANNOUNCEMENT_LEVELS = ['notice', 'success', 'warning', 'error'] as const
 
 function LegacyTab() {
   const { t } = useTranslation()
@@ -402,6 +406,10 @@ function GeneralTab() {
           footerShowVersion: r.footerShowVersion !== false,
           pwaEnabled: r.pwaEnabled !== false,
           pwaIconUrl: r.pwaIconUrl || '',
+          announcementEnabled: r.announcementEnabled === true,
+          announcementLevel: r.announcementLevel || 'notice',
+          announcementTitle: r.announcementTitle || '',
+          announcementContent: r.announcementContent || '',
           timezone: r.timezone || '',
         }),
       )
@@ -420,6 +428,10 @@ function GeneralTab() {
         footerShowVersion: v.footerShowVersion !== false,
         pwaEnabled: v.pwaEnabled !== false,
         pwaIconUrl: v.pwaIconUrl || '',
+        announcementEnabled: v.announcementEnabled === true,
+        announcementLevel: v.announcementLevel || 'notice',
+        announcementTitle: v.announcementTitle || '',
+        announcementContent: v.announcementContent || '',
         timezone: v.timezone || '',
       })
       await refresh()
@@ -467,7 +479,7 @@ function GeneralTab() {
   if (loading) return <Spin />
 
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 560 }}>
+    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 720 }}>
       <Form form={form} layout="vertical">
         <Form.Item
           name="siteTitle"
@@ -529,6 +541,57 @@ function GeneralTab() {
                 )}
                 <Typography.Text type="secondary">{t('settings.pwaIconPreview')}</Typography.Text>
               </div>
+            )
+          }}
+        </Form.Item>
+        <Divider orientation="left" orientationMargin={0}>
+          {t('settings.announcement')}
+        </Divider>
+        <Form.Item name="announcementEnabled" label={t('settings.announcementEnabled')} valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item name="announcementLevel" label={t('settings.announcementLevel')}>
+          <Select
+            options={ANNOUNCEMENT_LEVELS.map((level) => ({
+              value: level,
+              label: t(`settings.announcementLevel.${level}`),
+            }))}
+          />
+        </Form.Item>
+        <Form.Item
+          name="announcementTitle"
+          label={t('settings.announcementTitle')}
+          rules={[{ max: 160, message: t('settings.announcementTitleTooLong') }]}
+        >
+          <Input maxLength={160} showCount placeholder={t('settings.announcementTitlePlaceholder')} />
+        </Form.Item>
+        <Form.Item
+          name="announcementContent"
+          label={t('settings.announcementContent')}
+          extra={t('settings.announcementHint')}
+          rules={[{ max: 2000, message: t('settings.announcementContentTooLong') }]}
+        >
+          <Input.TextArea
+            maxLength={2000}
+            showCount
+            autoSize={{ minRows: 3, maxRows: 8 }}
+            placeholder={t('settings.announcementContentPlaceholder')}
+          />
+        </Form.Item>
+        <Form.Item shouldUpdate noStyle>
+          {({ getFieldValue }) => {
+            const enabled = getFieldValue('announcementEnabled') === true
+            const title = String(getFieldValue('announcementTitle') || '').trim()
+            const content = String(getFieldValue('announcementContent') || '').trim()
+            if (!enabled || (!title && !content)) return null
+            return (
+              <Alert
+                showIcon
+                type={announcementAlertType(getFieldValue('announcementLevel'))}
+                message={title || <span style={{ whiteSpace: 'pre-line' }}>{content}</span>}
+                description={title && content ? <span style={{ whiteSpace: 'pre-line' }}>{content}</span> : undefined}
+                style={{ borderRadius: 8, marginBottom: 20 }}
+              />
             )
           }}
         </Form.Item>

@@ -65,6 +65,28 @@ var (
 	summary  = []string{"汇总", "综合", "决策", "建议"}
 )
 
+// collapseLatestBySymbol keeps only the most recent run per stock for the browse/search feed, so a
+// stock analyzed on several days shows one card (its latest date) instead of one card per day. The
+// input must already be sorted latest-first (buildGroups guarantees date-desc, then time-desc), so
+// the first group seen for a symbol is the one to keep. Symbol-less (thematic) groups have no shared
+// identity to collapse on and are all kept. The full per-date history stays on the stock detail page.
+func collapseLatestBySymbol(gs []Group) []Group {
+	seen := map[string]bool{}
+	out := make([]Group, 0, len(gs))
+	for _, g := range gs {
+		if g.Symbol == "" {
+			out = append(out, g)
+			continue
+		}
+		if seen[g.Symbol] {
+			continue
+		}
+		seen[g.Symbol] = true
+		out = append(out, g)
+	}
+	return out
+}
+
 // gkey grouping key = symbol|date; if there is no symbol, each stands alone (using RID).
 func gkey(r Rep) string {
 	if r.Symbol != "" {

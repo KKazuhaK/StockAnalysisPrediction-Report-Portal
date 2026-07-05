@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
-import type { SiteSettings } from './api/types'
+import type { AnnouncementLevel, SiteSettings } from './api/types'
 import { BrandIcon } from './components/icons'
 
 const DEFAULT_FAVICON = '/favicon.svg'
@@ -13,6 +13,10 @@ const DEFAULT_SETTINGS: SiteSettings = {
   footerShowVersion: true,
   pwaEnabled: true,
   pwaIconUrl: '',
+  announcementEnabled: false,
+  announcementLevel: 'notice',
+  announcementTitle: '',
+  announcementContent: '',
 }
 
 interface SiteCtx {
@@ -25,6 +29,7 @@ interface SiteCtx {
 const Ctx = createContext<SiteCtx | null>(null)
 
 function normalizeSettings(s?: Partial<SiteSettings> | null): SiteSettings {
+  const level = String(s?.announcementLevel ?? '').trim().toLowerCase()
   return {
     siteTitle: (s?.siteTitle ?? '').trim(),
     siteLogoUrl: (s?.siteLogoUrl ?? '').trim(),
@@ -33,6 +38,10 @@ function normalizeSettings(s?: Partial<SiteSettings> | null): SiteSettings {
     footerShowVersion: s?.footerShowVersion !== false,
     pwaEnabled: s?.pwaEnabled !== false,
     pwaIconUrl: (s?.pwaIconUrl ?? '').trim(),
+    announcementEnabled: s?.announcementEnabled === true,
+    announcementLevel: ['notice', 'success', 'warning', 'error'].includes(level) ? (level as AnnouncementLevel) : 'notice',
+    announcementTitle: (s?.announcementTitle ?? '').trim(),
+    announcementContent: (s?.announcementContent ?? '').trim(),
   }
 }
 
