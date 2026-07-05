@@ -123,10 +123,10 @@ body {
 .md-body blockquote {
   margin: 0.9em 0;
   padding: 0.6em 1em;
-  border-left: 4px solid var(--ant-color-primary-border, rgba(22, 119, 255, 0.5));
+  border-left: 4px solid var(--ant-color-primary, #1677ff);
   border-radius: 0 10px 10px 0;
   background: var(--ant-color-primary-bg, rgba(22, 119, 255, 0.06));
-  color: var(--ant-color-text-secondary, rgba(128, 128, 128, 1));
+  color: var(--ant-color-text, inherit);
 }
 .md-body hr {
   border: none;
