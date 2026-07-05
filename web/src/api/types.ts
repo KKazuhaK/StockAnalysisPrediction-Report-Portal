@@ -295,6 +295,7 @@ export interface SettingsResp {
   pwaEnabled: boolean
   pwaIconUrl: string
   announcementEnabled: boolean
+  announcementPopup: boolean
   announcementLevel: AnnouncementLevel
   announcementTitle: string
   announcementContent: string
@@ -312,6 +313,7 @@ export interface SiteSettings {
   pwaEnabled: boolean
   pwaIconUrl: string
   announcementEnabled: boolean
+  announcementPopup: boolean
   announcementLevel: AnnouncementLevel
   announcementTitle: string
   announcementContent: string

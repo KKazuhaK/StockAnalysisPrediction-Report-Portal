@@ -211,7 +211,7 @@ export default function AppLayout() {
       </Header>
 
       <Content style={{ padding: '24px 20px', maxWidth: contentMaxWidth, width: '100%', margin: '0 auto', transition: 'max-width 0.2s ease' }}>
-        <SiteAnnouncement style={{ marginBottom: 24 }} />
+        <SiteAnnouncement style={{ marginBottom: 14 }} />
         <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
           <Outlet />
         </Suspense>

@@ -46,7 +46,7 @@ export default function LoginPage() {
       }}
     >
       <div style={{ width: '100%', maxWidth: 560 }}>
-        <SiteAnnouncement style={{ marginBottom: 16 }} />
+        <SiteAnnouncement style={{ marginBottom: 12 }} />
         <Card style={{ width: '100%', maxWidth: 380, margin: '0 auto', boxShadow: token.boxShadowSecondary }}>
           <Space direction="vertical" size={20} style={{ width: '100%' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>

@@ -407,6 +407,7 @@ function GeneralTab() {
           pwaEnabled: r.pwaEnabled !== false,
           pwaIconUrl: r.pwaIconUrl || '',
           announcementEnabled: r.announcementEnabled === true,
+          announcementPopup: r.announcementPopup === true,
           announcementLevel: r.announcementLevel || 'notice',
           announcementTitle: r.announcementTitle || '',
           announcementContent: r.announcementContent || '',
@@ -429,6 +430,7 @@ function GeneralTab() {
         pwaEnabled: v.pwaEnabled !== false,
         pwaIconUrl: v.pwaIconUrl || '',
         announcementEnabled: v.announcementEnabled === true,
+        announcementPopup: v.announcementPopup === true,
         announcementLevel: v.announcementLevel || 'notice',
         announcementTitle: v.announcementTitle || '',
         announcementContent: v.announcementContent || '',
@@ -550,6 +552,9 @@ function GeneralTab() {
         <Form.Item name="announcementEnabled" label={t('settings.announcementEnabled')} valuePropName="checked">
           <Switch />
         </Form.Item>
+        <Form.Item name="announcementPopup" label={t('settings.announcementPopup')} valuePropName="checked">
+          <Switch />
+        </Form.Item>
         <Form.Item name="announcementLevel" label={t('settings.announcementLevel')}>
           <Select
             options={ANNOUNCEMENT_LEVELS.map((level) => ({
@@ -588,9 +593,17 @@ function GeneralTab() {
               <Alert
                 showIcon
                 type={announcementAlertType(getFieldValue('announcementLevel'))}
-                message={title || <span style={{ whiteSpace: 'pre-line' }}>{content}</span>}
-                description={title && content ? <span style={{ whiteSpace: 'pre-line' }}>{content}</span> : undefined}
-                style={{ borderRadius: 8, marginBottom: 20 }}
+                message={
+                  <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', lineHeight: 1.35 }}>
+                    {title && <Typography.Text strong>{title}</Typography.Text>}
+                    {content && (
+                      <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line' }}>
+                        {content}
+                      </Typography.Text>
+                    )}
+                  </span>
+                }
+                style={{ borderRadius: 8, paddingBlock: 8, marginBottom: 20 }}
               />
             )
           }}

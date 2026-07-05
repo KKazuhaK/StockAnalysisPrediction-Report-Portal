@@ -176,12 +176,12 @@ func TestSiteSettings(t *testing.T) {
 	if pub["siteTitle"] != "" || pub["siteLogoUrl"] != "" || pub["footerText"] != "" ||
 		pub["footerShowInfo"] != true || pub["footerShowVersion"] != true ||
 		pub["pwaEnabled"] != true || pub["pwaIconUrl"] != "" ||
-		pub["announcementEnabled"] != false || pub["announcementLevel"] != "notice" ||
+		pub["announcementEnabled"] != false || pub["announcementPopup"] != false || pub["announcementLevel"] != "notice" ||
 		pub["announcementTitle"] != "" || pub["announcementContent"] != "" {
 		t.Fatalf("default site settings = %v, want empty overrides", pub)
 	}
 
-	if rec := save(`{"siteTitle":" 智研平台 ","siteLogoUrl":"/brand/logo.png","footerText":"© 智研平台","footerShowInfo":false,"footerShowVersion":false,"pwaEnabled":true,"pwaIconUrl":"/brand/app.png","announcementEnabled":true,"announcementLevel":"warning","announcementTitle":"节点维护","announcementContent":"今晚 22:00 开始维护。"}`); rec.Code != http.StatusOK {
+	if rec := save(`{"siteTitle":" 智研平台 ","siteLogoUrl":"/brand/logo.png","footerText":"© 智研平台","footerShowInfo":false,"footerShowVersion":false,"pwaEnabled":true,"pwaIconUrl":"/brand/app.png","announcementEnabled":true,"announcementPopup":true,"announcementLevel":"warning","announcementTitle":"节点维护","announcementContent":"今晚 22:00 开始维护。"}`); rec.Code != http.StatusOK {
 		t.Fatalf("save site settings: %d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := s.st.GetSetting("site_title", ""); got != "智研平台" {
@@ -200,6 +200,7 @@ func TestSiteSettings(t *testing.T) {
 		t.Errorf("pwa_icon_url=%q", got)
 	}
 	if !settingBool(s.st.GetSetting("announcement_enabled", ""), false) ||
+		!settingBool(s.st.GetSetting("announcement_popup", ""), false) ||
 		s.st.GetSetting("announcement_level", "") != "warning" ||
 		s.st.GetSetting("announcement_title", "") != "节点维护" ||
 		s.st.GetSetting("announcement_content", "") != "今晚 22:00 开始维护。" {
@@ -210,7 +211,7 @@ func TestSiteSettings(t *testing.T) {
 	if admin["siteTitle"] != "智研平台" || admin["siteLogoUrl"] != "/brand/logo.png" ||
 		admin["footerText"] != "© 智研平台" || admin["footerShowInfo"] != false || admin["footerShowVersion"] != false ||
 		admin["pwaEnabled"] != true || admin["pwaIconUrl"] != "/brand/app.png" ||
-		admin["announcementEnabled"] != true || admin["announcementLevel"] != "warning" ||
+		admin["announcementEnabled"] != true || admin["announcementPopup"] != true || admin["announcementLevel"] != "warning" ||
 		admin["announcementTitle"] != "节点维护" || admin["announcementContent"] != "今晚 22:00 开始维护。" {
 		t.Errorf("admin settings missing site fields: %v", admin)
 	}
@@ -218,7 +219,7 @@ func TestSiteSettings(t *testing.T) {
 	if pub["siteTitle"] != "智研平台" || pub["siteLogoUrl"] != "/brand/logo.png" ||
 		pub["footerText"] != "© 智研平台" || pub["footerShowInfo"] != false || pub["footerShowVersion"] != false ||
 		pub["pwaEnabled"] != true || pub["pwaIconUrl"] != "/brand/app.png" ||
-		pub["announcementEnabled"] != true || pub["announcementLevel"] != "warning" ||
+		pub["announcementEnabled"] != true || pub["announcementPopup"] != true || pub["announcementLevel"] != "warning" ||
 		pub["announcementTitle"] != "节点维护" || pub["announcementContent"] != "今晚 22:00 开始维护。" {
 		t.Errorf("public site settings = %v", pub)
 	}
@@ -245,7 +246,7 @@ func TestSiteSettings(t *testing.T) {
 		t.Errorf("invalid announcement save half-applied title: %q", got)
 	}
 
-	if rec := save(`{"siteTitle":"","siteLogoUrl":"","footerText":"","footerShowInfo":true,"footerShowVersion":true,"pwaIconUrl":"","announcementEnabled":false,"announcementLevel":"","announcementTitle":"","announcementContent":""}`); rec.Code != http.StatusOK {
+	if rec := save(`{"siteTitle":"","siteLogoUrl":"","footerText":"","footerShowInfo":true,"footerShowVersion":true,"pwaIconUrl":"","announcementEnabled":false,"announcementPopup":false,"announcementLevel":"","announcementTitle":"","announcementContent":""}`); rec.Code != http.StatusOK {
 		t.Fatalf("clear site settings: %d body=%s", rec.Code, rec.Body.String())
 	}
 	if s.st.GetSetting("site_title", "x") != "" || s.st.GetSetting("site_logo_url", "x") != "" ||
@@ -258,6 +259,9 @@ func TestSiteSettings(t *testing.T) {
 	}
 	if settingBool(s.st.GetSetting("announcement_enabled", ""), true) || normalizeAnnouncementLevel(s.st.GetSetting("announcement_level", "")) != "notice" {
 		t.Errorf("clear did not disable announcement")
+	}
+	if settingBool(s.st.GetSetting("announcement_popup", ""), true) {
+		t.Errorf("clear did not disable announcement popup")
 	}
 }
 

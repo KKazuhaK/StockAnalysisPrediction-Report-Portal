@@ -113,6 +113,7 @@ func (s *Server) siteSettingsJSON() map[string]any {
 		"pwaEnabled":          settingBool(s.st.GetSetting("pwa_enabled", ""), true),
 		"pwaIconUrl":          s.st.GetSetting("pwa_icon_url", ""),
 		"announcementEnabled": settingBool(s.st.GetSetting("announcement_enabled", ""), false),
+		"announcementPopup":   settingBool(s.st.GetSetting("announcement_popup", ""), false),
 		"announcementLevel":   normalizeAnnouncementLevel(s.st.GetSetting("announcement_level", "notice")),
 		"announcementTitle":   s.st.GetSetting("announcement_title", ""),
 		"announcementContent": s.st.GetSetting("announcement_content", ""),
@@ -709,9 +710,9 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	// All pointers: a nil field was omitted from the request → leave that setting
 	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
 	var in struct {
-		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText, PwaIconUrl *string
-		AnnouncementLevel, AnnouncementTitle, AnnouncementContent                           *string
-		FooterShowInfo, FooterShowVersion, PwaEnabled, AnnouncementEnabled                  *bool
+		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText, PwaIconUrl   *string
+		AnnouncementLevel, AnnouncementTitle, AnnouncementContent                             *string
+		FooterShowInfo, FooterShowVersion, PwaEnabled, AnnouncementEnabled, AnnouncementPopup *bool
 	}
 	readJSON(r, &in)
 	// Validate before writing anything so a bad field can't half-apply.
@@ -786,6 +787,9 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	if in.AnnouncementEnabled != nil {
 		s.st.SetSetting("announcement_enabled", strconv.FormatBool(*in.AnnouncementEnabled))
+	}
+	if in.AnnouncementPopup != nil {
+		s.st.SetSetting("announcement_popup", strconv.FormatBool(*in.AnnouncementPopup))
 	}
 	if in.AnnouncementLevel != nil {
 		s.st.SetSetting("announcement_level", normalizeAnnouncementLevel(*in.AnnouncementLevel))
