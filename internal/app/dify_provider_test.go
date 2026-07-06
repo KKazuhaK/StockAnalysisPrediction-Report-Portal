@@ -218,3 +218,43 @@ func TestDifyProviderReconcileFailureIsPermanent(t *testing.T) {
 		t.Errorf("workflow started %d times, want 1 (no re-run)", n)
 	}
 }
+
+// On cancel, the provider stops the run on Dify (via the captured task id) instead
+// of leaving the workflow executing server-side.
+func TestDifyProviderStopsOnCancel(t *testing.T) {
+	stopCh := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workflows/run":
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"event":"workflow_started","task_id":"task-1","workflow_run_id":"run-1","data":{}}`+"\n\n")
+			if fl, ok := w.(http.Flusher); ok {
+				fl.Flush()
+			}
+			<-r.Context().Done() // keep the run in flight until the client cancels
+		case "/workflows/tasks/task-1/stop":
+			stopCh <- "task-1"
+			io.WriteString(w, `{"result":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u"}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond) // let the client read workflow_started (capture the task id)
+		cancel()
+	}()
+	p.Run(ctx, map[string]string{"symbol": "1"})
+
+	select {
+	case tid := <-stopCh:
+		if tid != "task-1" {
+			t.Errorf("stopped task = %q, want task-1", tid)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("StopWorkflow was not called on cancel")
+	}
+}

@@ -14,9 +14,11 @@ import (
 
 // Reconnect-not-retry tuning: how often to poll a started-but-disconnected run, and
 // how long to keep reconciling before giving up (bounded by the same run budget).
+// difyStopTimeout bounds the best-effort server-side stop issued on cancel.
 const (
 	difyReconcilePoll    = 3 * time.Second
 	difyReconcileTimeout = difyRunTimeout
+	difyStopTimeout      = 15 * time.Second
 )
 
 // The Dify-native batch path (docs/adr/0006-dify-native.md). A Dify target is a
@@ -49,16 +51,29 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 	for k, v := range inputs {
 		in[k] = v
 	}
-	r, runID, err := p.c.RunWorkflowStream(ctx, in, p.user, nil)
+	// Capture the task id as it streams so a cancel can stop the run server-side.
+	var taskID string
+	r, runID, err := p.c.RunWorkflowStream(ctx, in, p.user, func(e dify.StreamEvent) {
+		if e.TaskID != "" {
+			taskID = e.TaskID
+		}
+	})
 	if err == nil {
 		return difyResultToBatch(r), nil
 	}
-	// Nothing started (no run id) or the job was cancelled → let the engine classify
-	// and, where appropriate, retry: no workflow is running, so a retry is safe.
+	// Job cancelled: aborting the stream only stops OUR wait — Dify keeps executing the
+	// workflow until told to stop. Best-effort stop it, then let the engine mark the row.
+	if ctx.Err() != nil {
+		if taskID != "" {
+			p.stop(taskID)
+		}
+		return batch.RunResult{}, classifyDifyErr(err)
+	}
+	// Nothing started (no run id) → safe to let the engine classify and retry.
 	// (Residual: a drop in the tiny window after Dify accepts the POST but before it
 	// emits the run id leaves runID empty though a run may have started — unavoidable
 	// without a request idempotency key, which Dify's workflow API doesn't offer.)
-	if runID == "" || ctx.Err() != nil {
+	if runID == "" {
 		return batch.RunResult{}, classifyDifyErr(err)
 	}
 	// A run has STARTED. Never re-run it — reconcile the true outcome by polling. Any
@@ -100,6 +115,15 @@ func (p difyProvider) reconcile(ctx context.Context, runID string) (dify.RunResu
 		case <-time.After(poll):
 		}
 	}
+}
+
+// stop asks Dify to stop a run server-side (true cancel). It runs on a fresh, short
+// context because the job context that triggered the cancel is already done. Best
+// effort — a failed stop only means the run finishes on Dify as it would have.
+func (p difyProvider) stop(taskID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), difyStopTimeout)
+	defer cancel()
+	_ = p.c.StopWorkflow(ctx, taskID, p.user)
 }
 
 // difyResultToBatch maps a Dify run outcome to the engine's per-row result. A Dify
