@@ -15,15 +15,28 @@ func userGroupsJSON(gs []UserGroup) []map[string]any {
 		// Default group's value"; the UI renders that as an inherit toggle.
 		var weight any = g.Weight
 		var urgent any = g.UrgentFree
+		var allowUrgent any = g.AllowUrgent
+		var maxQueued any = g.MaxQueued
+		var runWindow any = g.RunWindow
 		if g.WeightInherit {
 			weight = nil
 		}
 		if g.UrgentInherit {
 			urgent = nil
 		}
+		if g.AllowUrgentInherit {
+			allowUrgent = nil
+		}
+		if g.MaxQueuedInherit {
+			maxQueued = nil
+		}
+		if g.RunWindowInherit {
+			runWindow = nil
+		}
 		out = append(out, map[string]any{
 			"id": g.ID, "name": g.Name, "description": g.Description,
 			"is_default": g.IsDefault, "weight": weight, "urgent_unlimited": urgent,
+			"allow_urgent": allowUrgent, "max_queued": maxQueued, "run_window": runWindow,
 			"priority": g.Priority, "members": g.Members,
 		})
 	}
@@ -37,11 +50,14 @@ func (s *Server) apiAdminGroups(w http.ResponseWriter, r *http.Request, user str
 // groupInput is the create/update body. Weight and UrgentUnlimited are pointers so a
 // JSON null means "inherit the Default group" and a value means "override".
 type groupInput struct {
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	Weight          *int   `json:"weight"`
-	UrgentUnlimited *bool  `json:"urgent_unlimited"`
-	Priority        string `json:"priority"`
+	Name            string  `json:"name"`
+	Description     string  `json:"description"`
+	Weight          *int    `json:"weight"`
+	UrgentUnlimited *bool   `json:"urgent_unlimited"`
+	AllowUrgent     *bool   `json:"allow_urgent"`
+	MaxQueued       *int    `json:"max_queued"`
+	RunWindow       *string `json:"run_window"`
+	Priority        string  `json:"priority"`
 }
 
 // overrides normalizes the input's inherit/override fields for storage. The Default
@@ -60,6 +76,46 @@ func (in groupInput) overrides(isDefault bool) (*int, *bool) {
 		u = &f
 	}
 	return w, u
+}
+
+// governance normalizes the allow-urgent / max-queued / run-window fields. On the Default
+// group a null is coerced to the permissive baseline (urgent allowed, no cap, any hour).
+func (in groupInput) governance(isDefault bool) (*bool, *int, *string) {
+	allow, mq, rw := in.AllowUrgent, in.MaxQueued, in.RunWindow
+	if mq != nil {
+		v := *mq
+		if v < 0 {
+			v = 0
+		}
+		mq = &v
+	}
+	if rw != nil {
+		v := normalizeRunWindow(*rw)
+		rw = &v
+	}
+	if isDefault {
+		if allow == nil {
+			def := true
+			allow = &def
+		}
+		if mq == nil {
+			zero := 0
+			mq = &zero
+		}
+		if rw == nil {
+			empty := ""
+			rw = &empty
+		}
+	}
+	return allow, mq, rw
+}
+
+// normalizeRunWindow keeps a valid "H1-H2" window, else "" (no restriction).
+func normalizeRunWindow(win string) string {
+	if _, _, ok := parseRunWindow(win); ok {
+		return strings.TrimSpace(win)
+	}
+	return ""
 }
 
 func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string) {
@@ -82,6 +138,8 @@ func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string
 	}
 	// Re-apply as nullable so an omitted weight/urgent is stored as inherit (NULL).
 	s.st.UpdateGroup(id, name, strings.TrimSpace(in.Description), weight, urgent)
+	allow, mq, rw := in.governance(false)
+	s.st.SetGroupGovernance(id, allow, mq, rw)
 	s.st.SetGroupPriority(id, s.groupPriorityValid(in.Priority))
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
@@ -101,6 +159,8 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 		jsonError(w, http.StatusBadRequest, "group name already exists")
 		return
 	}
+	allow, mq, rw := in.governance(isDefault)
+	s.st.SetGroupGovernance(id, allow, mq, rw)
 	// The Default group carries no priority override (its members use the system
 	// default); force it clear so a stored value can't mislead.
 	if isDefault {

@@ -245,9 +245,13 @@ func (s *Store) init() error {
 		// NULL means "inherit from the Default group" (group model B), a concrete value
 		// means "override". The Default group (is_default=1) always holds concrete
 		// baselines. See docs/adr/0010-group-model.md.
+		// allow_urgent / max_queued / run_window are per-group governance (group model B):
+		// NULL on a non-default group means "inherit the Default group"; the Default group's
+		// NULL means the permissive baseline (urgent allowed, no queue cap, any hour).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS user_groups(
 			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER,
-			urgent_unlimited INTEGER, is_default INTEGER DEFAULT 0)`, pk),
+			urgent_unlimited INTEGER, is_default INTEGER DEFAULT 0,
+			allow_urgent INTEGER, max_queued INTEGER, run_window TEXT)`, pk),
 		`CREATE TABLE IF NOT EXISTS user_group_members(
 			group_id BIGINT, username TEXT, PRIMARY KEY(group_id, username))`,
 		`CREATE INDEX IF NOT EXISTS idx_ugm_user ON user_group_members(username)`,
@@ -276,6 +280,16 @@ func (s *Store) init() error {
 	}
 	if _, err := s.exec(`ALTER TABLE user_groups ADD COLUMN is_default INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
 		return fmt.Errorf("upgrade user_groups (is_default): %w", err)
+	}
+	// Per-group governance columns (group model B): additive, nullable.
+	for _, ddl := range []string{
+		`ALTER TABLE user_groups ADD COLUMN allow_urgent INTEGER`,
+		`ALTER TABLE user_groups ADD COLUMN max_queued INTEGER`,
+		`ALTER TABLE user_groups ADD COLUMN run_window TEXT`,
+	} {
+		if _, err := s.exec(ddl); err != nil && !duplicateColumnErr(err) {
+			return fmt.Errorf("upgrade user_groups governance: %w", err)
+		}
 	}
 	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
 	return nil

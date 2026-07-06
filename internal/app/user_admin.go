@@ -29,6 +29,14 @@ type UserGroup struct {
 	UrgentInherit bool
 	Priority      string // base priority override ("" = inherit the system default)
 	Members       int    // primary-member count, filled by ListUserGroups
+	// Per-group governance (group model B). Value fields carry the effective/permissive
+	// value when inherited; the *Inherit flags say whether this group sets them.
+	AllowUrgent        bool // may members use the urgent lane
+	AllowUrgentInherit bool
+	MaxQueued          int // active-run cap; 0 = unlimited
+	MaxQueuedInherit   bool
+	RunWindow          string // "" = any hour, else "H1-H2" (panel timezone)
+	RunWindowInherit   bool
 }
 
 // ---------- profile ----------
@@ -176,11 +184,13 @@ func (s *Store) EnsureDefaultGroup() int64 {
 // member counts, per-field override values, and inherit flags.
 func (s *Store) ListUserGroups() []UserGroup {
 	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''),
-			COALESCE(g.is_default,0), g.weight, g.urgent_unlimited, COALESCE(gp.priority,''), COUNT(pg.username)
+			COALESCE(g.is_default,0), g.weight, g.urgent_unlimited, g.allow_urgent, g.max_queued, g.run_window,
+			COALESCE(gp.priority,''), COUNT(pg.username)
 		FROM user_groups g
 		LEFT JOIN user_primary_group pg ON pg.group_id=g.id
 		LEFT JOIN group_priority gp ON gp.group_id=g.id
-		GROUP BY g.id, g.name, g.description, g.created_at, g.is_default, g.weight, g.urgent_unlimited, gp.priority
+		GROUP BY g.id, g.name, g.description, g.created_at, g.is_default, g.weight, g.urgent_unlimited,
+			g.allow_urgent, g.max_queued, g.run_window, gp.priority
 		ORDER BY g.is_default DESC, g.name`)
 	if err != nil {
 		return nil
@@ -190,13 +200,19 @@ func (s *Store) ListUserGroups() []UserGroup {
 	for rows.Next() {
 		var g UserGroup
 		var isDefault int
-		var weight, urgent sql.NullInt64
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &isDefault, &weight, &urgent, &g.Priority, &g.Members); err != nil {
+		var weight, urgent, allowUrgent, maxQueued sql.NullInt64
+		var runWindow sql.NullString
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &isDefault, &weight, &urgent,
+			&allowUrgent, &maxQueued, &runWindow, &g.Priority, &g.Members); err != nil {
 			continue
 		}
 		g.IsDefault = isDefault != 0
 		g.Weight, g.WeightInherit = int(weight.Int64), !weight.Valid && !g.IsDefault
 		g.UrgentFree, g.UrgentInherit = urgent.Int64 != 0, !urgent.Valid && !g.IsDefault
+		// Value fields carry the permissive default when unset, so the UI reads sensibly.
+		g.AllowUrgent, g.AllowUrgentInherit = !allowUrgent.Valid || allowUrgent.Int64 != 0, !allowUrgent.Valid && !g.IsDefault
+		g.MaxQueued, g.MaxQueuedInherit = int(maxQueued.Int64), !maxQueued.Valid && !g.IsDefault
+		g.RunWindow, g.RunWindowInherit = runWindow.String, !runWindow.Valid && !g.IsDefault
 		out = append(out, g)
 	}
 	return out
@@ -251,30 +267,69 @@ func (s *Store) AllPrimaryGroups() map[string]int64 {
 	return m
 }
 
-// EffectiveTicketSettings resolves a user's urgent-ticket settings through group model
-// B: their primary group's per-field override where set, otherwise the Default group's
-// baseline. Returns (weight, urgentUnlimited); (0,false) if no Default group exists.
-func (s *Store) EffectiveTicketSettings(username string) (int, bool) {
-	dw, du := s.defaultBaselines()
-	gid := s.PrimaryGroupOf(username)
-	if gid == 0 {
-		return dw, du
-	}
-	var w, u sql.NullInt64 // raw (un-coalesced) so NULL means inherit
-	s.queryRow("SELECT weight, urgent_unlimited FROM user_groups WHERE id=?", gid).Scan(&w, &u)
-	weight, urgent := dw, du
-	if w.Valid {
-		weight = int(w.Int64)
-	}
-	if u.Valid {
-		urgent = u.Int64 != 0
-	}
-	return weight, urgent
+// GroupSettings is a user's fully-resolved run governance (group model B).
+type GroupSettings struct {
+	Weight          int    // urgent tickets granted per period
+	UrgentUnlimited bool   // may run urgent without spending tickets
+	AllowUrgent     bool   // may use the urgent lane at all
+	MaxQueued       int    // cap on active (queued+running) jobs per user; 0 = unlimited
+	RunWindow       string // "" = any hour, else "startHour-endHour" (panel timezone)
 }
 
-// defaultBaselines returns the Default group's concrete weight + urgent-unlimited.
-func (s *Store) defaultBaselines() (int, bool) {
-	var w, u sql.NullInt64
-	s.queryRow("SELECT COALESCE(weight,0), COALESCE(urgent_unlimited,0) FROM user_groups WHERE is_default=1 ORDER BY id LIMIT 1").Scan(&w, &u)
-	return int(w.Int64), u.Int64 != 0
+// rawGroupSettings holds one group's un-coalesced governance columns (NULL = unset).
+type rawGroupSettings struct {
+	weight, urgent, allowUrgent, maxQueued sql.NullInt64
+	runWindow                              sql.NullString
+}
+
+func (s *Store) rawGroupSettings(id int64) rawGroupSettings {
+	var g rawGroupSettings
+	s.queryRow("SELECT weight, urgent_unlimited, allow_urgent, max_queued, run_window FROM user_groups WHERE id=?", id).
+		Scan(&g.weight, &g.urgent, &g.allowUrgent, &g.maxQueued, &g.runWindow)
+	return g
+}
+
+// EffectiveGroupSettings resolves a user's run governance by layering, in order: the
+// permissive baseline, the Default group's set fields, then the primary group's overrides
+// (each set field wins over the layer below; NULL = inherit).
+func (s *Store) EffectiveGroupSettings(username string) GroupSettings {
+	res := GroupSettings{AllowUrgent: true} // permissive baseline: no cap, any hour, urgent ok
+	apply := func(g rawGroupSettings) {
+		if g.weight.Valid {
+			res.Weight = int(g.weight.Int64)
+		}
+		if g.urgent.Valid {
+			res.UrgentUnlimited = g.urgent.Int64 != 0
+		}
+		if g.allowUrgent.Valid {
+			res.AllowUrgent = g.allowUrgent.Int64 != 0
+		}
+		if g.maxQueued.Valid {
+			res.MaxQueued = int(g.maxQueued.Int64)
+		}
+		if g.runWindow.Valid {
+			res.RunWindow = g.runWindow.String
+		}
+	}
+	defID := s.DefaultGroupID()
+	if defID != 0 {
+		apply(s.rawGroupSettings(defID))
+	}
+	if gid := s.PrimaryGroupOf(username); gid != 0 && gid != defID {
+		apply(s.rawGroupSettings(gid))
+	}
+	return res
+}
+
+// SetGroupGovernance writes a group's allow-urgent / max-queued / run-window overrides.
+// A nil pointer stores NULL (inherit the Default group); the Default group is coerced to
+// concrete by the API before calling this.
+func (s *Store) SetGroupGovernance(id int64, allowUrgent *bool, maxQueued *int, runWindow *string) error {
+	var rw any
+	if runWindow != nil {
+		rw = *runWindow
+	}
+	_, err := s.exec("UPDATE user_groups SET allow_urgent=?, max_queued=?, run_window=? WHERE id=?",
+		nullBoolInt(allowUrgent), nullInt(maxQueued), rw, id)
+	return err
 }

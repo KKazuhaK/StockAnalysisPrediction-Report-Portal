@@ -22,6 +22,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
+  ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   KeyOutlined,
@@ -405,6 +406,9 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const isDefault = edit !== 'new' && !!edit?.is_default
   const weightInherit = Form.useWatch('weight_inherit', form)
   const urgentInherit = Form.useWatch('urgent_inherit', form)
+  const allowInherit = Form.useWatch('allow_inherit', form)
+  const maxqInherit = Form.useWatch('maxq_inherit', form)
+  const windowInherit = Form.useWatch('window_inherit', form)
   const defaultGroup = useMemo(() => groups.find((g) => g.is_default), [groups])
 
   // The urgent lane + ticket config is GLOBAL (not per-group), but it belongs with the
@@ -450,16 +454,26 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const openForm = (g: UserGroupRow | 'new') => {
     setEdit(g)
     if (g === 'new')
-      form.setFieldsValue({ name: '', description: '', weight_inherit: true, weight: 0, urgent_inherit: true, urgent_unlimited: false, priority: undefined })
+      form.setFieldsValue({
+        name: '', description: '', weight_inherit: true, weight: 0, urgent_inherit: true, urgent_unlimited: false,
+        allow_inherit: true, allow_urgent: true, maxq_inherit: true, max_queued: 0, window_inherit: true, run_window: '',
+        priority: undefined,
+      })
     else
       form.setFieldsValue({
         name: g.name,
         description: g.description,
-        // A null weight / urgent means the group inherits the Default group's value.
+        // A null field means the group inherits the Default group's value.
         weight_inherit: !g.is_default && g.weight == null,
         weight: g.weight ?? 0,
         urgent_inherit: !g.is_default && g.urgent_unlimited == null,
         urgent_unlimited: !!g.urgent_unlimited,
+        allow_inherit: !g.is_default && g.allow_urgent == null,
+        allow_urgent: g.allow_urgent !== false, // permissive default
+        maxq_inherit: !g.is_default && g.max_queued == null,
+        max_queued: g.max_queued ?? 0,
+        window_inherit: !g.is_default && g.run_window == null,
+        run_window: g.run_window ?? '',
         priority: g.priority ? Number(g.priority) : undefined,
       })
   }
@@ -467,12 +481,15 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
     const v = await form.validateFields()
     const target = edit !== 'new' && edit ? edit : null
     const isDef = !!target?.is_default
-    // null weight / urgent = inherit the Default group; the Default group is always concrete.
+    // null field = inherit the Default group; the Default group is always concrete.
     const body = {
       name: v.name,
       description: v.description || '',
       weight: !isDef && v.weight_inherit ? null : (v.weight ?? 0),
       urgent_unlimited: !isDef && v.urgent_inherit ? null : !!v.urgent_unlimited,
+      allow_urgent: !isDef && v.allow_inherit ? null : !!v.allow_urgent,
+      max_queued: !isDef && v.maxq_inherit ? null : (v.max_queued ?? 0),
+      run_window: !isDef && v.window_inherit ? null : (v.run_window || ''),
       priority: v.priority == null || v.priority === '' ? '' : String(v.priority),
     }
     try {
@@ -497,6 +514,9 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   // Effective weight / urgent for display: a group's own value, or the Default's when inherited.
   const effWeight = (g: UserGroupRow) => (g.weight != null ? g.weight : defaultGroup?.weight ?? 0)
   const effUrgent = (g: UserGroupRow) => (g.urgent_unlimited != null ? g.urgent_unlimited : !!defaultGroup?.urgent_unlimited)
+  const effAllow = (g: UserGroupRow) => (g.allow_urgent != null ? g.allow_urgent : defaultGroup?.allow_urgent !== false)
+  const effMaxQueued = (g: UserGroupRow) => (g.max_queued != null ? g.max_queued : defaultGroup?.max_queued ?? 0)
+  const effWindow = (g: UserGroupRow) => (g.run_window != null ? g.run_window : defaultGroup?.run_window ?? '')
 
   const cfgRow = (label: string, hint: string, control: React.ReactNode) => (
     <Space wrap align="start">
@@ -580,6 +600,13 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
                         </Tag>
                       )}
                       {g.priority && <Tag color="blue">{t('users.priorityTag', { n: priorityNum(g.priority) })}</Tag>}
+                      {!effAllow(g) && <Tag>{t('users.urgentDisabledTag')}</Tag>}
+                      {effMaxQueued(g) > 0 && <Tag color="geekblue">{t('users.maxQueuedTag', { n: effMaxQueued(g) })}</Tag>}
+                      {effWindow(g) && (
+                        <Tag color="purple">
+                          <ClockCircleOutlined /> {effWindow(g)}
+                        </Tag>
+                      )}
                     </Space>
                     <div>
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -637,6 +664,36 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
           )}
           <Form.Item name="urgent_unlimited" valuePropName="checked" label={t('users.urgentUnlimited')} extra={t('users.urgentUnlimitedHint')}>
             <Switch disabled={!isDefault && urgentInherit} />
+          </Form.Item>
+
+          {/* Allow urgent: may members use the urgent lane at all. */}
+          {!isDefault && (
+            <Form.Item name="allow_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
+              <Switch size="small" />
+            </Form.Item>
+          )}
+          <Form.Item name="allow_urgent" valuePropName="checked" label={t('users.allowUrgent')} extra={t('users.allowUrgentHint')}>
+            <Switch disabled={!isDefault && allowInherit} />
+          </Form.Item>
+
+          {/* Max active (queued + running) runs per member; 0 = unlimited. */}
+          {!isDefault && (
+            <Form.Item name="maxq_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
+              <Switch size="small" />
+            </Form.Item>
+          )}
+          <Form.Item name="max_queued" label={t('users.maxQueued')} extra={t('users.maxQueuedHint')}>
+            <InputNumber min={0} max={999} style={{ width: '100%' }} disabled={!isDefault && maxqInherit} />
+          </Form.Item>
+
+          {/* Run window: allowed hours in panel time, e.g. 9-18. Empty = any hour. */}
+          {!isDefault && (
+            <Form.Item name="window_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
+              <Switch size="small" />
+            </Form.Item>
+          )}
+          <Form.Item name="run_window" label={t('users.runWindow')} extra={t('users.runWindowHint')}>
+            <Input placeholder="9-18" style={{ width: '100%' }} disabled={!isDefault && windowInherit} />
           </Form.Item>
 
           {/* The Default group has no priority override — its members use the system default. */}

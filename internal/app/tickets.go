@@ -34,16 +34,22 @@ func ticketRefill(remaining int, periodStart time.Time, allocation, periodDays i
 // UserTicketAllocation is the per-period urgent allowance for a user: their primary
 // group's weight override, else the Default group's weight (group model B).
 func (s *Store) UserTicketAllocation(username string) int {
-	w, _ := s.EffectiveTicketSettings(username)
-	return w
+	return s.EffectiveGroupSettings(username).Weight
 }
 
 // UserUrgentUnlimited reports whether a user's effective group grants unlimited urgent
 // runs. This is independent of role: admins are limited unless their primary (or the
 // Default) group grants it.
 func (s *Store) UserUrgentUnlimited(username string) bool {
-	_, u := s.EffectiveTicketSettings(username)
-	return u
+	return s.EffectiveGroupSettings(username).UrgentUnlimited
+}
+
+// ActiveJobCount is how many jobs a user currently has queued or running (the input to
+// the per-group max-queued cap).
+func (s *Store) ActiveJobCount(username string) int {
+	var n sql.NullInt64
+	s.queryRow("SELECT COUNT(*) FROM batch_jobs WHERE created_by=? AND status IN ('queued','running','cancelling')", username).Scan(&n)
+	return int(n.Int64)
 }
 
 func (s *Store) ticketRow(username string) (int, time.Time) {

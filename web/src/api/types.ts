@@ -285,6 +285,10 @@ export interface UserGroupRow {
   // value (group model B); a value means this group overrides it.
   weight: number | null // urgent tickets granted per period to each member (ADR 0005)
   urgent_unlimited?: boolean | null // members can run urgent jobs without spending tickets
+  // Per-group governance (group model B): null = inherit the Default group.
+  allow_urgent?: boolean | null // may members use the urgent lane at all
+  max_queued?: number | null // cap on active (queued+running) runs per member; 0 = unlimited
+  run_window?: string | null // '' = any hour, else 'H1-H2' (panel timezone)
   priority?: string // base run priority 0..100 override ('' / undefined = inherit the system default; ADR 0008)
   members: number // primary-member count
 }

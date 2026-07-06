@@ -183,16 +183,53 @@ func (s *Server) urgentAllowed(user, priority string, base int) (string, bool) {
 		return priority, false
 	}
 	if !s.urgentEnabled() {
-		return strconv.Itoa(base), true // 加急 turned off → run at base priority
+		return strconv.Itoa(base), true // urgent lane turned off → run at base priority
 	}
-	if s.st.UserUrgentUnlimited(user) {
+	gs := s.st.EffectiveGroupSettings(user)
+	if !gs.AllowUrgent {
+		return strconv.Itoa(base), true // the user's group disallows urgent
+	}
+	if gs.UrgentUnlimited {
 		return priority, false
 	}
-	alloc := s.st.UserTicketAllocation(user)
-	if ok, _ := s.st.SpendTicket(user, alloc, s.ticketPeriodDays(), time.Now()); ok {
+	if ok, _ := s.st.SpendTicket(user, gs.Weight, s.ticketPeriodDays(), time.Now()); ok {
 		return priority, false
 	}
-	return strconv.Itoa(base), true // out of 加急 tickets → runs at its base priority
+	return strconv.Itoa(base), true // out of tickets → runs at its base priority
+}
+
+// runWindowOpen reports whether the user's effective group allows runs at the current
+// panel-time hour, plus the window string for messaging. An empty/degenerate window is
+// always open.
+func (s *Server) runWindowOpen(user string) (bool, string) {
+	win := s.st.EffectiveGroupSettings(user).RunWindow
+	start, end, ok := parseRunWindow(win)
+	if !ok {
+		return true, ""
+	}
+	h := time.Now().In(s.panelLocation()).Hour()
+	if start < end {
+		return h >= start && h < end, win
+	}
+	return h >= start || h < end, win // window wraps midnight (e.g. 22-6)
+}
+
+// parseRunWindow parses "H1-H2" hours (0..23). ok=false for "" or a degenerate window.
+func parseRunWindow(win string) (int, int, bool) {
+	win = strings.TrimSpace(win)
+	if win == "" {
+		return 0, 0, false
+	}
+	parts := strings.SplitN(win, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	a, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	b, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || a < 0 || a > 23 || b < 0 || b > 23 || a == b {
+		return 0, 0, false
+	}
+	return a, b, true
 }
 
 // runDefaultPriority is the system-wide fallback base priority (0..100) for a run

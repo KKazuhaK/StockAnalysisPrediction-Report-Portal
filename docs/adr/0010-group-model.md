@@ -76,6 +76,24 @@ The old table is retained (additive-only schema; nothing reads it).
 - The account editor assigns a **single** primary group (clearable → inherit Default);
   bulk actions are `set_group` / `clear_group`.
 
+## Per-group governance (extension)
+
+The same inherit/override + Default-fallback model carries three more run controls, added
+as nullable `user_groups` columns (NULL = inherit; the Default group's NULL resolves to a
+permissive baseline):
+
+- **`allow_urgent`** — may members use the urgent lane at all (folded into `urgentAllowed`;
+  a disallowing group downgrades an urgent submit even when the global lane is on).
+- **`max_queued`** — cap on a member's active (queued + running) jobs; `0` = unlimited.
+- **`run_window`** — allowed hours in the panel timezone (`"H1-H2"`, wraps midnight if
+  `H1 > H2`; empty = any hour).
+
+`Store.EffectiveGroupSettings` resolves all of them (weight / urgent-unlimited / allow /
+max-queued / window) by layering permissive-baseline < Default < primary. Enforcement is at
+submit (`apiBatchJobCreate`): outside the window → rejected; over the cap → rejected.
+**Admins are exempt** from the window and the cap (operational necessity); `allow_urgent`
+applies to everyone. These sit with the per-group weight config on the Groups tab.
+
 ## Consequences
 
 - Resolution is unambiguous and lets an admin both raise and lower a user by moving their
