@@ -258,3 +258,24 @@ func TestDifyProviderStopsOnCancel(t *testing.T) {
 		t.Fatal("StopWorkflow was not called on cancel")
 	}
 }
+
+// The provider reports each node_started as live progress via the ctx sink.
+func TestDifyProviderReportsNodeProgress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"event":"workflow_started","task_id":"t","workflow_run_id":"run-1","data":{}}`+"\n\n")
+		io.WriteString(w, `data: {"event":"node_started","task_id":"t","workflow_run_id":"run-1","data":{"title":"LLM","index":1}}`+"\n\n")
+		io.WriteString(w, `data: {"event":"workflow_finished","task_id":"t","workflow_run_id":"run-1","data":{"status":"succeeded"}}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	var nodes []string
+	ctx := batch.WithProgress(context.Background(), func(p batch.Progress) { nodes = append(nodes, p.Node) })
+	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u"}
+	if _, err := p.Run(ctx, map[string]string{"symbol": "1"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0] != "LLM" {
+		t.Errorf("reported nodes = %v, want [LLM]", nodes)
+	}
+}

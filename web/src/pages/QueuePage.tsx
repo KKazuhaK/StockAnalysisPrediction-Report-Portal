@@ -26,6 +26,7 @@ import {
   PlayCircleOutlined,
   ReloadOutlined,
   StopOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -212,7 +213,16 @@ export default function QueuePage() {
         if (j.status === 'queued')
           return <Tag>{j.ahead ? t('batch.aheadN', { n: j.ahead }) : t('batch.aheadNext')}</Tag>
         const done = j.succeeded + j.partial + j.failed
-        return <Progress percent={j.total ? Math.round((done / j.total) * 100) : 0} size="small" status={j.failed ? 'exception' : undefined} style={{ maxWidth: 200 }} />
+        return (
+          <div style={{ maxWidth: 200 }}>
+            <Progress percent={j.total ? Math.round((done / j.total) * 100) : 0} size="small" status={j.failed ? 'exception' : undefined} />
+            {j.node && (
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -2 }} ellipsis={{ tooltip: j.node }}>
+                <SyncOutlined spin /> {j.node}
+              </Typography.Text>
+            )}
+          </div>
+        )
       },
     },
     {

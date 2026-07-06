@@ -51,11 +51,15 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 	for k, v := range inputs {
 		in[k] = v
 	}
-	// Capture the task id as it streams so a cancel can stop the run server-side.
+	// Capture the task id as it streams (so a cancel can stop the run server-side) and
+	// report each node's start as live progress.
 	var taskID string
 	r, runID, err := p.c.RunWorkflowStream(ctx, in, p.user, func(e dify.StreamEvent) {
 		if e.TaskID != "" {
 			taskID = e.TaskID
+		}
+		if e.Event == "node_started" && e.Title != "" {
+			batch.ReportProgress(ctx, batch.Progress{Node: e.Title, Index: e.Index})
 		}
 	})
 	if err == nil {

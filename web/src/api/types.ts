@@ -87,6 +87,7 @@ export interface BatchJob {
   scheduled?: boolean // queued but not yet due (定时, waiting for run_at)
   inputs?: string // first row's inputs as a JSON string (for a 标的 label)
   ahead?: number // for a queued job: how many are ahead of it in the queue
+  node?: string // live: the node the running row is currently executing
   concurrency: number
   max_retries: number
   total: number
@@ -109,6 +110,7 @@ export interface BatchItem {
   error: string
   started_at: string
   finished_at: string
+  progress?: string // live: node the row is executing (only while running)
 }
 
 export interface BatchJobDetail {

@@ -26,6 +26,7 @@ import {
   EyeOutlined,
   ReloadOutlined,
   StopOutlined,
+  SyncOutlined,
   ThunderboltOutlined,
   UploadOutlined,
 } from '@ant-design/icons'
@@ -91,6 +92,11 @@ function JobProgress({ job }: { job: BatchJob }) {
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {t('batch.progressText', { done, total: job.total, ok: job.succeeded, fail: job.failed, partial: job.partial })}
       </Typography.Text>
+      {job.node && (
+        <Typography.Text type="secondary" style={{ fontSize: 12, maxWidth: 160 }} ellipsis={{ tooltip: job.node }}>
+          <SyncOutlined spin /> {job.node}
+        </Typography.Text>
+      )}
     </Space>
   )
 }

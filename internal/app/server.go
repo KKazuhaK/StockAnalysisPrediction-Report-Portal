@@ -40,6 +40,7 @@ type Server struct {
 	pdf          *template.Template
 	batchRunning sync.Map   // jobID -> struct{}; guards against launching a job twice in-process
 	jobCancels   sync.Map   // jobID -> context.CancelFunc; lets a cancel abort the in-flight run
+	itemProgress sync.Map   // itemID -> itemProgress; ephemeral live node progress for running rows
 	schedMu      sync.Mutex // serializes scheduleTick so concurrent ticks can't over-admit (ADR 0004)
 	appTok       *appTokens // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
 }

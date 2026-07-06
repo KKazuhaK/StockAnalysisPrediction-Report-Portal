@@ -264,6 +264,7 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 		if j.Status == "running" || j.Status == "cancelling" {
 			_, _, succeeded, partial, failed := s.st.LiveJobCounts(j.ID)
 			m["succeeded"], m["partial"], m["failed"] = succeeded, partial, failed
+			m["node"] = s.jobCurrentNode(j.ID) // live: which node the running row is on
 		}
 		if j.Status == "queued" {
 			// A not-yet-due 定时 job is "scheduled", not "waiting"; flag it so the UI can
@@ -384,11 +385,15 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 	queued, running, succeeded, partial, failed := s.st.LiveJobCounts(id)
 	items := make([]map[string]any, 0)
 	for _, it := range s.st.BatchJobItems(id) {
-		items = append(items, map[string]any{
+		row := map[string]any{
 			"id": it.ID, "row_index": it.RowIndex, "inputs": it.Inputs, "status": it.Status,
 			"attempts": it.Attempts, "run_id": it.RunID, "error": it.Error,
 			"started_at": it.StartedAt, "finished_at": it.FinishedAt,
-		})
+		}
+		if it.Status == "running" {
+			row["progress"] = s.itemNode(it.ID) // live node label
+		}
+		items = append(items, row)
 	}
 	_, inProc := s.batchRunning.Load(id)
 	m := jobJSON(job)
