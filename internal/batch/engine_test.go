@@ -101,7 +101,96 @@ func seedStore(n int) *fakeStore {
 
 func noBackoff(int) time.Duration { return 0 }
 
+// countingGate is a test Gate that enforces `limit` concurrent holders and records the
+// peak, so a test can assert the engine never runs more rows at once than the gate allows.
+type countingGate struct {
+	slots    chan struct{}
+	mu       sync.Mutex
+	cur, max int
+}
+
+func newCountingGate(limit int) *countingGate { return &countingGate{slots: make(chan struct{}, limit)} }
+
+func (g *countingGate) Acquire(ctx context.Context) bool {
+	select {
+	case g.slots <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+	g.mu.Lock()
+	g.cur++
+	if g.cur > g.max {
+		g.max = g.cur
+	}
+	g.mu.Unlock()
+	return true
+}
+
+func (g *countingGate) Release() {
+	g.mu.Lock()
+	g.cur--
+	g.mu.Unlock()
+	<-g.slots
+}
+
+func (g *countingGate) peak() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.max
+}
+
+// rejectGate always refuses a slot (as if the job were cancelled before any slot freed).
+type rejectGate struct{}
+
+func (rejectGate) Acquire(context.Context) bool { return false }
+func (rejectGate) Release()                      {}
+
 // ---- tests ----
+
+// The global gate caps concurrent rows below the job's own worker-pool size: a job with
+// Concurrency 4 but a gate limit of 2 runs at most 2 rows at once.
+func TestEngineGateCapsBelowConcurrency(t *testing.T) {
+	st := seedStore(6)
+	gate := newCountingGate(2)
+	prov := providerFunc(func(ctx context.Context, _ map[string]string) (RunResult, error) {
+		time.Sleep(10 * time.Millisecond)
+		return RunResult{Status: Ok}, nil
+	})
+	eng := &Engine{Store: st, Backoff: noBackoff, Gate: gate}
+	eng.RunJob(context.Background(), JobSpec{JobID: 1, Concurrency: 4}, prov)
+
+	if p := gate.peak(); p > 2 {
+		t.Fatalf("peak concurrent rows = %d, want <= 2 (the gate limit)", p)
+	}
+	for _, it := range st.items {
+		if it.status != "done" || it.outcome != Ok {
+			t.Fatalf("item %d: status=%s outcome=%v, want done/Ok", it.id, it.status, it.outcome)
+		}
+	}
+}
+
+// A row must not be marked running until it holds a gate slot: with a gate that refuses
+// every slot, no item is ever started and the provider is never called (they stay queued,
+// resumable later). This pins the acquire-before-StartItem ordering — the core fix.
+func TestEngineGateGuardsStartItem(t *testing.T) {
+	st := seedStore(3)
+	var runs int32
+	prov := providerFunc(func(ctx context.Context, _ map[string]string) (RunResult, error) {
+		atomic.AddInt32(&runs, 1)
+		return RunResult{Status: Ok}, nil
+	})
+	eng := &Engine{Store: st, Backoff: noBackoff, Gate: rejectGate{}}
+	eng.RunJob(context.Background(), JobSpec{JobID: 1, Concurrency: 2}, prov)
+
+	if n := atomic.LoadInt32(&runs); n != 0 {
+		t.Fatalf("provider ran %d times, want 0 (no slot was ever granted)", n)
+	}
+	for _, it := range st.items {
+		if it.status != "queued" {
+			t.Fatalf("item %d status=%q, want queued (never started without a slot)", it.id, it.status)
+		}
+	}
+}
 
 // The worker pool must run at most Concurrency items simultaneously.
 func TestEngineRespectsConcurrency(t *testing.T) {

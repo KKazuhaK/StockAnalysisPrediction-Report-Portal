@@ -155,9 +155,9 @@ type runGate struct {
 
 func newRunGate(limit func() int) *runGate { return &runGate{limit: limit} }
 
-// acquire blocks until a slot is free (running < the current limit) or ctx is cancelled.
-// Returns false only on cancellation.
-func (g *runGate) acquire(ctx context.Context) bool {
+// Acquire blocks until a slot is free (running < the current limit) or ctx is cancelled.
+// Returns false only on cancellation. It satisfies batch.Gate.
+func (g *runGate) Acquire(ctx context.Context) bool {
 	for {
 		g.mu.Lock()
 		lim := g.limit()
@@ -178,29 +178,12 @@ func (g *runGate) acquire(ctx context.Context) bool {
 	}
 }
 
-func (g *runGate) release() {
+func (g *runGate) Release() {
 	g.mu.Lock()
 	if g.running > 0 {
 		g.running--
 	}
 	g.mu.Unlock()
-}
-
-// gatedProvider wraps a Provider so each run passes through the global run gate. A nil
-// gate (tests) is a pass-through.
-type gatedProvider struct {
-	inner batch.Provider
-	gate  *runGate
-}
-
-func (g gatedProvider) Run(ctx context.Context, inputs map[string]string) (batch.RunResult, error) {
-	if g.gate != nil {
-		if !g.gate.acquire(ctx) {
-			return batch.RunResult{}, ctx.Err()
-		}
-		defer g.gate.release()
-	}
-	return g.inner.Run(ctx, inputs)
 }
 
 // batchReserved is how many slots to hold for the top (加急) tier. Clamped to
@@ -528,8 +511,13 @@ func (s *Server) launchJob(jobID int64) {
 		s.batchRunning.Delete(jobID)
 		return
 	}
-	prov = gatedProvider{inner: prov, gate: s.runGate} // GLOBAL concurrent-run cap (across all jobs)
+	// GLOBAL concurrent-run cap (across all jobs): the engine takes a gate slot before it
+	// marks a row running, so at most `budget` rows run — and show as running — at once.
+	// Set conditionally so a nil gate stays a nil interface (not a non-nil typed nil).
 	eng := &batch.Engine{Store: s.st, Log: log.Printf}
+	if s.runGate != nil {
+		eng.Gate = s.runGate
+	}
 	// A batch runs up to its own chosen row-concurrency at once (set per-batch on the run
 	// form, default 1), capped by the global budget so one batch can't exceed the "max at
 	// once" limit. See docs/adr/0004-run-queue.md.

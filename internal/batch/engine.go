@@ -39,11 +39,25 @@ type JobSpec struct {
 	MaxRetries  int
 }
 
+// Gate caps how many items run concurrently across ALL jobs (the global run cap).
+// Acquire blocks until a slot is free or ctx is cancelled; a false return means
+// cancelled, so the caller must NOT run the row — it stays queued and a later RunJob
+// re-dispatches it. Release frees the slot. A nil Engine.Gate is a pass-through.
+//
+// The engine acquires a slot BEFORE marking a row running, so a row shows 'running'
+// only once it truly holds a slot: the displayed running count then equals the real
+// number of concurrent runs, never more.
+type Gate interface {
+	Acquire(ctx context.Context) bool
+	Release()
+}
+
 // Engine runs a batch job: a worker pool triggers a Provider over the job's queued
 // items, retries transient failures, honours cancellation, and persists per-item
 // state. It is backend-agnostic — it only knows the Provider interface.
 type Engine struct {
 	Store   JobStore
+	Gate    Gate                            // global concurrent-run cap; nil → no cap
 	Backoff func(attempt int) time.Duration // nil → defaultBackoff
 	Log     func(string, ...any)            // nil → no-op
 }
@@ -103,6 +117,15 @@ func (e *Engine) RunJob(ctx context.Context, spec JobSpec, prov Provider) error 
 // backend that ran but reported failure (RunResult with no error) is terminal and
 // never retried; only transport-level transient errors are.
 func (e *Engine) processItem(ctx context.Context, spec JobSpec, prov Provider, it Item) {
+	// Take a global run slot before marking the row running, so a row only ever shows
+	// 'running' once it actually holds a slot. Held for the whole retry loop below —
+	// released on return. A cancelled acquire leaves the row queued for a later resume.
+	if e.Gate != nil {
+		if !e.Gate.Acquire(ctx) {
+			return
+		}
+		defer e.Gate.Release()
+	}
 	_ = e.Store.StartItem(it.ID)
 	attempts := 0
 	for {

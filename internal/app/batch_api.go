@@ -509,12 +509,13 @@ func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user stri
 		}
 	}
 	writeJSON(w, map[string]any{
-		"waiting":     len(s.queuedItems()), // due, awaiting admission (excludes not-yet-due)
-		"running":     s.st.RunningJobCount(),
-		"scheduled":   scheduled,
-		"budget":      s.batchBudget(),
-		"reserved":    s.batchReserved(),
-		"my_priority": s.resolveBasePriority(user), // the caller's resolved base priority (0..100, ADR 0008)
+		"waiting":      len(s.queuedItems()), // due, awaiting admission (excludes not-yet-due)
+		"running":      s.st.RunningJobCount(),
+		"running_rows": s.st.RunningItemCount(), // concurrent runs (rows) — what the run cap governs
+		"scheduled":    scheduled,
+		"budget":       s.batchBudget(),
+		"reserved":     s.batchReserved(),
+		"my_priority":  s.resolveBasePriority(user), // the caller's resolved base priority (0..100, ADR 0008)
 	})
 }
 

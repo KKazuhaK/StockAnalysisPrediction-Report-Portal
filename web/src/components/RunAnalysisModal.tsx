@@ -109,9 +109,10 @@ export default function RunAnalysisModal({
   }
 
   // Three distinct states so the banner never misleads: a run can start immediately only
-  // when a slot is free (running < the concurrent-run cap); otherwise it queues.
+  // when a run slot is free (concurrent runs < the run cap); otherwise it queues. Count
+  // actual concurrent runs (rows), the unit the cap governs — not whole jobs.
   const waiting = queue?.waiting ?? 0
-  const running = queue?.running ?? 0
+  const running = queue?.running_rows ?? queue?.running ?? 0
   const budget = queue?.budget ?? 1
   const busy = running >= budget // no free slot → this submit will wait in the queue
   const queueMsg = busy

@@ -231,6 +231,16 @@ func (s *Store) RunningJobCount() int {
 	return n
 }
 
+// RunningItemCount returns how many individual rows are executing right now (item
+// status 'running') across all jobs — the true count of concurrent runs the global
+// run gate caps. This is what "N running at once" means to the user, whereas
+// RunningJobCount counts whole jobs (a batch can hold several running rows).
+func (s *Store) RunningItemCount() int {
+	var n int
+	s.queryRow("SELECT COUNT(*) FROM batch_items WHERE status='running'").Scan(&n)
+	return n
+}
+
 // MarkJobRunning atomically flips a job from 'queued' to 'running' (stamping
 // started_at). It returns true only for the caller that won the transition, so two
 // concurrent scheduler ticks can never launch the same job twice.
