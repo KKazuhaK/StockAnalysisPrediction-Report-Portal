@@ -68,10 +68,10 @@ func TestBuildDifyProviderAndInputs(t *testing.T) {
 		BaseURL: "https://dify.example/v1", APIKey: "app-key",
 		Inputs: []dify.Input{{Variable: "symbol", Label: "上市公司代码", Type: "text-input", Required: true}},
 	})
-	if _, err := buildDifyProvider(string(cfg), "report-portal"); err != nil {
+	if _, err := buildDifyProvider(string(cfg), "report-portal", false, 0); err != nil {
 		t.Fatalf("buildDifyProvider: %v", err)
 	}
-	if _, err := buildDifyProvider(`{"base_url":"","api_key":""}`, ""); err == nil {
+	if _, err := buildDifyProvider(`{"base_url":"","api_key":""}`, "", false, 0); err == nil {
 		t.Fatal("expected error for missing base_url/api_key")
 	}
 
@@ -148,6 +148,42 @@ func TestDifyProviderReconnectDoesNotRerun(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&runs); n != 1 {
 		t.Errorf("workflow was started %d times, want 1 (no re-run on reconnect)", n)
+	}
+}
+
+// Poll mode: the stream returns as soon as the run id is captured (no workflow_finished
+// read), then the outcome is polled. The workflow is started exactly once (no re-run).
+func TestDifyProviderPollMode(t *testing.T) {
+	var runs, gets int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workflows/run":
+			atomic.AddInt32(&runs, 1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"event":"workflow_started","task_id":"t","workflow_run_id":"run-p","data":{}}`+"\n\n")
+			io.WriteString(w, `data: {"event":"workflow_finished","task_id":"t","workflow_run_id":"run-p","data":{"status":"succeeded"}}`+"\n\n")
+		case "/workflows/run/run-p":
+			atomic.AddInt32(&gets, 1)
+			io.WriteString(w, `{"id":"run-p","status":"succeeded"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u", poll: true, reconcilePoll: time.Millisecond, reconcileTimeout: 5 * time.Second}
+	res, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != batch.Ok || res.RunID != "run-p" {
+		t.Fatalf("res = %+v, want Ok run-p", res)
+	}
+	if n := atomic.LoadInt32(&runs); n != 1 {
+		t.Errorf("workflow started %d times, want 1", n)
+	}
+	if atomic.LoadInt32(&gets) < 1 {
+		t.Error("poll mode should have polled the run status at least once")
 	}
 }
 
@@ -275,7 +311,7 @@ func TestDifyChatProviderRunsChat(t *testing.T) {
 	defer srv.Close()
 
 	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: srv.URL, APIKey: "k", Mode: "chat"})
-	prov, err := buildDifyProvider(string(cfg), "u")
+	prov, err := buildDifyProvider(string(cfg), "u", false, 0)
 	if err != nil {
 		t.Fatalf("buildDifyProvider: %v", err)
 	}

@@ -52,7 +52,7 @@ type streamEnvelope struct {
 // after the run started can reconcile the true outcome via GetWorkflowRun instead of
 // re-running the workflow (the duplicate-run hazard of blocking mode). onEvent is
 // called from this goroutine, synchronously, in stream order.
-func (c *Client) RunWorkflowStream(ctx context.Context, inputs map[string]any, user string, onEvent func(StreamEvent)) (RunResult, string, error) {
+func (c *Client) RunWorkflowStream(ctx context.Context, inputs map[string]any, user string, stopAtRunID bool, onEvent func(StreamEvent)) (RunResult, string, error) {
 	if inputs == nil {
 		inputs = map[string]any{}
 	}
@@ -104,6 +104,11 @@ func (c *Client) RunWorkflowStream(ctx context.Context, inputs map[string]any, u
 		if onEvent != nil {
 			onEvent(StreamEvent{Event: ev.Event, TaskID: taskID, RunID: runID, Title: ev.Data.Title, Index: ev.Data.Index, Status: ev.Data.Status})
 		}
+		// Poll mode: once the run id is captured, hand off to status polling instead of
+		// holding the stream open for the whole run (proxy-friendly; no long-lived SSE).
+		if stopAtRunID && runID != "" {
+			return res, runID, nil
+		}
 		switch ev.Event {
 		case "workflow_finished":
 			res = RunResult{
@@ -142,7 +147,7 @@ func (c *Client) RunWorkflowStream(ctx context.Context, inputs map[string]any, u
 // dropped connection is reconciled the same way (via GetWorkflowRun) instead of
 // re-running. The run completes on workflow_finished or message_end; an `error` event
 // is a terminal failure (not a transport error).
-func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user string, onEvent func(StreamEvent)) (RunResult, string, error) {
+func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user string, stopAtRunID bool, onEvent func(StreamEvent)) (RunResult, string, error) {
 	if user == "" {
 		user = "report-portal"
 	}
@@ -200,6 +205,9 @@ func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user 
 		}
 		if onEvent != nil {
 			onEvent(StreamEvent{Event: ev.Event, TaskID: taskID, RunID: runID, Title: ev.Data.Title, Index: ev.Data.Index, Status: ev.Data.Status})
+		}
+		if stopAtRunID && runID != "" {
+			return res, runID, nil // poll mode: hand off to status polling
 		}
 		switch ev.Event {
 		case "workflow_finished":

@@ -52,17 +52,19 @@ type difyProvider struct {
 	c                *dify.Client
 	user             string
 	chat             bool // chat/agent app (/chat-messages) vs workflow (/workflows/run)
+	poll             bool // poll mode: capture the run id then poll for the outcome (don't hold the stream open)
 	reconcilePoll    time.Duration
 	reconcileTimeout time.Duration
 }
 
 // runStream dispatches to the chat or workflow stream by the target's mode. Both
-// return the same shape, so the reconnect / reconcile / stop logic is identical.
+// return the same shape, so the reconnect / reconcile / stop logic is identical. In poll
+// mode the stream returns as soon as the run id is captured.
 func (p difyProvider) runStream(ctx context.Context, in map[string]any, onEvent func(dify.StreamEvent)) (dify.RunResult, string, error) {
 	if p.chat {
-		return p.c.RunChatStream(ctx, in, p.user, onEvent)
+		return p.c.RunChatStream(ctx, in, p.user, p.poll, onEvent)
 	}
-	return p.c.RunWorkflowStream(ctx, in, p.user, onEvent)
+	return p.c.RunWorkflowStream(ctx, in, p.user, p.poll, onEvent)
 }
 
 func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.RunResult, error) {
@@ -77,6 +79,15 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 			taskID = e.TaskID
 		}
 	})
+	// Poll mode: the stream returned as soon as the run id was captured. Poll the run to
+	// its terminal state instead of holding the connection open. Reconcile never re-runs.
+	if p.poll && err == nil && runID != "" && !difyTerminal(r.Status) {
+		r, err = p.reconcile(ctx, runID)
+		if err != nil {
+			return batch.RunResult{}, permanentRunErr{fmt.Errorf("poll dify run %s: %w", runID, err)}
+		}
+		return difyResultToBatch(r), nil
+	}
 	if err == nil {
 		return difyResultToBatch(r), nil
 	}
@@ -149,6 +160,12 @@ func (p difyProvider) stop(taskID string) {
 	_ = p.c.StopWorkflow(ctx, taskID, p.user)
 }
 
+// difyTerminal reports whether a Dify status is final (succeeded / failed / stopped) —
+// i.e. not empty and not "running".
+func difyTerminal(status string) bool {
+	return status != "" && status != "running"
+}
+
 // difyResultToBatch maps a Dify run outcome to the engine's per-row result. A Dify
 // workflow status is succeeded / failed / stopped; only succeeded is a success.
 func difyResultToBatch(r dify.RunResult) batch.RunResult {
@@ -187,7 +204,7 @@ func (permanentRunErr) Transient() bool { return false }
 // buildDifyProvider constructs the provider for a Dify target from its config JSON.
 // user is the end-user identity Dify records for each run (resolved from the
 // dify_end_user template); an empty user falls back to "report-portal" at run time.
-func buildDifyProvider(configJSON, user string) (batch.Provider, error) {
+func buildDifyProvider(configJSON, user string, poll bool, pollInterval time.Duration) (batch.Provider, error) {
 	var cfg difyTargetConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return nil, fmt.Errorf("dify target config: %w", err)
@@ -195,11 +212,16 @@ func buildDifyProvider(configJSON, user string) (batch.Provider, error) {
 	if cfg.BaseURL == "" || cfg.APIKey == "" {
 		return nil, fmt.Errorf("dify target: base_url and api_key are required")
 	}
-	return difyProvider{
+	p := difyProvider{
 		c:    dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: difyRunTimeout}),
 		user: user,
 		chat: difyModeChat(cfg.Mode),
-	}, nil
+		poll: poll,
+	}
+	if poll && pollInterval > 0 {
+		p.reconcilePoll = pollInterval
+	}
+	return p, nil
 }
 
 // difyTargetInputs returns a Dify target's discovered inputs (for the run form), or

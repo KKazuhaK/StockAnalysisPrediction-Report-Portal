@@ -39,7 +39,7 @@ func TestRunWorkflowStreamHappy(t *testing.T) {
 	c := New(srv.URL, "app-key", srv.Client())
 
 	var titles []string
-	res, runID, err := c.RunWorkflowStream(context.Background(), map[string]any{"symbol": "1"}, "u", func(e StreamEvent) {
+	res, runID, err := c.RunWorkflowStream(context.Background(), map[string]any{"symbol": "1"}, "u", false, func(e StreamEvent) {
 		if e.Event == "node_started" {
 			titles = append(titles, e.Title)
 		}
@@ -66,7 +66,7 @@ func TestRunWorkflowStreamErrorEvent(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, "app-key", srv.Client())
 
-	res, _, err := c.RunWorkflowStream(context.Background(), map[string]any{"symbol": "1"}, "u", nil)
+	res, _, err := c.RunWorkflowStream(context.Background(), map[string]any{"symbol": "1"}, "u", false, nil)
 	if err != nil {
 		t.Fatalf("an error event should be a terminal result, not a transport error: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestRunWorkflowStreamDropReturnsRunID(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, "app-key", srv.Client())
 
-	_, runID, err := c.RunWorkflowStream(context.Background(), nil, "u", nil)
+	_, runID, err := c.RunWorkflowStream(context.Background(), nil, "u", false, nil)
 	if err == nil {
 		t.Fatal("expected an error when the stream ends before workflow_finished")
 	}
@@ -104,7 +104,7 @@ func TestRunWorkflowStream4xx(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, "app-key", srv.Client())
 
-	_, runID, err := c.RunWorkflowStream(context.Background(), nil, "u", nil)
+	_, runID, err := c.RunWorkflowStream(context.Background(), nil, "u", false, nil)
 	if runID != "" {
 		t.Errorf("runID = %q, want empty (nothing started)", runID)
 	}
@@ -176,7 +176,7 @@ func TestRunChatStreamChatflow(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, "app-key", srv.Client())
 
-	res, runID, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi", "symbol": "600160"}, "u", nil)
+	res, runID, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi", "symbol": "600160"}, "u", false, nil)
 	if err != nil {
 		t.Fatalf("RunChatStream: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestRunChatStreamPureChat(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, "app-key", srv.Client())
 
-	res, runID, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", nil)
+	res, runID, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", false, nil)
 	if err != nil {
 		t.Fatalf("RunChatStream: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestRunChatStreamError(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, "app-key", srv.Client())
 
-	res, _, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", nil)
+	res, _, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", false, nil)
 	if err != nil {
 		t.Fatalf("an error event should be a terminal result, not a Go error: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestRunChatStreamTrailingErrorKeepsSuccess(t *testing.T) {
 	defer srv.Close()
 	c := New(srv.URL, "app-key", srv.Client())
 
-	res, _, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", nil)
+	res, _, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", false, nil)
 	if err != nil {
 		t.Fatalf("RunChatStream: %v", err)
 	}

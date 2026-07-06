@@ -298,6 +298,7 @@ export interface BatchConfig {
   default_priority: number
   urgent_enabled?: boolean
   dify_end_user?: string
+  dify_poll_seconds?: number // 0 = streaming; >0 = poll the run status every N seconds
   prio_w_base: number
   prio_w_age: number
   prio_w_fair: number
