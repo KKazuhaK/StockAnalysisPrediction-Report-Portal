@@ -27,6 +27,7 @@ export default function BatchConsole() {
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [targetId, setTargetId] = useState<number | undefined>()
   const [maxRetries, setMaxRetries] = useState(2)
+  const [rowConcurrency, setRowConcurrency] = useState(1)
   const [urgent, setUrgent] = useState(false)
   const [basePriority, setBasePriority] = useState(50)
   const [tickets, setTickets] = useState<BatchTickets | null>(null)
@@ -72,10 +73,11 @@ export default function BatchConsole() {
     }
     setSubmitting(true)
     try {
-      // Batch rows run sequentially (concurrency 1) — the per-run concurrency knob was removed.
+      // Per-batch row concurrency chosen here (default 1); the backend caps it at the
+      // global "max at once" budget so a batch can't overrun the queue.
       const res = await api.post<{ job_id: number; concurrency: number; downgraded?: boolean; run_at?: string }>('/api/admin/batch/jobs', {
         target_id: targetId,
-        concurrency: 1,
+        concurrency: rowConcurrency,
         max_retries: maxRetries,
         priority: urgent ? 'urgent' : admin ? String(basePriority) : '', // non-admins can't set priority; backend resolves it
         run_at: mode === 'scheduled' && runAt ? runAt.format('YYYY-MM-DD HH:mm:ss') : '',
@@ -125,6 +127,8 @@ export default function BatchConsole() {
               />
               <span>{t('batch.maxRetries')}：</span>
               <InputNumber min={0} max={5} value={maxRetries} onChange={(v) => setMaxRetries(v ?? 0)} />
+              <span>{t('batch.rowConcurrency')}：</span>
+              <InputNumber min={1} max={20} value={rowConcurrency} onChange={(v) => setRowConcurrency(v ?? 1)} />
               {admin && (
                 <>
                   <span>{t('batch.priorityLabel')}：</span>

@@ -199,8 +199,6 @@
   "batch.admin.deleteTargetConfirm": "刪除該目標？",
   "batch.admin.advancedPlugins": "進階：自訂執行器",
   "batch.admin.advancedPluginsHint": "匯入清單以接入非 Dify 的執行器。大多數情境只需上方的 Dify 目標即可。",
-  "batch.admin.rowConcurrency": "每批次同時跑幾行：",
-  "batch.admin.rowConcurrencyHint": "一個批次最多同時跑幾行。1 = 一行一行跑。會被“最多同時執行任務數”限制，單個批次不會超過全域性上限。",
   "batch.dify.newTarget": "新建 Dify 工作流",
   "batch.dify.editTarget": "編輯 Dify 工作流",
   "batch.dify.chatTag": "對話",
@@ -495,6 +493,7 @@
   "email.testTo": "收件人（留空＝你的郵箱）",
   "email.testSent": "測試郵件已傳送",
   "batch.notifyDone": "完成後郵件通知我",
+  "batch.rowConcurrency": "同時跑幾行",
   "email.publicUrl": "公開網址",
   "email.publicUrlHint": "例如 https://portal.example.com —— 用於產生重設連結。設定後，連結不會被偽造的請求標頭汙染。"
 }
