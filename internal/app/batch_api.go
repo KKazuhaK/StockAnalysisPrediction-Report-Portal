@@ -87,10 +87,12 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 	pw := s.prioWeights()
 	writeJSON(w, map[string]any{
 		"max_concurrency":    s.batchMaxConcurrency(),
-		"max_jobs":           s.batchBudget(),        // queue budget: jobs running at once (ADR 0004)
-		"reserved_slots":     s.batchReserved(),      // slots held for 加急 (ADR 0004)
-		"ticket_period_days": s.ticketPeriodDays(),   // how often 加急 tickets refill (ADR 0005)
-		"default_priority":   s.runDefaultPriority(), // base priority (0..100) for no-group runs (ADR 0008)
+		"max_jobs":           s.batchBudget(),                                   // queue budget: jobs running at once (ADR 0004)
+		"reserved_slots":     s.batchReserved(),                                 // slots held for 加急 (ADR 0004)
+		"ticket_period_days": s.ticketPeriodDays(),                              // how often 加急 tickets refill (ADR 0005)
+		"default_priority":   s.runDefaultPriority(),                            // base priority (0..100) for no-group runs (ADR 0008)
+		"urgent_enabled":     s.urgentEnabled(),                                 // is the 加急 lane offered at all (admin toggle)
+		"dify_end_user":      s.st.GetSetting("dify_end_user", "report-portal"), // Dify end-user template ([username] var)
 		// Multifactor priority weights + factor tuning (ADR 0008).
 		"prio_w_base":              pw.Base,
 		"prio_w_age":               pw.Age,
@@ -102,11 +104,13 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 
 func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		MaxConcurrency   int    `json:"max_concurrency"`
-		MaxJobs          int    `json:"max_jobs"`
-		ReservedSlots    int    `json:"reserved_slots"`
-		TicketPeriodDays int    `json:"ticket_period_days"`
-		DefaultPriority  string `json:"default_priority"`
+		MaxConcurrency   *int    `json:"max_concurrency"`
+		MaxJobs          *int    `json:"max_jobs"`
+		ReservedSlots    *int    `json:"reserved_slots"`
+		TicketPeriodDays *int    `json:"ticket_period_days"`
+		DefaultPriority  *string `json:"default_priority"`
+		UrgentEnabled    *bool   `json:"urgent_enabled"` // admin toggle for the 加急 lane
+		DifyEndUser      *string `json:"dify_end_user"`  // Dify end-user template ([username] var)
 		// Multifactor priority tuning; pointers so an omitted field is left unchanged
 		// (a weight of 0 is meaningful — it disables that factor). See ADR 0008.
 		PrioWBase             *float64 `json:"prio_w_base"`
@@ -121,20 +125,32 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	}
 	// The no-group default is a base number (0..100); 加急 stays ticket-gated, so it
 	// can't be a silent default (groupPriorityValid rejects it).
-	if p := s.groupPriorityValid(in.DefaultPriority); p != "" {
-		s.st.SetSetting("run_default_priority", p)
+	if in.DefaultPriority != nil {
+		if p := s.groupPriorityValid(*in.DefaultPriority); p != "" {
+			s.st.SetSetting("run_default_priority", p)
+		}
 	}
-	if in.MaxConcurrency >= 1 {
-		s.st.SetSetting("batch_max_concurrency", strconv.Itoa(in.MaxConcurrency))
+	if in.MaxConcurrency != nil && *in.MaxConcurrency >= 1 {
+		s.st.SetSetting("batch_max_concurrency", strconv.Itoa(*in.MaxConcurrency))
 	}
-	if in.MaxJobs >= 1 {
-		s.st.SetSetting("batch_max_concurrent_jobs", strconv.Itoa(in.MaxJobs))
+	if in.MaxJobs != nil && *in.MaxJobs >= 1 {
+		s.st.SetSetting("batch_max_concurrent_jobs", strconv.Itoa(*in.MaxJobs))
 	}
-	if in.ReservedSlots >= 0 {
-		s.st.SetSetting("batch_reserved_slots", strconv.Itoa(in.ReservedSlots))
+	if in.ReservedSlots != nil && *in.ReservedSlots >= 0 {
+		s.st.SetSetting("batch_reserved_slots", strconv.Itoa(*in.ReservedSlots))
 	}
-	if in.TicketPeriodDays >= 1 {
-		s.st.SetSetting("batch_ticket_period_days", strconv.Itoa(in.TicketPeriodDays))
+	if in.TicketPeriodDays != nil && *in.TicketPeriodDays >= 1 {
+		s.st.SetSetting("batch_ticket_period_days", strconv.Itoa(*in.TicketPeriodDays))
+	}
+	if in.UrgentEnabled != nil {
+		v := "0"
+		if *in.UrgentEnabled {
+			v = "1"
+		}
+		s.st.SetSetting("batch_urgent_enabled", v)
+	}
+	if in.DifyEndUser != nil {
+		s.st.SetSetting("dify_end_user", *in.DifyEndUser) // difyEndUser trims + defaults on read
 	}
 	setFloat := func(key string, v *float64, min float64) {
 		if v != nil && *v >= min {
@@ -346,16 +362,19 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 	writeJSON(w, map[string]any{"ok": true, "job_id": jobID, "concurrency": conc, "priority": priority, "downgraded": downgraded, "run_at": runAt})
 }
 
-// apiBatchTickets reports the caller's 加急 ticket balance for the run form. Admins
-// are exempt (unlimited).
+// apiBatchTickets reports the caller's 加急 ticket balance for the run form. Users
+// in an unlimited group are exempt from ticket spending, regardless of role.
 func (s *Server) apiBatchTickets(w http.ResponseWriter, r *http.Request, user string) {
-	if s.isAdmin(user) {
-		writeJSON(w, map[string]any{"unlimited": true})
+	// urgent_enabled lets the run forms hide the 加急 control entirely when the lane
+	// is turned off (admin toggle), independent of ticket balance.
+	enabled := s.urgentEnabled()
+	if s.st.UserUrgentUnlimited(user) {
+		writeJSON(w, map[string]any{"unlimited": true, "urgent_enabled": enabled})
 		return
 	}
 	alloc := s.st.UserTicketAllocation(user)
 	remaining := s.st.TicketStatus(user, alloc, s.ticketPeriodDays(), time.Now())
-	writeJSON(w, map[string]any{"unlimited": false, "remaining": remaining, "allocation": alloc, "period_days": s.ticketPeriodDays()})
+	writeJSON(w, map[string]any{"unlimited": false, "remaining": remaining, "allocation": alloc, "period_days": s.ticketPeriodDays(), "urgent_enabled": enabled})
 }
 
 func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user string) {

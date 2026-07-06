@@ -221,7 +221,6 @@ export default function BatchConsole() {
   const { message } = App.useApp()
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [targetId, setTargetId] = useState<number | undefined>()
-  const [concurrency, setConcurrency] = useState(3)
   const [maxRetries, setMaxRetries] = useState(2)
   const [urgent, setUrgent] = useState(false)
   const [basePriority, setBasePriority] = useState(50)
@@ -245,11 +244,12 @@ export default function BatchConsole() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const urgentEnabled = tickets?.urgent_enabled !== false
   // 加急 needs a ticket (unless unlimited/admin); disable it when the balance is 0.
-  const urgentDisabled = tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
+  const urgentDisabled = urgentEnabled && tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
   useEffect(() => {
-    if (urgentDisabled && urgent) setUrgent(false)
-  }, [urgentDisabled, urgent])
+    if ((!urgentEnabled || urgentDisabled) && urgent) setUrgent(false)
+  }, [urgentEnabled, urgentDisabled, urgent])
 
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputKeys = useMemo(() => (target?.inputs || []).map((i) => i.key), [target])
@@ -266,15 +266,15 @@ export default function BatchConsole() {
     if (!targetId || rows.length === 0) return
     setSubmitting(true)
     try {
+      // Batch rows run sequentially (concurrency 1) — the per-run concurrency knob was removed.
       const res = await api.post<{ job_id: number; concurrency: number; downgraded?: boolean }>('/api/admin/batch/jobs', {
         target_id: targetId,
-        concurrency,
+        concurrency: 1,
         max_retries: maxRetries,
         priority: urgent ? 'urgent' : String(basePriority),
         rows,
       })
       message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
-      if (res.concurrency !== concurrency) message.info(t('batch.msg.clamped', { n: res.concurrency }))
       if (res.downgraded) message.warning(t('batch.ticketDowngraded'))
       setCsvText('')
       loadJobs()
@@ -365,19 +365,21 @@ export default function BatchConsole() {
                   label: tg.plugin_name ? `${tg.name}（${tg.plugin_name}）` : tg.name,
                 }))}
               />
-              <span>{t('batch.concurrency')}：</span>
-              <InputNumber min={1} max={99} value={concurrency} onChange={(v) => setConcurrency(v || 1)} />
               <span>{t('batch.maxRetries')}：</span>
               <InputNumber min={0} max={5} value={maxRetries} onChange={(v) => setMaxRetries(v ?? 0)} />
               <span>{t('batch.priorityLabel')}：</span>
               <InputNumber min={0} max={BASE_MAX} value={basePriority} onChange={(v) => setBasePriority(v ?? 50)} disabled={urgent} />
-              <Checkbox checked={urgent} disabled={urgentDisabled} onChange={(e) => setUrgent(e.target.checked)}>
-                {t('run.urgent')}
-              </Checkbox>
-              {tickets && !tickets.unlimited && (
-                <Tag color={(tickets.remaining ?? 0) > 0 ? 'gold' : 'default'} icon={<ThunderboltOutlined />}>
-                  {t('batch.ticketsLeft', { n: tickets.remaining ?? 0, total: tickets.allocation ?? 0 })}
-                </Tag>
+              {urgentEnabled && (
+                <>
+                  <Checkbox checked={urgent} disabled={urgentDisabled} onChange={(e) => setUrgent(e.target.checked)}>
+                    {t('run.urgent')}
+                  </Checkbox>
+                  {tickets && !tickets.unlimited && (
+                    <Tag color={(tickets.remaining ?? 0) > 0 ? 'gold' : 'default'} icon={<ThunderboltOutlined />}>
+                      {t('batch.ticketsLeft', { n: tickets.remaining ?? 0, total: tickets.allocation ?? 0 })}
+                    </Tag>
+                  )}
+                </>
               )}
             </Space>
             {target && (

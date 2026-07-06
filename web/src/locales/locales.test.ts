@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { LANGS, BASE_LANG, findLang, detectLang } from './index'
+import { LANGS, BASE_LANG, findLang, detectLang, normalizeSaved } from './index'
 
 // Auto-detect maps the browser's ordered language preferences onto a supported code,
 // resolving Simplified vs Traditional by script (Hans/Hant) or region (CN/SG vs TW/HK/MO),
@@ -20,10 +20,10 @@ describe('detectLang', () => {
     [['zh-Hans-HK'], 'zh-CN'],
     [['zh-Hans-MO'], 'zh-CN'],
     [['zh-Hans-TW'], 'zh-CN'],
-    [['en-US'], 'en'],
-    [['en'], 'en'],
-    [['EN-GB'], 'en'], // case-insensitive
-    [['fr', 'en-US'], 'en'], // skip unsupported, take the next preference
+    [['en-US'], 'en-US'],
+    [['en'], 'en-US'],
+    [['EN-GB'], 'en-US'], // case-insensitive
+    [['fr', 'en-US'], 'en-US'], // skip unsupported, take the next preference
     [['ja'], 'zh-CN'], // nothing supported → base
     [[], 'zh-CN'], // empty → base
     [['zh-TW', 'en'], 'zh-TW'], // honor order: first match wins
@@ -33,6 +33,22 @@ describe('detectLang', () => {
       expect(detectLang(prefs)).toBe(want)
     })
   }
+})
+
+describe('normalizeSaved', () => {
+  it('keeps supported locales and migrates legacy short codes', () => {
+    expect(normalizeSaved('zh-CN')).toBe('zh-CN')
+    expect(normalizeSaved('zh-TW')).toBe('zh-TW')
+    expect(normalizeSaved('en-US')).toBe('en-US')
+    expect(normalizeSaved('zh')).toBe('zh-CN')
+    expect(normalizeSaved('en')).toBe('en-US')
+  })
+
+  it('falls back to the base language for unknown or missing values', () => {
+    expect(normalizeSaved(null)).toBe(BASE_LANG)
+    expect(normalizeSaved('en-GB')).toBe(BASE_LANG)
+    expect(normalizeSaved('fr')).toBe(BASE_LANG)
+  })
 })
 
 // Structural guarantee for "many languages": every registered language must load a bundle

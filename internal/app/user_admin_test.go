@@ -75,11 +75,28 @@ func TestUserGroupsCRUDAndMembership(t *testing.T) {
 	// Member counts.
 	groups := st.ListUserGroups()
 	counts := map[string]int{}
+	urgentFree := map[string]bool{}
 	for _, g := range groups {
 		counts[g.Name] = g.Members
+		urgentFree[g.Name] = g.UrgentFree
 	}
 	if counts["Research"] != 1 || counts["Ops"] != 2 {
 		t.Fatalf("member counts = %v, want Research:1 Ops:2", counts)
+	}
+	if urgentFree["Research"] || urgentFree["Ops"] {
+		t.Fatalf("new groups should not be unlimited by default: %v", urgentFree)
+	}
+
+	if err := st.UpdateUserGroup(gid, "Research", "The research desk", 0, true); err != nil {
+		t.Fatalf("UpdateUserGroup urgent unlimited: %v", err)
+	}
+	groups = st.ListUserGroups()
+	urgentFree = map[string]bool{}
+	for _, g := range groups {
+		urgentFree[g.Name] = g.UrgentFree
+	}
+	if !urgentFree["Research"] {
+		t.Fatalf("updated group did not persist urgent unlimited: %v", urgentFree)
 	}
 
 	// Re-assigning replaces (not appends).

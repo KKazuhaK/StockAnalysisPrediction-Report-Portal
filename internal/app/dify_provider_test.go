@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -63,10 +64,10 @@ func TestBuildDifyProviderAndInputs(t *testing.T) {
 		BaseURL: "https://dify.example/v1", APIKey: "app-key",
 		Inputs: []dify.Input{{Variable: "symbol", Label: "上市公司代码", Type: "text-input", Required: true}},
 	})
-	if _, err := buildDifyProvider(string(cfg)); err != nil {
+	if _, err := buildDifyProvider(string(cfg), "report-portal"); err != nil {
 		t.Fatalf("buildDifyProvider: %v", err)
 	}
-	if _, err := buildDifyProvider(`{"base_url":"","api_key":""}`); err == nil {
+	if _, err := buildDifyProvider(`{"base_url":"","api_key":""}`, ""); err == nil {
 		t.Fatal("expected error for missing base_url/api_key")
 	}
 
@@ -74,5 +75,41 @@ func TestBuildDifyProviderAndInputs(t *testing.T) {
 	got := difyInputsJSON(string(cfg))
 	if len(got) != 1 || got[0]["key"] != "symbol" || got[0]["required"] != true {
 		t.Fatalf("difyInputsJSON = %v", got)
+	}
+}
+
+// difyEndUser resolves the recorded end-user from the dify_end_user template:
+// the fixed default, [username] substitution, and a blank-template fallback.
+func TestDifyEndUserTemplate(t *testing.T) {
+	s := batchServer(t)
+	if got := s.difyEndUser("kazuha"); got != "report-portal" {
+		t.Errorf("default = %q, want report-portal", got)
+	}
+	s.st.SetSetting("dify_end_user", "[username]@anchan.kazuha.org")
+	if got := s.difyEndUser("kazuha"); got != "kazuha@anchan.kazuha.org" {
+		t.Errorf("templated = %q, want kazuha@anchan.kazuha.org", got)
+	}
+	s.st.SetSetting("dify_end_user", "   ") // blank falls back to the fixed default
+	if got := s.difyEndUser("kazuha"); got != "report-portal" {
+		t.Errorf("blank template = %q, want report-portal", got)
+	}
+}
+
+// The provider forwards its resolved end-user to Dify as the run's `user`.
+func TestDifyProviderSendsEndUser(t *testing.T) {
+	var gotUser string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		gotUser, _ = body["user"].(string)
+		io.WriteString(w, `{"workflow_run_id":"r","data":{"status":"succeeded"}}`)
+	}))
+	defer srv.Close()
+	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "kazuha@anchan.kazuha.org"}
+	if _, err := p.Run(context.Background(), map[string]string{"symbol": "1"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if gotUser != "kazuha@anchan.kazuha.org" {
+		t.Errorf("recorded user = %q, want kazuha@anchan.kazuha.org", gotUser)
 	}
 }

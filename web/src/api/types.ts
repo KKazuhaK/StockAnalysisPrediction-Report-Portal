@@ -275,8 +275,24 @@ export interface UserGroupRow {
   name: string
   description?: string
   weight: number // 加急 tickets granted per period to each member (ADR 0005)
+  urgent_unlimited?: boolean // members can run urgent jobs without spending tickets
   priority?: string // default base run priority 0..100 for members (as a string; ADR 0008)
   members: number // member count
+}
+
+export interface BatchConfig {
+  max_concurrency: number
+  max_jobs: number
+  reserved_slots: number
+  ticket_period_days: number
+  default_priority: number
+  urgent_enabled?: boolean
+  dify_end_user?: string
+  prio_w_base: number
+  prio_w_age: number
+  prio_w_fair: number
+  prio_age_hours: number
+  prio_fair_halflife_hours: number
 }
 
 // 加急 ticket balance for the batch run form (ADR 0005).
@@ -285,6 +301,7 @@ export interface BatchTickets {
   remaining?: number
   allocation?: number
   period_days?: number
+  urgent_enabled?: boolean // when false, the run forms hide the 加急 control entirely
 }
 
 export interface UsersResp {

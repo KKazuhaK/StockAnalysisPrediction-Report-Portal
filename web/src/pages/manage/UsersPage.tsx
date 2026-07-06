@@ -33,7 +33,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import { priorityNum } from '../../lib/batchUi'
-import type { Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
+import type { BatchConfig, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
 
 // A deterministic avatar colour from a name, so each user reads distinctly.
 const ROLE_COLOR: Record<string, string> = { admin: 'gold', operator: 'blue', user: 'default' }
@@ -378,18 +378,58 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [edit, setEdit] = useState<UserGroupRow | 'new' | null>(null)
+  const [ticketPeriod, setTicketPeriod] = useState<number>()
   const [form] = Form.useForm()
+
+  useEffect(() => {
+    let alive = true
+    api.get<Pick<BatchConfig, 'ticket_period_days'>>('/api/admin/batch/config').then(
+      (r) => {
+        if (alive && typeof r.ticket_period_days === 'number') setTicketPeriod(r.ticket_period_days)
+      },
+      () => {
+        /* keep group editing usable even if the global queue config is temporarily unreachable */
+      },
+    )
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (edit != null && ticketPeriod != null) form.setFieldValue('ticket_period_days', ticketPeriod)
+  }, [edit, form, ticketPeriod])
 
   const openForm = (g: UserGroupRow | 'new') => {
     setEdit(g)
-    if (g === 'new') form.setFieldsValue({ name: '', description: '', weight: 0, priority: undefined })
-    else form.setFieldsValue({ name: g.name, description: g.description, weight: g.weight, priority: g.priority ? Number(g.priority) : undefined })
+    const shared = { ticket_period_days: ticketPeriod }
+    if (g === 'new') form.setFieldsValue({ ...shared, name: '', description: '', weight: 0, urgent_unlimited: false, priority: undefined })
+    else
+      form.setFieldsValue({
+        ...shared,
+        name: g.name,
+        description: g.description,
+        weight: g.weight,
+        urgent_unlimited: !!g.urgent_unlimited,
+        priority: g.priority ? Number(g.priority) : undefined,
+      })
   }
   const save = async () => {
     const v = await form.validateFields()
     // priority is a base number 0..100; the API stores it as a string (ADR 0008).
-    const body = { ...v, priority: v.priority == null || v.priority === '' ? '' : String(v.priority) }
+    const nextTicketPeriod = typeof v.ticket_period_days === 'number' ? v.ticket_period_days : undefined
+    const body = {
+      name: v.name,
+      description: v.description || '',
+      weight: v.weight ?? 0,
+      urgent_unlimited: !!v.urgent_unlimited,
+      priority: v.priority == null || v.priority === '' ? '' : String(v.priority),
+    }
     try {
+      if (nextTicketPeriod != null && nextTicketPeriod !== ticketPeriod) {
+        await api.post('/api/admin/batch/config', { ticket_period_days: nextTicketPeriod })
+        setTicketPeriod(nextTicketPeriod)
+      }
       if (edit === 'new') await api.post('/api/admin/groups', body)
       else await api.put(`/api/admin/groups/${(edit as UserGroupRow).id}`, body)
       setEdit(null)
@@ -425,6 +465,11 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
                     {g.weight > 0 && (
                       <Tag color="gold" icon={<ThunderboltOutlined />}>
                         {t('users.weightN', { n: g.weight })}
+                      </Tag>
+                    )}
+                    {g.urgent_unlimited && (
+                      <Tag color="red" icon={<ThunderboltOutlined />}>
+                        {t('users.urgentUnlimitedTag')}
                       </Tag>
                     )}
                     {g.priority && <Tag color="blue">{t('users.priorityTag', { n: priorityNum(g.priority) })}</Tag>}
@@ -467,6 +512,19 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
           </Form.Item>
           <Form.Item name="weight" label={t('users.weight')} extra={t('users.weightHint')}>
             <InputNumber min={0} max={999} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="urgent_unlimited" valuePropName="checked" label={t('users.urgentUnlimited')} extra={t('users.urgentUnlimitedHint')}>
+            <Switch />
+          </Form.Item>
+          <Form.Item name="ticket_period_days" label={t('users.ticketPeriod')} extra={t('users.ticketPeriodHint')}>
+            <InputNumber
+              min={1}
+              max={365}
+              style={{ width: '100%' }}
+              addonAfter={t('batch.admin.days')}
+              disabled={ticketPeriod == null}
+              placeholder={ticketPeriod == null ? t('common.loading') : undefined}
+            />
           </Form.Item>
           <Form.Item name="priority" label={t('users.priority')} extra={t('users.priorityHint')}>
             <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder={t('users.prioritySystemDefault')} />

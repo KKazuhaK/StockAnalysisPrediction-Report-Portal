@@ -40,6 +40,16 @@ func (s *Store) UserTicketAllocation(username string) int {
 	return int(w.Int64)
 }
 
+// UserUrgentUnlimited reports whether any of the user's groups grants unlimited
+// 加急 runs. This is independent of role: admins are limited unless placed in such
+// a group.
+func (s *Store) UserUrgentUnlimited(username string) bool {
+	var v sql.NullInt64
+	s.queryRow(`SELECT COALESCE(MAX(g.urgent_unlimited),0) FROM user_group_members m
+		JOIN user_groups g ON g.id=m.group_id WHERE m.username=?`, username).Scan(&v)
+	return v.Int64 != 0
+}
+
 func (s *Store) ticketRow(username string) (int, time.Time) {
 	var remaining sql.NullInt64
 	var ps sql.NullString

@@ -11,7 +11,11 @@ import (
 func userGroupsJSON(gs []UserGroup) []map[string]any {
 	out := make([]map[string]any, 0, len(gs))
 	for _, g := range gs {
-		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "description": g.Description, "weight": g.Weight, "priority": g.Priority, "members": g.Members})
+		out = append(out, map[string]any{
+			"id": g.ID, "name": g.Name, "description": g.Description,
+			"weight": g.Weight, "urgent_unlimited": g.UrgentFree,
+			"priority": g.Priority, "members": g.Members,
+		})
 	}
 	return out
 }
@@ -25,6 +29,7 @@ func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Weight      int    `json:"weight"`
+		UrgentFree  bool   `json:"urgent_unlimited"`
 		Priority    string `json:"priority"`
 	}
 	readJSON(r, &in)
@@ -33,7 +38,7 @@ func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusBadRequest, "group name required")
 		return
 	}
-	id, err := s.st.CreateUserGroup(name, strings.TrimSpace(in.Description), clampWeight(in.Weight))
+	id, err := s.st.CreateUserGroup(name, strings.TrimSpace(in.Description), clampWeight(in.Weight), in.UrgentFree)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "group name already exists")
 		return
@@ -47,6 +52,7 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Weight      int    `json:"weight"`
+		UrgentFree  bool   `json:"urgent_unlimited"`
 		Priority    string `json:"priority"`
 	}
 	readJSON(r, &in)
@@ -56,7 +62,7 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 		return
 	}
 	id := pathID(r, "id")
-	if err := s.st.UpdateUserGroup(id, name, strings.TrimSpace(in.Description), clampWeight(in.Weight)); err != nil {
+	if err := s.st.UpdateUserGroup(id, name, strings.TrimSpace(in.Description), clampWeight(in.Weight), in.UrgentFree); err != nil {
 		jsonError(w, http.StatusBadRequest, "group name already exists")
 		return
 	}

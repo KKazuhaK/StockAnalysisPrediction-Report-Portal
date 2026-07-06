@@ -40,11 +40,12 @@ export default function RunAnalysisModal({
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputs = target?.inputs || []
 
+  const urgentEnabled = tickets?.urgent_enabled !== false
   // 加急 needs a ticket unless the caller is unlimited (admin); disable + uncheck at 0.
-  const urgentDisabled = tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
+  const urgentDisabled = urgentEnabled && tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
   useEffect(() => {
-    if (urgentDisabled) setUrgent(false)
-  }, [urgentDisabled])
+    if (!urgentEnabled || urgentDisabled) setUrgent(false)
+  }, [urgentEnabled, urgentDisabled])
 
   const pickTarget = (id: number) => {
     setTargetId(id)
@@ -166,21 +167,23 @@ export default function RunAnalysisModal({
           )}
         </div>
 
-        <div>
-          <Checkbox checked={urgent} disabled={urgentDisabled} onChange={(e) => setUrgent(e.target.checked)}>
-            {t('run.urgent')}
-          </Checkbox>
-          {tickets && !tickets.unlimited && (
-            <Tag style={{ marginLeft: 8 }} color={(tickets.remaining ?? 0) > 0 ? 'gold' : 'default'} icon={<ThunderboltOutlined />}>
-              {t('batch.ticketsLeft', { n: tickets.remaining ?? 0, total: tickets.allocation ?? 0 })}
-            </Tag>
-          )}
-          {urgentDisabled && (
-            <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-              {t('run.noTickets')}
-            </Typography.Text>
-          )}
-        </div>
+        {urgentEnabled && (
+          <div>
+            <Checkbox checked={urgent} disabled={urgentDisabled} onChange={(e) => setUrgent(e.target.checked)}>
+              {t('run.urgent')}
+            </Checkbox>
+            {tickets && !tickets.unlimited && (
+              <Tag style={{ marginLeft: 8 }} color={(tickets.remaining ?? 0) > 0 ? 'gold' : 'default'} icon={<ThunderboltOutlined />}>
+                {t('batch.ticketsLeft', { n: tickets.remaining ?? 0, total: tickets.allocation ?? 0 })}
+              </Tag>
+            )}
+            {urgentDisabled && (
+              <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                {t('run.noTickets')}
+              </Typography.Text>
+            )}
+          </div>
+        )}
 
         <Alert
           type={waiting > 0 ? 'warning' : 'success'}

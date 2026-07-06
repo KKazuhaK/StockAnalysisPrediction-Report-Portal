@@ -9,7 +9,7 @@ export interface LangBundle {
 }
 
 export interface LangMeta {
-  code: string // BCP-47: zh-CN 简体 / zh-TW 繁體 / en …
+  code: string // BCP-47: zh-CN 简体 / zh-TW 繁體 / en-US …
   label: string // native short name shown in the switcher
   load: () => Promise<{ default: LangBundle }>
 }
@@ -20,16 +20,17 @@ export const BASE_LANG = 'zh-CN'
 export const LANGS: LangMeta[] = [
   { code: 'zh-CN', label: '简体中文', load: () => import('./bundles/zh-CN') },
   { code: 'zh-TW', label: '繁體中文', load: () => import('./bundles/zh-TW') },
-  { code: 'en', label: 'English', load: () => import('./bundles/en') },
+  { code: 'en-US', label: 'English', load: () => import('./bundles/en-US') },
 ]
 
 export function findLang(code: string): LangMeta | undefined {
   return LANGS.find((l) => l.code === code)
 }
 
-// normalizeSaved maps a stored/legacy locale to a supported code (legacy bare 'zh' → 'zh-CN').
+// normalizeSaved maps a stored/legacy locale to a supported code (legacy 'zh' / 'en').
 export function normalizeSaved(v: string | null): string {
   if (v === 'zh') return 'zh-CN'
+  if (v === 'en') return 'en-US'
   return v && findLang(v) ? v : BASE_LANG
 }
 

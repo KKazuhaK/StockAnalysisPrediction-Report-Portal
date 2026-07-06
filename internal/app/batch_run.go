@@ -157,11 +157,35 @@ func (s *Server) ticketPeriodDays() int {
 	return n
 }
 
-// urgentAllowed gates a submitted 加急 run: admins use it freely; everyone else must
-// spend a 加急 ticket, otherwise the run falls back to its resolved base priority.
-// Returns the effective stored priority string and whether it was downgraded.
+// urgentEnabled reports whether the 加急 escalation is offered at all (admin toggle;
+// default off, so batch/runs have no urgent lane unless an admin turns it on).
+func (s *Server) urgentEnabled() bool {
+	return s.st.GetSetting("batch_urgent_enabled", "0") == "1"
+}
+
+// difyEndUser resolves the end-user identity Dify records for a run from the
+// dify_end_user template, substituting [username] with the submitting portal user.
+// The default (or a blank template) is the fixed "report-portal".
+func (s *Server) difyEndUser(username string) string {
+	tmpl := strings.TrimSpace(s.st.GetSetting("dify_end_user", "report-portal"))
+	if tmpl == "" {
+		return "report-portal"
+	}
+	return strings.ReplaceAll(tmpl, "[username]", username)
+}
+
+// urgentAllowed gates a submitted 加急 run: if the 加急 lane is disabled it always
+// downgrades to the base priority; otherwise unlimited groups use it freely and
+// everyone else must spend a 加急 ticket. Returns the effective stored priority and
+// whether it was downgraded.
 func (s *Server) urgentAllowed(user, priority string, base int) (string, bool) {
-	if priority != "urgent" || s.isAdmin(user) {
+	if priority != "urgent" {
+		return priority, false
+	}
+	if !s.urgentEnabled() {
+		return strconv.Itoa(base), true // 加急 turned off → run at base priority
+	}
+	if s.st.UserUrgentUnlimited(user) {
 		return priority, false
 	}
 	alloc := s.st.UserTicketAllocation(user)
@@ -349,7 +373,7 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	// Dify-native target (the default): talk to Dify directly via the typed client
 	// (docs/adr/0006-dify-native.md). The generic manifest below is the advanced path.
 	if tgt.PluginSlug == difyPluginSlug {
-		return buildDifyProvider(tgt.Config)
+		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy))
 	}
 	plug, ok := s.st.GetPlugin(tgt.PluginSlug)
 	if !ok {

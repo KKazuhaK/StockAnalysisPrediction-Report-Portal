@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Card, Divider, InputNumber, Space, Typography } from 'antd'
+import { App, Button, Card, Divider, Input, InputNumber, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
+import type { BatchConfig } from '../../api/types'
 
 // Standalone 运行/队列 settings (docs/adr/0007 + 0008): the queue budget, reserved
 // slots, 加急 ticket period, max concurrency, the no-group default base priority, and
@@ -14,6 +15,8 @@ export default function RunQueueSettingsPage() {
   const [maxJobs, setMaxJobs] = useState(1)
   const [reservedSlots, setReservedSlots] = useState(1)
   const [ticketPeriod, setTicketPeriod] = useState(7)
+  const [urgentEnabled, setUrgentEnabled] = useState(false)
+  const [difyEndUser, setDifyEndUser] = useState('')
   const [defaultPriority, setDefaultPriority] = useState(50)
   const [wBase, setWBase] = useState(1000)
   const [wAge, setWAge] = useState(1000)
@@ -23,23 +26,14 @@ export default function RunQueueSettingsPage() {
 
   const load = () =>
     api
-      .get<{
-        max_concurrency: number
-        max_jobs: number
-        reserved_slots: number
-        ticket_period_days: number
-        default_priority: number
-        prio_w_base: number
-        prio_w_age: number
-        prio_w_fair: number
-        prio_age_hours: number
-        prio_fair_halflife_hours: number
-      }>('/api/admin/batch/config')
+      .get<BatchConfig>('/api/admin/batch/config')
       .then((r) => {
         setMaxConcurrency(r.max_concurrency)
         setMaxJobs(r.max_jobs)
         setReservedSlots(r.reserved_slots)
         setTicketPeriod(r.ticket_period_days)
+        setUrgentEnabled(!!r.urgent_enabled)
+        setDifyEndUser(r.dify_end_user ?? '')
         setDefaultPriority(r.default_priority ?? 50)
         setWBase(r.prio_w_base)
         setWAge(r.prio_w_age)
@@ -57,6 +51,8 @@ export default function RunQueueSettingsPage() {
       max_jobs: maxJobs,
       reserved_slots: reservedSlots,
       ticket_period_days: ticketPeriod,
+      urgent_enabled: urgentEnabled,
+      dify_end_user: difyEndUser,
       default_priority: String(defaultPriority),
       prio_w_base: wBase,
       prio_w_age: wAge,
@@ -103,6 +99,25 @@ export default function RunQueueSettingsPage() {
           t('batch.admin.maxConcurrency'),
           t('batch.admin.maxConcurrencyHint'),
           <InputNumber min={1} max={100} value={maxConcurrency} onChange={(v) => setMaxConcurrency(v || 1)} />,
+        )}
+        {row(
+          t('batch.admin.urgentEnabled'),
+          t('batch.admin.urgentEnabledHint'),
+          <Switch checked={urgentEnabled} onChange={setUrgentEnabled} />,
+        )}
+
+        <Divider style={{ margin: '4px 0' }} orientation="left" plain>
+          {t('batch.admin.difyTitle')}
+        </Divider>
+        {row(
+          t('batch.admin.difyEndUser'),
+          t('batch.admin.difyEndUserHint'),
+          <Input
+            style={{ width: 280 }}
+            value={difyEndUser}
+            placeholder="report-portal"
+            onChange={(e) => setDifyEndUser(e.target.value)}
+          />,
         )}
 
         <Divider style={{ margin: '4px 0' }} orientation="left" plain>

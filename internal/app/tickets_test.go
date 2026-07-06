@@ -7,18 +7,19 @@ import (
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
-// The submit-time policy: admins get 加急 free; others spend a ticket and fall back
-// to their base priority once their allowance runs out; a base run never spends.
+// The submit-time policy: users spend 加急 tickets unless one of their groups grants
+// unlimited urgent runs; admins do not get a role-based exemption.
 func TestUrgentAllowedSpendsTickets(t *testing.T) {
 	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "x"}}
+	s.st.SetSetting("batch_urgent_enabled", "1") // ticket mechanics only apply when the 加急 lane is on
 	s.st.UpsertUser(User{Username: "admin", PasswordHash: "x", Role: "admin"})
 	s.st.UpsertUser(User{Username: "op", PasswordHash: "x", Role: "operator"})
 	g, _ := s.st.CreateUserGroup("G", "", 2)
 	s.st.SetUserGroups("op", []int64{g})
 
-	// Admin: unlimited urgent, no ticket spent (base is irrelevant for admins).
-	if p, d := s.urgentAllowed("admin", "urgent", 50); p != "urgent" || d {
-		t.Fatalf("admin urgent = %q downgraded=%v, want urgent/false", p, d)
+	// Admin with no tickets/unlimited group is limited like any other user.
+	if p, d := s.urgentAllowed("admin", "urgent", 50); p != "50" || !d {
+		t.Fatalf("admin urgent without group = %q downgraded=%v, want 50/true", p, d)
 	}
 
 	// Operator: two urgent runs succeed, the third falls back to its base priority.
@@ -33,6 +34,43 @@ func TestUrgentAllowedSpendsTickets(t *testing.T) {
 	// A non-urgent priority is never charged and passes through unchanged.
 	if p, d := s.urgentAllowed("op", "50", 50); p != "50" || d {
 		t.Fatalf("op base = %q downgraded=%v, want 50/false", p, d)
+	}
+
+	free, _ := s.st.CreateUserGroup("Unlimited", "", 0, true)
+	s.st.SetUserGroups("admin", []int64{free})
+	if p, d := s.urgentAllowed("admin", "urgent", 50); p != "urgent" || d {
+		t.Fatalf("admin urgent from unlimited group = %q downgraded=%v, want urgent/false", p, d)
+	}
+}
+
+// With the 加急 lane off (the default), any urgent submit downgrades to its base
+// priority — even an admin's — while a non-urgent priority passes through unchanged.
+// Turning the lane on still requires a ticket or an unlimited group.
+func TestUrgentDisabledDowngrades(t *testing.T) {
+	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "x"}}
+	s.st.UpsertUser(User{Username: "admin", PasswordHash: "x", Role: "admin"})
+
+	if s.urgentEnabled() {
+		t.Fatal("加急 should be off by default")
+	}
+	if p, d := s.urgentAllowed("admin", "urgent", 40); p != "40" || !d {
+		t.Fatalf("disabled admin urgent = %q downgraded=%v, want 40/true", p, d)
+	}
+	if p, d := s.urgentAllowed("op", "urgent", 20); p != "20" || !d {
+		t.Fatalf("disabled op urgent = %q downgraded=%v, want 20/true", p, d)
+	}
+	if p, d := s.urgentAllowed("op", "70", 50); p != "70" || d {
+		t.Fatalf("non-urgent = %q downgraded=%v, want 70/false", p, d)
+	}
+
+	s.st.SetSetting("batch_urgent_enabled", "1")
+	if p, d := s.urgentAllowed("admin", "urgent", 40); p != "40" || !d {
+		t.Fatalf("enabled admin urgent without group = %q downgraded=%v, want 40/true", p, d)
+	}
+	free, _ := s.st.CreateUserGroup("Unlimited", "", 0, true)
+	s.st.SetUserGroups("admin", []int64{free})
+	if p, d := s.urgentAllowed("admin", "urgent", 40); p != "urgent" || d {
+		t.Fatalf("enabled admin urgent from unlimited group = %q downgraded=%v, want urgent/false", p, d)
 	}
 }
 
@@ -78,6 +116,9 @@ func TestTicketSpendAndAllocation(t *testing.T) {
 	if a := st.UserTicketAllocation("op"); a != 0 {
 		t.Fatalf("allocation with no group = %d, want 0", a)
 	}
+	if st.UserUrgentUnlimited("op") {
+		t.Fatal("user without an unlimited group should not be unlimited")
+	}
 	if ok, _ := st.SpendTicket("op", 0, 7, now); ok {
 		t.Fatal("spent a ticket with zero allocation")
 	}
@@ -88,6 +129,9 @@ func TestTicketSpendAndAllocation(t *testing.T) {
 	st.SetUserGroups("op", []int64{g1, g2})
 	if a := st.UserTicketAllocation("op"); a != 3 {
 		t.Fatalf("allocation = %d, want 3 (max weight)", a)
+	}
+	if st.UserUrgentUnlimited("op") {
+		t.Fatal("weighted groups should not imply unlimited urgent")
 	}
 
 	alloc := st.UserTicketAllocation("op")
@@ -112,5 +156,11 @@ func TestTicketSpendAndAllocation(t *testing.T) {
 	}
 	if ok, left := st.SpendTicket("op", alloc, 7, next); !ok || left != 2 {
 		t.Fatalf("spend after refill = ok:%v left:%d, want ok/2", ok, left)
+	}
+
+	g3, _ := st.CreateUserGroup("Unlimited", "", 0, true)
+	st.SetUserGroups("op", []int64{g1, g3})
+	if !st.UserUrgentUnlimited("op") {
+		t.Fatal("unlimited group did not grant unlimited urgent")
 	}
 }

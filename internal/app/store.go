@@ -238,7 +238,8 @@ func (s *Store) init() error {
 		`CREATE TABLE IF NOT EXISTS user_profiles(
 			username TEXT PRIMARY KEY, display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT)`,
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS user_groups(
-			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER DEFAULT 0)`, pk),
+			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER DEFAULT 0,
+			urgent_unlimited INTEGER DEFAULT 0)`, pk),
 		`CREATE TABLE IF NOT EXISTS user_group_members(
 			group_id BIGINT, username TEXT, PRIMARY KEY(group_id, username))`,
 		`CREATE INDEX IF NOT EXISTS idx_ugm_user ON user_group_members(username)`,
@@ -257,7 +258,15 @@ func (s *Store) init() error {
 			return fmt.Errorf("建表失败: %w\nSQL: %s", err, st)
 		}
 	}
+	if _, err := s.exec(`ALTER TABLE user_groups ADD COLUMN urgent_unlimited INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
+		return fmt.Errorf("升级 user_groups 失败: %w", err)
+	}
 	return nil
+}
+
+func duplicateColumnErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists")
 }
 
 // ---------- Accounts ----------

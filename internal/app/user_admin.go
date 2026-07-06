@@ -13,9 +13,10 @@ type UserGroup struct {
 	Name        string
 	Description string
 	Created     string
-	Weight      int    // 加急 tickets granted per period to each member (see docs/adr/0005-priority-tickets.md)
-	Priority    string // default run priority for members (non-urgent tier; see docs/adr/0007); "" = none
-	Members     int    // member count, filled by ListUserGroups
+	Weight      int  // 加急 tickets granted per period to each member (see docs/adr/0005-priority-tickets.md)
+	UrgentFree  bool // members may run 加急 without spending tickets
+	Priority    string
+	Members     int // member count, filled by ListUserGroups
 }
 
 // ---------- profile ----------
@@ -52,13 +53,19 @@ func (s *Store) deleteUserExtras(username string) {
 // ---------- groups ----------
 
 // CreateUserGroup adds a group and returns its id.
-func (s *Store) CreateUserGroup(name, description string, weight int) (int64, error) {
-	return s.insertID(`INSERT INTO user_groups(name,description,created_at,weight) VALUES(?,?,?,?)`, name, description, nowStr(), weight)
+func (s *Store) CreateUserGroup(name, description string, weight int, urgentFree ...bool) (int64, error) {
+	return s.insertID(`INSERT INTO user_groups(name,description,created_at,weight,urgent_unlimited) VALUES(?,?,?,?,?)`,
+		name, description, nowStr(), weight, boolInt(len(urgentFree) > 0 && urgentFree[0]))
 }
 
 // UpdateUserGroup renames / re-describes a group and sets its weight.
-func (s *Store) UpdateUserGroup(id int64, name, description string, weight int) error {
-	_, err := s.exec("UPDATE user_groups SET name=?, description=?, weight=? WHERE id=?", name, description, weight, id)
+func (s *Store) UpdateUserGroup(id int64, name, description string, weight int, urgentFree ...bool) error {
+	if len(urgentFree) == 0 {
+		_, err := s.exec("UPDATE user_groups SET name=?, description=?, weight=? WHERE id=?", name, description, weight, id)
+		return err
+	}
+	_, err := s.exec("UPDATE user_groups SET name=?, description=?, weight=?, urgent_unlimited=? WHERE id=?",
+		name, description, weight, boolInt(urgentFree[0]), id)
 	return err
 }
 
@@ -104,11 +111,11 @@ func (s *Store) UserGroupPriorities(username string) []string {
 
 // ListUserGroups returns all groups with their member counts + default priority, by name.
 func (s *Store) ListUserGroups() []UserGroup {
-	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''), COALESCE(g.weight,0), COALESCE(gp.priority,''), COUNT(m.username)
+	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''), COALESCE(g.weight,0), COALESCE(g.urgent_unlimited,0), COALESCE(gp.priority,''), COUNT(m.username)
 		FROM user_groups g
 		LEFT JOIN user_group_members m ON m.group_id=g.id
 		LEFT JOIN group_priority gp ON gp.group_id=g.id
-		GROUP BY g.id, g.name, g.description, g.created_at, g.weight, gp.priority ORDER BY g.name`)
+		GROUP BY g.id, g.name, g.description, g.created_at, g.weight, g.urgent_unlimited, gp.priority ORDER BY g.name`)
 	if err != nil {
 		return nil
 	}
@@ -116,9 +123,11 @@ func (s *Store) ListUserGroups() []UserGroup {
 	var out []UserGroup
 	for rows.Next() {
 		var g UserGroup
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &g.Weight, &g.Priority, &g.Members); err != nil {
+		var urgentFree int
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &g.Weight, &urgentFree, &g.Priority, &g.Members); err != nil {
 			continue
 		}
+		g.UrgentFree = urgentFree != 0
 		out = append(out, g)
 	}
 	return out

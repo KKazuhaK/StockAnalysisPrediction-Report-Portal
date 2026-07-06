@@ -26,14 +26,19 @@ type difyTargetConfig struct {
 }
 
 // difyProvider adapts a dify.Client to the batch engine's Provider interface.
-type difyProvider struct{ c *dify.Client }
+// user is the caller identity Dify records for each run (the configurable end-user,
+// resolved per job from the dify_end_user template).
+type difyProvider struct {
+	c    *dify.Client
+	user string
+}
 
 func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.RunResult, error) {
 	in := make(map[string]any, len(inputs))
 	for k, v := range inputs {
 		in[k] = v
 	}
-	r, err := p.c.RunWorkflow(ctx, in, "report-portal")
+	r, err := p.c.RunWorkflow(ctx, in, p.user)
 	if err != nil {
 		return batch.RunResult{}, classifyDifyErr(err)
 	}
@@ -68,7 +73,9 @@ type permanentRunErr struct{ error }
 func (permanentRunErr) Transient() bool { return false }
 
 // buildDifyProvider constructs the provider for a Dify target from its config JSON.
-func buildDifyProvider(configJSON string) (batch.Provider, error) {
+// user is the end-user identity Dify records for each run (resolved from the
+// dify_end_user template); an empty user falls back to "report-portal" at run time.
+func buildDifyProvider(configJSON, user string) (batch.Provider, error) {
 	var cfg difyTargetConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return nil, fmt.Errorf("dify target config: %w", err)
@@ -76,7 +83,7 @@ func buildDifyProvider(configJSON string) (batch.Provider, error) {
 	if cfg.BaseURL == "" || cfg.APIKey == "" {
 		return nil, fmt.Errorf("dify target: base_url and api_key are required")
 	}
-	return difyProvider{c: dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: difyRunTimeout})}, nil
+	return difyProvider{c: dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: difyRunTimeout}), user: user}, nil
 }
 
 // difyTargetInputs returns a Dify target's discovered inputs (for the run form), or

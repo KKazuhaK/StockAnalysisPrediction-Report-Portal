@@ -111,6 +111,25 @@ func TestBatchConcurrencyClampedToAdminMax(t *testing.T) {
 	waitForJobDone(t, srv.st, jobID)
 }
 
+func TestBatchConfigSaveIsPartial(t *testing.T) {
+	srv := batchServer(t)
+	srv.st.SetSetting("batch_max_concurrent_jobs", "8")
+	srv.st.SetSetting("batch_reserved_slots", "3")
+	srv.st.SetSetting("batch_ticket_period_days", "7")
+
+	post(t, srv.apiBatchConfigSave, `{"ticket_period_days":14}`)
+
+	if got := srv.ticketPeriodDays(); got != 14 {
+		t.Fatalf("ticket period = %d, want 14", got)
+	}
+	if got := srv.batchBudget(); got != 8 {
+		t.Fatalf("queue budget was overwritten: got %d, want 8", got)
+	}
+	if got := srv.batchReserved(); got != 3 {
+		t.Fatalf("reserved slots were overwritten: got %d, want 3", got)
+	}
+}
+
 // A malformed manifest is rejected at import.
 func TestBatchPluginImportRejectsInvalid(t *testing.T) {
 	srv := batchServer(t)

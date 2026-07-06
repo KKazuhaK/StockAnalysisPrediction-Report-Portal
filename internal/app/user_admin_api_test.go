@@ -32,7 +32,7 @@ func TestUserAdminEnrichedFlow(t *testing.T) {
 	s := userAdminServer(t)
 
 	// Create a group.
-	_, g := call(t, s.apiGroupAdd, `{"name":"Research","description":"The desk"}`, "admin")
+	_, g := call(t, s.apiGroupAdd, `{"name":"Research","description":"The desk","urgent_unlimited":true}`, "admin")
 	gid := int64(g["id"].(float64))
 
 	// Create a user with display name / email / group.
@@ -55,9 +55,10 @@ func TestUserAdminEnrichedFlow(t *testing.T) {
 	var lst struct {
 		Users  []userRow `json:"users"`
 		Groups []struct {
-			ID      int64  `json:"id"`
-			Name    string `json:"name"`
-			Members int    `json:"members"`
+			ID              int64  `json:"id"`
+			Name            string `json:"name"`
+			UrgentUnlimited bool   `json:"urgent_unlimited"`
+			Members         int    `json:"members"`
 		} `json:"groups"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &lst)
@@ -72,6 +73,9 @@ func TestUserAdminEnrichedFlow(t *testing.T) {
 	}
 	if len(lst.Groups) != 1 || lst.Groups[0].Members != 1 {
 		t.Fatalf("group list = %+v, want 1 group with 1 member", lst.Groups)
+	}
+	if !lst.Groups[0].UrgentUnlimited {
+		t.Fatalf("group urgent_unlimited = false, want true")
 	}
 }
 
