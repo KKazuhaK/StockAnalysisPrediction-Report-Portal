@@ -115,7 +115,7 @@ export default function RunAnalysisModal({
   const budget = queue?.budget ?? 1
   const busy = running >= budget // no free slot → this submit will wait in the queue
   const queueMsg = busy
-    ? t('run.queueBusy', { n: running })
+    ? t('run.queueBusy', { n: running, ahead: waiting })
     : running + waiting === 0
       ? t('run.queueIdle')
       : t('run.queueFree', { n: budget - running })
