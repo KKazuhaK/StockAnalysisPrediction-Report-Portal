@@ -26,11 +26,15 @@ type StreamEvent struct {
 	Status string // node/workflow status on a *_finished event
 }
 
-// streamEnvelope is the JSON shape of each `data:` line in the event stream.
+// streamEnvelope is the JSON shape of each `data:` line in the event stream (both
+// the workflow and the chat streams; chat adds message_id/answer and a top-level
+// error message).
 type streamEnvelope struct {
 	Event         string `json:"event"`
 	TaskID        string `json:"task_id"`
 	WorkflowRunID string `json:"workflow_run_id"`
+	MessageID     string `json:"message_id"`
+	Message       string `json:"message"` // top-level text of an `error` event
 	Data          struct {
 		Title   string         `json:"title"`
 		Index   int            `json:"index"`
@@ -117,6 +121,112 @@ func (c *Client) RunWorkflowStream(ctx context.Context, inputs map[string]any, u
 		return res, runID, err // stream dropped mid-run; runID lets the caller reconcile
 	}
 	return res, runID, fmt.Errorf("dify stream ended before workflow_finished")
+}
+
+// RunChatStream runs a chat/agent app (/chat-messages) in streaming mode. `query` is
+// taken from inputs["query"], the rest are passed as inputs. Like RunWorkflowStream it
+// captures a run id early — chatflow/advanced-chat apps emit a workflow_run_id, so a
+// dropped connection is reconciled the same way (via GetWorkflowRun) instead of
+// re-running. The run completes on workflow_finished or message_end; an `error` event
+// is a terminal failure (not a transport error).
+func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user string, onEvent func(StreamEvent)) (RunResult, string, error) {
+	if user == "" {
+		user = "report-portal"
+	}
+	query, _ := inputs["query"].(string)
+	rest := make(map[string]any, len(inputs))
+	for k, v := range inputs {
+		if k != "query" {
+			rest[k] = v
+		}
+	}
+	body, _ := json.Marshal(map[string]any{
+		"query": query, "inputs": rest, "response_mode": "streaming",
+		"user": user, "conversation_id": "",
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat-messages", bytes.NewReader(body))
+	if err != nil {
+		return RunResult{}, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return RunResult{}, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return RunResult{}, "", &APIError{Status: resp.StatusCode, Message: apiErrMsg(raw)}
+	}
+
+	var res RunResult
+	var runID, taskID string
+	done := false
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if len(line) < 5 || line[:5] != "data:" {
+			continue
+		}
+		payload := bytes.TrimSpace([]byte(line[5:]))
+		if len(payload) == 0 {
+			continue
+		}
+		var ev streamEnvelope
+		if json.Unmarshal(payload, &ev) != nil {
+			continue
+		}
+		if ev.WorkflowRunID != "" {
+			runID = ev.WorkflowRunID
+		}
+		if ev.TaskID != "" {
+			taskID = ev.TaskID
+		}
+		if onEvent != nil {
+			onEvent(StreamEvent{Event: ev.Event, TaskID: taskID, RunID: runID, Title: ev.Data.Title, Index: ev.Data.Index, Status: ev.Data.Status})
+		}
+		switch ev.Event {
+		case "workflow_finished":
+			res = RunResult{WorkflowRunID: runID, TaskID: taskID, Status: ev.Data.Status, Error: ev.Data.Error, Raw: append([]byte(nil), payload...)}
+			done = true
+		case "message_end":
+			if !done { // chatflow sends workflow_finished first; message_end is the end for pure chat
+				res = RunResult{WorkflowRunID: runID, TaskID: taskID, Status: "succeeded", Raw: append([]byte(nil), payload...)}
+				done = true
+			}
+		case "error":
+			if !done { // don't let a trailing error clobber an already-terminal result
+				res = RunResult{WorkflowRunID: runID, TaskID: taskID, Status: "failed", Error: firstNonEmpty(ev.Data.Error, ev.Message), Raw: append([]byte(nil), payload...)}
+				done = true
+			}
+		}
+	}
+	if done {
+		return res, runID, nil
+	}
+	if err := sc.Err(); err != nil {
+		return res, runID, err
+	}
+	return res, runID, fmt.Errorf("dify chat stream ended before completion")
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// StopChat stops a streaming chat run server-side by its task id (best-effort).
+func (c *Client) StopChat(ctx context.Context, taskID, user string) error {
+	if user == "" {
+		user = "report-portal"
+	}
+	_, err := c.do(ctx, http.MethodPost, "/chat-messages/"+taskID+"/stop", map[string]any{"user": user})
+	return err
 }
 
 // GetWorkflowRun fetches a run's current state by id, used to reconcile a dropped

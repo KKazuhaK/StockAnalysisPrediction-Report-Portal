@@ -59,6 +59,10 @@ func (s *Server) apiBatchDifyProbe(w http.ResponseWriter, r *http.Request, user 
 	if inputs == nil {
 		inputs = []dify.Input{}
 	}
+	// A chat/agent app takes a `query` message; make it a batch column too.
+	if difyModeChat(info.Mode) {
+		inputs = ensureQueryInput(inputs)
+	}
 	out := map[string]any{"name": info.Name, "mode": info.Mode, "inputs": inputs}
 	if perr != nil {
 		out["inputs_error"] = perr.Error()
@@ -72,6 +76,7 @@ func (s *Server) apiBatchDifyTargetAdd(w http.ResponseWriter, r *http.Request, u
 		Name    string       `json:"name"`
 		BaseURL string       `json:"base_url"`
 		APIKey  string       `json:"api_key"`
+		Mode    string       `json:"mode"`
 		Inputs  []dify.Input `json:"inputs"`
 	}
 	if err := readJSON(r, &in); err != nil {
@@ -83,7 +88,7 @@ func (s *Server) apiBatchDifyTargetAdd(w http.ResponseWriter, r *http.Request, u
 		jsonError(w, http.StatusBadRequest, "name, base_url and api_key are required")
 		return
 	}
-	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Inputs: in.Inputs})
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Mode: in.Mode, Inputs: in.Inputs})
 	id, err := s.st.CreateTarget(difyPluginSlug, name, string(cfg))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -108,7 +113,7 @@ func (s *Server) apiBatchDifyTargetGet(w http.ResponseWriter, r *http.Request, u
 		inputs = []dify.Input{}
 	}
 	writeJSON(w, map[string]any{
-		"id": tgt.ID, "name": tgt.Name, "base_url": cfg.BaseURL,
+		"id": tgt.ID, "name": tgt.Name, "base_url": cfg.BaseURL, "mode": cfg.Mode,
 		"inputs": inputs, "has_key": cfg.APIKey != "",
 	})
 }
@@ -126,6 +131,7 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 		Name    string       `json:"name"`
 		BaseURL string       `json:"base_url"`
 		APIKey  string       `json:"api_key"`
+		Mode    string       `json:"mode"`
 		Inputs  []dify.Input `json:"inputs"`
 	}
 	if err := readJSON(r, &in); err != nil {
@@ -137,21 +143,36 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "name and base_url are required")
 		return
 	}
+	var cur difyTargetConfig
+	json.Unmarshal([]byte(tgt.Config), &cur)
 	if key == "" {
-		var cur difyTargetConfig
-		json.Unmarshal([]byte(tgt.Config), &cur)
-		key = cur.APIKey
+		key = cur.APIKey // blank → keep the stored key
 	}
 	if key == "" {
 		jsonError(w, http.StatusBadRequest, "api_key is required")
 		return
 	}
-	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Inputs: in.Inputs})
+	mode := in.Mode
+	if mode == "" {
+		mode = cur.Mode // blank → keep the stored mode
+	}
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Mode: mode, Inputs: in.Inputs})
 	if err := s.st.UpdateTarget(tgt.ID, name, string(cfg)); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, okJSON)
+}
+
+// ensureQueryInput prepends the chat `query` field to a chat app's discovered inputs
+// (the batch CSV needs a query column) unless the app already declares it.
+func ensureQueryInput(inputs []dify.Input) []dify.Input {
+	for _, in := range inputs {
+		if in.Variable == "query" {
+			return inputs
+		}
+	}
+	return append([]dify.Input{{Variable: "query", Label: "query", Type: "paragraph", Required: true}}, inputs...)
 }
 
 // difyInputsJSON maps a Dify target's stored inputs to the {key,label,required}

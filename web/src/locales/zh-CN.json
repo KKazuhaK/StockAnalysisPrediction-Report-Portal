@@ -198,6 +198,8 @@
   "batch.admin.advancedPluginsHint": "导入清单以接入非 Dify 的执行器。大多数场景只需上面的 Dify 目标即可。",
   "batch.dify.newTarget": "新建 Dify 工作流",
   "batch.dify.editTarget": "编辑 Dify 工作流",
+  "batch.dify.chatTag": "对话",
+  "batch.dify.chatHint": "这是对话／智能体应用 —— 每行的 query 列即为要运行的消息。",
   "batch.dify.targetsHint": "还没有目标。填入 Dify 工作流的 API Key，其输入参数会自动探测。",
   "batch.dify.baseUrl": "Dify API 地址",
   "batch.dify.baseUrlHint": "例如 https://your-dify/v1 —— 服务 API 根地址，以 /v1 结尾。",

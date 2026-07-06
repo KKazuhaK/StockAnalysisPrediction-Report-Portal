@@ -174,6 +174,7 @@ func (s *Server) targetJSON(t BatchTarget) map[string]any {
 	if t.PluginSlug == difyPluginSlug {
 		m["plugin_name"] = "Dify Workflow"
 		m["dify"] = true
+		m["mode"] = difyTargetMode(t.Config) // "" / "workflow" / "chat"
 		m["inputs"] = difyInputsJSON(t.Config)
 		return m
 	}

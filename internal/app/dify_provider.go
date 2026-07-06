@@ -28,11 +28,20 @@ const (
 
 const difyPluginSlug = "dify"
 
-// difyTargetConfig is what a Dify target stores in batch_targets.config.
+// difyTargetConfig is what a Dify target stores in batch_targets.config. Mode picks
+// the run surface: "workflow" (default, /workflows/run) or "chat" (a chat/agent app,
+// /chat-messages) — the row's "query" input becomes the chat message.
 type difyTargetConfig struct {
 	BaseURL string       `json:"base_url"`
 	APIKey  string       `json:"api_key"`
+	Mode    string       `json:"mode,omitempty"`
 	Inputs  []dify.Input `json:"inputs"`
+}
+
+// difyModeChat reports whether a probed app mode is a chat/agent app (anything that
+// isn't the workflow app). Dify workflow apps report mode "workflow".
+func difyModeChat(mode string) bool {
+	return mode != "" && mode != "workflow"
 }
 
 // difyProvider adapts a dify.Client to the batch engine's Provider interface.
@@ -42,8 +51,18 @@ type difyTargetConfig struct {
 type difyProvider struct {
 	c                *dify.Client
 	user             string
+	chat             bool // chat/agent app (/chat-messages) vs workflow (/workflows/run)
 	reconcilePoll    time.Duration
 	reconcileTimeout time.Duration
+}
+
+// runStream dispatches to the chat or workflow stream by the target's mode. Both
+// return the same shape, so the reconnect / reconcile / stop logic is identical.
+func (p difyProvider) runStream(ctx context.Context, in map[string]any, onEvent func(dify.StreamEvent)) (dify.RunResult, string, error) {
+	if p.chat {
+		return p.c.RunChatStream(ctx, in, p.user, onEvent)
+	}
+	return p.c.RunWorkflowStream(ctx, in, p.user, onEvent)
 }
 
 func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.RunResult, error) {
@@ -54,7 +73,7 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 	// Capture the task id as it streams (so a cancel can stop the run server-side) and
 	// report each node's start as live progress.
 	var taskID string
-	r, runID, err := p.c.RunWorkflowStream(ctx, in, p.user, func(e dify.StreamEvent) {
+	r, runID, err := p.runStream(ctx, in, func(e dify.StreamEvent) {
 		if e.TaskID != "" {
 			taskID = e.TaskID
 		}
@@ -127,6 +146,10 @@ func (p difyProvider) reconcile(ctx context.Context, runID string) (dify.RunResu
 func (p difyProvider) stop(taskID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), difyStopTimeout)
 	defer cancel()
+	if p.chat {
+		_ = p.c.StopChat(ctx, taskID, p.user)
+		return
+	}
 	_ = p.c.StopWorkflow(ctx, taskID, p.user)
 }
 
@@ -176,7 +199,11 @@ func buildDifyProvider(configJSON, user string) (batch.Provider, error) {
 	if cfg.BaseURL == "" || cfg.APIKey == "" {
 		return nil, fmt.Errorf("dify target: base_url and api_key are required")
 	}
-	return difyProvider{c: dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: difyRunTimeout}), user: user}, nil
+	return difyProvider{
+		c:    dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: difyRunTimeout}),
+		user: user,
+		chat: difyModeChat(cfg.Mode),
+	}, nil
 }
 
 // difyTargetInputs returns a Dify target's discovered inputs (for the run form), or
@@ -185,4 +212,11 @@ func difyTargetInputs(configJSON string) []dify.Input {
 	var cfg difyTargetConfig
 	json.Unmarshal([]byte(configJSON), &cfg)
 	return cfg.Inputs
+}
+
+// difyTargetMode returns a Dify target's app mode ("" / "workflow" / "chat").
+func difyTargetMode(configJSON string) string {
+	var cfg difyTargetConfig
+	json.Unmarshal([]byte(configJSON), &cfg)
+	return cfg.Mode
 }

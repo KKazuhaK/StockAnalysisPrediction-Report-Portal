@@ -279,3 +279,38 @@ func TestDifyProviderReportsNodeProgress(t *testing.T) {
 		t.Errorf("reported nodes = %v, want [LLM]", nodes)
 	}
 }
+
+// A chat-mode target runs via /chat-messages, sending the row's query, and succeeds
+// on message_end — the same reconcile/stop machinery applies.
+func TestDifyChatProviderRunsChat(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		gotQuery, _ = body["query"].(string)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"event":"message","task_id":"t","message_id":"m1"}`+"\n\n")
+		io.WriteString(w, `data: {"event":"message_end","task_id":"t","message_id":"m1"}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: srv.URL, APIKey: "k", Mode: "chat"})
+	prov, err := buildDifyProvider(string(cfg), "u")
+	if err != nil {
+		t.Fatalf("buildDifyProvider: %v", err)
+	}
+	res, err := prov.Run(context.Background(), map[string]string{"query": "研究一下"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if gotPath != "/chat-messages" {
+		t.Errorf("path = %q, want /chat-messages", gotPath)
+	}
+	if gotQuery != "研究一下" {
+		t.Errorf("query = %q, want 研究一下", gotQuery)
+	}
+	if res.Status != batch.Ok {
+		t.Errorf("status = %v, want Ok", res.Status)
+	}
+}

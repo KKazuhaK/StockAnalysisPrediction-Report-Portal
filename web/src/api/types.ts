@@ -55,6 +55,7 @@ export interface BatchTarget {
   plugin_name?: string
   name: string
   created_at: string
+  mode?: string // Dify app mode: "" / "workflow" / "chat"
   inputs?: PluginInput[]
 }
 
@@ -64,6 +65,7 @@ export interface DifyTargetEdit {
   id: number
   name: string
   base_url: string
+  mode?: string // "" / "workflow" / "chat"
   inputs: DifyInput[]
   has_key: boolean
 }

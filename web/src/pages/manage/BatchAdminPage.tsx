@@ -22,7 +22,10 @@ export default function BatchAdminPage() {
   const [probing, setProbing] = useState(false)
   const [probed, setProbed] = useState<{ name: string; inputsError?: string } | null>(null)
   const [inputs, setInputs] = useState<DifyInput[]>([])
+  const [mode, setMode] = useState('') // Dify app mode: "" / "workflow" / "chat"
   const [newVar, setNewVar] = useState('')
+
+  const isChat = mode !== '' && mode !== 'workflow'
 
   const editing = editingId !== null
   // The name + inputs section shows after a probe (create) or immediately (edit).
@@ -46,6 +49,7 @@ export default function BatchAdminPage() {
     form.resetFields()
     setProbed(null)
     setInputs([])
+    setMode('')
     setNewVar('')
   }
 
@@ -63,6 +67,7 @@ export default function BatchAdminPage() {
       resetModal()
       form.setFieldsValue({ name: d.name, base_url: d.base_url, api_key: '' })
       setInputs(d.inputs || [])
+      setMode(d.mode || '')
       setEditingId(tg.id)
       setTargetOpen(true)
     } catch (e) {
@@ -87,6 +92,7 @@ export default function BatchAdminPage() {
       )
       setProbed({ name: r.name, inputsError: r.inputs_error })
       setInputs(r.inputs || [])
+      setMode(r.mode || '')
       if (!form.getFieldValue('name') && r.name) form.setFieldValue('name', r.name)
       if (r.inputs_error) message.warning(t('batch.dify.inputsManual'))
       else message.success(t('batch.dify.probed', { name: r.name }))
@@ -119,7 +125,7 @@ export default function BatchAdminPage() {
     }
     setSaving(true)
     try {
-      const body = { name: v.name, base_url: v.base_url, api_key: v.api_key || '', inputs }
+      const body = { name: v.name, base_url: v.base_url, api_key: v.api_key || '', mode, inputs }
       if (editing) {
         await api.put(`/api/admin/batch/dify/targets/${editingId}`, body)
         message.success(t('batch.admin.msgTargetUpdated'))
@@ -160,7 +166,15 @@ export default function BatchAdminPage() {
   }
 
   const targetCols: ColumnsType<BatchTarget> = [
-    { title: t('common.name'), dataIndex: 'name' },
+    {
+      title: t('common.name'),
+      render: (_: unknown, tg: BatchTarget) => (
+        <Space size={6}>
+          {tg.name}
+          {tg.mode && tg.mode !== 'workflow' && <Tag color="purple">{t('batch.dify.chatTag')}</Tag>}
+        </Space>
+      ),
+    },
     { title: t('batch.admin.inputs'), render: (_: unknown, tg: BatchTarget) => (tg.inputs || []).map((i) => <Tag key={i.key}>{i.key}</Tag>) },
     { title: t('batch.admin.createdAt'), dataIndex: 'created_at', width: 170 },
     {
@@ -275,6 +289,9 @@ export default function BatchAdminPage() {
               <Form.Item name="name" label={t('batch.admin.targetName')} rules={[{ required: true }]} style={{ marginTop: 14 }}>
                 <Input placeholder={t('batch.admin.targetNamePlaceholder')} />
               </Form.Item>
+              {isChat && (
+                <Alert type="info" showIcon style={{ marginBottom: 10 }} message={<><Tag color="purple">{t('batch.dify.chatTag')}</Tag>{t('batch.dify.chatHint')}</>} />
+              )}
               <div style={{ marginBottom: 6 }}>
                 <Typography.Text type="secondary">{t('batch.dify.inputsLabel')}</Typography.Text>
               </div>

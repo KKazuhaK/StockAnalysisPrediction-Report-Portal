@@ -136,3 +136,109 @@ func TestStopWorkflow(t *testing.T) {
 		t.Errorf("stop user = %q, want kazuha", gotUser)
 	}
 }
+
+// A chatflow run (workflow events + a message): captures the workflow run id (so a
+// drop can be reconciled), sends the query, and reports succeeded.
+func TestRunChatStreamChatflow(t *testing.T) {
+	var gotQuery string
+	var gotInputs map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		gotQuery, _ = body["query"].(string)
+		gotInputs, _ = body["inputs"].(map[string]any)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"event":"workflow_started","task_id":"t","workflow_run_id":"run-1","data":{}}`+"\n\n")
+		io.WriteString(w, `data: {"event":"message","task_id":"t","answer":"hello","message_id":"m1"}`+"\n\n")
+		io.WriteString(w, `data: {"event":"workflow_finished","task_id":"t","workflow_run_id":"run-1","data":{"status":"succeeded"}}`+"\n\n")
+		io.WriteString(w, `data: {"event":"message_end","task_id":"t","message_id":"m1","conversation_id":"c1"}`+"\n\n")
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+
+	res, runID, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi", "symbol": "600160"}, "u", nil)
+	if err != nil {
+		t.Fatalf("RunChatStream: %v", err)
+	}
+	if gotQuery != "hi" {
+		t.Errorf("query = %q, want hi", gotQuery)
+	}
+	if gotInputs["symbol"] != "600160" || gotInputs["query"] != nil {
+		t.Errorf("inputs = %v; want symbol carried and query stripped out", gotInputs)
+	}
+	if runID != "run-1" || res.Status != "succeeded" || res.TaskID != "t" {
+		t.Fatalf("res=%+v runID=%q", res, runID)
+	}
+}
+
+// A pure chat app (no workflow events): message_end is the terminal; no run id.
+func TestRunChatStreamPureChat(t *testing.T) {
+	srv := sseStub(t, []string{
+		`{"event":"message","task_id":"t","answer":"hi","message_id":"m1"}`,
+		`{"event":"message_end","task_id":"t","message_id":"m1","conversation_id":"c1"}`,
+	})
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+
+	res, runID, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", nil)
+	if err != nil {
+		t.Fatalf("RunChatStream: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Errorf("status = %q, want succeeded", res.Status)
+	}
+	if runID != "" {
+		t.Errorf("runID = %q, want empty (no workflow to reconcile)", runID)
+	}
+}
+
+// An `error` event is a terminal failure result, not a transport error to retry.
+func TestRunChatStreamError(t *testing.T) {
+	srv := sseStub(t, []string{`{"event":"error","task_id":"t","message":"model overloaded","status":500}`})
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+
+	res, _, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", nil)
+	if err != nil {
+		t.Fatalf("an error event should be a terminal result, not a Go error: %v", err)
+	}
+	if res.Status != "failed" || res.Error != "model overloaded" {
+		t.Errorf("res = %+v, want failed / 'model overloaded'", res)
+	}
+}
+
+func TestStopChat(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		io.WriteString(w, `{"result":"success"}`)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+
+	if err := c.StopChat(context.Background(), "task-9", "u"); err != nil {
+		t.Fatalf("StopChat: %v", err)
+	}
+	if gotPath != "/chat-messages/task-9/stop" {
+		t.Errorf("stop path = %q", gotPath)
+	}
+}
+
+// A trailing error event after a successful workflow_finished must not flip the
+// already-terminal result to failed.
+func TestRunChatStreamTrailingErrorKeepsSuccess(t *testing.T) {
+	srv := sseStub(t, []string{
+		`{"event":"workflow_finished","task_id":"t","workflow_run_id":"run-1","data":{"status":"succeeded"}}`,
+		`{"event":"error","task_id":"t","message":"post-answer hiccup"}`,
+	})
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+
+	res, _, err := c.RunChatStream(context.Background(), map[string]any{"query": "hi"}, "u", nil)
+	if err != nil {
+		t.Fatalf("RunChatStream: %v", err)
+	}
+	if res.Status != "succeeded" {
+		t.Errorf("status = %q, want succeeded (trailing error must not clobber it)", res.Status)
+	}
+}

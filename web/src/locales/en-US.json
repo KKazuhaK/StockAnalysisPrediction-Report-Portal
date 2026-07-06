@@ -198,6 +198,8 @@
   "batch.admin.advancedPluginsHint": "Import a manifest to run a non-Dify provider. Most setups only need Dify targets above.",
   "batch.dify.newTarget": "New Dify workflow",
   "batch.dify.editTarget": "Edit Dify workflow",
+  "batch.dify.chatTag": "Chat",
+  "batch.dify.chatHint": "This is a chat / agent app — each row's `query` column is the message it runs.",
   "batch.dify.targetsHint": "No targets yet. Add a Dify workflow with its API key and its inputs are discovered automatically.",
   "batch.dify.baseUrl": "Dify API base URL",
   "batch.dify.baseUrlHint": "e.g. https://your-dify/v1 — the service API base, ending in /v1.",
