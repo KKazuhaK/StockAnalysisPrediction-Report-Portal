@@ -404,9 +404,8 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const [edit, setEdit] = useState<UserGroupRow | 'new' | null>(null)
   const [form] = Form.useForm()
   const isDefault = edit !== 'new' && !!edit?.is_default
-  const weightInherit = Form.useWatch('weight_inherit', form)
   const urgentInherit = Form.useWatch('urgent_inherit', form)
-  const allowInherit = Form.useWatch('allow_inherit', form)
+  const urgentPolicy = Form.useWatch('urgent_policy', form)
   const maxqInherit = Form.useWatch('maxq_inherit', form)
   const windowInherit = Form.useWatch('window_inherit', form)
   const defaultGroup = useMemo(() => groups.find((g) => g.is_default), [groups])
@@ -455,21 +454,18 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
     setEdit(g)
     if (g === 'new')
       form.setFieldsValue({
-        name: '', description: '', weight_inherit: true, weight: 0, urgent_inherit: true, urgent_unlimited: false,
-        allow_inherit: true, allow_urgent: true, maxq_inherit: true, max_queued: 0, window_inherit: true, run_window: '',
-        priority: undefined,
+        name: '', description: '', urgent_inherit: true, urgent_policy: 'ticket', weight: 0,
+        maxq_inherit: true, max_queued: 0, window_inherit: true, run_window: '', priority: undefined,
       })
     else
       form.setFieldsValue({
         name: g.name,
         description: g.description,
-        // A null field means the group inherits the Default group's value.
-        weight_inherit: !g.is_default && g.weight == null,
+        // A null field means the group inherits the Default group's value. The urgent
+        // policy folds allow_urgent + urgent_unlimited into one 3-way choice.
+        urgent_inherit: !g.is_default && g.allow_urgent == null,
+        urgent_policy: g.allow_urgent === false ? 'off' : g.urgent_unlimited ? 'unlimited' : 'ticket',
         weight: g.weight ?? 0,
-        urgent_inherit: !g.is_default && g.urgent_unlimited == null,
-        urgent_unlimited: !!g.urgent_unlimited,
-        allow_inherit: !g.is_default && g.allow_urgent == null,
-        allow_urgent: g.allow_urgent !== false, // permissive default
         maxq_inherit: !g.is_default && g.max_queued == null,
         max_queued: g.max_queued ?? 0,
         window_inherit: !g.is_default && g.run_window == null,
@@ -481,13 +477,16 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
     const v = await form.validateFields()
     const target = edit !== 'new' && edit ? edit : null
     const isDef = !!target?.is_default
-    // null field = inherit the Default group; the Default group is always concrete.
+    // The urgent policy is one control (禁止 / 限量-次票 / 无限) mapped back to the three
+    // stored fields, so allow + unlimited can never contradict. null = inherit Default.
+    const urgentInh = !isDef && v.urgent_inherit
+    const policy = v.urgent_policy as 'off' | 'ticket' | 'unlimited'
     const body = {
       name: v.name,
       description: v.description || '',
-      weight: !isDef && v.weight_inherit ? null : (v.weight ?? 0),
-      urgent_unlimited: !isDef && v.urgent_inherit ? null : !!v.urgent_unlimited,
-      allow_urgent: !isDef && v.allow_inherit ? null : !!v.allow_urgent,
+      allow_urgent: urgentInh ? null : policy !== 'off',
+      urgent_unlimited: urgentInh ? null : policy === 'unlimited',
+      weight: urgentInh ? null : policy === 'ticket' ? (v.weight ?? 0) : 0,
       max_queued: !isDef && v.maxq_inherit ? null : (v.max_queued ?? 0),
       run_window: !isDef && v.window_inherit ? null : (v.run_window || ''),
       priority: v.priority == null || v.priority === '' ? '' : String(v.priority),
@@ -646,35 +645,28 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
             <Input.TextArea rows={2} />
           </Form.Item>
 
-          {/* Urgent weight: a non-default group may inherit the Default group's value. */}
-          {!isDefault && (
-            <Form.Item name="weight_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
-              <Switch size="small" />
-            </Form.Item>
-          )}
-          <Form.Item name="weight" label={t('users.weight')} extra={t('users.weightHint')}>
-            <InputNumber min={0} max={999} style={{ width: '100%' }} disabled={!isDefault && weightInherit} />
-          </Form.Item>
-
-          {/* Unlimited urgent: same inherit / override choice. */}
+          {/* Urgent policy: one 3-way control (disabled / ticketed / unlimited) so allow +
+              unlimited can't contradict. A non-default group may inherit the Default's. */}
           {!isDefault && (
             <Form.Item name="urgent_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
               <Switch size="small" />
             </Form.Item>
           )}
-          <Form.Item name="urgent_unlimited" valuePropName="checked" label={t('users.urgentUnlimited')} extra={t('users.urgentUnlimitedHint')}>
-            <Switch disabled={!isDefault && urgentInherit} />
+          <Form.Item name="urgent_policy" label={t('users.urgentPolicy')} extra={t('users.urgentPolicyHint')}>
+            <Select
+              disabled={!isDefault && urgentInherit}
+              options={[
+                { value: 'off', label: t('users.urgentOff') },
+                { value: 'ticket', label: t('users.urgentTicket') },
+                { value: 'unlimited', label: t('users.urgentUnlimitedOpt') },
+              ]}
+            />
           </Form.Item>
-
-          {/* Allow urgent: may members use the urgent lane at all. */}
-          {!isDefault && (
-            <Form.Item name="allow_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
-              <Switch size="small" />
+          {urgentPolicy === 'ticket' && (
+            <Form.Item name="weight" label={t('users.weight')} extra={t('users.weightHint')}>
+              <InputNumber min={0} max={999} style={{ width: '100%' }} disabled={!isDefault && urgentInherit} />
             </Form.Item>
           )}
-          <Form.Item name="allow_urgent" valuePropName="checked" label={t('users.allowUrgent')} extra={t('users.allowUrgentHint')}>
-            <Switch disabled={!isDefault && allowInherit} />
-          </Form.Item>
 
           {/* Max active (queued + running) runs per member; 0 = unlimited. */}
           {!isDefault && (
