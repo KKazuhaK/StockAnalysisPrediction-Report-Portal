@@ -6,14 +6,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
-// difyRunStub returns a workflow-run response with the given status, or a status code
-// to force an HTTP error.
+// difyRunStub streams a workflow run ending in the given status, or returns a status
+// code to force an HTTP error. The provider runs in streaming mode now.
 func difyRunStub(t *testing.T, runStatus string, httpCode int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -22,7 +24,9 @@ func difyRunStub(t *testing.T, runStatus string, httpCode int) *httptest.Server 
 			w.Write([]byte(`{"code":"x","message":"boom"}`))
 			return
 		}
-		w.Write([]byte(`{"workflow_run_id":"run-9","data":{"status":"` + runStatus + `","error":"detail","outputs":{}}}`))
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"event":"workflow_started","task_id":"t1","workflow_run_id":"run-9","data":{}}`+"\n\n")
+		io.WriteString(w, `data: {"event":"workflow_finished","task_id":"t1","workflow_run_id":"run-9","data":{"status":"`+runStatus+`","error":"detail","outputs":{}}}`+"\n\n")
 	}))
 }
 
@@ -102,7 +106,8 @@ func TestDifyProviderSendsEndUser(t *testing.T) {
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
 		gotUser, _ = body["user"].(string)
-		io.WriteString(w, `{"workflow_run_id":"r","data":{"status":"succeeded"}}`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"event":"workflow_finished","task_id":"t","workflow_run_id":"r","data":{"status":"succeeded"}}`+"\n\n")
 	}))
 	defer srv.Close()
 	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "kazuha@anchan.kazuha.org"}
@@ -111,5 +116,105 @@ func TestDifyProviderSendsEndUser(t *testing.T) {
 	}
 	if gotUser != "kazuha@anchan.kazuha.org" {
 		t.Errorf("recorded user = %q, want kazuha@anchan.kazuha.org", gotUser)
+	}
+}
+
+// A stream that drops after the run started must NOT re-run the workflow: the
+// provider reconciles the outcome by polling the run id (the duplicate-run fix).
+func TestDifyProviderReconnectDoesNotRerun(t *testing.T) {
+	var runs int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workflows/run":
+			atomic.AddInt32(&runs, 1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			// Start the run, then drop the connection before workflow_finished.
+			io.WriteString(w, `data: {"event":"workflow_started","task_id":"t1","workflow_run_id":"run-42","data":{}}`+"\n\n")
+		case "/workflows/run/run-42":
+			io.WriteString(w, `{"id":"run-42","status":"succeeded","outputs":{"uid":"x"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u"}
+	res, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != batch.Ok || res.RunID != "run-42" {
+		t.Fatalf("res = %+v, want Ok run-42", res)
+	}
+	if n := atomic.LoadInt32(&runs); n != 1 {
+		t.Errorf("workflow was started %d times, want 1 (no re-run on reconnect)", n)
+	}
+}
+
+// A transient blip on the reconcile poll (e.g. a 502 right after the drop) is
+// retried within the deadline — the run reconciles to its real outcome and is not
+// re-run.
+func TestDifyProviderReconcileRetriesTransient(t *testing.T) {
+	var runs, gets int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workflows/run":
+			atomic.AddInt32(&runs, 1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"event":"workflow_started","task_id":"t","workflow_run_id":"run-7","data":{}}`+"\n\n")
+		case "/workflows/run/run-7":
+			if atomic.AddInt32(&gets, 1) == 1 {
+				w.WriteHeader(http.StatusBadGateway) // transient blip on the first poll
+				return
+			}
+			io.WriteString(w, `{"id":"run-7","status":"succeeded"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u", reconcilePoll: time.Millisecond, reconcileTimeout: 5 * time.Second}
+	res, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != batch.Ok {
+		t.Errorf("status = %v, want Ok (reconcile should retry the transient poll)", res.Status)
+	}
+	if n := atomic.LoadInt32(&runs); n != 1 {
+		t.Errorf("workflow started %d times, want 1 (no re-run)", n)
+	}
+}
+
+// When reconcile can't reach a terminal state before its deadline, the row fails
+// with a PERMANENT error — never a transient one, which would make the engine re-run
+// the already-started workflow (the money bug the review caught).
+func TestDifyProviderReconcileFailureIsPermanent(t *testing.T) {
+	var runs int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workflows/run":
+			atomic.AddInt32(&runs, 1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"event":"workflow_started","task_id":"t","workflow_run_id":"run-8","data":{}}`+"\n\n")
+		case "/workflows/run/run-8":
+			w.WriteHeader(http.StatusBadGateway) // never recovers → reconcile hits its deadline
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u", reconcilePoll: time.Millisecond, reconcileTimeout: 200 * time.Millisecond}
+	_, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
+	if err == nil {
+		t.Fatal("expected an error when reconcile can't finish")
+	}
+	if batch.IsTransient(err) {
+		t.Error("a started run's reconcile failure must be PERMANENT (else the engine re-runs it)")
+	}
+	if n := atomic.LoadInt32(&runs); n != 1 {
+		t.Errorf("workflow started %d times, want 1 (no re-run)", n)
 	}
 }

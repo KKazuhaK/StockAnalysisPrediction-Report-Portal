@@ -83,19 +83,24 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 		return nil, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if resp.StatusCode/100 != 2 {
-		msg := strings.TrimSpace(string(raw))
-		var e struct {
-			Message string `json:"message"`
-			Code    string `json:"code"`
-		}
-		if json.Unmarshal(raw, &e) == nil && e.Message != "" {
-			msg = e.Message
-		}
-		return nil, &APIError{Status: resp.StatusCode, Message: msg}
+		return nil, &APIError{Status: resp.StatusCode, Message: apiErrMsg(raw)}
 	}
 	return raw, nil
+}
+
+// apiErrMsg pulls Dify's {message,code} error text out of a response body, falling
+// back to the raw body when it isn't the expected JSON shape.
+func apiErrMsg(raw []byte) string {
+	var e struct {
+		Message string `json:"message"`
+		Code    string `json:"code"`
+	}
+	if json.Unmarshal(raw, &e) == nil && e.Message != "" {
+		return e.Message
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 // Info fetches the workflow app's metadata (used to confirm the key + show a name).
@@ -147,9 +152,10 @@ func (c *Client) Parameters(ctx context.Context) ([]Input, error) {
 	return out, nil
 }
 
-// RunResult is the outcome of a blocking workflow run.
+// RunResult is the outcome of a workflow run (blocking or streaming).
 type RunResult struct {
 	WorkflowRunID string
+	TaskID        string // streaming only; needed to stop the run server-side
 	Status        string // running | succeeded | failed | stopped
 	Error         string
 	Outputs       map[string]any
