@@ -76,7 +76,7 @@ export interface BatchQueueSummary {
   running: number
   scheduled: number // 定时 jobs not yet due
   budget: number // jobs allowed to run at once
-  reserved: number // slots held for 加急
+  reserved: number // slots held for urgent runs
   my_priority?: number // the caller's resolved base priority (0..100, ADR 0008)
 }
 
@@ -84,7 +84,7 @@ export interface BatchJob {
   id: number
   target_id: number
   status: string
-  priority?: string // "urgent" (加急) or a base number 0..100 as a string (ADR 0008)
+  priority?: string // "urgent" or a base number 0..100 as a string (ADR 0008)
   run_at?: string // one-shot scheduled start ("" = ASAP)
   scheduled?: boolean // queued but not yet due (定时, waiting for run_at)
   inputs?: string // first row's inputs as a JSON string (for a 标的 label)
@@ -278,7 +278,7 @@ export interface UserGroupRow {
   id: number
   name: string
   description?: string
-  weight: number // 加急 tickets granted per period to each member (ADR 0005)
+  weight: number // urgent tickets granted per period to each member (ADR 0005)
   urgent_unlimited?: boolean // members can run urgent jobs without spending tickets
   priority?: string // default base run priority 0..100 for members (as a string; ADR 0008)
   members: number // member count
@@ -298,13 +298,13 @@ export interface BatchConfig {
   prio_fair_halflife_hours: number
 }
 
-// 加急 ticket balance for the batch run form (ADR 0005).
+// Urgent ticket balance for the batch run form (ADR 0005).
 export interface BatchTickets {
   unlimited: boolean
   remaining?: number
   allocation?: number
   period_days?: number
-  urgent_enabled?: boolean // when false, the run forms hide the 加急 control entirely
+  urgent_enabled?: boolean // when false, the run forms hide the urgent control entirely
 }
 
 export interface UsersResp {

@@ -258,7 +258,7 @@ export default function BatchConsole() {
   }, [])
 
   const urgentEnabled = tickets?.urgent_enabled !== false
-  // 加急 needs a ticket (unless unlimited/admin); disable it when the balance is 0.
+  // Urgent runs need a ticket unless the user belongs to an unlimited group; disable at 0.
   const urgentDisabled = urgentEnabled && tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
   useEffect(() => {
     if ((!urgentEnabled || urgentDisabled) && urgent) setUrgent(false)
@@ -299,7 +299,7 @@ export default function BatchConsole() {
       setMode('now')
       setRunAt(null)
       loadJobs()
-      loadTickets() // a 加急 run may have spent a ticket
+      loadTickets() // an urgent run may have spent a ticket
       setOpenJobId(res.job_id)
     } catch (e) {
       message.error((e as Error).message || t('batch.msg.startFailed'))
@@ -317,7 +317,7 @@ export default function BatchConsole() {
     { title: '#', dataIndex: 'id', width: 64 },
     { title: t('batch.col.status'), dataIndex: 'status', width: 96, render: (s: string) => statusTag(t, s, JOB_STATUS_COLOR) },
     {
-      // Queued non-urgent jobs get an inline base-priority editor (插队); 加急 and
+      // Queued non-urgent jobs get an inline base-priority editor; urgent and
       // non-queued jobs show a static tag (ADR 0008).
       title: t('batch.priorityLabel'),
       width: 116,

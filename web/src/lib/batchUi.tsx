@@ -2,7 +2,7 @@ import { Tag } from 'antd'
 import type { TFunction } from 'i18next'
 
 // Shared presentation for run/queue views. Priority is a Slurm-style number now, not a
-// tier: a run stores "urgent" (加急) or a base number 0..100 (docs/adr/0008-multifactor-priority.md).
+// tier: a run stores "urgent" or a base number 0..100 (docs/adr/0008-multifactor-priority.md).
 
 export const BASE_MAX = 100
 export const JOB_STATUS_COLOR: Record<string, string> = {
@@ -17,7 +17,7 @@ export function statusTag(t: TFunction, s: string) {
   return <Tag color={JOB_STATUS_COLOR[s] || 'default'}>{t(`batch.status.${s}`)}</Tag>
 }
 
-// isUrgent reports whether a stored priority is the 加急 escalation.
+// isUrgent reports whether a stored priority is the urgent escalation.
 export function isUrgent(p?: string) {
   return p === 'urgent'
 }
@@ -39,7 +39,7 @@ function baseTagColor(n: number): string {
   return 'default'
 }
 
-// priorityTag renders a run's priority: a red 加急 tag, else the base number tinted by
+// priorityTag renders a run's priority: a red urgent tag, else the base number tinted by
 // magnitude.
 export function priorityTag(t: TFunction, p?: string) {
   if (isUrgent(p)) return <Tag color="red">{t('batch.priority.urgent')}</Tag>

@@ -5,7 +5,7 @@ import { api } from '../../api/client'
 import type { BatchConfig } from '../../api/types'
 
 // Standalone 运行/队列 settings (docs/adr/0007 + 0008): the queue budget, reserved
-// slots, 加急 ticket period, the no-group default base priority, and the Slurm-style
+// slots, urgent ticket period, the no-group default base priority, and the Slurm-style
 // multifactor priority weights. These govern the whole run system
 // (home 单次运行 + CSV 批量), so they live apart from the 批量任务 tab (targets + CSV).
 export default function RunQueueSettingsPage() {

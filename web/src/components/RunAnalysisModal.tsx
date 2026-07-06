@@ -6,9 +6,10 @@ import type { Dayjs } from 'dayjs'
 import { api } from '../api/client'
 import type { BatchQueueSummary, BatchTarget, BatchTickets } from '../api/types'
 
-// The home-page "运行分析" modal (docs/adr/0007-run-analysis-and-scheduling.md):
+// The home-page run-analysis modal (docs/adr/0007-run-analysis-and-scheduling.md):
 // pick a Dify workflow, fill its discovered inputs, run now or schedule, optionally
-// escalate to 加急 (ticket-gated), with the live queue depth shown inline.
+// escalate to urgent (ticket-gated unless the user is in an unlimited group), with
+// the live queue depth shown inline.
 export default function RunAnalysisModal({
   open,
   onClose,
@@ -41,7 +42,7 @@ export default function RunAnalysisModal({
   const inputs = target?.inputs || []
 
   const urgentEnabled = tickets?.urgent_enabled !== false
-  // 加急 needs a ticket unless the caller is unlimited (admin); disable + uncheck at 0.
+  // Urgent runs need a ticket unless the user belongs to an unlimited group; disable + uncheck at 0.
   const urgentDisabled = urgentEnabled && tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
   useEffect(() => {
     if (!urgentEnabled || urgentDisabled) setUrgent(false)
