@@ -22,6 +22,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/version"
 )
@@ -38,11 +39,10 @@ type Server struct {
 	st           *Store
 	names        *Names
 	pdf          *template.Template
-	batchRunning sync.Map                                          // jobID -> struct{}; guards against launching a job twice in-process
-	jobCancels   sync.Map                                          // jobID -> context.CancelFunc; lets a cancel abort the in-flight run
+	jobRuns      sync.Map                                          // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
 	jobNotify    sync.Map                                          // jobID -> bool; opt-in to email the submitter when the job finishes
-	runGate      *runGate                                          // global cap on concurrent runs: every row acquires a slot (reads the live budget)
-	schedMu      sync.Mutex                                        // serializes scheduleTick so concurrent ticks can't over-admit (ADR 0004)
+	buildProv    func(BatchJob) (batch.Provider, error)            // test seam for the run-item provider; nil → real buildProvider
+	schedMu      sync.Mutex                                        // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
 	mailFn       func(to []string, subject, htmlBody string) error // test seam; nil → real SMTP send
 	appTok       *appTokens                                        // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
 }
@@ -97,7 +97,6 @@ func RunServer(cfgPath string) {
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
 	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute)}
-	s.runGate = newRunGate(s.batchBudget) // global concurrent-run cap; reads the live budget setting
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()

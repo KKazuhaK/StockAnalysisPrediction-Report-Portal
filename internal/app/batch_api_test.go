@@ -177,7 +177,7 @@ func TestJobCreateBasePriorityAdminOnly(t *testing.T) {
 func TestCancelRunningJobAbortsContext(t *testing.T) {
 	s := batchServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	s.jobCancels.Store(int64(7), cancel)
+	s.jobRuns.Store(int64(7), &jobRun{ctx: ctx, cancel: cancel})
 
 	s.cancelRunningJob(7)
 	select {

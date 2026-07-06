@@ -422,7 +422,7 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 		}
 		items = append(items, row)
 	}
-	_, inProc := s.batchRunning.Load(id)
+	_, inProc := s.jobRuns.Load(id) // a job with an active run scope is executing here
 	m := jobJSON(job)
 	if job.Status == "queued" {
 		waiting := s.queuedItems()
@@ -454,6 +454,11 @@ func (s *Server) apiBatchJobCancel(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 	s.cancelRunningJob(id) // abort the in-flight run so the cancel is immediate
+	// Close it out now: if the job had no in-flight run (its rows were parked behind a
+	// saturated budget), no finishing run will ever finalize it — without this it would
+	// strand in 'cancelling'. finalizeJob is a no-op if runs are still in flight (their
+	// afterItem finalizes later) or the job was already terminal.
+	s.finalizeJob(id)
 	writeJSON(w, okJSON)
 }
 

@@ -8,12 +8,10 @@ import (
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
 )
 
-// This file is the persistence layer for the batch-run feature: plugin/target/job
-// CRUD plus the batch.JobStore implementation the engine drives. See
-// docs/adr/0001-batch-run-engine.md.
-
-// Store satisfies the engine's persistence port.
-var _ batch.JobStore = (*Store)(nil)
+// This file is the persistence layer for the batch-run feature: plugin/target/job/item
+// CRUD that the app-layer run-level scheduler drives. See
+// docs/adr/0011-run-level-scheduling.md (item-level scheduling; the batch package is now
+// just the stateless per-run trigger).
 
 // ---------- types ----------
 
@@ -61,7 +59,7 @@ func itemStatus(o batch.Outcome) string {
 	}
 }
 
-// ---------- batch.JobStore implementation ----------
+// ---------- job/item persistence (driven by the run-level scheduler, ADR 0011) ----------
 
 func (s *Store) QueuedItems(jobID int64) ([]batch.Item, error) {
 	rows, err := s.query(`SELECT id,row_index,inputs FROM batch_items WHERE job_id=? AND status='queued' ORDER BY row_index`, jobID)
@@ -132,6 +130,25 @@ func (s *Store) ResetInFlightItems() error {
 // ResumableJobIDs lists jobs that were mid-flight when the server stopped.
 func (s *Store) ResumableJobIDs() []int64 {
 	rows, err := s.query("SELECT id FROM batch_jobs WHERE status IN ('running','cancelling') ORDER BY id")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		out = append(out, id)
+	}
+	return out
+}
+
+// CancellingJobIDs lists jobs mid-cancel (status 'cancelling'), so the scheduler can
+// finalize any whose in-flight runs have all drained. SchedulableJobs deliberately
+// excludes them (a cancelling job admits no new runs), so the backstop sweeps them here
+// — otherwise a job cancelled while it had no in-flight run would strand (ADR 0011).
+func (s *Store) CancellingJobIDs() []int64 {
+	rows, err := s.query("SELECT id FROM batch_jobs WHERE status='cancelling' ORDER BY id")
 	if err != nil {
 		return nil
 	}
@@ -251,6 +268,49 @@ func (s *Store) MarkJobRunning(jobID int64) bool {
 	}
 	n, _ := res.RowsAffected()
 	return n == 1
+}
+
+// MarkItemRunning atomically flips ONE item (run) from 'queued' to 'running' (stamping
+// started_at). It returns true only for the caller that won the transition — the per-run
+// admission gate (ADR 0011): the winner takes one of the budget's concurrency slots, and
+// two scheduler ticks can never dispatch the same run twice.
+func (s *Store) MarkItemRunning(itemID int64) bool {
+	res, err := s.exec("UPDATE batch_items SET status='running', started_at=? WHERE id=? AND status='queued'", nowStr(), itemID)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n == 1
+}
+
+// SchedulableJobs lists jobs the run-level scheduler may draw runs from: those still
+// queued or already running (a running job keeps contributing rows as earlier ones
+// finish). Each carries its target, status, queue priority, producer window
+// (concurrency), retry budget, submitter, enqueue time, and one-shot run_at —
+// everything itemCandidates and the provider need. Cancelling/cancelled/finished jobs
+// are excluded. See docs/adr/0011-run-level-scheduling.md.
+func (s *Store) SchedulableJobs() []BatchJob {
+	rows, err := s.query(`SELECT b.id, b.target_id, b.status, COALESCE(q.priority,'normal'),
+		b.concurrency, b.max_retries, COALESCE(b.created_by,''), b.created_at, COALESCE(sc.run_at,'')
+		FROM batch_jobs b
+		LEFT JOIN job_queue q ON q.job_id=b.id
+		LEFT JOIN job_schedule sc ON sc.job_id=b.id
+		WHERE b.status IN ('queued','running') ORDER BY b.id`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []BatchJob
+	for rows.Next() {
+		var j BatchJob
+		var priority, createdBy, createdAt, runAt sql.NullString
+		if err := rows.Scan(&j.ID, &j.TargetID, &j.Status, &priority, &j.Concurrency, &j.MaxRetries, &createdBy, &createdAt, &runAt); err != nil {
+			continue
+		}
+		j.Priority, j.CreatedBy, j.CreatedAt, j.RunAt = priority.String, createdBy.String, createdAt.String, runAt.String
+		out = append(out, j)
+	}
+	return out
 }
 
 // SetJobPriority changes a job's queue priority (the 插队 / re-prioritise action).

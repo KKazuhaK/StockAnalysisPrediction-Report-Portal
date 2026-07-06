@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
@@ -140,50 +139,6 @@ func (s *Server) batchBudget() int {
 		return 1
 	}
 	return n
-}
-
-// runGate caps concurrent runs GLOBALLY: every row acquires a slot before running, so the
-// total simultaneous Dify runs across ALL jobs never exceeds the budget — regardless of
-// how many jobs run or each batch's row concurrency. This is what makes the "max at once"
-// limit a true cap on runs, not just on jobs. The limit is read on every acquire, so
-// changing it in the admin panel takes effect immediately (no restart).
-type runGate struct {
-	mu      sync.Mutex
-	running int
-	limit   func() int
-}
-
-func newRunGate(limit func() int) *runGate { return &runGate{limit: limit} }
-
-// Acquire blocks until a slot is free (running < the current limit) or ctx is cancelled.
-// Returns false only on cancellation. It satisfies batch.Gate.
-func (g *runGate) Acquire(ctx context.Context) bool {
-	for {
-		g.mu.Lock()
-		lim := g.limit()
-		if lim < 1 {
-			lim = 1
-		}
-		if g.running < lim {
-			g.running++
-			g.mu.Unlock()
-			return true
-		}
-		g.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(150 * time.Millisecond):
-		}
-	}
-}
-
-func (g *runGate) Release() {
-	g.mu.Lock()
-	if g.running > 0 {
-		g.running--
-	}
-	g.mu.Unlock()
 }
 
 // batchReserved is how many slots to hold for the top (加急) tier. Clamped to
@@ -438,24 +393,110 @@ func (s *Server) scheduleLoop() {
 	}
 }
 
-// scheduleTick admits as many queued jobs as the budget + reserved-slot rule allow,
-// highest priority first, and launches each. It is serialized by schedMu so two
-// callers can't over-admit; MarkJobRunning makes each admission atomic on top of
-// that. Called after a job is enqueued, after one finishes, and on startup.
+// scheduleTick admits runnable runs (individual items) up to the budget, highest
+// priority first, and starts each. It is serialized by schedMu so concurrent ticks
+// can't over-admit; MarkItemRunning makes each admission atomic on top of that. Called
+// after a job is enqueued, after a run finishes, when a scheduled job comes due, and on
+// startup. The budget is the ONLY concurrency gate now — one queue, one slot per run
+// (docs/adr/0011-run-level-scheduling.md).
 func (s *Server) scheduleTick() {
 	s.schedMu.Lock()
-	defer s.schedMu.Unlock()
-	items := s.queuedItems()
-	if len(items) == 0 {
-		return
-	}
-	running := s.st.RunningJobCount()
-	plan := queue.Plan{Budget: s.batchBudget(), Reserved: s.batchReserved()}
-	for _, it := range queue.Admit(items, running, plan) {
-		if s.st.MarkJobRunning(it.ID) {
-			s.launchJob(it.ID)
+	s.admitLocked()
+	// Backstop: finalize any active job that has no runs left to do but that no run's
+	// afterItem will ever close out — an all-done straggler, or a job whose rows all
+	// vanished (a retry that requeued nothing). Empty at creation is rejected upstream.
+	// Runs are admitted first, so a job with more rows to run is never finalized early.
+	var done []BatchJob
+	for _, j := range s.st.SchedulableJobs() {
+		if queued, running, _, _, _ := s.st.LiveJobCounts(j.ID); queued == 0 && running == 0 {
+			if fin := s.finalizeLocked(j.ID); fin != nil {
+				done = append(done, *fin)
+			}
 		}
 	}
+	// A job cancelled while it had no in-flight run isn't in SchedulableJobs and no run's
+	// afterItem will close it out; finalizeLocked finalizes it once its runs have drained.
+	for _, id := range s.st.CancellingJobIDs() {
+		if fin := s.finalizeLocked(id); fin != nil {
+			done = append(done, *fin)
+		}
+	}
+	s.schedMu.Unlock()
+	for _, j := range done {
+		s.fireEvent(EventBatchFinished, map[string]any{
+			"job_id": j.ID, "status": j.Status, "total": j.Total,
+			"succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed,
+		})
+		s.notifyJobDone(j)
+	}
+}
+
+// candMeta ties a scheduler item id back to its job and row for dispatch.
+type candMeta struct {
+	job  BatchJob
+	item batch.Item
+}
+
+// admitLocked is the body of scheduleTick; the caller holds schedMu. It fills the free
+// slots (budget − running runs) with the highest-priority runnable runs and starts them.
+func (s *Server) admitLocked() {
+	budget := s.batchBudget()
+	running := s.st.RunningItemCount()
+	if budget-running <= 0 {
+		return
+	}
+	cands, meta := s.itemCandidates()
+	if len(cands) == 0 {
+		return
+	}
+	plan := queue.Plan{Budget: budget, Reserved: s.batchReserved()}
+	for _, it := range queue.Admit(cands, running, plan) {
+		m := meta[it.ID]
+		if s.st.MarkItemRunning(it.ID) {
+			s.st.MarkJobRunning(m.job.ID) // queued → running (no-op if already running)
+			s.startItem(m.job, m.item)
+		}
+	}
+}
+
+// itemCandidates builds the run-level candidate set: for every schedulable job (queued
+// or running, due, not cancelling), up to `concurrency − its running runs` of its queued
+// rows — the producer's in-flight window — each scored by ITS job's priority factors, so
+// all of a job's runs share the job's score and a higher-priority job's runs rank first.
+// Returns the scheduler items plus an id → (job, row) lookup for dispatch.
+func (s *Server) itemCandidates() ([]queue.Item, map[int64]candMeta) {
+	now := time.Now()
+	w := s.prioWeights()
+	usage := s.userUsage(now)
+	var cands []queue.Item
+	meta := map[int64]candMeta{}
+	for _, j := range s.st.SchedulableJobs() {
+		if !runAtDue(j.RunAt, now) {
+			continue // a not-yet-due 定时 job contributes no runs
+		}
+		_, running, _, _, _ := s.st.LiveJobCounts(j.ID)
+		window := j.Concurrency
+		if window < 1 {
+			window = 1
+		}
+		if window -= running; window <= 0 {
+			continue // this job already has its share of runs in flight
+		}
+		items, err := s.st.QueuedItems(j.ID)
+		if err != nil || len(items) == 0 {
+			continue
+		}
+		f := s.jobFactors(j, now, usage)
+		score := w.Score(f)
+		for i, it := range items {
+			if i >= window {
+				break
+			}
+			cands = append(cands, queue.Item{ID: it.ID, Score: score, Urgent: f.Urgent})
+			meta[it.ID] = candMeta{job: j, item: it}
+		}
+	}
+	return cands, meta
 }
 
 // buildProvider constructs the Provider for a job from its target's plugin
@@ -484,89 +525,126 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	return m.NewProvider(cfg, &http.Client{Timeout: difyRunTimeout}), nil
 }
 
-// cancelRunningJob aborts a job's in-flight run if it is executing in this process,
-// so a cancel request takes effect immediately instead of waiting for the current
-// blocking row to return. A no-op if the job isn't running here.
+// jobRun is the shared cancellable scope for all in-flight runs of one job: cancelling
+// it aborts every in-flight Dify call of the job at once (the client uses this ctx for
+// its HTTP requests), so a cancel takes effect immediately instead of waiting for a
+// blocking run to return.
+type jobRun struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// jobRunFor returns the job's shared run scope, creating it on first use.
+func (s *Server) jobRunFor(jobID int64) *jobRun {
+	if v, ok := s.jobRuns.Load(jobID); ok {
+		return v.(*jobRun)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	jr := &jobRun{ctx: ctx, cancel: cancel}
+	if actual, loaded := s.jobRuns.LoadOrStore(jobID, jr); loaded {
+		cancel() // lost the race; use the winner's scope
+		return actual.(*jobRun)
+	}
+	return jr
+}
+
+// cancelRunningJob aborts a job's in-flight runs immediately (a no-op if none run here).
 func (s *Server) cancelRunningJob(jobID int64) {
-	if cf, ok := s.jobCancels.Load(jobID); ok {
-		cf.(context.CancelFunc)()
+	if v, ok := s.jobRuns.Load(jobID); ok {
+		v.(*jobRun).cancel()
 	}
 }
 
-// launchJob starts (or resumes) a job in the background. It is idempotent: a job
-// already running in this process is not launched twice.
-func (s *Server) launchJob(jobID int64) {
-	if _, loaded := s.batchRunning.LoadOrStore(jobID, struct{}{}); loaded {
-		return
+// startItem runs one admitted item in the background: build the provider, trigger the
+// run (retrying only transient transport errors), persist the outcome, then finalize the
+// job if it's done and re-admit into the freed slot. The scheduler already marked the
+// item running, so it holds one of the budget's slots for its whole lifetime.
+func (s *Server) startItem(job BatchJob, item batch.Item) {
+	jr := s.jobRunFor(job.ID)
+	build := s.buildProv
+	if build == nil {
+		build = s.buildProvider
 	}
-	job, ok := s.st.GetBatchJob(jobID)
-	if !ok {
-		s.batchRunning.Delete(jobID)
-		return
-	}
-	prov, err := s.buildProvider(job)
-	if err != nil {
-		log.Printf("batch job %d: cannot start: %v", jobID, err)
-		s.st.FinishJob(jobID, false) // nothing runnable; close it out
-		s.batchRunning.Delete(jobID)
-		return
-	}
-	// GLOBAL concurrent-run cap (across all jobs): the engine takes a gate slot before it
-	// marks a row running, so at most `budget` rows run — and show as running — at once.
-	// Set conditionally so a nil gate stays a nil interface (not a non-nil typed nil).
-	eng := &batch.Engine{Store: s.st, Log: log.Printf}
-	if s.runGate != nil {
-		eng.Gate = s.runGate
-	}
-	// A batch runs up to its own chosen row-concurrency at once (set per-batch on the run
-	// form, default 1), capped by the global budget so one batch can't exceed the "max at
-	// once" limit. See docs/adr/0004-run-queue.md.
-	conc := job.Concurrency
-	if conc < 1 {
-		conc = 1
-	}
-	if b := s.batchBudget(); conc > b {
-		conc = b
-	}
-	spec := batch.JobSpec{JobID: jobID, Concurrency: conc, MaxRetries: job.MaxRetries}
-	// A per-job cancellable context so a cancel request aborts the in-flight Dify call
-	// immediately (the dify client uses this ctx for its HTTP requests) instead of
-	// waiting for the current row's blocking run to return.
-	ctx, cancel := context.WithCancel(context.Background())
-	s.jobCancels.Store(jobID, cancel)
 	go func() {
-		defer s.batchRunning.Delete(jobID)
-		defer s.jobCancels.Delete(jobID)
-		defer cancel()
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("batch job %d panicked: %v", jobID, r)
+				log.Printf("batch job %d item %d panicked: %v", job.ID, item.ID, r)
 			}
+			s.afterItem(job.ID)
 		}()
-		if err := eng.RunJob(ctx, spec, prov); err != nil {
-			log.Printf("batch job %d ended with error: %v", jobID, err)
+		prov, err := build(job)
+		if err != nil {
+			log.Printf("batch job %d item %d: cannot start: %v", job.ID, item.ID, err)
+			s.st.FinishItem(item.ID, batch.Failed, 1, "", err.Error())
+			return
 		}
-		if j, ok := s.st.GetBatchJob(jobID); ok {
-			s.fireEvent(EventBatchFinished, map[string]any{
-				"job_id": j.ID, "status": j.Status, "total": j.Total,
-				"succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed,
-			})
-			s.notifyJobDone(j)
-		}
-		s.scheduleTick() // a slot just freed — admit the next queued job by priority
+		res, attempts := batch.RunItem(jr.ctx, prov, item.Inputs, job.MaxRetries, nil, log.Printf)
+		s.st.FinishItem(item.ID, res.Status, attempts, res.RunID, res.Detail)
 	}()
 }
 
-// resumeBatchJobs is called at startup: it requeues items left 'running' by a
-// crash and relaunches every job that was mid-flight.
+// afterItem runs when a run finishes: finalize the job if nothing is left to do, then
+// re-admit so the freed slot picks up the next-highest-priority run.
+func (s *Server) afterItem(jobID int64) {
+	s.finalizeJob(jobID)
+	s.scheduleTick()
+}
+
+// finalizeJob closes a job out — aggregate counts + terminal status, the finished event,
+// and the done-notification — exactly once, if it has no runs left to do. Serialized by
+// schedMu so two finishing runs can't double-finalize.
+func (s *Server) finalizeJob(jobID int64) {
+	s.schedMu.Lock()
+	done := s.finalizeLocked(jobID)
+	s.schedMu.Unlock()
+	if done != nil {
+		s.fireEvent(EventBatchFinished, map[string]any{
+			"job_id": done.ID, "status": done.Status, "total": done.Total,
+			"succeeded": done.Succeeded, "partial": done.Partial, "failed": done.Failed,
+		})
+		s.notifyJobDone(*done)
+	}
+}
+
+// finalizeLocked transitions a job to its terminal state when it has 0 running runs and
+// either 0 queued runs (all done → finished) or it is cancelling (remaining runs
+// abandoned → cancelled). The caller holds schedMu; because each run persists its
+// outcome BEFORE this reads the counts, the last run to finish always sees running == 0
+// and finalizes. Returns the finalized job (for event/notify) or nil if not yet done.
+func (s *Server) finalizeLocked(jobID int64) *BatchJob {
+	job, ok := s.st.GetBatchJob(jobID)
+	if !ok || job.Status == "finished" || job.Status == "cancelled" {
+		return nil // already terminal
+	}
+	queued, running, _, _, _ := s.st.LiveJobCounts(jobID)
+	cancelling := job.Status == "cancelling"
+	if running > 0 || (queued > 0 && !cancelling) {
+		return nil // runs still in flight or waiting
+	}
+	if err := s.st.FinishJob(jobID, cancelling); err != nil {
+		log.Printf("batch job %d: finalize: %v", jobID, err)
+		return nil
+	}
+	if v, ok := s.jobRuns.LoadAndDelete(jobID); ok {
+		v.(*jobRun).cancel()
+	}
+	j, ok := s.st.GetBatchJob(jobID)
+	if !ok {
+		return nil
+	}
+	return &j
+}
+
+// resumeBatchJobs is called at startup: it requeues runs left in-flight by a crash, then
+// re-admits from the persisted item state and finalizes any job with nothing left to run
+// (all its runs had finished, or it was cancelling, when the server stopped).
 func (s *Server) resumeBatchJobs() {
 	if err := s.st.ResetInFlightItems(); err != nil {
 		log.Printf("batch resume: reset in-flight items: %v", err)
 		return
 	}
+	s.scheduleTick()
 	for _, id := range s.st.ResumableJobIDs() {
-		log.Printf("batch resume: relaunching job %d", id)
-		s.launchJob(id)
+		s.finalizeJob(id)
 	}
-	s.scheduleTick() // admit any jobs that were left 'queued' when the server stopped
 }

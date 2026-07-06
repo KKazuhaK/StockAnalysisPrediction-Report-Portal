@@ -17,6 +17,25 @@ func (p fakeProv) Run(_ context.Context, in map[string]string) (batch.RunResult,
 	return p.fn(in)
 }
 
+// driveJobSync runs a job's queued items to completion through the store, the way the
+// run-level scheduler + startItem do (docs/adr/0011), but synchronously and in order for
+// deterministic store-integration tests. A cancelling/cancelled job dispatches nothing.
+func driveJobSync(st *Store, jobID int64, prov batch.Provider, maxRetries int) {
+	if c, _ := st.Cancelled(jobID); c {
+		st.FinishJob(jobID, true)
+		return
+	}
+	st.MarkJobRunning(jobID)
+	items, _ := st.QueuedItems(jobID)
+	for _, it := range items {
+		st.MarkItemRunning(it.ID)
+		res, attempts := batch.RunItem(context.Background(), prov, it.Inputs, maxRetries, func(int) time.Duration { return 0 }, nil)
+		st.FinishItem(it.ID, res.Status, attempts, res.RunID, res.Detail)
+	}
+	cancelled, _ := st.Cancelled(jobID)
+	st.FinishJob(jobID, cancelled)
+}
+
 func seedTarget(t *testing.T, st *Store) int64 {
 	t.Helper()
 	if err := st.UpsertPlugin("dify", "Dify", "1.0.0", "{}", "bundled"); err != nil {
@@ -46,10 +65,7 @@ func TestBatchJobLifecycleWithEngine(t *testing.T) {
 		}
 		return batch.RunResult{Status: batch.Ok, RunID: "run-" + in["code"]}, nil
 	}}
-	eng := &batch.Engine{Store: st, Backoff: func(int) time.Duration { return 0 }}
-	if err := eng.RunJob(context.Background(), batch.JobSpec{JobID: job, Concurrency: 2, MaxRetries: 1}, prov); err != nil {
-		t.Fatalf("RunJob: %v", err)
-	}
+	driveJobSync(st, job, prov, 1)
 
 	j, ok := st.GetBatchJob(job)
 	if !ok {
@@ -112,8 +128,7 @@ func TestCancelBatchJobStopsDispatch(t *testing.T) {
 		calls++
 		return batch.RunResult{Status: batch.Ok}, nil
 	}}
-	eng := &batch.Engine{Store: st, Backoff: func(int) time.Duration { return 0 }}
-	eng.RunJob(context.Background(), batch.JobSpec{JobID: job, Concurrency: 2}, prov)
+	driveJobSync(st, job, prov, 0)
 
 	if calls != 0 {
 		t.Errorf("provider called %d times on a cancelled job, want 0", calls)
