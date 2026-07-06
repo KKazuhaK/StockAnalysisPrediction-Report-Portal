@@ -20,7 +20,7 @@
   "run.startedOk": "运行 #{{id}} 已入队",
   "run.scheduledOk": "已定时至 {{at}}",
   "run.startFailed": "启动运行失败",
-  "run.queueBusy": "队列已满（{{n}} 个运行中），提交后需排队等待。",
+  "run.queueBusy": "队列已满（{{n}} 个运行中），前面还有 {{ahead}} 个在排队，提交后需等待。",
   "run.queueIdle": "队列空闲，提交后立即执行。",
   "run.queueFree": "有 {{n}} 个空位，提交后立即执行。",
   "nav.queue": "队列",
