@@ -39,6 +39,7 @@ type Server struct {
 	names        *Names
 	pdf          *template.Template
 	batchRunning sync.Map   // jobID -> struct{}; guards against launching a job twice in-process
+	jobCancels   sync.Map   // jobID -> context.CancelFunc; lets a cancel abort the in-flight run
 	schedMu      sync.Mutex // serializes scheduleTick so concurrent ticks can't over-admit (ADR 0004)
 	appTok       *appTokens // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
 }
@@ -220,7 +221,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("DELETE /api/admin/batch/jobs/{id}", s.requirePermJSON(PermRunBatch, s.apiBatchJobDelete))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/cancel", s.requirePermJSON(PermRunBatch, s.apiBatchJobCancel))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requirePermJSON(PermRunBatch, s.apiBatchJobRetry))
-	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/priority", s.requirePermJSON(PermRunBatch, s.apiBatchJobReprioritize))
+	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/priority", s.requireAdminJSON(s.apiBatchJobReprioritize))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/schedule", s.requirePermJSON(PermRunBatch, s.apiBatchJobSchedule))
 
 	// ---- Downloadable iframe apps (see docs/adr/0003-downloadable-apps.md) ----

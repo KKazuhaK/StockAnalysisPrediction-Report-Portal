@@ -31,6 +31,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { Dayjs } from 'dayjs'
 import { api } from '../api/client'
+import { useAuth } from '../auth'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchQueueSummary, BatchTarget } from '../api/types'
 import { BASE_MAX, fmtInputs, isTerminal, isUrgent, priorityNum, priorityTag, statusTag } from '../lib/batchUi'
 
@@ -86,6 +87,7 @@ function DetailDrawer({ jobId, onClose }: { jobId: number | null; onClose: () =>
 export default function QueuePage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const { admin } = useAuth()
   const [jobs, setJobs] = useState<BatchJob[]>([])
   const [summary, setSummary] = useState<BatchQueueSummary | null>(null)
   const [targets, setTargets] = useState<BatchTarget[]>([])
@@ -184,7 +186,7 @@ export default function QueuePage() {
       title: t('batch.priorityLabel'),
       width: 116,
       render: (_: unknown, j) =>
-        j.status === 'queued' && !j.scheduled && !isUrgent(j.priority) ? (
+        admin && j.status === 'queued' && !j.scheduled && !isUrgent(j.priority) ? (
           <InputNumber
             size="small"
             min={0}

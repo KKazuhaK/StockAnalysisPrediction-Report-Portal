@@ -281,7 +281,6 @@ export interface UserGroupRow {
 }
 
 export interface BatchConfig {
-  max_concurrency: number
   max_jobs: number
   reserved_slots: number
   ticket_period_days: number

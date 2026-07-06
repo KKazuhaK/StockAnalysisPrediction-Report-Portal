@@ -135,3 +135,46 @@ func TestDifyTargetUpdateValidation(t *testing.T) {
 		t.Errorf("blank base_url → %d, want 400", code)
 	}
 }
+
+// Re-probing an existing target with a blank key reuses the target's stored key +
+// base URL, so the admin never has to re-paste the secret to refresh inputs.
+func TestDifyProbeReusesStoredKey(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/info":
+			fmt.Fprint(w, `{"name":"WF","mode":"workflow"}`)
+		case "/parameters":
+			fmt.Fprint(w, `{"user_input_form":[{"text-input":{"variable":"symbol","required":true}}]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	s := batchServer(t)
+	if err := s.st.UpsertPlugin(difyPluginSlug, "Dify", "1.0.0", "{}", "bundled"); err != nil {
+		t.Fatalf("UpsertPlugin: %v", err)
+	}
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: srv.URL, APIKey: "app-stored"})
+	id, err := s.st.CreateTarget(difyPluginSlug, "T", string(cfg))
+	if err != nil {
+		t.Fatalf("CreateTarget: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	body := fmt.Sprintf(`{"base_url":"","api_key":"","target_id":%d}`, id)
+	s.apiBatchDifyProbe(rec, httptest.NewRequest("POST", "/x", strings.NewReader(body)), "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("probe → %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotAuth != "Bearer app-stored" {
+		t.Errorf("probe used auth %q, want Bearer app-stored (the stored key)", gotAuth)
+	}
+	var out map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["name"] != "WF" {
+		t.Errorf("probe name = %v, want WF", out["name"])
+	}
+}

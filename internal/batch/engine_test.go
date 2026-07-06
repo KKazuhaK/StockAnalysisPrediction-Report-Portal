@@ -250,3 +250,35 @@ func TestEngineProcessesOnlyQueued(t *testing.T) {
 		t.Error("queued item c was not processed")
 	}
 }
+
+// A cancel that arrives while the worker pool is full (the next row waiting on a
+// free worker) must not dispatch that next row.
+func TestEngineCancelMidRunStopsDispatch(t *testing.T) {
+	st := seedStore(3)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls int32
+	prov := providerFunc(func(ctx context.Context, _ map[string]string) (RunResult, error) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			st.mu.Lock()
+			st.cancelled = true // cancel arrives while the first row holds the only worker
+			st.mu.Unlock()
+			close(started)
+			<-release // hold the slot so the loop blocks acquiring it for the next row
+		}
+		return RunResult{Status: Ok}, nil
+	})
+	go func() {
+		<-started
+		close(release)
+	}()
+	eng := &Engine{Store: st, Backoff: noBackoff}
+	eng.RunJob(context.Background(), JobSpec{JobID: 1, Concurrency: 1}, prov)
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("provider called %d times, want 1 (no new dispatch after mid-run cancel)", got)
+	}
+	if !st.jobCancelled {
+		t.Error("job should be marked cancelled")
+	}
+}

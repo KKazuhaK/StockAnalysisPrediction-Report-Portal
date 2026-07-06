@@ -4,10 +4,12 @@ import {
   Button,
   Card,
   Checkbox,
+  DatePicker,
   Drawer,
   Input,
   InputNumber,
   Progress,
+  Radio,
   Select,
   Space,
   Table,
@@ -17,6 +19,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { TFunction } from 'i18next'
+import type { Dayjs } from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import {
   DownloadOutlined,
@@ -27,6 +30,7 @@ import {
   UploadOutlined,
 } from '@ant-design/icons'
 import { api } from '../api/client'
+import { useAuth } from '../auth'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchTarget, BatchTickets } from '../api/types'
 import { csvToRows, toCSV } from '../lib/csv'
 import { BASE_MAX, isUrgent, priorityNum, priorityTag } from '../lib/batchUi'
@@ -219,12 +223,15 @@ function JobDrawer({
 export default function BatchConsole() {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const { admin } = useAuth()
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [targetId, setTargetId] = useState<number | undefined>()
   const [maxRetries, setMaxRetries] = useState(2)
   const [urgent, setUrgent] = useState(false)
   const [basePriority, setBasePriority] = useState(50)
   const [tickets, setTickets] = useState<BatchTickets | null>(null)
+  const [mode, setMode] = useState<'now' | 'scheduled'>('now')
+  const [runAt, setRunAt] = useState<Dayjs | null>(null)
   const [csvText, setCsvText] = useState('')
   const [jobs, setJobs] = useState<BatchJob[]>([])
   const [openJobId, setOpenJobId] = useState<number | null>(null)
@@ -264,19 +271,27 @@ export default function BatchConsole() {
 
   const run = async () => {
     if (!targetId || rows.length === 0) return
+    if (mode === 'scheduled' && !runAt) {
+      message.error(t('run.pickTime'))
+      return
+    }
     setSubmitting(true)
     try {
       // Batch rows run sequentially (concurrency 1) — the per-run concurrency knob was removed.
-      const res = await api.post<{ job_id: number; concurrency: number; downgraded?: boolean }>('/api/admin/batch/jobs', {
+      const res = await api.post<{ job_id: number; concurrency: number; downgraded?: boolean; run_at?: string }>('/api/admin/batch/jobs', {
         target_id: targetId,
         concurrency: 1,
         max_retries: maxRetries,
-        priority: urgent ? 'urgent' : String(basePriority),
+        priority: urgent ? 'urgent' : admin ? String(basePriority) : '', // non-admins can't set priority; backend resolves it
+        run_at: mode === 'scheduled' && runAt ? runAt.format('YYYY-MM-DD HH:mm:ss') : '',
         rows,
       })
-      message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
+      if (res.run_at) message.success(t('run.scheduledOk', { at: res.run_at }))
+      else message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
       if (res.downgraded) message.warning(t('batch.ticketDowngraded'))
       setCsvText('')
+      setMode('now')
+      setRunAt(null)
       loadJobs()
       loadTickets() // a 加急 run may have spent a ticket
       setOpenJobId(res.job_id)
@@ -301,7 +316,7 @@ export default function BatchConsole() {
       title: t('batch.priorityLabel'),
       width: 116,
       render: (_: unknown, j: BatchJob) =>
-        j.status === 'queued' && !isUrgent(j.priority) ? (
+        admin && j.status === 'queued' && !isUrgent(j.priority) ? (
           <InputNumber
             size="small"
             min={0}
@@ -367,8 +382,12 @@ export default function BatchConsole() {
               />
               <span>{t('batch.maxRetries')}：</span>
               <InputNumber min={0} max={5} value={maxRetries} onChange={(v) => setMaxRetries(v ?? 0)} />
-              <span>{t('batch.priorityLabel')}：</span>
-              <InputNumber min={0} max={BASE_MAX} value={basePriority} onChange={(v) => setBasePriority(v ?? 50)} disabled={urgent} />
+              {admin && (
+                <>
+                  <span>{t('batch.priorityLabel')}：</span>
+                  <InputNumber min={0} max={BASE_MAX} value={basePriority} onChange={(v) => setBasePriority(v ?? 50)} disabled={urgent} />
+                </>
+              )}
               {urgentEnabled && (
                 <>
                   <Checkbox checked={urgent} disabled={urgentDisabled} onChange={(e) => setUrgent(e.target.checked)}>
@@ -404,6 +423,13 @@ export default function BatchConsole() {
                 <Button icon={<UploadOutlined />}>{t('batch.uploadCsv')}</Button>
               </Upload>
               <Typography.Text type="secondary">{t('batch.parsedRows', { n: rows.length })}</Typography.Text>
+              <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} optionType="button" buttonStyle="solid">
+                <Radio.Button value="now">{t('run.now')}</Radio.Button>
+                <Radio.Button value="scheduled">{t('run.scheduled')}</Radio.Button>
+              </Radio.Group>
+              {mode === 'scheduled' && (
+                <DatePicker showTime value={runAt} onChange={setRunAt} format="YYYY-MM-DD HH:mm:ss" placeholder={t('run.pickTime')} />
+              )}
               <Button
                 type="primary"
                 icon={<ThunderboltOutlined />}
@@ -411,7 +437,7 @@ export default function BatchConsole() {
                 disabled={!targetId || rows.length === 0}
                 onClick={run}
               >
-                {t('batch.run')}
+                {mode === 'scheduled' ? t('run.scheduled') : t('batch.run')}
               </Button>
             </Space>
           </Space>

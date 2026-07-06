@@ -82,7 +82,8 @@ export default function BatchAdminPage() {
     try {
       const r = await api.post<{ name: string; mode?: string; inputs: DifyInput[]; inputs_error?: string }>(
         '/api/admin/batch/dify/probe',
-        { base_url: v.base_url, api_key: v.api_key },
+        // When editing, pass the target id so a blank key reuses the stored one.
+        { base_url: v.base_url, api_key: v.api_key || '', target_id: editing ? editingId : undefined },
       )
       setProbed({ name: r.name, inputsError: r.inputs_error })
       setInputs(r.inputs || [])

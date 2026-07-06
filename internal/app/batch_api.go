@@ -86,7 +86,6 @@ func (s *Server) apiBatchPluginDelete(w http.ResponseWriter, r *http.Request, us
 func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user string) {
 	pw := s.prioWeights()
 	writeJSON(w, map[string]any{
-		"max_concurrency":    s.batchMaxConcurrency(),
 		"max_jobs":           s.batchBudget(),                                   // queue budget: jobs running at once (ADR 0004)
 		"reserved_slots":     s.batchReserved(),                                 // slots held for 加急 (ADR 0004)
 		"ticket_period_days": s.ticketPeriodDays(),                              // how often 加急 tickets refill (ADR 0005)
@@ -104,7 +103,6 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 
 func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		MaxConcurrency   *int    `json:"max_concurrency"`
 		MaxJobs          *int    `json:"max_jobs"`
 		ReservedSlots    *int    `json:"reserved_slots"`
 		TicketPeriodDays *int    `json:"ticket_period_days"`
@@ -129,9 +127,6 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		if p := s.groupPriorityValid(*in.DefaultPriority); p != "" {
 			s.st.SetSetting("run_default_priority", p)
 		}
-	}
-	if in.MaxConcurrency != nil && *in.MaxConcurrency >= 1 {
-		s.st.SetSetting("batch_max_concurrency", strconv.Itoa(*in.MaxConcurrency))
 	}
 	if in.MaxJobs != nil && *in.MaxJobs >= 1 {
 		s.st.SetSetting("batch_max_concurrent_jobs", strconv.Itoa(*in.MaxJobs))
@@ -299,15 +294,17 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	// Resolve the stored priority: an explicit 加急 escalates (ticket-gated below); an
-	// explicit base number is honored; otherwise it resolves from the submitter's group
-	// default / the system default (ADR 0008). base is the fallback if 加急 is denied.
+	// Resolve the stored priority: an explicit 加急 escalates (ticket-gated below);
+	// otherwise the base priority resolves from the submitter's group default / the
+	// system default (ADR 0008). Only admins may set an explicit base number — a
+	// non-admin can't hand themselves a higher priority to jump the queue. base is the
+	// fallback if 加急 is denied.
 	base := s.resolveBasePriority(user)
 	stored := strconv.Itoa(base)
 	if in.Priority != "" {
 		if b, urgent := parsePriority(in.Priority); urgent {
 			stored = "urgent"
-		} else {
+		} else if s.isAdmin(user) {
 			base, stored = b, strconv.Itoa(b)
 		}
 	}
@@ -408,10 +405,12 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 }
 
 func (s *Server) apiBatchJobCancel(w http.ResponseWriter, r *http.Request, user string) {
-	if err := s.st.CancelBatchJob(pathID(r, "id")); err != nil {
+	id := pathID(r, "id")
+	if err := s.st.CancelBatchJob(id); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.cancelRunningJob(id) // abort the in-flight run so the cancel is immediate
 	writeJSON(w, okJSON)
 }
 

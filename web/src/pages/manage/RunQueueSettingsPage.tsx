@@ -5,13 +5,12 @@ import { api } from '../../api/client'
 import type { BatchConfig } from '../../api/types'
 
 // Standalone 运行/队列 settings (docs/adr/0007 + 0008): the queue budget, reserved
-// slots, 加急 ticket period, max concurrency, the no-group default base priority, and
-// the Slurm-style multifactor priority weights. These govern the whole run system
+// slots, 加急 ticket period, the no-group default base priority, and the Slurm-style
+// multifactor priority weights. These govern the whole run system
 // (home 单次运行 + CSV 批量), so they live apart from the 批量任务 tab (targets + CSV).
 export default function RunQueueSettingsPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const [maxConcurrency, setMaxConcurrency] = useState(10)
   const [maxJobs, setMaxJobs] = useState(1)
   const [reservedSlots, setReservedSlots] = useState(1)
   const [ticketPeriod, setTicketPeriod] = useState(7)
@@ -28,7 +27,6 @@ export default function RunQueueSettingsPage() {
     api
       .get<BatchConfig>('/api/admin/batch/config')
       .then((r) => {
-        setMaxConcurrency(r.max_concurrency)
         setMaxJobs(r.max_jobs)
         setReservedSlots(r.reserved_slots)
         setTicketPeriod(r.ticket_period_days)
@@ -47,7 +45,6 @@ export default function RunQueueSettingsPage() {
 
   const save = async () => {
     await api.post('/api/admin/batch/config', {
-      max_concurrency: maxConcurrency,
       max_jobs: maxJobs,
       reserved_slots: reservedSlots,
       ticket_period_days: ticketPeriod,
@@ -94,11 +91,6 @@ export default function RunQueueSettingsPage() {
           t('batch.admin.ticketPeriod'),
           t('batch.admin.ticketPeriodHint'),
           <InputNumber min={1} max={365} value={ticketPeriod} onChange={(v) => setTicketPeriod(v || 7)} addonAfter={t('batch.admin.days')} />,
-        )}
-        {row(
-          t('batch.admin.maxConcurrency'),
-          t('batch.admin.maxConcurrencyHint'),
-          <InputNumber min={1} max={100} value={maxConcurrency} onChange={(v) => setMaxConcurrency(v || 1)} />,
         )}
         {row(
           t('batch.admin.urgentEnabled'),

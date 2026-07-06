@@ -150,7 +150,7 @@
   "batch.admin.settings": "Batch settings",
   "batch.admin.maxConcurrency": "Max concurrency:",
   "batch.admin.maxConcurrencyHint": "An operator's chosen concurrency will not exceed this.",
-  "batch.admin.urgentEnabled": "Enable urgent (加急):",
+  "batch.admin.urgentEnabled": "Enable urgent runs:",
   "batch.admin.urgentEnabledHint": "Off by default. When off, the urgent lane is hidden everywhere and any urgent submit runs at its base priority.",
   "batch.admin.difyTitle": "Dify",
   "batch.admin.difyEndUser": "End-user:",

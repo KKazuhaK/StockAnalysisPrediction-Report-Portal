@@ -63,16 +63,28 @@ func (e *Engine) RunJob(ctx context.Context, spec JobSpec, prov Provider) error 
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	cancelled := false
-	for _, it := range items {
+	// stop reports whether the job has been cancelled (via context or the store), so
+	// the dispatch loop can bail out promptly.
+	stop := func() bool {
 		if ctx.Err() != nil {
-			cancelled = true
-			break
+			return true
 		}
-		if c, _ := e.Store.Cancelled(spec.JobID); c {
+		c, _ := e.Store.Cancelled(spec.JobID)
+		return c
+	}
+	for _, it := range items {
+		if stop() {
 			cancelled = true
 			break
 		}
 		sem <- struct{}{}
+		// A cancel can arrive while we were blocked waiting for a free worker; re-check
+		// before dispatching so no new row starts after cancellation.
+		if stop() {
+			<-sem
+			cancelled = true
+			break
+		}
 		wg.Add(1)
 		go func(it Item) {
 			defer wg.Done()

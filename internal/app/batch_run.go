@@ -388,6 +388,15 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	return m.NewProvider(cfg, &http.Client{Timeout: difyRunTimeout}), nil
 }
 
+// cancelRunningJob aborts a job's in-flight run if it is executing in this process,
+// so a cancel request takes effect immediately instead of waiting for the current
+// blocking row to return. A no-op if the job isn't running here.
+func (s *Server) cancelRunningJob(jobID int64) {
+	if cf, ok := s.jobCancels.Load(jobID); ok {
+		cf.(context.CancelFunc)()
+	}
+}
+
 // launchJob starts (or resumes) a job in the background. It is idempotent: a job
 // already running in this process is not launched twice.
 func (s *Server) launchJob(jobID int64) {
@@ -408,14 +417,21 @@ func (s *Server) launchJob(jobID int64) {
 	}
 	eng := &batch.Engine{Store: s.st, Log: log.Printf}
 	spec := batch.JobSpec{JobID: jobID, Concurrency: job.Concurrency, MaxRetries: job.MaxRetries}
+	// A per-job cancellable context so a cancel request aborts the in-flight Dify call
+	// immediately (the dify client uses this ctx for its HTTP requests) instead of
+	// waiting for the current row's blocking run to return.
+	ctx, cancel := context.WithCancel(context.Background())
+	s.jobCancels.Store(jobID, cancel)
 	go func() {
 		defer s.batchRunning.Delete(jobID)
+		defer s.jobCancels.Delete(jobID)
+		defer cancel()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("batch job %d panicked: %v", jobID, r)
 			}
 		}()
-		if err := eng.RunJob(context.Background(), spec, prov); err != nil {
+		if err := eng.RunJob(ctx, spec, prov); err != nil {
 			log.Printf("batch job %d ended with error: %v", jobID, err)
 		}
 		if j, ok := s.st.GetBatchJob(jobID); ok {

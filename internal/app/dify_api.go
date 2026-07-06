@@ -18,14 +18,29 @@ import (
 // Read-only on Dify's side (GET /info + /parameters).
 func (s *Server) apiBatchDifyProbe(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		BaseURL string `json:"base_url"`
-		APIKey  string `json:"api_key"`
+		BaseURL  string `json:"base_url"`
+		APIKey   string `json:"api_key"`
+		TargetID int64  `json:"target_id"` // optional: reuse this Dify target's stored key/base
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
 	base, key := strings.TrimSpace(in.BaseURL), strings.TrimSpace(in.APIKey)
+	// Re-probing an existing target: fall back to its stored key (and base) so refreshing
+	// inputs doesn't force re-pasting the secret we already hold.
+	if in.TargetID != 0 && (key == "" || base == "") {
+		if tgt, ok := s.st.GetTarget(in.TargetID); ok && tgt.PluginSlug == difyPluginSlug {
+			var cfg difyTargetConfig
+			json.Unmarshal([]byte(tgt.Config), &cfg)
+			if key == "" {
+				key = cfg.APIKey
+			}
+			if base == "" {
+				base = cfg.BaseURL
+			}
+		}
+	}
 	if base == "" || key == "" {
 		jsonError(w, http.StatusBadRequest, "base_url and api_key are required")
 		return

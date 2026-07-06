@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -138,4 +139,53 @@ func TestBatchPluginImportRejectsInvalid(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("invalid manifest → %d, want 400 (%s)", rec.Code, rec.Body.String())
 	}
+}
+
+// Only admins may hand a run an explicit base priority; a non-admin's priority
+// number is ignored and resolved from their group / the system default, so they
+// can't jump the queue. (Scheduled far in the future so nothing launches.)
+func TestJobCreateBasePriorityAdminOnly(t *testing.T) {
+	s := batchServer(t)
+	s.st.UpsertUser(User{Username: "admin", PasswordHash: "x", Role: "admin"})
+	s.st.UpsertUser(User{Username: "op", PasswordHash: "x", Role: "operator"})
+	tgt := seedDifyTarget(t, s, "T")
+
+	submit := func(user, priority string) string {
+		rec := httptest.NewRecorder()
+		body := fmt.Sprintf(`{"target_id":%d,"priority":%q,"run_at":"2099-01-01 00:00:00","rows":[{"symbol":"1"}]}`, tgt, priority)
+		s.apiBatchJobCreate(rec, httptest.NewRequest("POST", "/x", strings.NewReader(body)), user)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("create(%s) → %d: %s", user, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Priority string `json:"priority"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		return out.Priority
+	}
+
+	if p := submit("op", "90"); p != "50" {
+		t.Errorf("non-admin explicit base priority = %q, want 50 (ignored → system default)", p)
+	}
+	if p := submit("admin", "90"); p != "90" {
+		t.Errorf("admin explicit base priority = %q, want 90", p)
+	}
+}
+
+// Cancelling a job aborts its in-flight run's context immediately (so the blocking
+// Dify call is dropped) — and an unknown job id is a harmless no-op.
+func TestCancelRunningJobAbortsContext(t *testing.T) {
+	s := batchServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.jobCancels.Store(int64(7), cancel)
+
+	s.cancelRunningJob(7)
+	select {
+	case <-ctx.Done():
+		// good — the cancel propagated to the run's context
+	case <-time.After(time.Second):
+		t.Fatal("cancelRunningJob did not cancel the in-flight context")
+	}
+
+	s.cancelRunningJob(999) // not running here → no panic, no effect
 }
