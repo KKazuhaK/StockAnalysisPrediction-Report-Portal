@@ -58,6 +58,16 @@ export interface BatchTarget {
   inputs?: PluginInput[]
 }
 
+// A Dify target's editable config, returned by GET /api/admin/batch/dify/targets/{id}.
+// The api_key is never sent back — has_key only reports whether one is stored.
+export interface DifyTargetEdit {
+  id: number
+  name: string
+  base_url: string
+  inputs: DifyInput[]
+  has_key: boolean
+}
+
 // Queue summary for the home banner + drawer (docs/adr/0007-run-analysis-and-scheduling.md).
 export interface BatchQueueSummary {
   waiting: number // due, awaiting admission (excludes not-yet-due scheduled)

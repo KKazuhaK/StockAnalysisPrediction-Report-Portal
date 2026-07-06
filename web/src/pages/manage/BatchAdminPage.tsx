@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, App, Button, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { ApiOutlined, DeleteOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
+import { ApiOutlined, DeleteOutlined, EditOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import type { BatchPlugin, BatchTarget, DifyInput } from '../../api/types'
+import type { BatchPlugin, BatchTarget, DifyInput, DifyTargetEdit } from '../../api/types'
 
 export default function BatchAdminPage() {
   const { t } = useTranslation()
@@ -14,12 +14,19 @@ export default function BatchAdminPage() {
   const [targets, setTargets] = useState<BatchTarget[]>([])
 
   const [targetOpen, setTargetOpen] = useState(false)
+  // null = creating a new target; a number = editing that target's id.
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
   const [form] = Form.useForm()
   // Dify probe state
   const [probing, setProbing] = useState(false)
   const [probed, setProbed] = useState<{ name: string; inputsError?: string } | null>(null)
   const [inputs, setInputs] = useState<DifyInput[]>([])
   const [newVar, setNewVar] = useState('')
+
+  const editing = editingId !== null
+  // The name + inputs section shows after a probe (create) or immediately (edit).
+  const showDetails = editing || !!probed
 
   const loadPlugins = () =>
     api.get<{ plugins: BatchPlugin[] }>('/api/admin/batch/plugins').then((r) => setPlugins(r.plugins || []))
@@ -35,12 +42,32 @@ export default function BatchAdminPage() {
   // Custom (non-Dify) plugins — the bundled "dify" adapter is hidden; it's implied.
   const customPlugins = useMemo(() => plugins.filter((p) => p.slug !== 'dify'), [plugins])
 
-  const openTarget = () => {
+  const resetModal = () => {
     form.resetFields()
     setProbed(null)
     setInputs([])
     setNewVar('')
+  }
+
+  const openCreate = () => {
+    resetModal()
+    setEditingId(null)
     setTargetOpen(true)
+  }
+
+  // Load a target's editable config (name, base_url, inputs — never the api_key) and
+  // open the modal in edit mode.
+  const openEdit = async (tg: BatchTarget) => {
+    try {
+      const d = await api.get<DifyTargetEdit>(`/api/admin/batch/dify/targets/${tg.id}`)
+      resetModal()
+      form.setFieldsValue({ name: d.name, base_url: d.base_url, api_key: '' })
+      setInputs(d.inputs || [])
+      setEditingId(tg.id)
+      setTargetOpen(true)
+    } catch (e) {
+      message.error((e as Error).message)
+    }
   }
 
   // Probe: ask Dify for the workflow's name + input fields from the pasted key.
@@ -77,6 +104,8 @@ export default function BatchAdminPage() {
   }
 
   const saveTarget = async () => {
+    // api_key is always read back: in create mode its rule makes it required; in edit mode
+    // the rule is optional, so a blank keeps the stored key while a typed value rotates it.
     let v
     try {
       v = await form.validateFields(['name', 'base_url', 'api_key'])
@@ -87,10 +116,23 @@ export default function BatchAdminPage() {
       message.error(t('batch.dify.needInputs'))
       return
     }
-    await api.post('/api/admin/batch/dify/targets', { name: v.name, base_url: v.base_url, api_key: v.api_key, inputs })
-    setTargetOpen(false)
-    message.success(t('batch.admin.msgTargetCreated'))
-    loadTargets()
+    setSaving(true)
+    try {
+      const body = { name: v.name, base_url: v.base_url, api_key: v.api_key || '', inputs }
+      if (editing) {
+        await api.put(`/api/admin/batch/dify/targets/${editingId}`, body)
+        message.success(t('batch.admin.msgTargetUpdated'))
+      } else {
+        await api.post('/api/admin/batch/dify/targets', body)
+        message.success(t('batch.admin.msgTargetCreated'))
+      }
+      setTargetOpen(false)
+      loadTargets()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const importFile = (file: File) => {
@@ -122,11 +164,16 @@ export default function BatchAdminPage() {
     { title: t('batch.admin.createdAt'), dataIndex: 'created_at', width: 170 },
     {
       title: t('batch.col.actions'),
-      width: 80,
+      width: 100,
       render: (_: unknown, tg: BatchTarget) => (
-        <Popconfirm title={t('batch.admin.deleteTargetConfirm')} onConfirm={() => deleteTarget(tg.id)}>
-          <Button size="small" danger icon={<DeleteOutlined />} />
-        </Popconfirm>
+        <Space size={4}>
+          {tg.plugin_slug === 'dify' && (
+            <Button size="small" icon={<EditOutlined />} title={t('common.edit')} onClick={() => openEdit(tg)} />
+          )}
+          <Popconfirm title={t('batch.admin.deleteTargetConfirm')} onConfirm={() => deleteTarget(tg.id)}>
+            <Button size="small" danger icon={<DeleteOutlined />} title={t('common.delete')} />
+          </Popconfirm>
+        </Space>
       ),
     },
   ]
@@ -157,7 +204,7 @@ export default function BatchAdminPage() {
             children: (
               <Space direction="vertical" size={12} style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <Button type="primary" icon={<PlusOutlined />} onClick={openTarget}>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
                     {t('batch.dify.newTarget')}
                   </Button>
                 </div>
@@ -187,35 +234,43 @@ export default function BatchAdminPage() {
         ]}
       />
 
-      {/* New Dify workflow target */}
+      {/* Create / edit a Dify workflow target */}
       <Modal
-        title={t('batch.dify.newTarget')}
+        title={editing ? t('batch.dify.editTarget') : t('batch.dify.newTarget')}
         open={targetOpen}
         onOk={saveTarget}
-        okButtonProps={{ disabled: !probed }}
+        confirmLoading={saving}
+        okButtonProps={{ disabled: !editing && !probed }}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
         onCancel={() => setTargetOpen(false)}
-        destroyOnClose
+        forceRender
       >
         <Form form={form} layout="vertical">
           <Form.Item name="base_url" label={t('batch.dify.baseUrl')} extra={t('batch.dify.baseUrlHint')} rules={[{ required: true }]}>
             <Input placeholder="https://dify.example.com/v1" />
           </Form.Item>
-          <Form.Item name="api_key" label={t('batch.dify.apiKey')} extra={t('batch.dify.apiKeyHint')} rules={[{ required: true }]}>
-            <Input.Password placeholder="app-…" autoComplete="new-password" />
+          <Form.Item
+            name="api_key"
+            label={t('batch.dify.apiKey')}
+            extra={editing ? t('batch.dify.apiKeyKeepHint') : t('batch.dify.apiKeyHint')}
+            rules={editing ? [] : [{ required: true }]}
+          >
+            <Input.Password placeholder={editing ? t('batch.dify.apiKeyKeepPlaceholder') : 'app-…'} autoComplete="new-password" />
           </Form.Item>
           <Button icon={<ApiOutlined />} loading={probing} onClick={probe}>
-            {t('batch.dify.probe')}
+            {editing ? t('batch.dify.reprobe') : t('batch.dify.probe')}
           </Button>
 
-          {probed && (
+          {showDetails && (
             <div style={{ marginTop: 14 }}>
-              <Alert
-                type={probed.inputsError ? 'warning' : 'success'}
-                showIcon
-                message={probed.inputsError ? t('batch.dify.connectedNoInputs', { name: probed.name }) : t('batch.dify.connected', { name: probed.name })}
-              />
+              {probed && (
+                <Alert
+                  type={probed.inputsError ? 'warning' : 'success'}
+                  showIcon
+                  message={probed.inputsError ? t('batch.dify.connectedNoInputs', { name: probed.name }) : t('batch.dify.connected', { name: probed.name })}
+                />
+              )}
               <Form.Item name="name" label={t('batch.admin.targetName')} rules={[{ required: true }]} style={{ marginTop: 14 }}>
                 <Input placeholder={t('batch.admin.targetNamePlaceholder')} />
               </Form.Item>

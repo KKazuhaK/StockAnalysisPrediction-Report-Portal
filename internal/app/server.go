@@ -209,6 +209,8 @@ func RunServer(cfgPath string) {
 	// Dify-native config (docs/adr/0006-dify-native.md): probe a workflow by key, then save it.
 	mux.HandleFunc("POST /api/admin/batch/dify/probe", s.requireAdminJSON(s.apiBatchDifyProbe))
 	mux.HandleFunc("POST /api/admin/batch/dify/targets", s.requireAdminJSON(s.apiBatchDifyTargetAdd))
+	mux.HandleFunc("GET /api/admin/batch/dify/targets/{id}", s.requireAdminJSON(s.apiBatchDifyTargetGet))
+	mux.HandleFunc("PUT /api/admin/batch/dify/targets/{id}", s.requireAdminJSON(s.apiBatchDifyTargetUpdate))
 	mux.HandleFunc("DELETE /api/admin/batch/targets/{id}", s.requireAdminJSON(s.apiBatchTargetDelete))
 	mux.HandleFunc("GET /api/admin/batch/tickets", s.requirePermJSON(PermRunBatch, s.apiBatchTickets))
 	mux.HandleFunc("GET /api/admin/batch/queue", s.requirePermJSON(PermRunBatch, s.apiBatchQueue))

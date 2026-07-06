@@ -465,6 +465,11 @@ func (s *Store) GetTarget(id int64) (BatchTarget, bool) {
 	return t, true
 }
 
+func (s *Store) UpdateTarget(id int64, name, config string) error {
+	_, err := s.exec(`UPDATE batch_targets SET name=?, config=? WHERE id=?`, name, config, id)
+	return err
+}
+
 func (s *Store) DeleteTarget(id int64) error {
 	_, err := s.exec("DELETE FROM batch_targets WHERE id=?", id)
 	return err
