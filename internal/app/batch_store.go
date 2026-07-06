@@ -279,6 +279,28 @@ func (s *Store) DeleteBatchJob(jobID int64) error {
 	return err
 }
 
+// DeleteFinishedJobs removes every terminal (finished / cancelled) job and its rows,
+// returning how many jobs were cleared. Active jobs (queued/running/cancelling) are
+// left untouched.
+func (s *Store) DeleteFinishedJobs() int {
+	rows, err := s.query("SELECT id FROM batch_jobs WHERE status IN ('finished','cancelled')")
+	if err != nil {
+		return 0
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		s.DeleteBatchJob(id)
+	}
+	return len(ids)
+}
+
 // CancelBatchJob cancels a job. A still-queued job is cancelled outright (nothing
 // is dispatching it); a running job is asked to stop and its workers observe the
 // 'cancelling' status via Cancelled().

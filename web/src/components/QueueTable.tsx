@@ -160,6 +160,15 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
       setReschedId(null)
       setReschedAt(null)
     })
+  const clearFinished = async () => {
+    try {
+      const r = await api.post<{ n: number }>('/api/admin/batch/jobs/clear-finished')
+      message.success(t('queue.clearedN', { n: r.n }))
+      load()
+    } catch (e) {
+      message.error((e as Error).message || 'failed')
+    }
+  }
 
   const cols: ColumnsType<BatchJob> = [
     {
@@ -220,9 +229,19 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
           )
         if (j.status === 'queued') return <Tag>{j.ahead ? t('batch.aheadN', { n: j.ahead }) : t('batch.aheadNext')}</Tag>
         const done = j.succeeded + j.partial + j.failed
+        const running = j.status === 'running' || j.status === 'cancelling'
+        const realPct = j.total ? Math.round((done / j.total) * 100) : 0
+        // A running job with no measurable progress yet (a single-row run, or a batch
+        // whose first row is still going) shows an indeterminate "loading" bar — a full
+        // animated stripe — instead of an empty 0% one.
+        const loading = running && realPct === 0
         return (
           <div style={{ maxWidth: 200 }}>
-            <Progress percent={j.total ? Math.round((done / j.total) * 100) : 0} size="small" status={j.failed ? 'exception' : undefined} />
+            <Progress
+              percent={loading ? 100 : realPct}
+              size="small"
+              status={j.failed ? 'exception' : running ? 'active' : undefined}
+            />
             <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -2 }}>
               {t('batch.progressText', { done, total: j.total, ok: j.succeeded, fail: j.failed, partial: j.partial })}
             </Typography.Text>
@@ -288,6 +307,13 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
               <span style={{ fontSize: 12 }}>
                 <Typography.Text type="secondary">{t('queue.myPriority')}</Typography.Text> {priorityTag(t, String(summary.my_priority))}
               </span>
+            )}
+            {admin && (
+              <Popconfirm title={t('queue.clearFinishedConfirm')} onConfirm={clearFinished}>
+                <Button size="small" icon={<DeleteOutlined />}>
+                  {t('queue.clearFinished')}
+                </Button>
+              </Popconfirm>
             )}
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('queue.autoRefresh')}

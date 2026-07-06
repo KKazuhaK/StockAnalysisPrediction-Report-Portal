@@ -513,6 +513,12 @@ func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user stri
 	})
 }
 
+// apiBatchClearFinished deletes every terminal (finished/cancelled) job at once. Admin-
+// only (like single delete); active jobs are left running.
+func (s *Server) apiBatchClearFinished(w http.ResponseWriter, r *http.Request, user string) {
+	writeJSON(w, map[string]any{"ok": true, "n": s.st.DeleteFinishedJobs()})
+}
+
 // apiBatchJobDelete removes a terminal job (finished/cancelled) and its rows. An
 // active job (queued/running/cancelling) must be cancelled first — this only
 // clears history, it never stops a run.

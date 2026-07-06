@@ -228,6 +228,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/admin/batch/jobs/{id}", s.requirePermJSON(PermRunBatch, s.apiBatchJobDetail))
 	// Queue mutations are admin-only, except cancel — a non-admin may cancel their own
 	// run (ownership is checked inside apiBatchJobCancel).
+	mux.HandleFunc("POST /api/admin/batch/jobs/clear-finished", s.requireAdminJSON(s.apiBatchClearFinished))
 	mux.HandleFunc("DELETE /api/admin/batch/jobs/{id}", s.requireAdminJSON(s.apiBatchJobDelete))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/cancel", s.requirePermJSON(PermRunBatch, s.apiBatchJobCancel))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requireAdminJSON(s.apiBatchJobRetry))
