@@ -6,6 +6,7 @@ import { SiteProvider } from './site'
 import { lazyRetry } from './lib/lazyRetry'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 
 // Route pages are lazy-loaded (Suspense boundary lives in AppLayout), so the first
 // paint only ships the shell + landing page; admin / batch / webhook code and the
@@ -21,6 +22,7 @@ const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
 const UsersPage = lazyRetry(() => import('./pages/manage/UsersPage'))
 const SiteSettingsPage = lazyRetry(() => import('./pages/manage/SiteSettingsPage'))
 const AnnouncementPage = lazyRetry(() => import('./pages/manage/AnnouncementPage'))
+const EmailPage = lazyRetry(() => import('./pages/manage/EmailPage'))
 const TokensPage = lazyRetry(() => import('./pages/manage/TokensPage'))
 const ApiDocPage = lazyRetry(() => import('./pages/manage/ApiDocPage'))
 const BatchAdminPage = lazyRetry(() => import('./pages/manage/BatchAdminPage'))
@@ -63,6 +65,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/reset" element={<ResetPasswordPage />} />
       <Route
         element={
           <Protected>
@@ -104,6 +107,7 @@ function AppRoutes() {
           <Route index element={<Navigate to="site" replace />} />
           <Route path="site" element={<SiteSettingsPage />} />
           <Route path="announcement" element={<AnnouncementPage />} />
+          <Route path="email" element={<EmailPage />} />
           <Route path="links" element={<LinksPage />} />
           <Route path="types" element={<TypesPage />} />
           <Route path="users" element={<UsersPage />} />

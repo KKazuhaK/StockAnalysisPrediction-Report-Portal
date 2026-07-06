@@ -313,6 +313,20 @@ func (s *Store) GetUser(name string) *User {
 	return &u
 }
 
+// UserByEmail finds a user by their (case-insensitive, non-empty) profile email, for
+// the "forgot password" lookup. Returns nil if none or the email is blank.
+func (s *Store) UserByEmail(email string) *User {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return nil
+	}
+	u, err := scanUser(s.queryRow("SELECT "+userCols+" FROM users u JOIN user_profiles p ON p.username=u.username WHERE p.email<>'' AND LOWER(p.email)=LOWER(?)", email).Scan)
+	if err != nil {
+		return nil
+	}
+	return &u
+}
+
 func (s *Store) UpsertUser(u User) error {
 	_, err := s.exec(`INSERT INTO users(username,password_hash,role) VALUES(?,?,?)
 		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,role=excluded.role`,

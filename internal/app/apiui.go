@@ -134,11 +134,20 @@ func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	role, name := "", u
-	if usr := s.st.GetUser(u); usr != nil {
-		role, name = usr.EffRole(), usr.Name()
+	writeJSON(w, s.meJSON(u))
+}
+
+// meJSON is the shared "who am I" payload for /api/me and /api/login (email +
+// mail_enabled drive the "email me when done" opt-in).
+func (s *Server) meJSON(user string) map[string]any {
+	role, name, email := "", user, ""
+	if usr := s.st.GetUser(user); usr != nil {
+		role, name, email = usr.EffRole(), usr.Name(), usr.Email
 	}
-	writeJSON(w, map[string]any{"user": u, "name": name, "admin": s.isAdmin(u), "role": role, "perms": permsOf(role)})
+	return map[string]any{
+		"user": user, "name": name, "admin": s.isAdmin(user), "role": role, "perms": permsOf(role),
+		"email": email, "mail_enabled": s.emailEnabled(),
+	}
 }
 
 func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +171,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	s.st.TouchLastLogin(u.Username)
 	log.Printf("login %s", u.Username)
-	writeJSON(w, map[string]any{"user": u.Username, "name": u.Name(), "admin": s.isAdmin(u.Username)})
+	writeJSON(w, s.meJSON(u.Username))
 }
 
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {

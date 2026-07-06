@@ -290,6 +290,7 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		MaxRetries  int                 `json:"max_retries"`
 		Priority    string              `json:"priority"`
 		RunAt       string              `json:"run_at"` // one-shot 定时运行; "" = run now
+		Notify      bool                `json:"notify"` // email the submitter when the job finishes
 		Rows        []map[string]string `json:"rows"`
 	}
 	if err := readJSON(r, &in); err != nil {
@@ -356,6 +357,9 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 	}
 	if runAt != "" {
 		s.st.ScheduleJob(jobID, runAt) // hidden from admission until run_at passes
+	}
+	if in.Notify {
+		s.jobNotify.Store(jobID, true) // email the submitter on finish (best-effort, in-memory)
 	}
 	s.scheduleTick() // admit now if due + budget allows, else it waits (or waits for its schedule)
 	writeJSON(w, map[string]any{"ok": true, "job_id": jobID, "concurrency": conc, "priority": priority, "downgraded": downgraded, "run_at": runAt})

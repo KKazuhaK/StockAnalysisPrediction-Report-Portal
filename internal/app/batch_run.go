@@ -479,6 +479,7 @@ func (s *Server) launchJob(jobID int64) {
 				"job_id": j.ID, "status": j.Status, "total": j.Total,
 				"succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed,
 			})
+			s.notifyJobDone(j)
 		}
 		s.scheduleTick() // a slot just freed — admit the next queued job by priority
 	}()

@@ -229,7 +229,7 @@ function JobDrawer({
 export default function BatchConsole() {
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const { admin } = useAuth()
+  const { admin, email, mailEnabled } = useAuth()
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [targetId, setTargetId] = useState<number | undefined>()
   const [maxRetries, setMaxRetries] = useState(2)
@@ -238,6 +238,7 @@ export default function BatchConsole() {
   const [tickets, setTickets] = useState<BatchTickets | null>(null)
   const [mode, setMode] = useState<'now' | 'scheduled'>('now')
   const [runAt, setRunAt] = useState<Dayjs | null>(null)
+  const [notify, setNotify] = useState(false)
   const [csvText, setCsvText] = useState('')
   const [jobs, setJobs] = useState<BatchJob[]>([])
   const [openJobId, setOpenJobId] = useState<number | null>(null)
@@ -290,6 +291,7 @@ export default function BatchConsole() {
         max_retries: maxRetries,
         priority: urgent ? 'urgent' : admin ? String(basePriority) : '', // non-admins can't set priority; backend resolves it
         run_at: mode === 'scheduled' && runAt ? runAt.format('YYYY-MM-DD HH:mm:ss') : '',
+        notify,
         rows,
       })
       if (res.run_at) message.success(t('run.scheduledOk', { at: res.run_at }))
@@ -298,6 +300,7 @@ export default function BatchConsole() {
       setCsvText('')
       setMode('now')
       setRunAt(null)
+      setNotify(false)
       loadJobs()
       loadTickets() // an urgent run may have spent a ticket
       setOpenJobId(res.job_id)
@@ -435,6 +438,11 @@ export default function BatchConsole() {
               </Radio.Group>
               {mode === 'scheduled' && (
                 <DatePicker showTime value={runAt} onChange={setRunAt} format="YYYY-MM-DD HH:mm:ss" placeholder={t('run.pickTime')} />
+              )}
+              {mailEnabled && email && (
+                <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>
+                  {t('batch.notifyDone')}
+                </Checkbox>
               )}
               <Button
                 type="primary"

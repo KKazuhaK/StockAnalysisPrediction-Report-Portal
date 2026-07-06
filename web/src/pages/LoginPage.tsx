@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { Button, Card, Form, Input, Segmented, Select, Space, Typography, theme } from 'antd'
+import { Button, Card, Form, Input, Modal, Segmented, Select, Space, Typography, theme } from 'antd'
 import { LockOutlined, UserOutlined } from '@ant-design/icons'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth'
 import { usePrefs } from '../prefs'
-import { ApiError } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { SiteLogo, useSite } from '../site'
 import { AutoIcon, MoonIcon, SunIcon } from '../components/icons'
 
@@ -18,8 +18,29 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [forgotOpen, setForgotOpen] = useState(false)
+  const [forgotAcct, setForgotAcct] = useState('')
+  const [forgotBusy, setForgotBusy] = useState(false)
+  const [forgotSent, setForgotSent] = useState(false)
 
   if (!loading && user) return <Navigate to="/" replace />
+
+  const submitForgot = async () => {
+    setForgotBusy(true)
+    try {
+      await api.post('/api/password/forgot', { account: forgotAcct.trim() })
+    } catch {
+      // ignore — always report "sent" so accounts can't be enumerated
+    } finally {
+      setForgotBusy(false)
+      setForgotSent(true)
+    }
+  }
+  const closeForgot = () => {
+    setForgotOpen(false)
+    setForgotSent(false)
+    setForgotAcct('')
+  }
 
   const onFinish = async (v: { username: string; password: string }) => {
     setErr('')
@@ -92,9 +113,41 @@ export default function LoginPage() {
                 {t('login.submit')}
               </Button>
             </Form>
+            <div style={{ textAlign: 'center', marginTop: -8 }}>
+              <Button type="link" size="small" onClick={() => setForgotOpen(true)}>
+                {t('login.forgot')}
+              </Button>
+            </div>
           </Space>
         </Card>
       </div>
+
+      <Modal
+        open={forgotOpen}
+        title={t('login.forgotTitle')}
+        onCancel={closeForgot}
+        onOk={submitForgot}
+        confirmLoading={forgotBusy}
+        okText={t('login.forgotSend')}
+        cancelText={t('common.cancel')}
+        footer={forgotSent ? null : undefined}
+        destroyOnClose
+      >
+        {forgotSent ? (
+          <Typography.Paragraph>{t('login.forgotSent')}</Typography.Paragraph>
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Typography.Text type="secondary">{t('login.forgotHint')}</Typography.Text>
+            <Input
+              prefix={<UserOutlined />}
+              placeholder={t('login.forgotAccount')}
+              value={forgotAcct}
+              onChange={(e) => setForgotAcct(e.target.value)}
+              onPressEnter={submitForgot}
+            />
+          </Space>
+        )}
+      </Modal>
     </div>
   )
 }

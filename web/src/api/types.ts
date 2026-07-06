@@ -6,6 +6,8 @@ export interface Me {
   admin: boolean
   role?: string
   perms?: Record<string, boolean>
+  email?: string // the user's email (for the "email me when done" opt-in)
+  mail_enabled?: boolean // whether SMTP is configured, so email features can be offered
 }
 
 // ---- Batch-run feature ----

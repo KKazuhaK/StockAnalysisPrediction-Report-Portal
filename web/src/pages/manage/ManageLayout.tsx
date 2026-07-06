@@ -10,6 +10,7 @@ import {
   GlobalOutlined,
   KeyOutlined,
   LinkOutlined,
+  MailOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   NotificationOutlined,
@@ -93,6 +94,7 @@ export default function ManageLayout() {
       children: [
         { key: 'site', label: t('settings.general'), icon: <GlobalOutlined /> },
         { key: 'announcement', label: t('nav.announcement'), icon: <NotificationOutlined /> },
+        { key: 'email', label: t('nav.email'), icon: <MailOutlined /> },
         { key: 'links', label: t('nav.links'), icon: <LinkOutlined /> },
       ],
     },

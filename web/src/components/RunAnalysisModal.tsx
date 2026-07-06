@@ -4,6 +4,7 @@ import { ThunderboltOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { Dayjs } from 'dayjs'
 import { api } from '../api/client'
+import { useAuth } from '../auth'
 import type { BatchQueueSummary, BatchTarget, BatchTickets } from '../api/types'
 
 // The home-page run-analysis modal (docs/adr/0007-run-analysis-and-scheduling.md):
@@ -21,6 +22,7 @@ export default function RunAnalysisModal({
 }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const { email, mailEnabled } = useAuth()
   const [form] = Form.useForm()
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [targetId, setTargetId] = useState<number | undefined>()
@@ -29,6 +31,7 @@ export default function RunAnalysisModal({
   const [mode, setMode] = useState<'now' | 'scheduled'>('now')
   const [runAt, setRunAt] = useState<Dayjs | null>(null)
   const [urgent, setUrgent] = useState(false)
+  const [notify, setNotify] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -56,6 +59,7 @@ export default function RunAnalysisModal({
   const reset = () => {
     setTargetId(undefined)
     setUrgent(false)
+    setNotify(false)
     setMode('now')
     setRunAt(null)
     form.resetFields()
@@ -88,6 +92,7 @@ export default function RunAnalysisModal({
         max_retries: 2,
         priority: urgent ? 'urgent' : '', // "" → backend resolves group/system default
         run_at: mode === 'scheduled' && runAt ? runAt.format('YYYY-MM-DD HH:mm:ss') : '',
+        notify,
         rows: [row],
       })
       if (res.run_at) message.success(t('run.scheduledOk', { at: res.run_at }))
@@ -184,6 +189,12 @@ export default function RunAnalysisModal({
               </Typography.Text>
             )}
           </div>
+        )}
+
+        {mailEnabled && email && (
+          <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>
+            {t('batch.notifyDone')}
+          </Checkbox>
         )}
 
         <Alert

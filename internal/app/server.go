@@ -41,7 +41,9 @@ type Server struct {
 	batchRunning sync.Map   // jobID -> struct{}; guards against launching a job twice in-process
 	jobCancels   sync.Map   // jobID -> context.CancelFunc; lets a cancel abort the in-flight run
 	itemProgress sync.Map   // itemID -> itemProgress; ephemeral live node progress for running rows
+	jobNotify    sync.Map   // jobID -> bool; opt-in to email the submitter when the job finishes
 	schedMu      sync.Mutex // serializes scheduleTick so concurrent ticks can't over-admit (ADR 0004)
+	mailFn       func(to []string, subject, htmlBody string) error // test seam; nil → real SMTP send
 	appTok       *appTokens // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
 }
 
@@ -163,6 +165,9 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/me", s.apiMe)
 	mux.HandleFunc("POST /api/login", s.apiLogin)
 	mux.HandleFunc("POST /api/logout", s.apiLogout)
+	// Public password reset (no session).
+	mux.HandleFunc("POST /api/password/forgot", s.apiForgotPassword)
+	mux.HandleFunc("POST /api/password/reset", s.apiResetPassword)
 	mux.HandleFunc("GET /api/home", s.requireUserJSON(s.apiHome))
 	mux.HandleFunc("GET /api/stock/{symbol}", s.requireUserJSON(s.apiStock))
 	mux.HandleFunc("GET /api/run/{key}", s.requireUserJSON(s.apiRun))
@@ -194,6 +199,9 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("DELETE /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupDelete))
 	mux.HandleFunc("GET /api/admin/settings", s.requireAdminJSON(s.apiAdminSettings))
 	mux.HandleFunc("POST /api/admin/settings", s.requireAdminJSON(s.apiSettingsSave))
+	mux.HandleFunc("GET /api/admin/email", s.requireAdminJSON(s.apiEmailGet))
+	mux.HandleFunc("POST /api/admin/email", s.requireAdminJSON(s.apiEmailSave))
+	mux.HandleFunc("POST /api/admin/email/test", s.requireAdminJSON(s.apiEmailTest))
 	mux.HandleFunc("POST /api/admin/site-asset", s.requireAdminJSON(s.apiSiteAssetUpload))
 	mux.HandleFunc("GET /api/admin/tokens", s.requireAdminJSON(s.apiAdminTokens))
 	mux.HandleFunc("POST /api/admin/tokens", s.requireAdminJSON(s.apiTokenAdd))
