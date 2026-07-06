@@ -306,6 +306,14 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         title={t('queue.title')}
         extra={
           <Space wrap>
+            {summary?.budget != null && (
+              <span style={{ fontSize: 12 }}>
+                <Typography.Text type="secondary">{t('queue.budget')}</Typography.Text>{' '}
+                <Tag>
+                  {summary.running ?? 0} / {summary.budget}
+                </Tag>
+              </span>
+            )}
             {summary?.my_priority != null && (
               <span style={{ fontSize: 12 }}>
                 <Typography.Text type="secondary">{t('queue.myPriority')}</Typography.Text> {priorityTag(t, String(summary.my_priority))}
