@@ -108,7 +108,17 @@ export default function RunAnalysisModal({
     }
   }
 
+  // Three distinct states so the banner never misleads: a run can start immediately only
+  // when a slot is free (running < the concurrent-run cap); otherwise it queues.
   const waiting = queue?.waiting ?? 0
+  const running = queue?.running ?? 0
+  const budget = queue?.budget ?? 1
+  const busy = running >= budget // no free slot → this submit will wait in the queue
+  const queueMsg = busy
+    ? t('run.queueBusy', { n: running })
+    : running + waiting === 0
+      ? t('run.queueIdle')
+      : t('run.queueFree', { n: budget - running })
 
   return (
     <Modal
@@ -197,11 +207,7 @@ export default function RunAnalysisModal({
           </Checkbox>
         )}
 
-        <Alert
-          type={waiting > 0 ? 'warning' : 'success'}
-          showIcon
-          message={waiting > 0 ? t('run.queueWaiting', { n: waiting }) : t('run.queueEmpty')}
-        />
+        <Alert type={busy ? 'warning' : 'success'} showIcon message={queueMsg} />
       </Space>
     </Modal>
   )

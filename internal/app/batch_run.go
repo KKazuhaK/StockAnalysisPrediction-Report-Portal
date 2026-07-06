@@ -141,6 +141,28 @@ func (s *Server) batchBudget() int {
 	return n
 }
 
+// gatedProvider caps concurrent runs GLOBALLY: every row acquires a shared slot before
+// running, so the total simultaneous Dify runs across ALL jobs never exceeds the budget —
+// regardless of how many jobs run or each batch's row concurrency. This is what makes the
+// "max at once" limit a true cap on runs, not just on jobs. The gate is sized at startup;
+// changing the budget needs a restart. A nil gate (tests) is a pass-through.
+type gatedProvider struct {
+	inner batch.Provider
+	gate  chan struct{}
+}
+
+func (g gatedProvider) Run(ctx context.Context, inputs map[string]string) (batch.RunResult, error) {
+	if g.gate != nil {
+		select {
+		case g.gate <- struct{}{}:
+			defer func() { <-g.gate }()
+		case <-ctx.Done():
+			return batch.RunResult{}, ctx.Err()
+		}
+	}
+	return g.inner.Run(ctx, inputs)
+}
+
 // batchReserved is how many slots to hold for the top (加急) tier. Clamped to
 // [0, budget-1] by the scheduler, so it only bites once the budget is raised.
 func (s *Server) batchReserved() int {
@@ -455,6 +477,7 @@ func (s *Server) launchJob(jobID int64) {
 		s.batchRunning.Delete(jobID)
 		return
 	}
+	prov = gatedProvider{inner: prov, gate: s.runGate} // GLOBAL concurrent-run cap (across all jobs)
 	eng := &batch.Engine{Store: s.st, Log: log.Printf}
 	// A batch runs up to its own chosen row-concurrency at once (set per-batch on the run
 	// form, default 1), capped by the global budget so one batch can't exceed the "max at
