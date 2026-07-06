@@ -92,6 +92,7 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 		"default_priority":   s.runDefaultPriority(),                            // base priority (0..100) for no-group runs (ADR 0008)
 		"urgent_enabled":     s.urgentEnabled(),                                 // is the 加急 lane offered at all (admin toggle)
 		"dify_end_user":      s.st.GetSetting("dify_end_user", "report-portal"), // Dify end-user template ([username] var)
+		"dify_poll_seconds":  s.difyPollSeconds(),                               // 0 = streaming; >0 = poll the run status every N s (proxy-friendly)
 		// Multifactor priority weights + factor tuning (ADR 0008).
 		"prio_w_base":              pw.Base,
 		"prio_w_age":               pw.Age,
@@ -107,8 +108,9 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		ReservedSlots    *int    `json:"reserved_slots"`
 		TicketPeriodDays *int    `json:"ticket_period_days"`
 		DefaultPriority  *string `json:"default_priority"`
-		UrgentEnabled    *bool   `json:"urgent_enabled"` // admin toggle for the 加急 lane
-		DifyEndUser      *string `json:"dify_end_user"`  // Dify end-user template ([username] var)
+		UrgentEnabled    *bool   `json:"urgent_enabled"`    // admin toggle for the 加急 lane
+		DifyEndUser      *string `json:"dify_end_user"`     // Dify end-user template ([username] var)
+		DifyPollSeconds  *int    `json:"dify_poll_seconds"` // 0 = streaming; >0 = poll the run status every N s
 		// Multifactor priority tuning; pointers so an omitted field is left unchanged
 		// (a weight of 0 is meaningful — it disables that factor). See ADR 0008.
 		PrioWBase             *float64 `json:"prio_w_base"`
@@ -143,6 +145,9 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 			v = "1"
 		}
 		s.st.SetSetting("batch_urgent_enabled", v)
+	}
+	if in.DifyPollSeconds != nil && *in.DifyPollSeconds >= 0 {
+		s.st.SetSetting("dify_poll_seconds", strconv.Itoa(*in.DifyPollSeconds))
 	}
 	if in.DifyEndUser != nil {
 		s.st.SetSetting("dify_end_user", *in.DifyEndUser) // difyEndUser trims + defaults on read

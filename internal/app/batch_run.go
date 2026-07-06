@@ -182,6 +182,17 @@ func (s *Server) ticketPeriodDays() int {
 	return n
 }
 
+// difyPollSeconds is how often to poll a started run's status (poll mode). 0 = off: hold
+// the streaming connection open until the run finishes (the default). Poll mode captures
+// the run id then closes the stream, which avoids long-lived SSE through a proxy.
+func (s *Server) difyPollSeconds() int {
+	n, err := strconv.Atoi(s.st.GetSetting("dify_poll_seconds", "0"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 // urgentEnabled reports whether the 加急 escalation is offered at all (admin toggle;
 // default off, so batch/runs have no urgent lane unless an admin turns it on).
 func (s *Server) urgentEnabled() bool {
@@ -435,7 +446,7 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	// Dify-native target (the default): talk to Dify directly via the typed client
 	// (docs/adr/0006-dify-native.md). The generic manifest below is the advanced path.
 	if tgt.PluginSlug == difyPluginSlug {
-		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy))
+		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy), s.difyPollSeconds() > 0, time.Duration(s.difyPollSeconds())*time.Second)
 	}
 	plug, ok := s.st.GetPlugin(tgt.PluginSlug)
 	if !ok {
