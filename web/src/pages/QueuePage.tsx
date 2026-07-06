@@ -182,7 +182,7 @@ export default function QueuePage() {
         ),
     },
     {
-      // A queued non-urgent job gets an inline base-priority editor (插队); 加急 and
+      // A queued non-urgent job gets an inline base-priority editor; urgent and
       // non-queued jobs show a static tag (ADR 0008).
       title: t('batch.priorityLabel'),
       width: 116,
