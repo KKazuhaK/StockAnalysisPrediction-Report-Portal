@@ -416,6 +416,17 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 
 func (s *Server) apiBatchJobCancel(w http.ResponseWriter, r *http.Request, user string) {
 	id := pathID(r, "id")
+	job, ok := s.st.GetBatchJob(id)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	// A non-admin may cancel only their own run; admins may cancel anyone's. All other
+	// queue mutations (delete / retry / reschedule / reprioritize) are admin-only routes.
+	if !s.isAdmin(user) && job.CreatedBy != user {
+		jsonError(w, http.StatusForbidden, "you can only cancel your own runs")
+		return
+	}
 	if err := s.st.CancelBatchJob(id); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
