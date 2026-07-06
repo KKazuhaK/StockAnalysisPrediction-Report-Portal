@@ -11,9 +11,9 @@ import (
 func TestDayExportEntriesOrdersAndNumbers(t *testing.T) {
 	// Scrambled input; expected reading order is r3, r2, r1, r4.
 	r1 := Rep{Kind: "投资决策", RType: "财务分析", Title: "财务分析", Time: "09:00"}
-	r2 := Rep{Kind: "投资决策", RType: "投资决策建议", Title: "投资决策建议", Time: "08:00"} // summary (建议)
+	r2 := Rep{Kind: "投资决策", RType: "投资决策建议", Title: "投资决策建议", Time: "08:00"}   // summary (建议)
 	r3 := Rep{Kind: "重组决策", RType: "重组基本面分析", Title: "重组基本面分析", Time: "07:00"} // 重组决策 sorts first
-	r4 := Rep{Kind: "深度研究", RType: "调研纪要", Title: "调研纪要", Time: "10:00"} // 深度研究 sorts last
+	r4 := Rep{Kind: "深度研究", RType: "调研纪要", Title: "调研纪要", Time: "10:00"}       // 深度研究 sorts last
 
 	got := dayExportEntries([]Rep{r1, r2, r3, r4})
 	want := []string{

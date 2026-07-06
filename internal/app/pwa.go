@@ -26,15 +26,15 @@ func (s *Server) pwaManifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	json.NewEncoder(w).Encode(map[string]any{
-		"name":             title,
-		"short_name":       shortManifestName(title),
-		"description":      title,
-		"id":               "/",
-		"start_url":        "/",
-		"scope":            "/",
-		"display":          "standalone",
-		"background_color": "#ffffff",
-		"theme_color":      "#1677ff",
+		"name":                        title,
+		"short_name":                  shortManifestName(title),
+		"description":                 title,
+		"id":                          "/",
+		"start_url":                   "/",
+		"scope":                       "/",
+		"display":                     "standalone",
+		"background_color":            "#ffffff",
+		"theme_color":                 "#1677ff",
 		"prefer_related_applications": false,
 		"icons": []map[string]string{
 			{"src": "/pwa-icon", "sizes": "192x192", "purpose": "any maskable"},

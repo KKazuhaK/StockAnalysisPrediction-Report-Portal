@@ -38,13 +38,12 @@ type Server struct {
 	st           *Store
 	names        *Names
 	pdf          *template.Template
-	batchRunning sync.Map   // jobID -> struct{}; guards against launching a job twice in-process
-	jobCancels   sync.Map   // jobID -> context.CancelFunc; lets a cancel abort the in-flight run
-	itemProgress sync.Map   // itemID -> itemProgress; ephemeral live node progress for running rows
-	jobNotify    sync.Map   // jobID -> bool; opt-in to email the submitter when the job finishes
-	schedMu      sync.Mutex // serializes scheduleTick so concurrent ticks can't over-admit (ADR 0004)
+	batchRunning sync.Map                                          // jobID -> struct{}; guards against launching a job twice in-process
+	jobCancels   sync.Map                                          // jobID -> context.CancelFunc; lets a cancel abort the in-flight run
+	jobNotify    sync.Map                                          // jobID -> bool; opt-in to email the submitter when the job finishes
+	schedMu      sync.Mutex                                        // serializes scheduleTick so concurrent ticks can't over-admit (ADR 0004)
 	mailFn       func(to []string, subject, htmlBody string) error // test seam; nil → real SMTP send
-	appTok       *appTokens // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
+	appTok       *appTokens                                        // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
 }
 
 // statusRecorder records the response status code for use in request logging.

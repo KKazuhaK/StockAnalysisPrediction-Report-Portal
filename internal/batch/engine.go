@@ -43,10 +43,9 @@ type JobSpec struct {
 // items, retries transient failures, honours cancellation, and persists per-item
 // state. It is backend-agnostic — it only knows the Provider interface.
 type Engine struct {
-	Store    JobStore
-	Backoff  func(attempt int) time.Duration    // nil → defaultBackoff
-	Log      func(string, ...any)               // nil → no-op
-	Progress func(jobID, itemID int64, p Progress) // nil → progress not tracked
+	Store   JobStore
+	Backoff func(attempt int) time.Duration // nil → defaultBackoff
+	Log     func(string, ...any)            // nil → no-op
 }
 
 // RunJob drives one job to completion (or cancellation). It blocks until every
@@ -105,10 +104,6 @@ func (e *Engine) RunJob(ctx context.Context, spec JobSpec, prov Provider) error 
 // never retried; only transport-level transient errors are.
 func (e *Engine) processItem(ctx context.Context, spec JobSpec, prov Provider, it Item) {
 	_ = e.Store.StartItem(it.ID)
-	if e.Progress != nil {
-		defer e.Progress(spec.JobID, it.ID, Progress{}) // clear live progress when the row ends
-		ctx = WithProgress(ctx, func(p Progress) { e.Progress(spec.JobID, it.ID, p) })
-	}
 	attempts := 0
 	for {
 		attempts++

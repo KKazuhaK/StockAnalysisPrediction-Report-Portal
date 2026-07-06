@@ -19,9 +19,9 @@ func TestRestoreDefaultTypesWipesToFirstRunDefaults(t *testing.T) {
 	// Admin diverges the config: move + rename + reorder + flip-summary a default,
 	// delete another default outright, and add two custom (non-default) types.
 	s.st.UpsertTypeConfig("交易分析", "投资决策", "成交分析", 99, true) // moved out of 重组决策, renamed, reordered
-	s.st.DeleteTypeConfig("信号监测")                            // a default removed entirely
-	s.st.UpsertTypeConfig("重组分析", "重组决策", "自定义", 5, true)  // custom type with NO report data
-	s.st.UpsertTypeConfig("重组交易分析", "重组决策", "", 6, false)  // custom type that DOES have report data
+	s.st.DeleteTypeConfig("信号监测")                           // a default removed entirely
+	s.st.UpsertTypeConfig("重组分析", "重组决策", "自定义", 5, true)   // custom type with NO report data
+	s.st.UpsertTypeConfig("重组交易分析", "重组决策", "", 6, false)   // custom type that DOES have report data
 
 	// A stored report keeps the (now-custom) type alive in the data. Restore must not touch report data.
 	if _, err := s.st.UpsertReport(Rep{UID: "r1", RType: "重组交易分析", Kind: "重组决策", Date: "2026-07-04"}); err != nil {

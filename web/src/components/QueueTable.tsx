@@ -26,7 +26,6 @@ import {
   PlayCircleOutlined,
   ReloadOutlined,
   StopOutlined,
-  SyncOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -224,11 +223,9 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         return (
           <div style={{ maxWidth: 200 }}>
             <Progress percent={j.total ? Math.round((done / j.total) * 100) : 0} size="small" status={j.failed ? 'exception' : undefined} />
-            {j.node && (
-              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -2 }} ellipsis={{ tooltip: j.node }}>
-                <SyncOutlined spin /> {j.node}
-              </Typography.Text>
-            )}
+            <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -2 }}>
+              {t('batch.progressText', { done, total: j.total, ok: j.succeeded, fail: j.failed, partial: j.partial })}
+            </Typography.Text>
           </div>
         )
       },

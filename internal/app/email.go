@@ -96,11 +96,11 @@ func (s *Server) apiEmailGet(w http.ResponseWriter, r *http.Request, user string
 // editing other fields never forces re-entering the secret.
 func (s *Server) apiEmailSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		Enabled  *bool   `json:"enabled"`
-		Host     *string `json:"host"`
-		Port     *int    `json:"port"`
-		User     *string `json:"user"`
-		Pass     *string `json:"pass"`
+		Enabled   *bool   `json:"enabled"`
+		Host      *string `json:"host"`
+		Port      *int    `json:"port"`
+		User      *string `json:"user"`
+		Pass      *string `json:"pass"`
 		From      *string `json:"from"`
 		Security  *string `json:"security"`
 		PublicURL *string `json:"public_url"`

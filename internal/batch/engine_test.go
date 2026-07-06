@@ -282,38 +282,3 @@ func TestEngineCancelMidRunStopsDispatch(t *testing.T) {
 		t.Error("job should be marked cancelled")
 	}
 }
-
-// The engine threads a provider's progress reports to its Progress sink, tagged with
-// the job + item id, and clears (blank node) when the row finishes.
-func TestEngineForwardsProgress(t *testing.T) {
-	st := seedStore(1)
-	itemID := st.items[0].id
-	var mu sync.Mutex
-	type ev struct {
-		job, item int64
-		node      string
-	}
-	var evs []ev
-	prov := providerFunc(func(ctx context.Context, _ map[string]string) (RunResult, error) {
-		ReportProgress(ctx, Progress{Node: "LLM", Index: 1})
-		return RunResult{Status: Ok}, nil
-	})
-	eng := &Engine{Store: st, Backoff: noBackoff, Progress: func(job, item int64, p Progress) {
-		mu.Lock()
-		evs = append(evs, ev{job, item, p.Node})
-		mu.Unlock()
-	}}
-	eng.RunJob(context.Background(), JobSpec{JobID: 5, Concurrency: 1}, prov)
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(evs) < 2 {
-		t.Fatalf("progress events = %+v, want a report + a clear", evs)
-	}
-	if evs[0] != (ev{5, itemID, "LLM"}) {
-		t.Errorf("first progress = %+v, want {5,%d,LLM}", evs[0], itemID)
-	}
-	if last := evs[len(evs)-1]; last.node != "" {
-		t.Errorf("last progress = %q, want cleared (blank) at finish", last.node)
-	}
-}

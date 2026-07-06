@@ -425,46 +425,6 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	return m.NewProvider(cfg, &http.Client{Timeout: difyRunTimeout}), nil
 }
 
-// itemProgress is the live node a running row is executing (ephemeral, in-memory —
-// no schema change, per the no-migration rule).
-type itemProgress struct {
-	JobID int64
-	Node  string
-	Index int
-}
-
-// recordProgress is the engine's live-progress sink: a blank node clears the entry
-// (the row finished), otherwise it records the current node for that item.
-func (s *Server) recordProgress(jobID, itemID int64, p batch.Progress) {
-	if p.Node == "" {
-		s.itemProgress.Delete(itemID)
-		return
-	}
-	s.itemProgress.Store(itemID, itemProgress{JobID: jobID, Node: p.Node, Index: p.Index})
-}
-
-// jobCurrentNode returns the node a job's running row is executing (or "" if none),
-// for the queue/console live-progress label.
-func (s *Server) jobCurrentNode(jobID int64) string {
-	node := ""
-	s.itemProgress.Range(func(_, v any) bool {
-		if ip, ok := v.(itemProgress); ok && ip.JobID == jobID {
-			node = ip.Node
-			return false
-		}
-		return true
-	})
-	return node
-}
-
-// itemNode returns the live node an item is executing (or "").
-func (s *Server) itemNode(itemID int64) string {
-	if v, ok := s.itemProgress.Load(itemID); ok {
-		return v.(itemProgress).Node
-	}
-	return ""
-}
-
 // cancelRunningJob aborts a job's in-flight run if it is executing in this process,
 // so a cancel request takes effect immediately instead of waiting for the current
 // blocking row to return. A no-op if the job isn't running here.
@@ -492,7 +452,7 @@ func (s *Server) launchJob(jobID int64) {
 		s.batchRunning.Delete(jobID)
 		return
 	}
-	eng := &batch.Engine{Store: s.st, Log: log.Printf, Progress: s.recordProgress}
+	eng := &batch.Engine{Store: s.st, Log: log.Printf}
 	// A job runs its rows one at a time (no per-batch parallelism), so the queue's
 	// "max concurrent jobs" budget is the real cap on simultaneous Dify runs: N running
 	// jobs × 1 row = at most N live runs. Per-batch concurrency would multiply that and
