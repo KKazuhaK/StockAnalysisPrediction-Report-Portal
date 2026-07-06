@@ -1,22 +1,34 @@
 package app
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // User-admin persistence: extended profile attributes (display name / email /
 // active / last login) and organizational groups. Groups are labels only —
 // permissions still come from the role. The `users` table is never altered; these
 // live in additive tables (user_profiles, user_groups, user_group_members).
 
-// UserGroup is an organizational group (a team / department label).
+// UserGroup is an organizational group whose settings decide its members' run
+// behavior (group model B, docs/adr/0010-group-model.md). Every user has at most one
+// primary group; users without one inherit the Default group. A non-default group can
+// override each field or inherit it from the Default group (the *Inherit flags below
+// say which); the Default group always holds concrete baselines.
 type UserGroup struct {
 	ID          int64
 	Name        string
 	Description string
 	Created     string
-	Weight      int  // 加急 tickets granted per period to each member (see docs/adr/0005-priority-tickets.md)
-	UrgentFree  bool // members may run 加急 without spending tickets
-	Priority    string
-	Members     int // member count, filled by ListUserGroups
+	IsDefault   bool
+	Weight      int  // urgent tickets granted per period (see docs/adr/0005-priority-tickets.md); 0 when inherited
+	UrgentFree  bool // members may run urgent without spending tickets; false when inherited
+	// Inherit flags: true means the field is unset on this group and resolves to the
+	// Default group's value. Always false on the Default group itself.
+	WeightInherit bool
+	UrgentInherit bool
+	Priority      string // base priority override ("" = inherit the system default)
+	Members       int    // primary-member count, filled by ListUserGroups
 }
 
 // ---------- profile ----------
@@ -48,37 +60,71 @@ func (s *Store) TouchLastLogin(username string) error {
 func (s *Store) deleteUserExtras(username string) {
 	s.exec("DELETE FROM user_profiles WHERE username=?", username)
 	s.exec("DELETE FROM user_group_members WHERE username=?", username)
+	s.exec("DELETE FROM user_primary_group WHERE username=?", username)
 }
 
 // ---------- groups ----------
 
-// CreateUserGroup adds a group and returns its id.
-func (s *Store) CreateUserGroup(name, description string, weight int, urgentFree ...bool) (int64, error) {
-	return s.insertID(`INSERT INTO user_groups(name,description,created_at,weight,urgent_unlimited) VALUES(?,?,?,?,?)`,
-		name, description, nowStr(), weight, boolInt(len(urgentFree) > 0 && urgentFree[0]))
+// nullWeight/nullUrgent build the override arguments for an insert/update: a nil
+// pointer stores NULL (inherit from the Default group), a value stores the override.
+func nullInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+func nullBoolInt(p *bool) any {
+	if p == nil {
+		return nil
+	}
+	return boolInt(*p)
 }
 
-// UpdateUserGroup renames / re-describes a group and sets its weight.
-func (s *Store) UpdateUserGroup(id int64, name, description string, weight int, urgentFree ...bool) error {
-	if len(urgentFree) == 0 {
-		_, err := s.exec("UPDATE user_groups SET name=?, description=?, weight=? WHERE id=?", name, description, weight, id)
-		return err
-	}
+// CreateUserGroup adds a group and returns its id. The variadic urgentFree keeps the
+// old concrete-value call sites working; weight is stored as a concrete override.
+func (s *Store) CreateUserGroup(name, description string, weight int, urgentFree ...bool) (int64, error) {
+	uf := len(urgentFree) > 0 && urgentFree[0]
+	return s.insertID(`INSERT INTO user_groups(name,description,created_at,weight,urgent_unlimited,is_default) VALUES(?,?,?,?,?,0)`,
+		name, description, nowStr(), weight, boolInt(uf))
+}
+
+// UpdateGroup renames / re-describes a group and sets its per-field overrides. A nil
+// weight/urgent stores NULL (inherit the Default group's value); a value overrides it.
+func (s *Store) UpdateGroup(id int64, name, description string, weight *int, urgent *bool) error {
 	_, err := s.exec("UPDATE user_groups SET name=?, description=?, weight=?, urgent_unlimited=? WHERE id=?",
-		name, description, weight, boolInt(urgentFree[0]), id)
+		name, description, nullInt(weight), nullBoolInt(urgent), id)
 	return err
 }
 
-// DeleteUserGroup removes a group and all of its memberships (+ its priority row).
+// UpdateUserGroup is the concrete-value shim kept for existing call sites/tests.
+func (s *Store) UpdateUserGroup(id int64, name, description string, weight int, urgentFree ...bool) error {
+	w := weight
+	if len(urgentFree) == 0 {
+		return s.UpdateGroup(id, name, description, &w, nil)
+	}
+	uf := urgentFree[0]
+	return s.UpdateGroup(id, name, description, &w, &uf)
+}
+
+// DeleteUserGroup removes a group, its priority row, and any primary-group pointers to
+// it (its former primary members fall back to the Default group). Any group flagged
+// is_default is never deletable — the resolution depends on it. We check the row's own
+// flag (not just DefaultGroupID) so even a stray duplicate default can't be removed.
 func (s *Store) DeleteUserGroup(id int64) error {
+	var isDefault sql.NullInt64
+	s.queryRow("SELECT is_default FROM user_groups WHERE id=?", id).Scan(&isDefault)
+	if isDefault.Int64 != 0 {
+		return fmt.Errorf("the Default group cannot be deleted")
+	}
 	s.exec("DELETE FROM user_group_members WHERE group_id=?", id)
+	s.exec("DELETE FROM user_primary_group WHERE group_id=?", id)
 	s.exec("DELETE FROM group_priority WHERE group_id=?", id)
 	_, err := s.exec("DELETE FROM user_groups WHERE id=?", id)
 	return err
 }
 
-// SetGroupPriority sets a group's default run priority (ADR 0007). An empty
-// priority clears it (the group contributes no default).
+// SetGroupPriority sets a group's base priority override (ADR 0007). An empty priority
+// clears it (a non-default group then inherits the system default).
 func (s *Store) SetGroupPriority(groupID int64, priority string) error {
 	if priority == "" {
 		_, err := s.exec("DELETE FROM group_priority WHERE group_id=?", groupID)
@@ -89,33 +135,53 @@ func (s *Store) SetGroupPriority(groupID int64, priority string) error {
 	return err
 }
 
-// UserGroupPriorities returns the (non-empty) default priorities of the groups a
-// user belongs to. The caller ranks them; the highest wins (ADR 0007).
-func (s *Store) UserGroupPriorities(username string) []string {
-	rows, err := s.query(`SELECT gp.priority FROM user_group_members m
-		JOIN group_priority gp ON gp.group_id=m.group_id
-		WHERE m.username=? AND COALESCE(gp.priority,'')<>''`, username)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var p sql.NullString
-		if rows.Scan(&p) == nil && p.String != "" {
-			out = append(out, p.String)
-		}
-	}
-	return out
+// GroupPriority returns a group's base-priority override, or "" if it inherits.
+func (s *Store) GroupPriority(groupID int64) string {
+	var p sql.NullString
+	s.queryRow("SELECT priority FROM group_priority WHERE group_id=?", groupID).Scan(&p)
+	return p.String
 }
 
-// ListUserGroups returns all groups with their member counts + default priority, by name.
+// DefaultGroupID returns the id of the Default (fallback) group, or 0 if none exists.
+func (s *Store) DefaultGroupID() int64 {
+	var id sql.NullInt64
+	s.queryRow("SELECT id FROM user_groups WHERE is_default=1 ORDER BY id LIMIT 1").Scan(&id)
+	return id.Int64
+}
+
+// EnsureDefaultGroup creates the Default group if none exists and returns its id. It is
+// idempotent and safe to call on every boot. The Default group holds concrete baselines
+// (weight 0, urgent-unlimited off) that every other group inherits from.
+func (s *Store) EnsureDefaultGroup() int64 {
+	if id := s.DefaultGroupID(); id != 0 {
+		return id
+	}
+	// Pick a free name (the column is UNIQUE): "Default", then "Default (1)", ...
+	base := "Default"
+	for i := 0; i < 100; i++ {
+		name := base
+		if i > 0 {
+			name = fmt.Sprintf("%s (%d)", base, i)
+		}
+		id, err := s.insertID(`INSERT INTO user_groups(name,description,created_at,weight,urgent_unlimited,is_default) VALUES(?,?,?,0,0,1)`,
+			name, "Fallback group — users without an assigned group inherit these settings.", nowStr())
+		if err == nil {
+			return id
+		}
+	}
+	return s.DefaultGroupID()
+}
+
+// ListUserGroups returns all groups (Default first, then by name) with their primary-
+// member counts, per-field override values, and inherit flags.
 func (s *Store) ListUserGroups() []UserGroup {
-	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''), COALESCE(g.weight,0), COALESCE(g.urgent_unlimited,0), COALESCE(gp.priority,''), COUNT(m.username)
+	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''),
+			COALESCE(g.is_default,0), g.weight, g.urgent_unlimited, COALESCE(gp.priority,''), COUNT(pg.username)
 		FROM user_groups g
-		LEFT JOIN user_group_members m ON m.group_id=g.id
+		LEFT JOIN user_primary_group pg ON pg.group_id=g.id
 		LEFT JOIN group_priority gp ON gp.group_id=g.id
-		GROUP BY g.id, g.name, g.description, g.created_at, g.weight, g.urgent_unlimited, gp.priority ORDER BY g.name`)
+		GROUP BY g.id, g.name, g.description, g.created_at, g.is_default, g.weight, g.urgent_unlimited, gp.priority
+		ORDER BY g.is_default DESC, g.name`)
 	if err != nil {
 		return nil
 	}
@@ -123,62 +189,53 @@ func (s *Store) ListUserGroups() []UserGroup {
 	var out []UserGroup
 	for rows.Next() {
 		var g UserGroup
-		var urgentFree int
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &g.Weight, &urgentFree, &g.Priority, &g.Members); err != nil {
+		var isDefault int
+		var weight, urgent sql.NullInt64
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &isDefault, &weight, &urgent, &g.Priority, &g.Members); err != nil {
 			continue
 		}
-		g.UrgentFree = urgentFree != 0
+		g.IsDefault = isDefault != 0
+		g.Weight, g.WeightInherit = int(weight.Int64), !weight.Valid && !g.IsDefault
+		g.UrgentFree, g.UrgentInherit = urgent.Int64 != 0, !urgent.Valid && !g.IsDefault
 		out = append(out, g)
 	}
 	return out
 }
 
-// ---------- membership ----------
+// ---------- primary group (membership) ----------
 
-// SetUserGroups replaces a user's group membership with the given group ids.
-func (s *Store) SetUserGroups(username string, ids []int64) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(s.bind("DELETE FROM user_group_members WHERE username=?"), username); err != nil {
-		return err
-	}
-	stmt, err := tx.Prepare(s.bind("INSERT INTO user_group_members(group_id,username) VALUES(?,?)"))
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	for _, id := range ids {
-		if _, err := stmt.Exec(id, username); err != nil {
-			return err
+// SetPrimaryGroup sets a user's primary group; a groupID of 0 clears it (the user then
+// falls back to the Default group). A non-existent group id is treated as a clear so the
+// stored pointer is never left dangling (e.g. a stale UI targeting a just-deleted group).
+func (s *Store) SetPrimaryGroup(username string, groupID int64) error {
+	if groupID != 0 {
+		var exists sql.NullInt64
+		s.queryRow("SELECT 1 FROM user_groups WHERE id=?", groupID).Scan(&exists)
+		if exists.Int64 == 0 {
+			groupID = 0
 		}
 	}
-	return tx.Commit()
+	if groupID == 0 {
+		_, err := s.exec("DELETE FROM user_primary_group WHERE username=?", username)
+		return err
+	}
+	_, err := s.exec(`INSERT INTO user_primary_group(username,group_id) VALUES(?,?)
+		ON CONFLICT(username) DO UPDATE SET group_id=excluded.group_id`, username, groupID)
+	return err
 }
 
-// GroupsOf returns the group ids a user belongs to.
-func (s *Store) GroupsOf(username string) []int64 {
-	rows, err := s.query("SELECT group_id FROM user_group_members WHERE username=? ORDER BY group_id", username)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []int64
-	for rows.Next() {
-		var id int64
-		rows.Scan(&id)
-		out = append(out, id)
-	}
-	return out
+// PrimaryGroupOf returns a user's primary group id, or 0 if they inherit the Default.
+func (s *Store) PrimaryGroupOf(username string) int64 {
+	var id sql.NullInt64
+	s.queryRow("SELECT group_id FROM user_primary_group WHERE username=?", username).Scan(&id)
+	return id.Int64
 }
 
-// AllUserGroups returns username → group ids for every membership, so a user list
-// can be enriched with one query instead of N.
-func (s *Store) AllUserGroups() map[string][]int64 {
-	m := map[string][]int64{}
-	rows, err := s.query("SELECT username, group_id FROM user_group_members")
+// AllPrimaryGroups returns username → primary group id for every assigned user, so a
+// user list can be enriched with one query instead of N.
+func (s *Store) AllPrimaryGroups() map[string]int64 {
+	m := map[string]int64{}
+	rows, err := s.query("SELECT username, group_id FROM user_primary_group")
 	if err != nil {
 		return m
 	}
@@ -189,7 +246,35 @@ func (s *Store) AllUserGroups() map[string][]int64 {
 		if err := rows.Scan(&name, &id); err != nil {
 			continue
 		}
-		m[name] = append(m[name], id)
+		m[name] = id
 	}
 	return m
+}
+
+// EffectiveTicketSettings resolves a user's urgent-ticket settings through group model
+// B: their primary group's per-field override where set, otherwise the Default group's
+// baseline. Returns (weight, urgentUnlimited); (0,false) if no Default group exists.
+func (s *Store) EffectiveTicketSettings(username string) (int, bool) {
+	dw, du := s.defaultBaselines()
+	gid := s.PrimaryGroupOf(username)
+	if gid == 0 {
+		return dw, du
+	}
+	var w, u sql.NullInt64 // raw (un-coalesced) so NULL means inherit
+	s.queryRow("SELECT weight, urgent_unlimited FROM user_groups WHERE id=?", gid).Scan(&w, &u)
+	weight, urgent := dw, du
+	if w.Valid {
+		weight = int(w.Int64)
+	}
+	if u.Valid {
+		urgent = u.Int64 != 0
+	}
+	return weight, urgent
+}
+
+// defaultBaselines returns the Default group's concrete weight + urgent-unlimited.
+func (s *Store) defaultBaselines() (int, bool) {
+	var w, u sql.NullInt64
+	s.queryRow("SELECT COALESCE(weight,0), COALESCE(urgent_unlimited,0) FROM user_groups WHERE is_default=1 ORDER BY id LIMIT 1").Scan(&w, &u)
+	return int(w.Int64), u.Int64 != 0
 }

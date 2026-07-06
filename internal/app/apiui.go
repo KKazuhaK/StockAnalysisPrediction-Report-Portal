@@ -598,23 +598,21 @@ func (s *Server) apiTypesRestoreDefaults(w http.ResponseWriter, r *http.Request,
 
 // ---------- Admin: accounts ----------
 
-// userJSON is the enriched account row the admin UI renders.
-func userJSON(u User, groups []int64) map[string]any {
-	if groups == nil {
-		groups = []int64{}
-	}
+// userJSON is the enriched account row the admin UI renders. primaryGroup is 0 when
+// the user has no assigned group (they inherit the Default group).
+func userJSON(u User, primaryGroup int64) map[string]any {
 	return map[string]any{
 		"username": u.Username, "role": u.EffRole(), "display_name": u.DisplayName,
-		"email": u.Email, "active": u.Active, "last_login": u.LastLogin, "groups": groups,
+		"email": u.Email, "active": u.Active, "last_login": u.LastLogin, "primary_group": primaryGroup,
 	}
 }
 
 func (s *Server) apiAdminUsers(w http.ResponseWriter, r *http.Request, user string) {
 	us := s.st.Users()
-	members := s.st.AllUserGroups()
+	primary := s.st.AllPrimaryGroups()
 	out := make([]map[string]any, 0, len(us))
 	for _, u := range us {
-		out = append(out, userJSON(u, members[u.Username]))
+		out = append(out, userJSON(u, primary[u.Username]))
 	}
 	roles := make([]map[string]any, 0, len(roleRegistry))
 	for _, ro := range roleRegistry {
@@ -625,12 +623,12 @@ func (s *Server) apiAdminUsers(w http.ResponseWriter, r *http.Request, user stri
 
 func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		Username    string  `json:"username"`
-		Password    string  `json:"password"`
-		Role        string  `json:"role"`
-		DisplayName string  `json:"display_name"`
-		Email       string  `json:"email"`
-		Groups      []int64 `json:"groups"`
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+		Role         string `json:"role"`
+		DisplayName  string `json:"display_name"`
+		Email        string `json:"email"`
+		PrimaryGroup int64  `json:"primary_group"`
 	}
 	readJSON(r, &in)
 	name := strings.TrimSpace(in.Username)
@@ -645,7 +643,7 @@ func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string)
 	h, _ := bcrypt.GenerateFromPassword([]byte(in.Password), 12)
 	s.st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: validRole(in.Role)})
 	s.st.SetUserProfile(name, strings.TrimSpace(in.DisplayName), strings.TrimSpace(in.Email))
-	s.st.SetUserGroups(name, in.Groups)
+	s.st.SetPrimaryGroup(name, in.PrimaryGroup)
 	writeJSON(w, okJSON)
 }
 
@@ -659,12 +657,12 @@ func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string
 		return
 	}
 	var in struct {
-		Role        *string  `json:"role"`
-		Password    string   `json:"password"`
-		DisplayName *string  `json:"display_name"`
-		Email       *string  `json:"email"`
-		Active      *bool    `json:"active"`
-		Groups      *[]int64 `json:"groups"`
+		Role         *string `json:"role"`
+		Password     string  `json:"password"`
+		DisplayName  *string `json:"display_name"`
+		Email        *string `json:"email"`
+		Active       *bool   `json:"active"`
+		PrimaryGroup *int64  `json:"primary_group"`
 	}
 	readJSON(r, &in)
 	if in.Role != nil {
@@ -695,8 +693,8 @@ func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string
 		}
 		s.st.SetUserActive(name, active)
 	}
-	if in.Groups != nil {
-		s.st.SetUserGroups(name, *in.Groups)
+	if in.PrimaryGroup != nil {
+		s.st.SetPrimaryGroup(name, *in.PrimaryGroup)
 	}
 	writeJSON(w, okJSON)
 }

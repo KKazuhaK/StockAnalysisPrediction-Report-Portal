@@ -31,33 +31,35 @@ func call(t *testing.T, h handler, body, actor string) (int, map[string]any) {
 func TestUserAdminEnrichedFlow(t *testing.T) {
 	s := userAdminServer(t)
 
-	// Create a group.
+	// Create a group with an urgent-unlimited override.
 	_, g := call(t, s.apiGroupAdd, `{"name":"Research","description":"The desk","urgent_unlimited":true}`, "admin")
 	gid := int64(g["id"].(float64))
 
-	// Create a user with display name / email / group.
-	code, _ := call(t, s.apiUserAdd, fmt.Sprintf(`{"username":"alice","password":"pw12345678","role":"operator","display_name":"Alice A","email":"a@x.com","groups":[%d]}`, gid), "admin")
+	// Create a user with display name / email / primary group.
+	code, _ := call(t, s.apiUserAdd, fmt.Sprintf(`{"username":"alice","password":"pw12345678","role":"operator","display_name":"Alice A","email":"a@x.com","primary_group":%d}`, gid), "admin")
 	if code != http.StatusOK {
 		t.Fatalf("apiUserAdd → %d", code)
 	}
 
-	// The enriched list surfaces the profile + membership + group with its count.
+	// The enriched list surfaces the profile + primary group; the group carries its
+	// primary-member count. The Default group is always present too.
 	rec := httptest.NewRecorder()
 	s.apiAdminUsers(rec, httptest.NewRequest("GET", "/x", nil), "admin")
 	type userRow struct {
-		Username    string  `json:"username"`
-		DisplayName string  `json:"display_name"`
-		Email       string  `json:"email"`
-		Role        string  `json:"role"`
-		Active      bool    `json:"active"`
-		Groups      []int64 `json:"groups"`
+		Username     string `json:"username"`
+		DisplayName  string `json:"display_name"`
+		Email        string `json:"email"`
+		Role         string `json:"role"`
+		Active       bool   `json:"active"`
+		PrimaryGroup int64  `json:"primary_group"`
 	}
 	var lst struct {
 		Users  []userRow `json:"users"`
 		Groups []struct {
 			ID              int64  `json:"id"`
 			Name            string `json:"name"`
-			UrgentUnlimited bool   `json:"urgent_unlimited"`
+			IsDefault       bool   `json:"is_default"`
+			UrgentUnlimited *bool  `json:"urgent_unlimited"`
 			Members         int    `json:"members"`
 		} `json:"groups"`
 	}
@@ -68,14 +70,27 @@ func TestUserAdminEnrichedFlow(t *testing.T) {
 			alice = &lst.Users[i]
 		}
 	}
-	if alice == nil || alice.DisplayName != "Alice A" || alice.Email != "a@x.com" || !alice.Active || len(alice.Groups) != 1 || alice.Groups[0] != gid {
+	if alice == nil || alice.DisplayName != "Alice A" || alice.Email != "a@x.com" || !alice.Active || alice.PrimaryGroup != gid {
 		t.Fatalf("alice enriched row = %+v", alice)
 	}
-	if len(lst.Groups) != 1 || lst.Groups[0].Members != 1 {
-		t.Fatalf("group list = %+v, want 1 group with 1 member", lst.Groups)
+	var research *bool
+	sawDefault := false
+	for _, gg := range lst.Groups {
+		if gg.ID == gid {
+			if gg.Members != 1 {
+				t.Fatalf("Research members = %d, want 1", gg.Members)
+			}
+			research = gg.UrgentUnlimited
+		}
+		if gg.IsDefault {
+			sawDefault = true
+		}
 	}
-	if !lst.Groups[0].UrgentUnlimited {
-		t.Fatalf("group urgent_unlimited = false, want true")
+	if research == nil || !*research {
+		t.Fatalf("Research urgent_unlimited = %v, want true (override)", research)
+	}
+	if !sawDefault {
+		t.Fatal("group list is missing the Default group")
 	}
 }
 
@@ -132,11 +147,15 @@ func TestBulkActionsAndGuards(t *testing.T) {
 		t.Fatalf("last admin was disabled by bulk: n=%v active=%v", r2["n"], s.st.GetUser("admin").Active)
 	}
 
-	// Bulk add-to-group.
+	// Bulk set primary group, then clear it.
 	_, g := call(t, s.apiGroupAdd, `{"name":"Ops"}`, "admin")
 	gid := int64(g["id"].(float64))
-	call(t, s.apiUsersBulk, fmt.Sprintf(`{"action":"add_group","usernames":["u1","u2"],"group_id":%d}`, gid), "admin")
-	if len(s.st.GroupsOf("u1")) != 1 || len(s.st.GroupsOf("u2")) != 1 {
-		t.Fatal("bulk add_group did not assign both users")
+	call(t, s.apiUsersBulk, fmt.Sprintf(`{"action":"set_group","usernames":["u1","u2"],"group_id":%d}`, gid), "admin")
+	if s.st.PrimaryGroupOf("u1") != gid || s.st.PrimaryGroupOf("u2") != gid {
+		t.Fatal("bulk set_group did not assign both users")
+	}
+	call(t, s.apiUsersBulk, `{"action":"clear_group","usernames":["u1"]}`, "admin")
+	if s.st.PrimaryGroupOf("u1") != 0 {
+		t.Fatal("bulk clear_group did not clear u1")
 	}
 }

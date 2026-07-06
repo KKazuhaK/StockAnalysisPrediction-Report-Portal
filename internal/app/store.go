@@ -237,12 +237,21 @@ func (s *Store) init() error {
 		// (many-to-many); permissions still come from the role.
 		`CREATE TABLE IF NOT EXISTS user_profiles(
 			username TEXT PRIMARY KEY, display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT)`,
+		// weight / urgent_unlimited are NULL-able on purpose: on a non-default group a
+		// NULL means "inherit from the Default group" (group model B), a concrete value
+		// means "override". The Default group (is_default=1) always holds concrete
+		// baselines. See docs/adr/0010-group-model.md.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS user_groups(
-			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER DEFAULT 0,
-			urgent_unlimited INTEGER DEFAULT 0)`, pk),
+			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER,
+			urgent_unlimited INTEGER, is_default INTEGER DEFAULT 0)`, pk),
 		`CREATE TABLE IF NOT EXISTS user_group_members(
 			group_id BIGINT, username TEXT, PRIMARY KEY(group_id, username))`,
 		`CREATE INDEX IF NOT EXISTS idx_ugm_user ON user_group_members(username)`,
+		// Group model B: every user has at most one primary group; users without a row
+		// fall back to the Default group. This supersedes the many-to-many membership in
+		// user_group_members (left intact but no longer consulted for resolution).
+		`CREATE TABLE IF NOT EXISTS user_primary_group(
+			username TEXT PRIMARY KEY, group_id BIGINT)`,
 		// A group's default run priority (定时/优先级 resolution, ADR 0007). Additive
 		// side table (not a user_groups column) so weight (加急次票) and priority stay
 		// separate concerns. A member's effective default = highest across their groups.
@@ -259,8 +268,12 @@ func (s *Store) init() error {
 		}
 	}
 	if _, err := s.exec(`ALTER TABLE user_groups ADD COLUMN urgent_unlimited INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
-		return fmt.Errorf("升级 user_groups 失败: %w", err)
+		return fmt.Errorf("upgrade user_groups (urgent_unlimited): %w", err)
 	}
+	if _, err := s.exec(`ALTER TABLE user_groups ADD COLUMN is_default INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
+		return fmt.Errorf("upgrade user_groups (is_default): %w", err)
+	}
+	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
 	return nil
 }
 

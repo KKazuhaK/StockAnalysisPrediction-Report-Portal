@@ -31,23 +31,19 @@ func ticketRefill(remaining int, periodStart time.Time, allocation, periodDays i
 	return remaining, periodStart
 }
 
-// UserTicketAllocation is the per-period 加急 allowance for a user: the highest
-// weight among the groups they belong to (0 if none).
+// UserTicketAllocation is the per-period urgent allowance for a user: their primary
+// group's weight override, else the Default group's weight (group model B).
 func (s *Store) UserTicketAllocation(username string) int {
-	var w sql.NullInt64
-	s.queryRow(`SELECT COALESCE(MAX(g.weight),0) FROM user_group_members m
-		JOIN user_groups g ON g.id=m.group_id WHERE m.username=?`, username).Scan(&w)
-	return int(w.Int64)
+	w, _ := s.EffectiveTicketSettings(username)
+	return w
 }
 
-// UserUrgentUnlimited reports whether any of the user's groups grants unlimited
-// 加急 runs. This is independent of role: admins are limited unless placed in such
-// a group.
+// UserUrgentUnlimited reports whether a user's effective group grants unlimited urgent
+// runs. This is independent of role: admins are limited unless their primary (or the
+// Default) group grants it.
 func (s *Store) UserUrgentUnlimited(username string) bool {
-	var v sql.NullInt64
-	s.queryRow(`SELECT COALESCE(MAX(g.urgent_unlimited),0) FROM user_group_members m
-		JOIN user_groups g ON g.id=m.group_id WHERE m.username=?`, username).Scan(&v)
-	return v.Int64 != 0
+	_, u := s.EffectiveTicketSettings(username)
+	return u
 }
 
 func (s *Store) ticketRow(username string) (int, time.Time) {
