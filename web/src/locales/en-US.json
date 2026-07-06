@@ -199,6 +199,8 @@
   "batch.admin.deleteTargetConfirm": "Delete this target?",
   "batch.admin.advancedPlugins": "Advanced: custom executors",
   "batch.admin.advancedPluginsHint": "Import a manifest to run a non-Dify provider. Most setups only need Dify targets above.",
+  "batch.admin.rowConcurrency": "Rows per batch at once:",
+  "batch.admin.rowConcurrencyHint": "How many rows of one batch run simultaneously. 1 = one at a time. Capped by \"max jobs running at once\" so a batch can never exceed the global limit.",
   "batch.dify.newTarget": "New Dify workflow",
   "batch.dify.editTarget": "Edit Dify workflow",
   "batch.dify.chatTag": "Chat",

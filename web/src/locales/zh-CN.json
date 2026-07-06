@@ -199,6 +199,8 @@
   "batch.admin.deleteTargetConfirm": "删除该目标？",
   "batch.admin.advancedPlugins": "高级：自定义执行器",
   "batch.admin.advancedPluginsHint": "导入清单以接入非 Dify 的执行器。大多数场景只需上面的 Dify 目标即可。",
+  "batch.admin.rowConcurrency": "每批量同时跑几行：",
+  "batch.admin.rowConcurrencyHint": "一个批量最多同时跑几行。1 = 一行一行跑。会被“最多同时运行任务数”限制，单个批量不会超过全局上限。",
   "batch.dify.newTarget": "新建 Dify 工作流",
   "batch.dify.editTarget": "编辑 Dify 工作流",
   "batch.dify.chatTag": "对话",

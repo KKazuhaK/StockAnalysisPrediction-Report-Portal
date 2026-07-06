@@ -141,6 +141,20 @@ func (s *Server) batchBudget() int {
 	return n
 }
 
+// batchRowConcurrency is how many rows of a single batch run at once (admin-set; default
+// 1 = one row at a time). Capped by the global concurrency budget so a single batch can
+// never spawn more simultaneous runs than the "max at once" limit.
+func (s *Server) batchRowConcurrency() int {
+	n, err := strconv.Atoi(s.st.GetSetting("batch_row_concurrency", "1"))
+	if err != nil || n < 1 {
+		n = 1
+	}
+	if b := s.batchBudget(); n > b {
+		n = b
+	}
+	return n
+}
+
 // batchReserved is how many slots to hold for the top (加急) tier. Clamped to
 // [0, budget-1] by the scheduler, so it only bites once the budget is raised.
 func (s *Server) batchReserved() int {
@@ -456,11 +470,9 @@ func (s *Server) launchJob(jobID int64) {
 		return
 	}
 	eng := &batch.Engine{Store: s.st, Log: log.Printf}
-	// A job runs its rows one at a time (no per-batch parallelism), so the queue's
-	// "max concurrent jobs" budget is the real cap on simultaneous Dify runs: N running
-	// jobs × 1 row = at most N live runs. Per-batch concurrency would multiply that and
-	// overrun the limit (and hammer Dify's rate limit). See docs/adr/0004-run-queue.md.
-	spec := batch.JobSpec{JobID: jobID, Concurrency: 1, MaxRetries: job.MaxRetries}
+	// A batch runs up to batch_row_concurrency rows at once (default 1), capped by the
+	// global budget so one batch can't exceed the "max at once" limit. See ADR 0004.
+	spec := batch.JobSpec{JobID: jobID, Concurrency: s.batchRowConcurrency(), MaxRetries: job.MaxRetries}
 	// A per-job cancellable context so a cancel request aborts the in-flight Dify call
 	// immediately (the dify client uses this ctx for its HTTP requests) instead of
 	// waiting for the current row's blocking run to return.

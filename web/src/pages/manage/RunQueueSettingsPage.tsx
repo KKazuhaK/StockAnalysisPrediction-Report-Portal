@@ -13,6 +13,7 @@ export default function RunQueueSettingsPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [maxJobs, setMaxJobs] = useState(1)
+  const [rowConcurrency, setRowConcurrency] = useState(1)
   const [difyEndUser, setDifyEndUser] = useState('')
   const [defaultPriority, setDefaultPriority] = useState(50)
   const [wBase, setWBase] = useState(1000)
@@ -26,6 +27,7 @@ export default function RunQueueSettingsPage() {
       .get<BatchConfig>('/api/admin/batch/config')
       .then((r) => {
         setMaxJobs(r.max_jobs)
+        setRowConcurrency(r.row_concurrency ?? 1)
         setDifyEndUser(r.dify_end_user ?? '')
         setDefaultPriority(r.default_priority ?? 50)
         setWBase(r.prio_w_base)
@@ -41,6 +43,7 @@ export default function RunQueueSettingsPage() {
   const save = async () => {
     await api.post('/api/admin/batch/config', {
       max_jobs: maxJobs,
+      row_concurrency: rowConcurrency,
       dify_end_user: difyEndUser,
       default_priority: String(defaultPriority),
       prio_w_base: wBase,
@@ -68,6 +71,11 @@ export default function RunQueueSettingsPage() {
           t('batch.admin.maxJobs'),
           t('batch.admin.maxJobsHint'),
           <InputNumber min={1} max={50} value={maxJobs} onChange={(v) => setMaxJobs(v || 1)} />,
+        )}
+        {row(
+          t('batch.admin.rowConcurrency'),
+          t('batch.admin.rowConcurrencyHint'),
+          <InputNumber min={1} max={maxJobs} value={rowConcurrency} onChange={(v) => setRowConcurrency(v || 1)} />,
         )}
         {row(
           t('batch.admin.defaultPriority'),

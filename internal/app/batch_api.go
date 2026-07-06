@@ -87,6 +87,7 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 	pw := s.prioWeights()
 	writeJSON(w, map[string]any{
 		"max_jobs":           s.batchBudget(),                                   // queue budget: jobs running at once (ADR 0004)
+		"row_concurrency":    s.batchRowConcurrency(),                           // rows of one batch running at once (capped by max_jobs)
 		"reserved_slots":     s.batchReserved(),                                 // slots held for 加急 (ADR 0004)
 		"ticket_period_days": s.ticketPeriodDays(),                              // how often 加急 tickets refill (ADR 0005)
 		"default_priority":   s.runDefaultPriority(),                            // base priority (0..100) for no-group runs (ADR 0008)
@@ -104,6 +105,7 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		MaxJobs          *int    `json:"max_jobs"`
+		RowConcurrency   *int    `json:"row_concurrency"`
 		ReservedSlots    *int    `json:"reserved_slots"`
 		TicketPeriodDays *int    `json:"ticket_period_days"`
 		DefaultPriority  *string `json:"default_priority"`
@@ -130,6 +132,9 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	}
 	if in.MaxJobs != nil && *in.MaxJobs >= 1 {
 		s.st.SetSetting("batch_max_concurrent_jobs", strconv.Itoa(*in.MaxJobs))
+	}
+	if in.RowConcurrency != nil && *in.RowConcurrency >= 1 {
+		s.st.SetSetting("batch_row_concurrency", strconv.Itoa(*in.RowConcurrency))
 	}
 	if in.ReservedSlots != nil && *in.ReservedSlots >= 0 {
 		s.st.SetSetting("batch_reserved_slots", strconv.Itoa(*in.ReservedSlots))

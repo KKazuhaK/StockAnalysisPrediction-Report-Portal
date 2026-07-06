@@ -293,6 +293,7 @@ export interface UserGroupRow {
 
 export interface BatchConfig {
   max_jobs: number
+  row_concurrency: number
   reserved_slots: number
   ticket_period_days: number
   default_priority: number
