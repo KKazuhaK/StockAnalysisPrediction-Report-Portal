@@ -235,12 +235,18 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         // whose first row is still going) shows an indeterminate "loading" bar — a full
         // animated stripe — instead of an empty 0% one.
         const loading = running && realPct === 0
+        // Terminal colour: all-ok green, all-failed red, a mix (partial success) yellow.
+        const anyFail = j.failed > 0
+        const anyOk = j.succeeded > 0 || j.partial > 0
+        const status = running ? 'active' : anyFail && !anyOk ? 'exception' : !anyFail ? 'success' : undefined
+        const strokeColor = !running && anyFail && anyOk ? '#faad14' : undefined // partial → yellow
         return (
           <div style={{ maxWidth: 200 }}>
             <Progress
               percent={loading ? 100 : realPct}
               size="small"
-              status={j.failed ? 'exception' : running ? 'active' : undefined}
+              status={status}
+              strokeColor={strokeColor}
               // Indeterminate "loading" bar: animate a full bar but hide the "100%" —
               // the run is at 0/1, not done, so the number would be a lie.
               showInfo={!loading}
