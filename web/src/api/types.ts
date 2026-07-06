@@ -98,6 +98,7 @@ export interface BatchJob {
   succeeded: number
   partial: number
   failed: number
+  cancelled?: number // rows the operator cancelled individually (terminal, neither ok nor fail)
   created_by: string
   created_at: string
   started_at: string
@@ -118,7 +119,7 @@ export interface BatchItem {
 
 export interface BatchJobDetail {
   job: BatchJob
-  counts: { queued: number; running: number; succeeded: number; partial: number; failed: number }
+  counts: { queued: number; running: number; succeeded: number; partial: number; failed: number; cancelled: number }
   running_in_process: boolean
   items: BatchItem[]
 }

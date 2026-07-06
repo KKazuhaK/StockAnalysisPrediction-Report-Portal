@@ -83,6 +83,15 @@ cancelling), write the aggregate counts + terminal status via `FinishJob`, fire
   in-flight run (its rows parked behind a saturated budget) has no finishing run to trigger
   that finalize, so the cancel handler finalizes it directly and the `scheduleTick` backstop
   also sweeps `cancelling` jobs — otherwise such a job would strand in `cancelling`.
+- **Per-row cancel.** Because a batch is a producer of individual runs, a single row can be
+  cancelled without touching the rest: a `queued` row is marked `cancelled` (the scheduler
+  never admits it); a `running` row is aborted via a per-row context (`itemCancels`, a child
+  of the job's) and its goroutine records it `cancelled` — a distinct terminal status, not
+  `failed`, since the operator stopped it deliberately. Job-level cancel is the same
+  mechanism applied to every row, so its in-flight rows also land `cancelled`. `cancelled`
+  rows are terminal-but-neutral: `total − succeeded − partial − failed`, counted as done for
+  progress. `POST /jobs/{id}/items/cancel` takes a list of row ids (one for the per-row ⊘,
+  many for checkbox multi-select), authorized like job cancel (owner or admin).
 - Restart resume becomes trivial: `ResetInFlightItems` (running→queued) then
   `scheduleTick`; the scheduler re-admits from the persisted item state. No per-job
   engine to relaunch.

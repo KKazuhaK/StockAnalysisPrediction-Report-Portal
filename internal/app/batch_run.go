@@ -408,7 +408,7 @@ func (s *Server) scheduleTick() {
 	// Runs are admitted first, so a job with more rows to run is never finalized early.
 	var done []BatchJob
 	for _, j := range s.st.SchedulableJobs() {
-		if queued, running, _, _, _ := s.st.LiveJobCounts(j.ID); queued == 0 && running == 0 {
+		if queued, running, _, _, _, _ := s.st.LiveJobCounts(j.ID); queued == 0 && running == 0 {
 			if fin := s.finalizeLocked(j.ID); fin != nil {
 				done = append(done, *fin)
 			}
@@ -474,7 +474,7 @@ func (s *Server) itemCandidates() ([]queue.Item, map[int64]candMeta) {
 		if !runAtDue(j.RunAt, now) {
 			continue // a not-yet-due 定时 job contributes no runs
 		}
-		_, running, _, _, _ := s.st.LiveJobCounts(j.ID)
+		_, running, _, _, _, _ := s.st.LiveJobCounts(j.ID)
 		window := j.Concurrency
 		if window < 1 {
 			window = 1
@@ -555,12 +555,24 @@ func (s *Server) cancelRunningJob(jobID int64) {
 	}
 }
 
+// cancelRunningItem aborts ONE in-flight run (a single row) immediately, leaving the
+// job's other runs untouched. A no-op if that row isn't running here.
+func (s *Server) cancelRunningItem(itemID int64) {
+	if v, ok := s.itemCancels.Load(itemID); ok {
+		v.(context.CancelFunc)()
+	}
+}
+
 // startItem runs one admitted item in the background: build the provider, trigger the
 // run (retrying only transient transport errors), persist the outcome, then finalize the
 // job if it's done and re-admit into the freed slot. The scheduler already marked the
 // item running, so it holds one of the budget's slots for its whole lifetime.
 func (s *Server) startItem(job BatchJob, item batch.Item) {
 	jr := s.jobRunFor(job.ID)
+	// A per-row cancel scope, a child of the job's, so cancelling the whole job OR just
+	// this row aborts this run — and marks it 'cancelled', not 'failed'.
+	itemCtx, itemCancel := context.WithCancel(jr.ctx)
+	s.itemCancels.Store(item.ID, itemCancel)
 	build := s.buildProv
 	if build == nil {
 		build = s.buildProvider
@@ -570,6 +582,8 @@ func (s *Server) startItem(job BatchJob, item batch.Item) {
 			if r := recover(); r != nil {
 				log.Printf("batch job %d item %d panicked: %v", job.ID, item.ID, r)
 			}
+			s.itemCancels.Delete(item.ID)
+			itemCancel()
 			s.afterItem(job.ID)
 		}()
 		prov, err := build(job)
@@ -578,7 +592,14 @@ func (s *Server) startItem(job BatchJob, item batch.Item) {
 			s.st.FinishItem(item.ID, batch.Failed, 1, "", err.Error())
 			return
 		}
-		res, attempts := batch.RunItem(jr.ctx, prov, item.Inputs, job.MaxRetries, nil, log.Printf)
+		res, attempts := batch.RunItem(itemCtx, prov, item.Inputs, job.MaxRetries, nil, log.Printf)
+		// A cancelled run (this row or its whole job) is recorded as 'cancelled', not
+		// 'failed' — the operator stopped it on purpose. A run that actually finished
+		// keeps its real outcome even if a cancel raced in just after.
+		if itemCtx.Err() != nil {
+			s.st.FinishItemCancelled(item.ID)
+			return
+		}
 		s.st.FinishItem(item.ID, res.Status, attempts, res.RunID, res.Detail)
 	}()
 }
@@ -616,7 +637,7 @@ func (s *Server) finalizeLocked(jobID int64) *BatchJob {
 	if !ok || job.Status == "finished" || job.Status == "cancelled" {
 		return nil // already terminal
 	}
-	queued, running, _, _, _ := s.st.LiveJobCounts(jobID)
+	queued, running, _, _, _, _ := s.st.LiveJobCounts(jobID)
 	cancelling := job.Status == "cancelling"
 	if running > 0 || (queued > 0 && !cancelling) {
 		return nil // runs still in flight or waiting

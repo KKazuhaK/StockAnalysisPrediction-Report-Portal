@@ -457,7 +457,9 @@ func (s *Store) ListBatchJobs() []BatchJob {
 
 // LiveJobCounts returns the live per-status tallies computed from items (so a
 // running job's progress is always consistent, not a stale cached counter).
-func (s *Store) LiveJobCounts(jobID int64) (queued, running, succeeded, partial, failed int) {
+// cancelled counts rows the operator cancelled individually (ADR 0011) — terminal
+// but neither success nor failure.
+func (s *Store) LiveJobCounts(jobID int64) (queued, running, succeeded, partial, failed, cancelled int) {
 	rows, err := s.query("SELECT status, COUNT(*) FROM batch_items WHERE job_id=? GROUP BY status", jobID)
 	if err != nil {
 		return
@@ -478,9 +480,41 @@ func (s *Store) LiveJobCounts(jobID int64) (queued, running, succeeded, partial,
 			partial = n
 		case "failed":
 			failed = n
+		case "cancelled":
+			cancelled = n
 		}
 	}
 	return
+}
+
+// CancelQueuedItem marks ONE queued item (a run that hasn't started) 'cancelled' so the
+// scheduler never admits it. Atomic on status='queued', so it can't cancel a row that
+// started running between the read and the write; returns true only for the winner.
+func (s *Store) CancelQueuedItem(itemID int64) bool {
+	res, err := s.exec("UPDATE batch_items SET status='cancelled', finished_at=? WHERE id=? AND status='queued'", nowStr(), itemID)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n == 1
+}
+
+// FinishItemCancelled marks a running item 'cancelled' (its in-flight run was aborted by
+// a per-item or job cancel). Unconditional: the run's own goroutine calls it after the
+// provider returns, so it owns the transition.
+func (s *Store) FinishItemCancelled(itemID int64) error {
+	_, err := s.exec("UPDATE batch_items SET status='cancelled', finished_at=? WHERE id=?", nowStr(), itemID)
+	return err
+}
+
+// ItemJobAndStatus returns the parent job id and current status of an item, for the
+// per-item cancel endpoint to authorize (job ownership) and route (queued vs running).
+func (s *Store) ItemJobAndStatus(itemID int64) (jobID int64, status string, ok bool) {
+	err := s.queryRow("SELECT job_id, status FROM batch_items WHERE id=?", itemID).Scan(&jobID, &status)
+	if err != nil {
+		return 0, "", false
+	}
+	return jobID, status, true
 }
 
 // AllJobsFirstInputs returns each job's first row's inputs (raw JSON string), so a

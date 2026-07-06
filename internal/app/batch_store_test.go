@@ -143,6 +143,30 @@ func TestCancelBatchJobStopsDispatch(t *testing.T) {
 	}
 }
 
+// Per-row cancel: a queued row can be cancelled (skipped) but a running one can't be
+// queued-cancelled; LiveJobCounts tallies the new 'cancelled' status.
+func TestCancelQueuedItemAndCounts(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "u", []map[string]string{{"c": "a"}, {"c": "b"}}, "normal")
+	items := st.BatchJobItems(job)
+
+	if !st.CancelQueuedItem(items[0].ID) {
+		t.Fatal("CancelQueuedItem should cancel a queued row")
+	}
+	if st.CancelQueuedItem(items[0].ID) {
+		t.Fatal("CancelQueuedItem should return false the second time (already cancelled)")
+	}
+	st.MarkItemRunning(items[1].ID)
+	if st.CancelQueuedItem(items[1].ID) {
+		t.Fatal("CancelQueuedItem must not cancel a running row")
+	}
+	_, running, _, _, _, cancelled := st.LiveJobCounts(job)
+	if cancelled != 1 || running != 1 {
+		t.Fatalf("counts: cancelled=%d running=%d, want 1/1", cancelled, running)
+	}
+}
+
 // Retrying failed rows requeues only them and reopens the job.
 func TestRequeueFailedOnly(t *testing.T) {
 	st := newTestStore(t)

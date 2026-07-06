@@ -234,10 +234,17 @@ func (s *Server) apiBatchTargetDelete(w http.ResponseWriter, r *http.Request, us
 // ---------- jobs ----------
 
 func jobJSON(j BatchJob) map[string]any {
+	// cancelled rows are terminal but neither success nor failure; derive them so the
+	// progress bar can treat them as done (total − ok − partial − failed). A running
+	// job's live cancelled count is filled in by apiBatchJobs from LiveJobCounts.
+	cancelled := j.Total - j.Succeeded - j.Partial - j.Failed
+	if cancelled < 0 {
+		cancelled = 0
+	}
 	return map[string]any{
 		"id": j.ID, "target_id": j.TargetID, "status": j.Status, "priority": j.Priority,
 		"concurrency": j.Concurrency, "max_retries": j.MaxRetries,
-		"total": j.Total, "succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed,
+		"total": j.Total, "succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed, "cancelled": cancelled,
 		"created_by": j.CreatedBy, "created_at": j.CreatedAt, "started_at": j.StartedAt, "finished_at": j.FinishedAt,
 		"run_at": j.RunAt, // one-shot scheduled start ("" = ASAP; ADR 0007)
 	}
@@ -268,8 +275,8 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 		// A running job's stored counts are only written at finish; fill live counts
 		// so the console shows real-time progress.
 		if j.Status == "running" || j.Status == "cancelling" {
-			_, _, succeeded, partial, failed := s.st.LiveJobCounts(j.ID)
-			m["succeeded"], m["partial"], m["failed"] = succeeded, partial, failed
+			_, _, succeeded, partial, failed, cancelled := s.st.LiveJobCounts(j.ID)
+			m["succeeded"], m["partial"], m["failed"], m["cancelled"] = succeeded, partial, failed, cancelled
 		}
 		if j.Status == "queued" {
 			// A not-yet-due 定时 job is "scheduled", not "waiting"; flag it so the UI can
@@ -412,7 +419,7 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusNotFound, "job not found")
 		return
 	}
-	queued, running, succeeded, partial, failed := s.st.LiveJobCounts(id)
+	queued, running, succeeded, partial, failed, cancelled := s.st.LiveJobCounts(id)
 	items := make([]map[string]any, 0)
 	for _, it := range s.st.BatchJobItems(id) {
 		row := map[string]any{
@@ -430,10 +437,53 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 	}
 	writeJSON(w, map[string]any{
 		"job":                m,
-		"counts":             map[string]int{"queued": queued, "running": running, "succeeded": succeeded, "partial": partial, "failed": failed},
+		"counts":             map[string]int{"queued": queued, "running": running, "succeeded": succeeded, "partial": partial, "failed": failed, "cancelled": cancelled},
 		"running_in_process": inProc,
 		"items":              items,
 	})
+}
+
+// apiBatchItemsCancel cancels one or more individual rows of a job (ADR 0011): a queued
+// row is skipped (never runs), a running row's Dify call is aborted; both land 'cancelled'
+// (not 'failed'). It backs both the per-row ⊘ (one id) and multi-select (many). Auth
+// mirrors job cancel: a non-admin may only cancel rows of their own job.
+func (s *Server) apiBatchItemsCancel(w http.ResponseWriter, r *http.Request, user string) {
+	id := pathID(r, "id")
+	job, ok := s.st.GetBatchJob(id)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if !s.isAdmin(user) && job.CreatedBy != user {
+		jsonError(w, http.StatusForbidden, "you can only cancel your own runs")
+		return
+	}
+	var in struct {
+		ItemIDs []int64 `json:"item_ids"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	n := 0
+	for _, itemID := range in.ItemIDs {
+		jobID, status, ok := s.st.ItemJobAndStatus(itemID)
+		if !ok || jobID != id { // ignore ids that aren't this job's rows
+			continue
+		}
+		switch status {
+		case "queued":
+			if s.st.CancelQueuedItem(itemID) { // skip a not-yet-run row
+				n++
+			}
+		case "running":
+			s.cancelRunningItem(itemID) // abort the in-flight run; its goroutine marks it cancelled
+			n++
+		}
+	}
+	// Cancelling queued rows may have left the job with nothing more to run.
+	s.finalizeJob(id)
+	writeJSON(w, map[string]any{"cancelled": n})
 }
 
 func (s *Server) apiBatchJobCancel(w http.ResponseWriter, r *http.Request, user string) {

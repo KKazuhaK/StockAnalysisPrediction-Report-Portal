@@ -40,6 +40,7 @@ type Server struct {
 	names        *Names
 	pdf          *template.Template
 	jobRuns      sync.Map                                          // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
+	itemCancels  sync.Map                                          // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
 	jobNotify    sync.Map                                          // jobID -> bool; opt-in to email the submitter when the job finishes
 	buildProv    func(BatchJob) (batch.Provider, error)            // test seam for the run-item provider; nil → real buildProvider
 	schedMu      sync.Mutex                                        // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
@@ -232,6 +233,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/batch/jobs/clear-finished", s.requireAdminJSON(s.apiBatchClearFinished))
 	mux.HandleFunc("DELETE /api/admin/batch/jobs/{id}", s.requireAdminJSON(s.apiBatchJobDelete))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/cancel", s.requirePermJSON(PermRunBatch, s.apiBatchJobCancel))
+	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/items/cancel", s.requirePermJSON(PermRunBatch, s.apiBatchItemsCancel))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requireAdminJSON(s.apiBatchJobRetry))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/priority", s.requireAdminJSON(s.apiBatchJobReprioritize))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/schedule", s.requireAdminJSON(s.apiBatchJobSchedule))

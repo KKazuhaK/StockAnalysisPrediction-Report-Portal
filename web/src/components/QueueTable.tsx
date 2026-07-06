@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type Key } from 'react'
 import {
   App,
   Button,
@@ -37,19 +37,42 @@ import { BASE_MAX, fmtInputs, isTerminal, isUrgent, priorityNum, priorityTag, st
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
-// Detail drawer: a run's rows, inputs, errors + a link to the stock's reports.
-function DetailDrawer({ jobId, onClose }: { jobId: number | null; onClose: () => void }) {
+// itemActive reports whether a run (row) can still be cancelled — it hasn't reached a
+// terminal state (succeeded / partial / failed / cancelled).
+const itemActive = (s: string) => s === 'queued' || s === 'running'
+
+// Detail drawer: a run's rows, inputs, errors + a link to the stock's reports. Rows can be
+// cancelled individually (per-row ⊘) or several at once (checkbox multi-select), by the
+// job's owner or an admin.
+function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; admin: boolean; user: string | null; onClose: () => void }) {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const [detail, setDetail] = useState<BatchJobDetail | null>(null)
+  const [selected, setSelected] = useState<Key[]>([])
   const open = jobId != null
+  const load = () => (jobId == null ? Promise.resolve() : api.get<BatchJobDetail>(`/api/admin/batch/jobs/${jobId}`).then(setDetail).catch(() => {}))
   useEffect(() => {
     if (jobId == null) return
     setDetail(null)
-    const load = () => api.get<BatchJobDetail>(`/api/admin/batch/jobs/${jobId}`).then(setDetail).catch(() => {})
+    setSelected([])
     load()
     const id = setInterval(load, 2500)
     return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId])
+
+  const canCancel = detail != null && (admin || detail.job.created_by === user)
+  const cancelRows = async (ids: Key[]) => {
+    if (jobId == null || ids.length === 0) return
+    try {
+      await api.post(`/api/admin/batch/jobs/${jobId}/items/cancel`, { item_ids: ids.map(Number) })
+      message.success(t('batch.msg.rowsCancelled', { n: ids.length }))
+      setSelected([])
+      await load()
+    } catch (e) {
+      message.error((e as Error).message || 'failed')
+    }
+  }
 
   const symbolOf = (it: BatchItem) => {
     try {
@@ -76,10 +99,51 @@ function DetailDrawer({ jobId, onClose }: { jobId: number | null; onClose: () =>
           ''
         ),
     },
+    {
+      title: '',
+      width: 40,
+      render: (_: unknown, it) =>
+        canCancel && itemActive(it.status) ? (
+          <Popconfirm title={t('queue.cancelRowConfirm')} onConfirm={() => cancelRows([it.id])}>
+            <Button size="small" type="text" danger icon={<StopOutlined />} title={t('queue.cancelRow')} />
+          </Popconfirm>
+        ) : null,
+    },
   ]
+  const rowSelection = canCancel
+    ? {
+        selectedRowKeys: selected,
+        onChange: setSelected,
+        getCheckboxProps: (it: BatchItem) => ({ disabled: !itemActive(it.status) }),
+      }
+    : undefined
   return (
-    <Drawer title={detail ? t('batch.jobTitle', { id: detail.job.id }) : t('batch.jobDetail')} width={680} open={open} onClose={onClose} destroyOnClose>
-      {detail && <Table rowKey="id" size="small" dataSource={detail.items} columns={cols} pagination={{ pageSize: 20, size: 'small' }} />}
+    <Drawer
+      title={detail ? t('batch.jobTitle', { id: detail.job.id }) : t('batch.jobDetail')}
+      width={680}
+      open={open}
+      onClose={onClose}
+      destroyOnClose
+      extra={
+        selected.length > 0 ? (
+          <Popconfirm title={t('queue.cancelRowsConfirm', { n: selected.length })} onConfirm={() => cancelRows(selected)}>
+            <Button danger size="small" icon={<StopOutlined />}>
+              {t('queue.cancelSelected', { n: selected.length })}
+            </Button>
+          </Popconfirm>
+        ) : null
+      }
+    >
+      {detail && (
+        <Table
+          rowKey="id"
+          size="small"
+          rowSelection={rowSelection}
+          dataSource={detail.items}
+          columns={cols}
+          pagination={{ pageSize: 20, size: 'small' }}
+        />
+      )}
     </Drawer>
   )
 }
@@ -104,6 +168,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const [detailId, setDetailId] = useState<number | null>(null)
   const [reschedId, setReschedId] = useState<number | null>(null)
   const [reschedAt, setReschedAt] = useState<Dayjs | null>(null)
+  const [selectedJobs, setSelectedJobs] = useState<Key[]>([])
 
   const load = () => {
     api.get<{ jobs: BatchJob[] }>('/api/admin/batch/jobs').then((r) => setJobs(r.jobs || [])).catch(() => {})
@@ -148,6 +213,13 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
     }
   }
   const cancel = (id: number) => act(() => api.post(`/api/admin/batch/jobs/${id}/cancel`), t('batch.msg.cancelRequested'))
+  // Cancel several whole jobs at once (multi-select). Each goes through the same per-job
+  // cancel endpoint (which the server authorizes per job), so partial permission is fine.
+  const cancelJobs = (ids: Key[]) =>
+    act(async () => {
+      await Promise.allSettled(ids.map((id) => api.post(`/api/admin/batch/jobs/${Number(id)}/cancel`)))
+      setSelectedJobs([])
+    }, t('batch.msg.cancelRequested'))
   const del = (id: number) => act(() => api.del(`/api/admin/batch/jobs/${id}`), t('queue.deleted'))
   const retry = (id: number) => act(() => api.post(`/api/admin/batch/jobs/${id}/retry`, { statuses: ['failed'] }), t('queue.retried'))
   const runNow = (id: number) => act(() => api.post(`/api/admin/batch/jobs/${id}/schedule`, { run_at: '' }), t('queue.runningNow'))
@@ -228,17 +300,19 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
             </Typography.Text>
           )
         if (j.status === 'queued') return <Tag>{j.ahead ? t('batch.aheadN', { n: j.ahead }) : t('batch.aheadNext')}</Tag>
-        const done = j.succeeded + j.partial + j.failed
+        const cancelled = j.cancelled || 0
+        const done = j.succeeded + j.partial + j.failed + cancelled // cancelled rows are terminal too
         const running = j.status === 'running' || j.status === 'cancelling'
         const realPct = j.total ? Math.round((done / j.total) * 100) : 0
         // A running job with no measurable progress yet (a single-row run, or a batch
         // whose first row is still going) shows an indeterminate "loading" bar — a full
         // animated stripe — instead of an empty 0% one.
         const loading = running && realPct === 0
-        // Terminal colour: all-ok green, all-failed red, a mix (partial success) yellow.
+        // Terminal colour: some-ok+some-fail (partial success) yellow, all-failed red,
+        // any success green, all-cancelled/none neutral.
         const anyFail = j.failed > 0
         const anyOk = j.succeeded > 0 || j.partial > 0
-        const status = running ? 'active' : anyFail && !anyOk ? 'exception' : !anyFail ? 'success' : undefined
+        const status = running ? 'active' : anyFail && !anyOk ? 'exception' : !anyFail && anyOk ? 'success' : undefined
         const strokeColor = !running && anyFail && anyOk ? '#faad14' : undefined // partial → yellow
         return (
           <div style={{ maxWidth: 200 }}>
@@ -253,6 +327,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
             />
             <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -2 }}>
               {t('batch.progressText', { done, total: j.total, ok: j.succeeded, fail: j.failed, partial: j.partial })}
+              {cancelled > 0 ? ` · ${t('batch.cancelledN', { n: cancelled })}` : ''}
             </Typography.Text>
           </div>
         )
@@ -325,6 +400,13 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
                 <Typography.Text type="secondary">{t('queue.myPriority')}</Typography.Text> {priorityTag(t, String(summary.my_priority))}
               </span>
             )}
+            {selectedJobs.length > 0 && (
+              <Popconfirm title={t('queue.cancelJobsConfirm', { n: selectedJobs.length })} onConfirm={() => cancelJobs(selectedJobs)}>
+                <Button size="small" danger icon={<StopOutlined />}>
+                  {t('queue.cancelSelected', { n: selectedJobs.length })}
+                </Button>
+              </Popconfirm>
+            )}
             {admin && (
               <Popconfirm title={t('queue.clearFinishedConfirm')} onConfirm={clearFinished}>
                 <Button size="small" icon={<DeleteOutlined />}>
@@ -361,11 +443,25 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         {rows.length === 0 ? (
           <Empty description={t('queue.empty')} />
         ) : (
-          <Table rowKey="id" size="small" dataSource={rows} columns={cols} pagination={{ pageSize: 15 }} scroll={{ x: 900 }} />
+          <Table
+            rowKey="id"
+            size="small"
+            rowSelection={{
+              selectedRowKeys: selectedJobs,
+              onChange: setSelectedJobs,
+              // Only in-flight jobs (their owner/admin) can be cancelled; terminal or
+              // others' jobs aren't selectable.
+              getCheckboxProps: (j) => ({ disabled: isTerminal(j.status) || !canCancel(j) }),
+            }}
+            dataSource={rows}
+            columns={cols}
+            pagination={{ pageSize: 15 }}
+            scroll={{ x: 900 }}
+          />
         )}
       </Card>
 
-      <DetailDrawer jobId={detailId} onClose={() => setDetailId(null)} />
+      <DetailDrawer jobId={detailId} admin={admin} user={user} onClose={() => setDetailId(null)} />
 
       <Modal
         title={t('queue.reschedule')}
