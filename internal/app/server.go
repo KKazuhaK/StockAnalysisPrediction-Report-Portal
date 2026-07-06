@@ -41,7 +41,7 @@ type Server struct {
 	batchRunning sync.Map                                          // jobID -> struct{}; guards against launching a job twice in-process
 	jobCancels   sync.Map                                          // jobID -> context.CancelFunc; lets a cancel abort the in-flight run
 	jobNotify    sync.Map                                          // jobID -> bool; opt-in to email the submitter when the job finishes
-	runGate      chan struct{}                                     // global cap on concurrent runs: every row acquires a slot (sized at startup to the budget)
+	runGate      *runGate                                          // global cap on concurrent runs: every row acquires a slot (reads the live budget)
 	schedMu      sync.Mutex                                        // serializes scheduleTick so concurrent ticks can't over-admit (ADR 0004)
 	mailFn       func(to []string, subject, htmlBody string) error // test seam; nil → real SMTP send
 	appTok       *appTokens                                        // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
@@ -97,7 +97,7 @@ func RunServer(cfgPath string) {
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
 	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute)}
-	s.runGate = make(chan struct{}, s.batchBudget()) // global concurrent-run cap (restart to resize)
+	s.runGate = newRunGate(s.batchBudget) // global concurrent-run cap; reads the live budget setting
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()
