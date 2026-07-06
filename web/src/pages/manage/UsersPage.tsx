@@ -401,40 +401,58 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [edit, setEdit] = useState<UserGroupRow | 'new' | null>(null)
-  const [ticketPeriod, setTicketPeriod] = useState<number>()
   const [form] = Form.useForm()
   const isDefault = edit !== 'new' && !!edit?.is_default
   const weightInherit = Form.useWatch('weight_inherit', form)
   const urgentInherit = Form.useWatch('urgent_inherit', form)
   const defaultGroup = useMemo(() => groups.find((g) => g.is_default), [groups])
 
-  useEffect(() => {
-    let alive = true
-    api.get<Pick<BatchConfig, 'ticket_period_days'>>('/api/admin/batch/config').then(
+  // The urgent lane + ticket config is GLOBAL (not per-group), but it belongs with the
+  // per-group weights conceptually, so it lives here rather than on the run-queue
+  // settings page. Loaded from / saved to the shared batch config.
+  const [urgentEnabled, setUrgentEnabled] = useState(false)
+  const [reservedSlots, setReservedSlots] = useState(1)
+  const [ticketPeriod, setTicketPeriod] = useState(7)
+  const [maxJobs, setMaxJobs] = useState(1)
+  const [cfgReady, setCfgReady] = useState(false)
+
+  const loadCfg = () =>
+    api.get<BatchConfig>('/api/admin/batch/config').then(
       (r) => {
-        if (alive && typeof r.ticket_period_days === 'number') setTicketPeriod(r.ticket_period_days)
+        setUrgentEnabled(!!r.urgent_enabled)
+        setReservedSlots(r.reserved_slots)
+        setTicketPeriod(r.ticket_period_days)
+        setMaxJobs(r.max_jobs)
+        setCfgReady(true)
       },
       () => {
         /* keep group editing usable even if the global queue config is temporarily unreachable */
       },
     )
-    return () => {
-      alive = false
-    }
+  useEffect(() => {
+    loadCfg()
   }, [])
 
-  useEffect(() => {
-    if (edit != null && ticketPeriod != null) form.setFieldValue('ticket_period_days', ticketPeriod)
-  }, [edit, form, ticketPeriod])
+  const saveUrgent = async () => {
+    try {
+      await api.post('/api/admin/batch/config', {
+        urgent_enabled: urgentEnabled,
+        reserved_slots: reservedSlots,
+        ticket_period_days: ticketPeriod,
+      })
+      message.success(t('common.saved'))
+      loadCfg()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
 
   const openForm = (g: UserGroupRow | 'new') => {
     setEdit(g)
-    const shared = { ticket_period_days: ticketPeriod }
     if (g === 'new')
-      form.setFieldsValue({ ...shared, name: '', description: '', weight_inherit: true, weight: 0, urgent_inherit: true, urgent_unlimited: false, priority: undefined })
+      form.setFieldsValue({ name: '', description: '', weight_inherit: true, weight: 0, urgent_inherit: true, urgent_unlimited: false, priority: undefined })
     else
       form.setFieldsValue({
-        ...shared,
         name: g.name,
         description: g.description,
         // A null weight / urgent means the group inherits the Default group's value.
@@ -449,7 +467,6 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
     const v = await form.validateFields()
     const target = edit !== 'new' && edit ? edit : null
     const isDef = !!target?.is_default
-    const nextTicketPeriod = typeof v.ticket_period_days === 'number' ? v.ticket_period_days : undefined
     // null weight / urgent = inherit the Default group; the Default group is always concrete.
     const body = {
       name: v.name,
@@ -459,10 +476,6 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
       priority: v.priority == null || v.priority === '' ? '' : String(v.priority),
     }
     try {
-      if (nextTicketPeriod != null && nextTicketPeriod !== ticketPeriod) {
-        await api.post('/api/admin/batch/config', { ticket_period_days: nextTicketPeriod })
-        setTicketPeriod(nextTicketPeriod)
-      }
       if (edit === 'new') await api.post('/api/admin/groups', body)
       else await api.put(`/api/admin/groups/${(edit as UserGroupRow).id}`, body)
       setEdit(null)
@@ -485,8 +498,53 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const effWeight = (g: UserGroupRow) => (g.weight != null ? g.weight : defaultGroup?.weight ?? 0)
   const effUrgent = (g: UserGroupRow) => (g.urgent_unlimited != null ? g.urgent_unlimited : !!defaultGroup?.urgent_unlimited)
 
+  const cfgRow = (label: string, hint: string, control: React.ReactNode) => (
+    <Space wrap align="start">
+      <span style={{ display: 'inline-block', minWidth: 128 }}>{label}</span>
+      {control}
+      <Typography.Text type="secondary" style={{ maxWidth: 360, display: 'inline-block' }}>
+        {hint}
+      </Typography.Text>
+    </Space>
+  )
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
+      {/* Global urgent lane + ticket config (moved off the run-queue settings page). */}
+      <Card size="small" title={t('users.urgentTitle')}>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {cfgRow(
+            t('batch.admin.urgentEnabled'),
+            t('batch.admin.urgentEnabledHint'),
+            <Switch checked={urgentEnabled} onChange={setUrgentEnabled} disabled={!cfgReady} />,
+          )}
+          {urgentEnabled && (
+            <>
+              {cfgRow(
+                t('batch.admin.reservedSlots'),
+                t('batch.admin.reservedSlotsHint'),
+                <InputNumber min={0} max={Math.max(0, maxJobs - 1)} value={reservedSlots} onChange={(v) => setReservedSlots(v ?? 0)} disabled={!cfgReady} />,
+              )}
+              {cfgRow(
+                t('batch.admin.ticketPeriod'),
+                t('batch.admin.ticketPeriodHint'),
+                <InputNumber
+                  min={1}
+                  max={365}
+                  value={ticketPeriod}
+                  onChange={(v) => setTicketPeriod(v || 7)}
+                  addonAfter={t('batch.admin.days')}
+                  disabled={!cfgReady}
+                />,
+              )}
+            </>
+          )}
+          <Button type="primary" onClick={saveUrgent} disabled={!cfgReady}>
+            {t('common.save')}
+          </Button>
+        </Space>
+      </Card>
+
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button type="primary" icon={<UsergroupAddOutlined />} onClick={() => openForm('new')}>
           {t('users.addGroup')}
@@ -581,16 +639,6 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
             <Switch disabled={!isDefault && urgentInherit} />
           </Form.Item>
 
-          <Form.Item name="ticket_period_days" label={t('users.ticketPeriod')} extra={t('users.ticketPeriodHint')}>
-            <InputNumber
-              min={1}
-              max={365}
-              style={{ width: '100%' }}
-              addonAfter={t('batch.admin.days')}
-              disabled={ticketPeriod == null}
-              placeholder={ticketPeriod == null ? t('common.loading') : undefined}
-            />
-          </Form.Item>
           {/* The Default group has no priority override — its members use the system default. */}
           {!isDefault && (
             <Form.Item name="priority" label={t('users.priority')} extra={t('users.priorityHint')}>
