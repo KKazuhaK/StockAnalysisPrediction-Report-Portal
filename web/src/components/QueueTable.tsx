@@ -241,6 +241,9 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
               percent={loading ? 100 : realPct}
               size="small"
               status={j.failed ? 'exception' : running ? 'active' : undefined}
+              // Indeterminate "loading" bar: animate a full bar but hide the "100%" —
+              // the run is at 0/1, not done, so the number would be a lie.
+              showInfo={!loading}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -2 }}>
               {t('batch.progressText', { done, total: j.total, ok: j.succeeded, fail: j.failed, partial: j.partial })}
