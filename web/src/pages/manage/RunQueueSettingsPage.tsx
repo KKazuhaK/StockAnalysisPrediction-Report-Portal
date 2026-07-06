@@ -75,7 +75,7 @@ export default function RunQueueSettingsPage() {
           <InputNumber min={0} max={100} value={defaultPriority} onChange={(v) => setDefaultPriority(v ?? 50)} />,
         )}
 
-        <Divider style={{ margin: '4px 0' }} orientation="left" plain>
+        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
           {t('batch.admin.difyTitle')}
         </Divider>
         {row(
@@ -89,7 +89,7 @@ export default function RunQueueSettingsPage() {
           />,
         )}
 
-        <Divider style={{ margin: '4px 0' }} orientation="left" plain>
+        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
           {t('batch.admin.prioWeightsTitle')}
         </Divider>
         <Typography.Text type="secondary">{t('batch.admin.prioWeightsHint')}</Typography.Text>

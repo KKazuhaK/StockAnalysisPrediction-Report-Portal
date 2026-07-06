@@ -120,7 +120,7 @@ export default function EmailPage() {
           {t('common.save')}
         </Button>
 
-        <Divider style={{ margin: '4px 0' }} orientation="left" plain>
+        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
           {t('email.test')}
         </Divider>
         <Space wrap>
