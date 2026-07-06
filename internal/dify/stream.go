@@ -104,12 +104,25 @@ func (c *Client) RunWorkflowStream(ctx context.Context, inputs map[string]any, u
 		if onEvent != nil {
 			onEvent(StreamEvent{Event: ev.Event, TaskID: taskID, RunID: runID, Title: ev.Data.Title, Index: ev.Data.Index, Status: ev.Data.Status})
 		}
-		if ev.Event == "workflow_finished" {
+		switch ev.Event {
+		case "workflow_finished":
 			res = RunResult{
 				WorkflowRunID: runID, TaskID: taskID, Status: ev.Data.Status,
 				Error: ev.Data.Error, Outputs: ev.Data.Outputs, Raw: append([]byte(nil), payload...),
 			}
 			done = true
+		case "error":
+			// A stream-level error (e.g. bad model config / quota / rate limit) — often
+			// emitted before workflow_started, so there is no run to reconcile. Surface
+			// Dify's real message as a terminal failure instead of the generic
+			// "stream ended" fallback (which hid the actual cause).
+			if !done {
+				res = RunResult{
+					WorkflowRunID: runID, TaskID: taskID, Status: "failed",
+					Error: firstNonEmpty(ev.Data.Error, ev.Message), Raw: append([]byte(nil), payload...),
+				}
+				done = true
+			}
 		}
 	}
 	// If workflow_finished already arrived, the run completed — a trailing read error

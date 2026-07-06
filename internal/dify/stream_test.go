@@ -55,6 +55,26 @@ func TestRunWorkflowStreamHappy(t *testing.T) {
 	}
 }
 
+// A stream-level `error` event (bad model config / quota / rate limit) — often emitted
+// before any workflow_started, so there is no run id — is surfaced as a terminal failure
+// carrying Dify's real message, NOT the generic "stream ended before workflow_finished"
+// that used to swallow it.
+func TestRunWorkflowStreamErrorEvent(t *testing.T) {
+	srv := sseStub(t, []string{
+		`{"event":"error","task_id":"t1","message":"insufficient credits","code":"provider_quota","status":400}`,
+	})
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+
+	res, _, err := c.RunWorkflowStream(context.Background(), map[string]any{"symbol": "1"}, "u", nil)
+	if err != nil {
+		t.Fatalf("an error event should be a terminal result, not a transport error: %v", err)
+	}
+	if res.Status != "failed" || res.Error != "insufficient credits" {
+		t.Fatalf("res = %+v, want failed / 'insufficient credits'", res)
+	}
+}
+
 // A stream that ends before workflow_finished (a dropped connection) still returns
 // the run id, so the caller can reconcile the outcome instead of re-running.
 func TestRunWorkflowStreamDropReturnsRunID(t *testing.T) {
