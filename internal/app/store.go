@@ -207,6 +207,10 @@ func (s *Store) init() error {
 			id %s, job_id BIGINT, row_index INTEGER, inputs TEXT, status TEXT DEFAULT 'queued',
 			attempts INTEGER DEFAULT 0, run_id TEXT, error TEXT, started_at TEXT, finished_at TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id, status)`,
+		// The batch console polls AllJobsFirstInputs (first row of every job) every 2s;
+		// without this the WHERE row_index=0 lookup is a full scan of batch_items — the
+		// fastest-growing table — and gets slow on a large job history.
+		`CREATE INDEX IF NOT EXISTS idx_batch_items_row0 ON batch_items(row_index, job_id)`,
 		// Priority run queue (see docs/adr/0004-run-queue.md). A job's priority level
 		// lives in its own table (not a batch_jobs column) so the queue is an additive
 		// layer — no change to the existing table. enqueue time = batch_jobs.created_at.
