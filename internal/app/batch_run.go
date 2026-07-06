@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
@@ -141,24 +142,63 @@ func (s *Server) batchBudget() int {
 	return n
 }
 
-// gatedProvider caps concurrent runs GLOBALLY: every row acquires a shared slot before
-// running, so the total simultaneous Dify runs across ALL jobs never exceeds the budget —
-// regardless of how many jobs run or each batch's row concurrency. This is what makes the
-// "max at once" limit a true cap on runs, not just on jobs. The gate is sized at startup;
-// changing the budget needs a restart. A nil gate (tests) is a pass-through.
+// runGate caps concurrent runs GLOBALLY: every row acquires a slot before running, so the
+// total simultaneous Dify runs across ALL jobs never exceeds the budget — regardless of
+// how many jobs run or each batch's row concurrency. This is what makes the "max at once"
+// limit a true cap on runs, not just on jobs. The limit is read on every acquire, so
+// changing it in the admin panel takes effect immediately (no restart).
+type runGate struct {
+	mu      sync.Mutex
+	running int
+	limit   func() int
+}
+
+func newRunGate(limit func() int) *runGate { return &runGate{limit: limit} }
+
+// acquire blocks until a slot is free (running < the current limit) or ctx is cancelled.
+// Returns false only on cancellation.
+func (g *runGate) acquire(ctx context.Context) bool {
+	for {
+		g.mu.Lock()
+		lim := g.limit()
+		if lim < 1 {
+			lim = 1
+		}
+		if g.running < lim {
+			g.running++
+			g.mu.Unlock()
+			return true
+		}
+		g.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+}
+
+func (g *runGate) release() {
+	g.mu.Lock()
+	if g.running > 0 {
+		g.running--
+	}
+	g.mu.Unlock()
+}
+
+// gatedProvider wraps a Provider so each run passes through the global run gate. A nil
+// gate (tests) is a pass-through.
 type gatedProvider struct {
 	inner batch.Provider
-	gate  chan struct{}
+	gate  *runGate
 }
 
 func (g gatedProvider) Run(ctx context.Context, inputs map[string]string) (batch.RunResult, error) {
 	if g.gate != nil {
-		select {
-		case g.gate <- struct{}{}:
-			defer func() { <-g.gate }()
-		case <-ctx.Done():
+		if !g.gate.acquire(ctx) {
 			return batch.RunResult{}, ctx.Err()
 		}
+		defer g.gate.release()
 	}
 	return g.inner.Run(ctx, inputs)
 }

@@ -17,11 +17,12 @@ func (f providerRunFunc) Run(ctx context.Context, in map[string]string) (batch.R
 	return f(ctx, in)
 }
 
-// gatedProvider caps concurrent runs across all callers at the gate's size, no matter how
-// many rows/jobs fire at once — the whole point of the global run cap.
+// gatedProvider caps concurrent runs across all callers at the current limit, no matter
+// how many rows/jobs fire at once — the whole point of the global run cap. The limit is
+// read live, so lowering it is honored immediately.
 func TestGatedProviderCapsConcurrency(t *testing.T) {
-	const cap = 2
-	gate := make(chan struct{}, cap)
+	var limit int32 = 2
+	gate := newRunGate(func() int { return int(atomic.LoadInt32(&limit)) })
 	var cur, max int32
 	inner := providerRunFunc(func(ctx context.Context, _ map[string]string) (batch.RunResult, error) {
 		n := atomic.AddInt32(&cur, 1)
@@ -43,9 +44,23 @@ func TestGatedProviderCapsConcurrency(t *testing.T) {
 		go func() { defer wg.Done(); gp.Run(context.Background(), nil) }()
 	}
 	wg.Wait()
-	if max > cap {
-		t.Fatalf("max concurrent runs = %d, want <= %d (the global cap)", max, cap)
+	if max > 2 {
+		t.Fatalf("max concurrent runs = %d, want <= 2 (the global cap)", max)
 	}
+
+	// Lowering the limit to 1 is honored immediately (no restart): the next burst never
+	// exceeds 1 at a time.
+	atomic.StoreInt32(&limit, 1)
+	atomic.StoreInt32(&max, 0)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); gp.Run(context.Background(), nil) }()
+	}
+	wg.Wait()
+	if max > 1 {
+		t.Fatalf("after lowering the limit to 1, max concurrent = %d, want <= 1", max)
+	}
+
 	// A nil gate is a pass-through (used in tests / when unsized).
 	if _, err := (gatedProvider{inner: inner}).Run(context.Background(), nil); err != nil {
 		t.Fatalf("nil-gate pass-through: %v", err)
