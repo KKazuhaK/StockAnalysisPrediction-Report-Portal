@@ -227,11 +227,13 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobs))
 	mux.HandleFunc("POST /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobCreate))
 	mux.HandleFunc("GET /api/admin/batch/jobs/{id}", s.requirePermJSON(PermRunBatch, s.apiBatchJobDetail))
-	mux.HandleFunc("DELETE /api/admin/batch/jobs/{id}", s.requirePermJSON(PermRunBatch, s.apiBatchJobDelete))
+	// Queue mutations are admin-only, except cancel — a non-admin may cancel their own
+	// run (ownership is checked inside apiBatchJobCancel).
+	mux.HandleFunc("DELETE /api/admin/batch/jobs/{id}", s.requireAdminJSON(s.apiBatchJobDelete))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/cancel", s.requirePermJSON(PermRunBatch, s.apiBatchJobCancel))
-	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requirePermJSON(PermRunBatch, s.apiBatchJobRetry))
+	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requireAdminJSON(s.apiBatchJobRetry))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/priority", s.requireAdminJSON(s.apiBatchJobReprioritize))
-	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/schedule", s.requirePermJSON(PermRunBatch, s.apiBatchJobSchedule))
+	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/schedule", s.requireAdminJSON(s.apiBatchJobSchedule))
 
 	// ---- Downloadable iframe apps (see docs/adr/0003-downloadable-apps.md) ----
 	// List/open is any-user; install/uninstall is admin; assets are served publicly.
