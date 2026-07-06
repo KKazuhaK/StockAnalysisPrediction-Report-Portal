@@ -15,7 +15,7 @@ func TestUrgentAllowedSpendsTickets(t *testing.T) {
 	s.st.UpsertUser(User{Username: "admin", PasswordHash: "x", Role: "admin"})
 	s.st.UpsertUser(User{Username: "op", PasswordHash: "x", Role: "operator"})
 	g, _ := s.st.CreateUserGroup("G", "", 2)
-	s.st.SetUserGroups("op", []int64{g})
+	s.st.SetPrimaryGroup("op", g)
 
 	// Admin with no tickets/unlimited group is limited like any other user.
 	if p, d := s.urgentAllowed("admin", "urgent", 50); p != "50" || !d {
@@ -37,7 +37,7 @@ func TestUrgentAllowedSpendsTickets(t *testing.T) {
 	}
 
 	free, _ := s.st.CreateUserGroup("Unlimited", "", 0, true)
-	s.st.SetUserGroups("admin", []int64{free})
+	s.st.SetPrimaryGroup("admin", free)
 	if p, d := s.urgentAllowed("admin", "urgent", 50); p != "urgent" || d {
 		t.Fatalf("admin urgent from unlimited group = %q downgraded=%v, want urgent/false", p, d)
 	}
@@ -68,7 +68,7 @@ func TestUrgentDisabledDowngrades(t *testing.T) {
 		t.Fatalf("enabled admin urgent without group = %q downgraded=%v, want 40/true", p, d)
 	}
 	free, _ := s.st.CreateUserGroup("Unlimited", "", 0, true)
-	s.st.SetUserGroups("admin", []int64{free})
+	s.st.SetPrimaryGroup("admin", free)
 	if p, d := s.urgentAllowed("admin", "urgent", 40); p != "urgent" || d {
 		t.Fatalf("enabled admin urgent from unlimited group = %q downgraded=%v, want urgent/false", p, d)
 	}
@@ -123,12 +123,12 @@ func TestTicketSpendAndAllocation(t *testing.T) {
 		t.Fatal("spent a ticket with zero allocation")
 	}
 
-	// Join a weight-3 group; allocation = 3 (max across groups).
+	// Primary group with weight 3; allocation = the primary's weight.
 	g1, _ := st.CreateUserGroup("A", "", 3)
-	g2, _ := st.CreateUserGroup("B", "", 1)
-	st.SetUserGroups("op", []int64{g1, g2})
+	st.CreateUserGroup("B", "", 1)
+	st.SetPrimaryGroup("op", g1)
 	if a := st.UserTicketAllocation("op"); a != 3 {
-		t.Fatalf("allocation = %d, want 3 (max weight)", a)
+		t.Fatalf("allocation = %d, want 3 (primary group's weight)", a)
 	}
 	if st.UserUrgentUnlimited("op") {
 		t.Fatal("weighted groups should not imply unlimited urgent")
@@ -159,8 +159,8 @@ func TestTicketSpendAndAllocation(t *testing.T) {
 	}
 
 	g3, _ := st.CreateUserGroup("Unlimited", "", 0, true)
-	st.SetUserGroups("op", []int64{g1, g3})
+	st.SetPrimaryGroup("op", g3)
 	if !st.UserUrgentUnlimited("op") {
-		t.Fatal("unlimited group did not grant unlimited urgent")
+		t.Fatal("unlimited primary group did not grant unlimited urgent")
 	}
 }

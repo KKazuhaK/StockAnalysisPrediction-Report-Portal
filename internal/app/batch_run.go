@@ -227,17 +227,17 @@ func (s *Server) groupPriorityValid(p string) string {
 }
 
 // resolveBasePriority is a run's base priority (0..100) when the caller didn't force an
-// explicit value: the highest of the submitter's group defaults, else the system
-// default. This numeric knob replaces the old 普通/其他 tiers (ADR 0008).
+// explicit value: the submitter's primary-group priority override, else the system
+// default (group model B). The Default group carries no priority override — its members
+// (and every unassigned user) use the system default (run_default_priority), so priority
+// resolves symmetrically with weight/urgent. A never-a-default urgent override is ignored.
 func (s *Server) resolveBasePriority(user string) int {
-	best := -1
-	for _, p := range s.st.UserGroupPriorities(user) {
-		if b, urgent := parsePriority(p); !urgent && b > best {
-			best = b
+	if gid := s.st.PrimaryGroupOf(user); gid != 0 && gid != s.st.DefaultGroupID() {
+		if p := s.st.GroupPriority(gid); p != "" {
+			if b, urgent := parsePriority(p); !urgent {
+				return b
+			}
 		}
-	}
-	if best >= 0 {
-		return best
 	}
 	return s.runDefaultPriority()
 }

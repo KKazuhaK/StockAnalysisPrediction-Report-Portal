@@ -82,17 +82,24 @@ export default function UsersPage() {
   const groups: UserGroupRow[] = data?.groups || []
   const roleName = (code: string) => roles.find((r) => r.code === code)?.name || code
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups])
+  const defaultGroup = useMemo(() => groups.find((g) => g.is_default), [groups])
   const adminCount = useMemo(() => (data?.users || []).filter((u) => u.role === 'admin').length, [data])
+
+  // A user's effective group is their primary group, or the Default when unassigned.
+  const primaryOf = (u: UserRow) => (u.primary_group ? groupById.get(u.primary_group) : undefined)
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return (data?.users || []).filter((u) => {
       if (roleFilter && u.role !== roleFilter) return false
-      if (groupFilter && !u.groups.includes(groupFilter)) return false
+      if (groupFilter) {
+        const inherits = !u.primary_group && groupFilter === defaultGroup?.id
+        if (u.primary_group !== groupFilter && !inherits) return false
+      }
       if (q && ![u.username, u.display_name, u.email].some((v) => (v || '').toLowerCase().includes(q))) return false
       return true
     })
-  }, [data, search, roleFilter, groupFilter])
+  }, [data, search, roleFilter, groupFilter, defaultGroup])
 
   const patch = async (name: string, body: Record<string, unknown>) => {
     await api.put(`/api/admin/users/${encodeURIComponent(name)}`, body)
@@ -107,11 +114,20 @@ export default function UsersPage() {
 
   const openEdit = (u: UserRow | 'new') => {
     setEditUser(u)
-    if (u === 'new') form.setFieldsValue({ username: '', display_name: '', email: '', role: 'user', groups: [], password: '' })
-    else form.setFieldsValue({ username: u.username, display_name: u.display_name, email: u.email, role: u.role, groups: u.groups, password: '' })
+    if (u === 'new') form.setFieldsValue({ username: '', display_name: '', email: '', role: 'user', primary_group: undefined, password: '' })
+    else
+      form.setFieldsValue({
+        username: u.username,
+        display_name: u.display_name,
+        email: u.email,
+        role: u.role,
+        primary_group: u.primary_group || undefined,
+        password: '',
+      })
   }
   const saveEdit = async () => {
     const v = await form.validateFields()
+    const primaryGroup = v.primary_group ?? 0
     try {
       if (editUser === 'new') {
         await api.post('/api/admin/users', {
@@ -120,14 +136,14 @@ export default function UsersPage() {
           role: v.role,
           display_name: v.display_name || '',
           email: v.email || '',
-          groups: v.groups || [],
+          primary_group: primaryGroup,
         })
       } else {
         await patch((editUser as UserRow).username, {
           role: v.role,
           display_name: v.display_name || '',
           email: v.email || '',
-          groups: v.groups || [],
+          primary_group: primaryGroup,
           ...(v.password ? { password: v.password } : {}),
         })
       }
@@ -175,20 +191,18 @@ export default function UsersPage() {
       render: (role: string) => <Tag color={ROLE_COLOR[role] ?? 'default'}>{roleName(role)}</Tag>,
     },
     {
-      title: t('users.groups'),
-      dataIndex: 'groups',
-      render: (gids: number[]) =>
-        gids.length ? (
-          <Space size={[4, 4]} wrap>
-            {gids.map((id) => (
-              <Tag key={id} color="blue">
-                {groupById.get(id)?.name || id}
-              </Tag>
-            ))}
-          </Space>
-        ) : (
-          <Typography.Text type="secondary">—</Typography.Text>
-        ),
+      title: t('users.group'),
+      dataIndex: 'primary_group',
+      render: (_, u) => {
+        const g = primaryOf(u)
+        if (g) return <Tag color="blue">{g.name}</Tag>
+        // No primary group → inherits the Default group.
+        return (
+          <Tag>
+            {defaultGroup?.name || t('users.defaultGroupTag')} <span style={{ opacity: 0.6 }}>· {t('users.inheritedTag')}</span>
+          </Tag>
+        )
+      },
     },
     {
       title: t('users.status'),
@@ -258,8 +272,8 @@ export default function UsersPage() {
           />
           <Select
             allowClear
-            placeholder={t('users.groups')}
-            style={{ width: 150 }}
+            placeholder={t('users.group')}
+            style={{ width: 160 }}
             value={groupFilter}
             onChange={setGroupFilter}
             options={groups.map((g) => ({ value: g.id, label: g.name }))}
@@ -286,11 +300,14 @@ export default function UsersPage() {
               <Button size="small">{t('users.bulkSetRole')}</Button>
             </Dropdown>
             <Dropdown
-              menu={{ items: groups.map((g) => ({ key: g.id, label: g.name, onClick: () => bulk('add_group', { group_id: g.id }) })) }}
+              menu={{ items: groups.map((g) => ({ key: g.id, label: g.name, onClick: () => bulk('set_group', { group_id: g.id }) })) }}
               disabled={groups.length === 0}
             >
-              <Button size="small">{t('users.bulkAddGroup')}</Button>
+              <Button size="small">{t('users.bulkSetGroup')}</Button>
             </Dropdown>
+            <Button size="small" onClick={() => bulk('clear_group')}>
+              {t('users.bulkClearGroup')}
+            </Button>
             <Popconfirm title={t('users.bulkDeleteConfirm', { n: selected.length })} onConfirm={() => bulk('delete')}>
               <Button size="small" danger>
                 {t('common.delete')}
@@ -336,8 +353,12 @@ export default function UsersPage() {
           <Form.Item name="role" label={t('users.role')}>
             <Select options={roles.map((r) => ({ value: r.code, label: r.name }))} />
           </Form.Item>
-          <Form.Item name="groups" label={t('users.groups')}>
-            <Select mode="multiple" allowClear placeholder={t('users.groups')} options={groups.map((g) => ({ value: g.id, label: g.name }))} />
+          <Form.Item name="primary_group" label={t('users.group')} extra={t('users.primaryGroupHint')}>
+            <Select
+              allowClear
+              placeholder={t('users.inheritDefault')}
+              options={groups.map((g) => ({ value: g.id, label: g.is_default ? `${g.name} · ${t('users.defaultGroupTag')}` : g.name }))}
+            />
           </Form.Item>
         </Form>
       </Modal>
@@ -372,14 +393,20 @@ export default function UsersPage() {
   )
 }
 
-// Groups list + editor, shown as the "groups" sub-tab of the users page (it used to
-// be a Drawer opened from a toolbar button). Weight / priority feed the run queue.
+// Groups list + editor, shown as the "groups" sub-tab of the users page. A group's
+// weight / urgent / priority drive the run queue for its members (group model B): a
+// non-default group either overrides a field or inherits it from the Default group,
+// which every unassigned user falls back to.
 function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged: () => void }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [edit, setEdit] = useState<UserGroupRow | 'new' | null>(null)
   const [ticketPeriod, setTicketPeriod] = useState<number>()
   const [form] = Form.useForm()
+  const isDefault = edit !== 'new' && !!edit?.is_default
+  const weightInherit = Form.useWatch('weight_inherit', form)
+  const urgentInherit = Form.useWatch('urgent_inherit', form)
+  const defaultGroup = useMemo(() => groups.find((g) => g.is_default), [groups])
 
   useEffect(() => {
     let alive = true
@@ -403,26 +430,32 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const openForm = (g: UserGroupRow | 'new') => {
     setEdit(g)
     const shared = { ticket_period_days: ticketPeriod }
-    if (g === 'new') form.setFieldsValue({ ...shared, name: '', description: '', weight: 0, urgent_unlimited: false, priority: undefined })
+    if (g === 'new')
+      form.setFieldsValue({ ...shared, name: '', description: '', weight_inherit: true, weight: 0, urgent_inherit: true, urgent_unlimited: false, priority: undefined })
     else
       form.setFieldsValue({
         ...shared,
         name: g.name,
         description: g.description,
-        weight: g.weight,
+        // A null weight / urgent means the group inherits the Default group's value.
+        weight_inherit: !g.is_default && g.weight == null,
+        weight: g.weight ?? 0,
+        urgent_inherit: !g.is_default && g.urgent_unlimited == null,
         urgent_unlimited: !!g.urgent_unlimited,
         priority: g.priority ? Number(g.priority) : undefined,
       })
   }
   const save = async () => {
     const v = await form.validateFields()
-    // priority is a base number 0..100; the API stores it as a string (ADR 0008).
+    const target = edit !== 'new' && edit ? edit : null
+    const isDef = !!target?.is_default
     const nextTicketPeriod = typeof v.ticket_period_days === 'number' ? v.ticket_period_days : undefined
+    // null weight / urgent = inherit the Default group; the Default group is always concrete.
     const body = {
       name: v.name,
       description: v.description || '',
-      weight: v.weight ?? 0,
-      urgent_unlimited: !!v.urgent_unlimited,
+      weight: !isDef && v.weight_inherit ? null : (v.weight ?? 0),
+      urgent_unlimited: !isDef && v.urgent_inherit ? null : !!v.urgent_unlimited,
       priority: v.priority == null || v.priority === '' ? '' : String(v.priority),
     }
     try {
@@ -440,9 +473,17 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
     }
   }
   const remove = async (id: number) => {
-    await api.del(`/api/admin/groups/${id}`)
-    onChanged()
+    try {
+      await api.del(`/api/admin/groups/${id}`)
+      onChanged()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
   }
+
+  // Effective weight / urgent for display: a group's own value, or the Default's when inherited.
+  const effWeight = (g: UserGroupRow) => (g.weight != null ? g.weight : defaultGroup?.weight ?? 0)
+  const effUrgent = (g: UserGroupRow) => (g.urgent_unlimited != null ? g.urgent_unlimited : !!defaultGroup?.urgent_unlimited)
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
@@ -455,42 +496,51 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
         <Empty description={t('users.noGroups')} />
       ) : (
         <Space direction="vertical" size={8} style={{ width: '100%' }}>
-          {groups.map((g) => (
-            <Card key={g.id} size="small">
-              <Space style={{ width: '100%', justifyContent: 'space-between' }} align="start">
-                <div>
-                  <Space size={6} wrap>
-                    <Typography.Text strong>{g.name}</Typography.Text>
-                    <Tag>{t('users.groupMembers', { n: g.members })}</Tag>
-                    {g.weight > 0 && (
-                      <Tag color="gold" icon={<ThunderboltOutlined />}>
-                        {t('users.weightN', { n: g.weight })}
-                      </Tag>
-                    )}
-                    {g.urgent_unlimited && (
-                      <Tag color="red" icon={<ThunderboltOutlined />}>
-                        {t('users.urgentUnlimitedTag')}
-                      </Tag>
-                    )}
-                    {g.priority && <Tag color="blue">{t('users.priorityTag', { n: priorityNum(g.priority) })}</Tag>}
-                  </Space>
-                  {g.description && (
+          {groups.map((g) => {
+            const weightInh = !g.is_default && g.weight == null
+            const urgentInh = !g.is_default && g.urgent_unlimited == null
+            const w = effWeight(g)
+            const urg = effUrgent(g)
+            return (
+              <Card key={g.id} size="small">
+                <Space style={{ width: '100%', justifyContent: 'space-between' }} align="start">
+                  <div>
+                    <Space size={6} wrap>
+                      <Typography.Text strong>{g.name}</Typography.Text>
+                      {g.is_default && <Tag color="green">{t('users.defaultGroupTag')}</Tag>}
+                      <Tag>{t('users.groupMembers', { n: g.members })}</Tag>
+                      {w > 0 && (
+                        <Tag color="gold" icon={<ThunderboltOutlined />}>
+                          {t('users.weightN', { n: w })}
+                          {weightInh && <span style={{ opacity: 0.6 }}> · {t('users.inheritedTag')}</span>}
+                        </Tag>
+                      )}
+                      {urg && (
+                        <Tag color="red" icon={<ThunderboltOutlined />}>
+                          {t('users.urgentUnlimitedTag')}
+                          {urgentInh && <span style={{ opacity: 0.6 }}> · {t('users.inheritedTag')}</span>}
+                        </Tag>
+                      )}
+                      {g.priority && <Tag color="blue">{t('users.priorityTag', { n: priorityNum(g.priority) })}</Tag>}
+                    </Space>
                     <div>
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        {g.description}
+                        {g.is_default ? g.description || t('users.defaultGroupHint') : g.description}
                       </Typography.Text>
                     </div>
-                  )}
-                </div>
-                <Space>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => openForm(g)} />
-                  <Popconfirm title={t('users.deleteGroupConfirm')} onConfirm={() => remove(g.id)}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
+                  </div>
+                  <Space>
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openForm(g)} />
+                    {!g.is_default && (
+                      <Popconfirm title={t('users.deleteGroupConfirm')} onConfirm={() => remove(g.id)}>
+                        <Button size="small" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
+                    )}
+                  </Space>
                 </Space>
-              </Space>
-            </Card>
-          ))}
+              </Card>
+            )
+          })}
         </Space>
       )}
 
@@ -507,15 +557,30 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
           <Form.Item name="name" label={t('users.groupName')} rules={[{ required: true }]}>
             <Input autoComplete="off" />
           </Form.Item>
-          <Form.Item name="description" label={t('users.groupDesc')}>
+          <Form.Item name="description" label={t('users.groupDesc')} extra={isDefault ? t('users.defaultGroupHint') : undefined}>
             <Input.TextArea rows={2} />
           </Form.Item>
+
+          {/* Urgent weight: a non-default group may inherit the Default group's value. */}
+          {!isDefault && (
+            <Form.Item name="weight_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
+              <Switch size="small" />
+            </Form.Item>
+          )}
           <Form.Item name="weight" label={t('users.weight')} extra={t('users.weightHint')}>
-            <InputNumber min={0} max={999} style={{ width: '100%' }} />
+            <InputNumber min={0} max={999} style={{ width: '100%' }} disabled={!isDefault && weightInherit} />
           </Form.Item>
+
+          {/* Unlimited urgent: same inherit / override choice. */}
+          {!isDefault && (
+            <Form.Item name="urgent_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
+              <Switch size="small" />
+            </Form.Item>
+          )}
           <Form.Item name="urgent_unlimited" valuePropName="checked" label={t('users.urgentUnlimited')} extra={t('users.urgentUnlimitedHint')}>
-            <Switch />
+            <Switch disabled={!isDefault && urgentInherit} />
           </Form.Item>
+
           <Form.Item name="ticket_period_days" label={t('users.ticketPeriod')} extra={t('users.ticketPeriodHint')}>
             <InputNumber
               min={1}
@@ -526,9 +591,12 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
               placeholder={ticketPeriod == null ? t('common.loading') : undefined}
             />
           </Form.Item>
-          <Form.Item name="priority" label={t('users.priority')} extra={t('users.priorityHint')}>
-            <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder={t('users.prioritySystemDefault')} />
-          </Form.Item>
+          {/* The Default group has no priority override — its members use the system default. */}
+          {!isDefault && (
+            <Form.Item name="priority" label={t('users.priority')} extra={t('users.priorityHint')}>
+              <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder={t('users.prioritySystemDefault')} />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
     </Space>

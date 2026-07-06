@@ -1,7 +1,6 @@
 package app
 
 import (
-	"reflect"
 	"testing"
 )
 
@@ -52,72 +51,161 @@ func TestUserGroupsCRUDAndMembership(t *testing.T) {
 	mkUser(t, st, "alice", "user")
 	mkUser(t, st, "bob", "operator")
 
+	// The Default group is bootstrapped and can't be deleted.
+	def := st.DefaultGroupID()
+	if def == 0 {
+		t.Fatal("Default group was not bootstrapped")
+	}
+	if err := st.DeleteUserGroup(def); err == nil {
+		t.Fatal("the Default group must not be deletable")
+	}
+
 	gid, err := st.CreateUserGroup("Research", "The research desk", 0)
 	if err != nil {
 		t.Fatalf("CreateUserGroup: %v", err)
 	}
 	gid2, _ := st.CreateUserGroup("Ops", "", 0)
 
-	// Membership: alice in both groups, bob in Ops only.
-	if err := st.SetUserGroups("alice", []int64{gid, gid2}); err != nil {
-		t.Fatalf("SetUserGroups: %v", err)
+	// Primary group: alice → Research, bob → Ops.
+	if err := st.SetPrimaryGroup("alice", gid); err != nil {
+		t.Fatalf("SetPrimaryGroup: %v", err)
 	}
-	st.SetUserGroups("bob", []int64{gid2})
+	st.SetPrimaryGroup("bob", gid2)
 
-	if got := st.GroupsOf("alice"); !reflect.DeepEqual(got, []int64{gid, gid2}) {
-		t.Fatalf("GroupsOf(alice) = %v, want [%d %d]", got, gid, gid2)
+	if got := st.PrimaryGroupOf("alice"); got != gid {
+		t.Fatalf("PrimaryGroupOf(alice) = %d, want %d", got, gid)
 	}
-	all := st.AllUserGroups()
-	if len(all["alice"]) != 2 || len(all["bob"]) != 1 {
-		t.Fatalf("AllUserGroups = %v", all)
+	all := st.AllPrimaryGroups()
+	if all["alice"] != gid || all["bob"] != gid2 {
+		t.Fatalf("AllPrimaryGroups = %v", all)
 	}
 
-	// Member counts.
-	groups := st.ListUserGroups()
+	// Member counts reflect primary membership.
 	counts := map[string]int{}
-	urgentFree := map[string]bool{}
-	for _, g := range groups {
+	for _, g := range st.ListUserGroups() {
 		counts[g.Name] = g.Members
-		urgentFree[g.Name] = g.UrgentFree
 	}
-	if counts["Research"] != 1 || counts["Ops"] != 2 {
-		t.Fatalf("member counts = %v, want Research:1 Ops:2", counts)
-	}
-	if urgentFree["Research"] || urgentFree["Ops"] {
-		t.Fatalf("new groups should not be unlimited by default: %v", urgentFree)
+	if counts["Research"] != 1 || counts["Ops"] != 1 {
+		t.Fatalf("member counts = %v, want Research:1 Ops:1", counts)
 	}
 
+	// The Default group is never marked inherit (it is the baseline).
+	for _, g := range st.ListUserGroups() {
+		if g.IsDefault && (g.WeightInherit || g.UrgentInherit) {
+			t.Fatal("the Default group must never be marked inherit")
+		}
+	}
+
+	// Override urgent-unlimited on Research (concrete shim), then confirm it sticks.
 	if err := st.UpdateUserGroup(gid, "Research", "The research desk", 0, true); err != nil {
 		t.Fatalf("UpdateUserGroup urgent unlimited: %v", err)
 	}
-	groups = st.ListUserGroups()
-	urgentFree = map[string]bool{}
-	for _, g := range groups {
-		urgentFree[g.Name] = g.UrgentFree
-	}
-	if !urgentFree["Research"] {
-		t.Fatalf("updated group did not persist urgent unlimited: %v", urgentFree)
+	if !st.UserUrgentUnlimited("alice") {
+		t.Fatal("override did not grant alice unlimited urgent")
 	}
 
-	// Re-assigning replaces (not appends).
-	st.SetUserGroups("alice", []int64{gid})
-	if got := st.GroupsOf("alice"); !reflect.DeepEqual(got, []int64{gid}) {
-		t.Fatalf("after replace GroupsOf(alice) = %v, want [%d]", got, gid)
+	// Inherit resolution: make Ops inherit (NULL overrides), raise the Default group's
+	// weight, and a member of the inheriting group picks up the Default baseline.
+	st.UpdateGroup(gid2, "Ops", "", nil, nil)
+	for _, g := range st.ListUserGroups() {
+		if g.Name == "Ops" && (!g.WeightInherit || !g.UrgentInherit) {
+			t.Fatalf("Ops should inherit after NULL overrides: %+v", g)
+		}
+	}
+	defFalse := false
+	st.UpdateGroup(def, "Default", "", ptrInt(5), &defFalse)
+	if a := st.UserTicketAllocation("bob"); a != 5 { // bob's Ops group inherits
+		t.Fatalf("inheriting member allocation = %d, want 5 (Default baseline)", a)
 	}
 
-	// Deleting a group drops its memberships.
+	// Switching primary is a replace (single-valued).
+	st.SetPrimaryGroup("alice", gid2)
+	if got := st.PrimaryGroupOf("alice"); got != gid2 {
+		t.Fatalf("after switch PrimaryGroupOf(alice) = %d, want %d", got, gid2)
+	}
+
+	// Deleting a group drops its primary pointers (members fall back to Default).
 	st.DeleteUserGroup(gid2)
-	if got := st.GroupsOf("bob"); len(got) != 0 {
-		t.Fatalf("bob still in a deleted group: %v", got)
+	if got := st.PrimaryGroupOf("bob"); got != 0 {
+		t.Fatalf("bob still points at a deleted group: %d", got)
 	}
 
-	// Deleting a user cleans up profile + memberships.
+	// Deleting a user cleans up profile + primary group.
+	st.SetPrimaryGroup("alice", gid)
 	st.SetUserProfile("alice", "A", "a@x")
 	st.DeleteUser("alice")
-	if len(st.GroupsOf("alice")) != 0 {
-		t.Fatal("deleted user's memberships survived")
+	if st.PrimaryGroupOf("alice") != 0 {
+		t.Fatal("deleted user's primary group survived")
 	}
 	if u := st.GetUser("alice"); u != nil {
 		t.Fatal("deleted user still present")
+	}
+}
+
+func ptrInt(v int) *int { return &v }
+
+// The Default group is created once and reused; a concrete override on a user's
+// primary group beats the Default baseline, and clearing the primary falls back.
+func TestGroupModelResolution(t *testing.T) {
+	st := newTestStore(t)
+	mkUser(t, st, "u", "user")
+
+	def := st.DefaultGroupID()
+	if def == 0 || st.EnsureDefaultGroup() != def {
+		t.Fatal("EnsureDefaultGroup is not idempotent")
+	}
+	defaults := 0
+	for _, g := range st.ListUserGroups() {
+		if g.IsDefault {
+			defaults++
+		}
+	}
+	if defaults != 1 {
+		t.Fatalf("want exactly one Default group, got %d", defaults)
+	}
+
+	// Default baseline weight 4, urgent off.
+	off := false
+	st.UpdateGroup(def, "Default", "", ptrInt(4), &off)
+
+	// No primary group → inherit the Default baseline.
+	if w := st.UserTicketAllocation("u"); w != 4 {
+		t.Fatalf("no-primary allocation = %d, want 4 (Default)", w)
+	}
+
+	// Primary group overrides weight to 9 and grants unlimited urgent.
+	on := true
+	g, _ := st.CreateUserGroup("VIP", "", 9)
+	st.UpdateGroup(g, "VIP", "", ptrInt(9), &on)
+	st.SetPrimaryGroup("u", g)
+	if w := st.UserTicketAllocation("u"); w != 9 {
+		t.Fatalf("override allocation = %d, want 9", w)
+	}
+	if !st.UserUrgentUnlimited("u") {
+		t.Fatal("override did not grant unlimited urgent")
+	}
+
+	// Clearing the primary group falls back to the Default baseline again.
+	st.SetPrimaryGroup("u", 0)
+	if w := st.UserTicketAllocation("u"); w != 4 || st.UserUrgentUnlimited("u") {
+		t.Fatalf("after clear = (%d, %v), want (4, false)", st.UserTicketAllocation("u"), st.UserUrgentUnlimited("u"))
+	}
+
+	// A non-existent group id is not stored (it would dangle); the user inherits Default.
+	if err := st.SetPrimaryGroup("u", 999999); err != nil {
+		t.Fatalf("SetPrimaryGroup(bad id): %v", err)
+	}
+	if got := st.PrimaryGroupOf("u"); got != 0 {
+		t.Fatalf("stale primary id was stored: %d, want 0", got)
+	}
+
+	// Deleting a group also clears its primary members; a stray duplicate default (if one
+	// ever existed) is likewise protected — the guard checks the row's own is_default flag.
+	st.SetPrimaryGroup("u", g)
+	if err := st.DeleteUserGroup(g); err != nil {
+		t.Fatalf("DeleteUserGroup(VIP): %v", err)
+	}
+	if got := st.PrimaryGroupOf("u"); got != 0 {
+		t.Fatalf("primary pointer to a deleted group survived: %d", got)
 	}
 }

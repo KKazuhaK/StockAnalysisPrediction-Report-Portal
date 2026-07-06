@@ -273,17 +273,20 @@ export interface UserRow {
   email?: string
   active: boolean
   last_login?: string
-  groups: number[] // group ids the user belongs to
+  primary_group: number // primary group id, or 0 when the user inherits the Default group
 }
 
 export interface UserGroupRow {
   id: number
   name: string
   description?: string
-  weight: number // urgent tickets granted per period to each member (ADR 0005)
-  urgent_unlimited?: boolean // members can run urgent jobs without spending tickets
-  priority?: string // default base run priority 0..100 for members (as a string; ADR 0008)
-  members: number // member count
+  is_default?: boolean // the fallback group inherited by users with no primary group
+  // weight / urgent_unlimited are null when this group inherits the Default group's
+  // value (group model B); a value means this group overrides it.
+  weight: number | null // urgent tickets granted per period to each member (ADR 0005)
+  urgent_unlimited?: boolean | null // members can run urgent jobs without spending tickets
+  priority?: string // base run priority 0..100 override ('' / undefined = inherit the system default; ADR 0008)
+  members: number // primary-member count
 }
 
 export interface BatchConfig {
