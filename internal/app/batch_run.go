@@ -198,20 +198,20 @@ func (s *Server) urgentAllowed(user, priority string, base int) (string, bool) {
 	return strconv.Itoa(base), true // out of tickets → runs at its base priority
 }
 
-// runWindowOpen reports whether the user's effective group allows runs at the current
+// runWindowOpenAt reports whether the user's effective group allows a run at the given
 // panel-time hour, plus the window string for messaging. An empty/degenerate window is
-// always open.
-func (s *Server) runWindowOpen(user string) (bool, string) {
+// always open. The caller passes the effective run hour (a scheduled run's run_at hour,
+// else now) so the window governs execution time, not submission time.
+func (s *Server) runWindowOpenAt(user string, hour int) (bool, string) {
 	win := s.st.EffectiveGroupSettings(user).RunWindow
 	start, end, ok := parseRunWindow(win)
 	if !ok {
 		return true, ""
 	}
-	h := time.Now().In(s.panelLocation()).Hour()
 	if start < end {
-		return h >= start && h < end, win
+		return hour >= start && hour < end, win
 	}
-	return h >= start || h < end, win // window wraps midnight (e.g. 22-6)
+	return hour >= start || hour < end, win // window wraps midnight (e.g. 22-6)
 }
 
 // parseRunWindow parses "H1-H2" hours (0..23). ok=false for "" or a degenerate window.

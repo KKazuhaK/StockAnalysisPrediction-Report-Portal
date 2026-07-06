@@ -315,19 +315,6 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusBadRequest, "no rows to run")
 		return
 	}
-	// Per-group governance (group model B): non-admins are held to their group's run
-	// window and active-run cap. Admins are exempt (operational). allow-urgent is enforced
-	// separately, inside urgentAllowed.
-	if !s.isAdmin(user) {
-		if open, win := s.runWindowOpen(user); !open {
-			jsonError(w, http.StatusForbidden, "runs are only allowed during "+win+":00 (panel time)")
-			return
-		}
-		if cap := s.st.EffectiveGroupSettings(user).MaxQueued; cap > 0 && s.st.ActiveJobCount(user) >= cap {
-			jsonError(w, http.StatusConflict, "you already have the maximum number of active runs; wait for one to finish")
-			return
-		}
-	}
 	// Validate the optional schedule up front so a bad time never leaves an orphan job.
 	runAt := ""
 	if in.RunAt != "" {
@@ -337,6 +324,27 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 			return
 		}
 		runAt = rt
+	}
+	// Per-group governance (group model B): non-admins are held to their group's run
+	// window and active-run cap. Admins are exempt (operational). allow-urgent is enforced
+	// separately, inside urgentAllowed. The window is checked against the effective run
+	// time — a scheduled job's run_at hour, not submit time — so a run can't be scheduled
+	// to slip outside the window (nor wrongly rejected for a submit that lands outside it).
+	if !s.isAdmin(user) {
+		hour := time.Now().In(s.panelLocation()).Hour()
+		if runAt != "" {
+			if rt, err := time.ParseInLocation("2006-01-02 15:04:05", runAt, time.Local); err == nil {
+				hour = rt.In(s.panelLocation()).Hour()
+			}
+		}
+		if open, win := s.runWindowOpenAt(user, hour); !open {
+			jsonError(w, http.StatusForbidden, "runs are only allowed during "+win+":00 (panel time)")
+			return
+		}
+		if cap := s.st.EffectiveGroupSettings(user).MaxQueued; cap > 0 && s.st.ActiveJobCount(user) >= cap {
+			jsonError(w, http.StatusConflict, "you already have the maximum number of active runs; wait for one to finish")
+			return
+		}
 	}
 	tgt, ok := s.st.GetTarget(in.TargetID)
 	if !ok {
