@@ -20,8 +20,11 @@ import (
 // it survives page refreshes and (via resumeBatchJobs) server restarts. See
 // docs/adr/0001-batch-run-engine.md.
 
-// difyRunTimeout bounds a single blocking workflow run. Dify runs can take minutes.
-const difyRunTimeout = 10 * time.Minute
+// difyRunTimeout bounds a single Dify run: it caps the streaming connection AND the
+// reconcile poll window (difyReconcileTimeout). Real workflows here run 30-40 minutes,
+// so this must comfortably exceed that — a shorter cap cuts the stream and lets the
+// reconcile expire while Dify is still running, marking a run failed that then succeeds.
+const difyRunTimeout = 60 * time.Minute
 
 // batchMaxConcurrency is the admin-set ceiling a per-job concurrency is clamped to.
 func (s *Server) batchMaxConcurrency() int {
