@@ -75,6 +75,41 @@ func TestActiveJobCount(t *testing.T) {
 	}
 }
 
+// The run window is evaluated at an explicit (effective run) hour, not submit time, and
+// handles midnight-wrapping windows.
+func TestRunWindowOpenAt(t *testing.T) {
+	s := &Server{st: newTestStore(t)}
+	s.st.UpsertUser(User{Username: "u", PasswordHash: "x", Role: "user"})
+	def := s.st.DefaultGroupID()
+
+	win := "9-18"
+	s.st.SetGroupGovernance(def, nil, nil, &win)
+	if ok, _ := s.runWindowOpenAt("u", 10); !ok {
+		t.Fatal("hour 10 should be open for 9-18")
+	}
+	if ok, _ := s.runWindowOpenAt("u", 3); ok {
+		t.Fatal("hour 3 should be closed for 9-18 (the scheduled-run bypass)")
+	}
+	if ok, _ := s.runWindowOpenAt("u", 18); ok {
+		t.Fatal("hour 18 is the exclusive end of 9-18")
+	}
+
+	wrap := "22-6"
+	s.st.SetGroupGovernance(def, nil, nil, &wrap)
+	if ok, _ := s.runWindowOpenAt("u", 23); !ok {
+		t.Fatal("hour 23 should be open for 22-6")
+	}
+	if ok, _ := s.runWindowOpenAt("u", 12); ok {
+		t.Fatal("hour 12 should be closed for 22-6")
+	}
+
+	none := ""
+	s.st.SetGroupGovernance(def, nil, nil, &none)
+	if ok, _ := s.runWindowOpenAt("u", 3); !ok {
+		t.Fatal("no window → always open")
+	}
+}
+
 // A group that disallows urgent downgrades an urgent submit even with the lane enabled.
 func TestUrgentAllowedGroupDisallow(t *testing.T) {
 	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "x"}}
