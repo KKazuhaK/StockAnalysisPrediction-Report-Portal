@@ -493,7 +493,11 @@ func (s *Server) launchJob(jobID int64) {
 		return
 	}
 	eng := &batch.Engine{Store: s.st, Log: log.Printf, Progress: s.recordProgress}
-	spec := batch.JobSpec{JobID: jobID, Concurrency: job.Concurrency, MaxRetries: job.MaxRetries}
+	// A job runs its rows one at a time (no per-batch parallelism), so the queue's
+	// "max concurrent jobs" budget is the real cap on simultaneous Dify runs: N running
+	// jobs × 1 row = at most N live runs. Per-batch concurrency would multiply that and
+	// overrun the limit (and hammer Dify's rate limit). See docs/adr/0004-run-queue.md.
+	spec := batch.JobSpec{JobID: jobID, Concurrency: 1, MaxRetries: job.MaxRetries}
 	// A per-job cancellable context so a cancel request aborts the in-flight Dify call
 	// immediately (the dify client uses this ctx for its HTTP requests) instead of
 	// waiting for the current row's blocking run to return.
