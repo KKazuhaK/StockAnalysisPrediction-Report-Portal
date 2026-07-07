@@ -55,6 +55,45 @@ func TestRunWorkflowStreamHappy(t *testing.T) {
 	}
 }
 
+// A streaming chat: the conversation_id is captured EARLY (onMeta fires once, before the
+// turn ends), answer chunks accumulate, and message_end returns the aggregated reply. This
+// is what lets a long chat turn be reopened after a reload — the linkage is saved up front.
+func TestChatStreamCapturesConvIDEarly(t *testing.T) {
+	srv := sseStub(t, []string{
+		`{"event":"agent_message","conversation_id":"conv-9","message_id":"m1","answer":"Hel"}`,
+		`{"event":"agent_message","conversation_id":"conv-9","message_id":"m1","answer":"lo"}`,
+		`{"event":"message_end","conversation_id":"conv-9","message_id":"m1"}`,
+	})
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+
+	var metaCalls int
+	var earlyConv string
+	reply, err := c.ChatStream(context.Background(), "hi", nil, "u", "", func(cid, _ string) {
+		metaCalls++
+		earlyConv = cid
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if metaCalls != 1 || earlyConv != "conv-9" {
+		t.Fatalf("onMeta calls=%d conv=%q, want 1 / conv-9 (captured once, early)", metaCalls, earlyConv)
+	}
+	if reply.Answer != "Hello" || reply.ConversationID != "conv-9" {
+		t.Fatalf("reply = {answer:%q conv:%q}, want Hello / conv-9", reply.Answer, reply.ConversationID)
+	}
+}
+
+// A stream `error` event surfaces as a failure carrying Dify's message.
+func TestChatStreamErrorEvent(t *testing.T) {
+	srv := sseStub(t, []string{`{"event":"error","message":"model quota exceeded"}`})
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+	if _, err := c.ChatStream(context.Background(), "hi", nil, "u", "", nil); err == nil || err.Error() != "model quota exceeded" {
+		t.Fatalf("err = %v, want it to carry Dify's message", err)
+	}
+}
+
 // A stream-level `error` event (bad model config / quota / rate limit) — often emitted
 // before any workflow_started, so there is no run id — is surfaced as a terminal failure
 // carrying Dify's real message, NOT the generic "stream ended before workflow_finished"

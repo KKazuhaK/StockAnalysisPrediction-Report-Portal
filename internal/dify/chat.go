@@ -1,12 +1,16 @@
 package dify
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // This file covers the interactive chat/assistant surface (docs/adr/0012-interactive-chat.md):
@@ -23,32 +27,81 @@ type ChatReply struct {
 	MessageID      string
 }
 
-// Chat sends one message to a chat/agent app in blocking mode. conversationID is "" to
-// start a new conversation (Dify assigns one, returned in the reply) or an existing id to
-// continue with full context. user is the Dify end-user the conversation is keyed to.
-func (c *Client) Chat(ctx context.Context, query string, inputs map[string]any, user, conversationID string) (ChatReply, error) {
+// ChatStream sends a message in STREAMING mode so the conversation_id is captured the
+// moment Dify assigns it (the first event) and handed to onMeta — letting the caller
+// persist the conversation↔Dify linkage BEFORE a possibly-long turn finishes, so it
+// survives a page reload mid-generation. It still returns one aggregated ChatReply (the
+// portal accumulates the answer chunks and answers the browser once), so callers stay
+// request/response. onMeta may be nil; it fires at most once.
+func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string]any, user, conversationID string, onMeta func(convID, msgID string)) (ChatReply, error) {
 	if user == "" {
 		user = "report-portal"
 	}
 	if inputs == nil {
 		inputs = map[string]any{}
 	}
-	raw, err := c.do(ctx, http.MethodPost, "/chat-messages", map[string]any{
-		"query": query, "inputs": inputs, "response_mode": "blocking",
+	body, _ := json.Marshal(map[string]any{
+		"query": query, "inputs": inputs, "response_mode": "streaming",
 		"user": user, "conversation_id": conversationID,
 	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat-messages", bytes.NewReader(body))
 	if err != nil {
 		return ChatReply{}, err
 	}
-	var out struct {
-		Answer         string `json:"answer"`
-		ConversationID string `json:"conversation_id"`
-		MessageID      string `json:"message_id"`
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return ChatReply{}, err
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return ChatReply{}, fmt.Errorf("dify /chat-messages: bad JSON: %w", err)
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return ChatReply{}, &APIError{Status: resp.StatusCode, Message: apiErrMsg(raw)}
 	}
-	return ChatReply{Answer: out.Answer, ConversationID: out.ConversationID, MessageID: out.MessageID}, nil
+
+	var out ChatReply
+	var answer strings.Builder
+	metaSent := false
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if len(line) < 5 || line[:5] != "data:" {
+			continue
+		}
+		payload := bytes.TrimSpace([]byte(line[5:]))
+		if len(payload) == 0 {
+			continue
+		}
+		var ev streamEnvelope
+		if json.Unmarshal(payload, &ev) != nil {
+			continue
+		}
+		if ev.ConversationID != "" {
+			out.ConversationID = ev.ConversationID
+			out.MessageID = ev.MessageID
+			if !metaSent && onMeta != nil {
+				metaSent = true
+				onMeta(ev.ConversationID, ev.MessageID) // persist the linkage now, early
+			}
+		}
+		switch ev.Event {
+		case "message", "agent_message":
+			answer.WriteString(ev.Answer)
+		case "message_end", "workflow_finished":
+			out.Answer = answer.String()
+			return out, nil
+		case "error":
+			return ChatReply{}, fmt.Errorf("%s", firstNonEmpty(ev.Data.Error, ev.Message))
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return ChatReply{}, err
+	}
+	out.Answer = answer.String() // stream ended without an explicit end event
+	return out, nil
 }
 
 // ChatTurn is one stored exchange in a conversation's history: the user's query and the

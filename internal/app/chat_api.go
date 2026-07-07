@@ -180,24 +180,23 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Detach from the browser connection: a chat turn should finish — and be stored by
-	// Dify + have its conversation_id saved here — even if the user navigates away
-	// mid-generation, so the result is there when they return. (net/http cancels
-	// r.Context() on client disconnect but keeps the handler goroutine running; using a
-	// fresh context means the Dify call isn't aborted with the browser.) The turn is not
-	// persisted across a server restart, only across the client leaving.
+	// Detach from the browser connection so the turn finishes and lands at Dify even if the
+	// user navigates away mid-generation (net/http cancels r.Context() on disconnect but
+	// keeps the handler goroutine running; a fresh context isn't aborted with the browser).
 	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
 	defer cancel()
-	reply, err := client.Chat(ctx, query, nil, s.difyEndUser(conv.CreatedBy), conv.ConvID)
+	// Stream so the conversation_id is captured the INSTANT Dify assigns it and persisted
+	// right away (title too). A long turn (e.g. a Deep Research chatflow) can then be
+	// reopened after a reload / from another tab and pull its history from Dify — instead of
+	// stranding an untitled, unlinked conversation until the whole turn returned.
+	reply, err := client.ChatStream(ctx, query, nil, s.difyEndUser(conv.CreatedBy), conv.ConvID, func(convID, _ string) {
+		s.st.AfterTurn(conv.ID, convID, chatTitle(query))
+	})
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, "dify: "+err.Error())
 		return
 	}
-	if err := s.st.AfterTurn(conv.ID, reply.ConversationID, chatTitle(query)); err != nil {
-		// The turn succeeded at Dify; a failed index update is non-fatal for this reply.
-		writeJSON(w, map[string]any{"answer": reply.Answer, "conversation_id": reply.ConversationID})
-		return
-	}
+	s.st.AfterTurn(conv.ID, reply.ConversationID, chatTitle(query)) // bump updated_at; conv_id/title sticky
 	writeJSON(w, map[string]any{"answer": reply.Answer, "conversation_id": reply.ConversationID})
 }
 

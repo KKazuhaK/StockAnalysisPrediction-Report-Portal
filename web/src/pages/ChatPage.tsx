@@ -26,6 +26,15 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [loadingHist, setLoadingHist] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Mirrors of state read inside the poll interval (so the closure sees current values).
+  const sendingRef = useRef(false)
+  const msgsLenRef = useRef(0)
+  useEffect(() => {
+    sendingRef.current = sending
+  }, [sending])
+  useEffect(() => {
+    msgsLenRef.current = msgs.length
+  }, [msgs])
 
   useEffect(() => {
     api
@@ -54,24 +63,52 @@ export default function ChatPage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [msgs, sending])
 
+  // Dify's history for a conversation, flattened into a message thread.
+  const fetchHistory = async (id: number): Promise<Msg[]> => {
+    const r = await api.get<{ turns: ChatTurn[] }>(`/api/chat/conversations/${id}/messages`)
+    const m: Msg[] = []
+    for (const tn of r.turns || []) {
+      if (tn.query) m.push({ role: 'user', content: tn.query })
+      if (tn.answer) m.push({ role: 'assistant', content: tn.answer })
+    }
+    return m
+  }
+
   const openConv = async (id: number) => {
     setConvId(id)
     setMsgs([])
     setLoadingHist(true)
     try {
-      const r = await api.get<{ turns: ChatTurn[] }>(`/api/chat/conversations/${id}/messages`)
-      const m: Msg[] = []
-      for (const tn of r.turns || []) {
-        if (tn.query) m.push({ role: 'user', content: tn.query })
-        if (tn.answer) m.push({ role: 'assistant', content: tn.answer })
-      }
-      setMsgs(m)
+      setMsgs(await fetchHistory(id))
     } catch {
       /* history unavailable — leave the thread empty */
     } finally {
       setLoadingHist(false)
     }
   }
+
+  // While a conversation is open, gently poll Dify's history so a turn that finishes after
+  // the user reloaded / opened another tab shows up on its own. Skip while a send is in
+  // flight (the optimistic bubbles are authoritative then), and never shrink the thread —
+  // so a momentarily-empty history (eventual consistency) can't blank a fresh answer.
+  useEffect(() => {
+    if (convId == null) return
+    let cancelled = false
+    const id = setInterval(async () => {
+      if (sendingRef.current) return
+      try {
+        const m = await fetchHistory(convId)
+        if (!cancelled && m.length >= msgsLenRef.current) setMsgs(m)
+      } catch {
+        /* ignore transient errors */
+      }
+    }, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convId])
 
   // Create a conversation if none is open; returns its id (or undefined on failure).
   const ensureConv = async (): Promise<number | undefined> => {
