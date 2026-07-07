@@ -194,6 +194,13 @@ body {
   min-width: 0;
   width: min(100% - 32px, var(--rp-doc-max, 1080px));
   margin: 0 auto;
+  /* Smoothly expand/collapse the reading column when the "wide" switch is toggled. */
+  transition: width 0.28s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rp-reader__doc {
+    transition: none;
+  }
 }
 /* Normal mode on a roomy container: the timeline is a slim rail floating in the left gutter
    next to the centered column (which reserves room for it, so nothing overlaps and the
