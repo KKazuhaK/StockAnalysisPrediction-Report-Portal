@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, Typography } from 'antd'
+import { App, Button, Checkbox, Form, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Typography } from 'antd'
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { LinkItem } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
 import { LINK_ICON_OPTIONS, linkIconComponent } from '../../components/linkIcons'
+import { APP_SHORTCUTS, shortcutOfUrl, shortcutUrl } from '../../lib/shortcuts'
 
 // Options for the icon picker: each renders its glyph + name.
 const iconSelectOptions = LINK_ICON_OPTIONS.map(({ value }) => {
@@ -43,19 +44,32 @@ export default function LinksPage() {
   const openAdd = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ newTab: true }) // default: open in a new tab
+    form.setFieldsValue({ kind: 'url', newTab: true }) // default: an external link, new tab
     setOpen(true)
   }
   const openEdit = (l: LinkItem) => {
     setEditing(l)
-    form.setFieldsValue({ label: l.label, url: l.url, icon: l.icon, newTab: l.newTab !== false })
+    const sc = shortcutOfUrl(l.url)
+    form.setFieldsValue({
+      label: l.label,
+      icon: l.icon,
+      kind: sc ? 'shortcut' : 'url',
+      shortcut: sc?.key,
+      url: sc ? '' : l.url,
+      newTab: l.newTab !== false,
+    })
     setOpen(true)
   }
 
   const submit = async () => {
     const v = await form.validateFields()
-    if (editing) await api.put(`/api/admin/links/${editing.id}`, v)
-    else await api.post('/api/admin/links', v)
+    // A shortcut is stored as url = "rp:<key>"; a plain link keeps its URL + new-tab flag.
+    const payload =
+      v.kind === 'shortcut'
+        ? { label: v.label, url: shortcutUrl(v.shortcut), icon: v.icon, newTab: false }
+        : { label: v.label, url: v.url, icon: v.icon, newTab: v.newTab }
+    if (editing) await api.put(`/api/admin/links/${editing.id}`, payload)
+    else await api.post('/api/admin/links', payload)
     setOpen(false)
     message.success(t('common.saved'))
     load()
@@ -103,11 +117,16 @@ export default function LinksPage() {
             {
               title: t('links.url'),
               dataIndex: 'url',
-              render: (u: string) => (
-                <a href={u} target="_blank" rel="noreferrer">
-                  {u}
-                </a>
-              ),
+              render: (u: string) => {
+                const sc = shortcutOfUrl(u)
+                return sc ? (
+                  <Tag color="blue">{t('links.shortcutTag', { name: t(sc.labelKey) })}</Tag>
+                ) : (
+                  <a href={u} target="_blank" rel="noreferrer">
+                    {u}
+                  </a>
+                )
+              },
             },
             {
               title: t('links.newTab'),
@@ -146,14 +165,39 @@ export default function LinksPage() {
           <Form.Item name="label" label={t('links.label')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="url" label={t('links.url')} rules={[{ required: true }]}>
-            <Input placeholder="https://…" />
+          <Form.Item name="kind" label={t('links.type')} initialValue="url">
+            <Radio.Group optionType="button" buttonStyle="solid">
+              <Radio.Button value="url">{t('links.typeUrl')}</Radio.Button>
+              <Radio.Button value="shortcut">{t('links.typeShortcut')}</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(a, b) => a.kind !== b.kind}>
+            {({ getFieldValue }) =>
+              getFieldValue('kind') === 'shortcut' ? (
+                <Form.Item name="shortcut" label={t('links.shortcut')} rules={[{ required: true }]}>
+                  <Select
+                    placeholder={t('links.shortcutPlaceholder')}
+                    options={APP_SHORTCUTS.map((s) => ({ value: s.key, label: t(s.labelKey) }))}
+                  />
+                </Form.Item>
+              ) : (
+                <Form.Item name="url" label={t('links.url')} rules={[{ required: true }]}>
+                  <Input placeholder="https://…" />
+                </Form.Item>
+              )
+            }
           </Form.Item>
           <Form.Item name="icon" label={t('links.icon')}>
             <Select allowClear showSearch placeholder={t('links.iconPlaceholder')} options={iconSelectOptions} optionFilterProp="value" />
           </Form.Item>
-          <Form.Item name="newTab" valuePropName="checked">
-            <Checkbox>{t('links.newTab')}</Checkbox>
+          <Form.Item noStyle shouldUpdate={(a, b) => a.kind !== b.kind}>
+            {({ getFieldValue }) =>
+              getFieldValue('kind') === 'shortcut' ? null : (
+                <Form.Item name="newTab" valuePropName="checked">
+                  <Checkbox>{t('links.newTab')}</Checkbox>
+                </Form.Item>
+              )
+            }
           </Form.Item>
         </Form>
       </Modal>

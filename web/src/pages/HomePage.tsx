@@ -15,15 +15,17 @@ import {
   theme,
   Typography,
 } from 'antd'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, qs } from '../api/client'
 import type { HomeResp } from '../api/types'
 import { SiteLogo, useSite } from '../site'
+import { useAuth } from '../auth'
 import Omnibox from '../components/Omnibox'
 import ReportCard from '../components/ReportCard'
 import { linkIconComponent } from '../components/linkIcons'
+import { shortcutOfUrl, triggerShortcut } from '../lib/shortcuts'
 
 const { RangePicker } = DatePicker
 
@@ -31,6 +33,9 @@ export default function HomePage() {
   const { t } = useTranslation()
   const { title } = useSite()
   const { token } = theme.useToken()
+  const navigate = useNavigate()
+  const { can } = useAuth()
+  const canRun = can('run_batch')
   const [sp, setSp] = useSearchParams()
   const [data, setData] = useState<HomeResp | null>(null)
   const [loading, setLoading] = useState(true)
@@ -133,6 +138,17 @@ export default function HomePage() {
           <Space size={[8, 8]} wrap>
             {data.links.map((l) => {
               const Icon = linkIconComponent(l.icon)
+              // A shortcut link (url = "rp:<action>") triggers an internal action; a
+              // shortcut the user can't run (e.g. run-analysis without run_batch) is hidden.
+              const sc = shortcutOfUrl(l.url)
+              if (sc) {
+                if (sc.requiresRun && !canRun) return null
+                return (
+                  <Button key={l.id} icon={<Icon />} onClick={() => triggerShortcut(sc, navigate)}>
+                    {l.label}
+                  </Button>
+                )
+              }
               const newTab = l.newTab !== false // default: open in a new tab
               return (
                 <Button
