@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { App, Button, Empty, Input, Popconfirm, Select, Space, Spin, Typography, theme } from 'antd'
-import { DeleteOutlined, PlusOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons'
+import { App, Button, Drawer, Empty, Grid, Input, Popconfirm, Select, Spin, Typography, theme } from 'antd'
+import { DeleteOutlined, MessageOutlined, PlusOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import Markdown from '../components/Markdown'
@@ -17,6 +17,8 @@ export default function ChatPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { token } = theme.useToken()
+  const compact = !Grid.useBreakpoint().md // phone / small tablet: fold the sidebar into a drawer
+  const [navOpen, setNavOpen] = useState(false)
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [targetId, setTargetId] = useState<number>()
   const [convs, setConvs] = useState<ChatConversation[]>([])
@@ -193,66 +195,97 @@ export default function ChatPage() {
     )
   }
 
-  return (
-    <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 140px)', minHeight: 420 }}>
-      {/* Left: target picker + conversation list */}
-      <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <Select
-          style={{ width: '100%' }}
-          value={targetId}
-          onChange={setTargetId}
-          options={targets.map((tg) => ({ value: tg.id, label: tg.name }))}
-        />
-        <Button icon={<PlusOutlined />} onClick={newConv} block>
-          {t('chat.newConversation')}
-        </Button>
-        <div style={{ overflowY: 'auto', flex: 1, borderTop: `1px solid ${token.colorBorderSecondary}`, paddingTop: 8 }}>
-          {convs.length === 0 ? (
-            <Typography.Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
-              {t('chat.noConversations')}
-            </Typography.Text>
-          ) : (
-            convs.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => openConv(c.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 8px',
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                  background: c.id === convId ? token.colorFillSecondary : 'transparent',
-                }}
-              >
-                <Typography.Text ellipsis style={{ flex: 1, fontSize: 13 }}>
-                  {c.title || t('chat.untitled')}
-                </Typography.Text>
-                <Popconfirm title={t('chat.deleteConfirm')} onConfirm={() => delConv(c.id)}>
-                  <Button
-                    size="small"
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={(e) => e.stopPropagation()}
-                    title={t('common.delete')}
-                  />
-                </Popconfirm>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+  const pickConv = (id: number) => {
+    setNavOpen(false)
+    openConv(id)
+  }
+  const startNew = () => {
+    setNavOpen(false)
+    newConv()
+  }
 
-      {/* Right: message thread + composer */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 10, overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
-          <Space>
-            <RobotOutlined />
-            <Typography.Text strong>{target?.name}</Typography.Text>
-            {difyModeTag(t, target?.mode)}
-          </Space>
+  // Sidebar: target picker + new-conversation + conversation list. A left column on desktop,
+  // folded into a drawer on mobile.
+  const sidebar = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: '100%' }}>
+      <Select
+        style={{ width: '100%' }}
+        value={targetId}
+        onChange={setTargetId}
+        options={targets.map((tg) => ({ value: tg.id, label: tg.name }))}
+      />
+      <Button icon={<PlusOutlined />} onClick={startNew} block>
+        {t('chat.newConversation')}
+      </Button>
+      <div style={{ overflowY: 'auto', flex: 1, borderTop: `1px solid ${token.colorBorderSecondary}`, paddingTop: 8 }}>
+        {convs.length === 0 ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
+            {t('chat.noConversations')}
+          </Typography.Text>
+        ) : (
+          convs.map((c) => (
+            <div
+              key={c.id}
+              onClick={() => pickConv(c.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 8px',
+                borderRadius: 8,
+                cursor: 'pointer',
+                background: c.id === convId ? token.colorFillSecondary : 'transparent',
+              }}
+            >
+              <Typography.Text ellipsis style={{ flex: 1, fontSize: 13 }}>
+                {c.title || t('chat.untitled')}
+              </Typography.Text>
+              <Popconfirm title={t('chat.deleteConfirm')} onConfirm={() => delConv(c.id)}>
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={(e) => e.stopPropagation()}
+                  title={t('common.delete')}
+                />
+              </Popconfirm>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={{ display: 'flex', gap: 16, height: 'calc(100dvh - 130px)', minHeight: 380 }}>
+      {/* Conversation list: a fixed left column on desktop, a drawer on mobile. */}
+      {compact ? (
+        <Drawer
+          open={navOpen}
+          onClose={() => setNavOpen(false)}
+          placement="left"
+          width={280}
+          title={t('chat.conversations')}
+          styles={{ body: { padding: 12 } }}
+        >
+          {sidebar}
+        </Drawer>
+      ) : (
+        <div style={{ width: 260, flexShrink: 0 }}>{sidebar}</div>
+      )}
+
+      {/* Message thread + composer */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ padding: '8px 14px', borderBottom: `1px solid ${token.colorBorderSecondary}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {compact && (
+            <Button type="text" size="small" icon={<MessageOutlined />} onClick={() => setNavOpen(true)} title={t('chat.conversations')} />
+          )}
+          <RobotOutlined />
+          <Typography.Text strong ellipsis style={{ flex: 1, minWidth: 0 }}>
+            {target?.name}
+          </Typography.Text>
+          {difyModeTag(t, target?.mode)}
         </div>
         <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
           {loadingHist ? (

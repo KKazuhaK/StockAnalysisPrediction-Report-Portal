@@ -61,6 +61,7 @@
   "nav.apps": "應用",
   "nav.chat": "助手",
   "chat.newConversation": "新對話",
+  "chat.conversations": "對話列表",
   "chat.noConversations": "還沒有對話",
   "chat.noTargets": "還沒有對話或智慧體應用。去 管理 → 執行目標 新增一個 Dify 的 chat/agent 應用。",
   "chat.untitled": "未命名",

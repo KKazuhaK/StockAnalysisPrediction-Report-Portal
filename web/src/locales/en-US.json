@@ -61,6 +61,7 @@
   "nav.apps": "Apps",
   "nav.chat": "Assistant",
   "chat.newConversation": "New conversation",
+  "chat.conversations": "Conversations",
   "chat.noConversations": "No conversations yet",
   "chat.noTargets": "No chat or agent apps yet. Add one under Manage → Targets (a Dify chat/agent app).",
   "chat.untitled": "Untitled",
