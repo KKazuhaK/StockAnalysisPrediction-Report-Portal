@@ -156,3 +156,54 @@ func (c *Client) Messages(ctx context.Context, conversationID, user string, limi
 	}
 	return out.Data, nil
 }
+
+// GetChatOutcome reconciles a dropped chat/agent run from its conversation history.
+// A pure agent/basic-chat app never emits a workflow_run_id, so GetWorkflowRun can't
+// reconcile it (docs/adr/0006-dify-native.md); instead we read the conversation's newest
+// message: an `error` status is a terminal failure, a non-empty answer is success, and
+// nothing-yet is "running" so the caller keeps polling. The returned RunResult mirrors
+// GetWorkflowRun's shape so the same reconcile loop drives both.
+func (c *Client) GetChatOutcome(ctx context.Context, conversationID, user string) (RunResult, error) {
+	if user == "" {
+		user = "report-portal"
+	}
+	q := url.Values{}
+	q.Set("conversation_id", conversationID)
+	q.Set("user", user)
+	q.Set("limit", "20")
+	raw, err := c.do(ctx, http.MethodGet, "/messages?"+q.Encode(), nil)
+	if err != nil {
+		return RunResult{}, err
+	}
+	var doc struct {
+		Data []struct {
+			ID        string `json:"id"`
+			Answer    string `json:"answer"`
+			Status    string `json:"status"`
+			Error     string `json:"error"`
+			CreatedAt int64  `json:"created_at"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return RunResult{}, fmt.Errorf("dify /messages: bad JSON: %w", err)
+	}
+	if len(doc.Data) == 0 {
+		return RunResult{ConversationID: conversationID, Status: "running", Raw: raw}, nil // not persisted yet
+	}
+	latest := doc.Data[0] // pick the newest turn regardless of the API's sort order
+	for _, m := range doc.Data[1:] {
+		if m.CreatedAt > latest.CreatedAt {
+			latest = m
+		}
+	}
+	out := RunResult{ConversationID: conversationID, Raw: raw}
+	switch {
+	case latest.Status == "error":
+		out.Status, out.Error = "failed", firstNonEmpty(latest.Error, "dify chat message failed")
+	case latest.Answer != "":
+		out.Status, out.Outputs = "succeeded", map[string]any{"answer": latest.Answer}
+	default:
+		out.Status = "running" // no answer yet and not marked failed → still generating
+	}
+	return out, nil
+}

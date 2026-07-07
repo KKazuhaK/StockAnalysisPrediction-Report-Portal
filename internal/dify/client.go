@@ -154,12 +154,13 @@ func (c *Client) Parameters(ctx context.Context) ([]Input, error) {
 
 // RunResult is the outcome of a workflow run (blocking or streaming).
 type RunResult struct {
-	WorkflowRunID string
-	TaskID        string // streaming only; needed to stop the run server-side
-	Status        string // running | succeeded | failed | stopped
-	Error         string
-	Outputs       map[string]any
-	Raw           json.RawMessage
+	WorkflowRunID  string
+	ConversationID string // chat/agent apps only; the handle used to reconcile a dropped chat run
+	TaskID         string // streaming only; needed to stop the run server-side
+	Status         string // running | succeeded | failed | stopped
+	Error          string
+	Outputs        map[string]any
+	Raw            json.RawMessage
 }
 
 // RunWorkflow runs the workflow once (blocking) with the given inputs. user is the

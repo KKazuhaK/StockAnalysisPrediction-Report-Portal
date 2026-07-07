@@ -37,7 +37,7 @@ type streamEnvelope struct {
 	MessageID      string `json:"message_id"`
 	Answer         string `json:"answer"`  // chat/agent apps: a chunk of the reply
 	Message        string `json:"message"` // top-level text of an `error` event
-	Data          struct {
+	Data           struct {
 		Title   string         `json:"title"`
 		Index   int            `json:"index"`
 		Status  string         `json:"status"`
@@ -182,10 +182,14 @@ func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user 
 	}
 
 	var res RunResult
-	var runID, taskID string
+	var runID, taskID, convID string
 	done := false
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
+	// partial carries the ids seen so far, so a stream that drops before a terminal event
+	// still hands the caller a conversation id (pure chat/agent) or run id (chatflow) to
+	// reconcile with instead of nothing — the pure-chat analogue of returning the run id.
+	partial := func() RunResult { return RunResult{WorkflowRunID: runID, ConversationID: convID, TaskID: taskID} }
 	for sc.Scan() {
 		line := sc.Text()
 		if len(line) < 5 || line[:5] != "data:" {
@@ -205,24 +209,27 @@ func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user 
 		if ev.TaskID != "" {
 			taskID = ev.TaskID
 		}
+		if ev.ConversationID != "" {
+			convID = ev.ConversationID
+		}
 		if onEvent != nil {
 			onEvent(StreamEvent{Event: ev.Event, TaskID: taskID, RunID: runID, Title: ev.Data.Title, Index: ev.Data.Index, Status: ev.Data.Status})
 		}
 		if stopAtRunID && runID != "" {
-			return res, runID, nil // poll mode: hand off to status polling
+			return partial(), runID, nil // poll mode: hand off to status polling
 		}
 		switch ev.Event {
 		case "workflow_finished":
-			res = RunResult{WorkflowRunID: runID, TaskID: taskID, Status: ev.Data.Status, Error: ev.Data.Error, Raw: append([]byte(nil), payload...)}
+			res = RunResult{WorkflowRunID: runID, ConversationID: convID, TaskID: taskID, Status: ev.Data.Status, Error: ev.Data.Error, Raw: append([]byte(nil), payload...)}
 			done = true
 		case "message_end":
 			if !done { // chatflow sends workflow_finished first; message_end is the end for pure chat
-				res = RunResult{WorkflowRunID: runID, TaskID: taskID, Status: "succeeded", Raw: append([]byte(nil), payload...)}
+				res = RunResult{WorkflowRunID: runID, ConversationID: convID, TaskID: taskID, Status: "succeeded", Raw: append([]byte(nil), payload...)}
 				done = true
 			}
 		case "error":
 			if !done { // don't let a trailing error clobber an already-terminal result
-				res = RunResult{WorkflowRunID: runID, TaskID: taskID, Status: "failed", Error: firstNonEmpty(ev.Data.Error, ev.Message), Raw: append([]byte(nil), payload...)}
+				res = RunResult{WorkflowRunID: runID, ConversationID: convID, TaskID: taskID, Status: "failed", Error: firstNonEmpty(ev.Data.Error, ev.Message), Raw: append([]byte(nil), payload...)}
 				done = true
 			}
 		}
@@ -231,9 +238,9 @@ func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user 
 		return res, runID, nil
 	}
 	if err := sc.Err(); err != nil {
-		return res, runID, err
+		return partial(), runID, err
 	}
-	return res, runID, fmt.Errorf("dify chat stream ended before completion")
+	return partial(), runID, fmt.Errorf("dify chat stream ended before completion")
 }
 
 func firstNonEmpty(a, b string) string {

@@ -79,6 +79,7 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 			taskID = e.TaskID
 		}
 	})
+	convID := r.ConversationID // chat/agent apps: the handle to reconcile a dropped run
 	// Poll mode: the stream returned as soon as the run id was captured. Poll the run to
 	// its terminal state instead of holding the connection open. Reconcile never re-runs.
 	if p.poll && err == nil && runID != "" && !difyTerminal(r.Status) {
@@ -99,27 +100,55 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 		}
 		return batch.RunResult{}, classifyDifyErr(err)
 	}
-	// Nothing started (no run id) → safe to let the engine classify and retry.
-	// (Residual: a drop in the tiny window after Dify accepts the POST but before it
-	// emits the run id leaves runID empty though a run may have started — unavoidable
-	// without a request idempotency key, which Dify's workflow API doesn't offer.)
-	if runID == "" {
-		return batch.RunResult{}, classifyDifyErr(err)
+	// The stream dropped mid-run. NEVER re-run a run that started — reconcile its true
+	// outcome by polling whatever handle we captured. A reconcile failure is returned as
+	// PERMANENT so the engine can't retry (a retry would re-run the started run — the
+	// ~1M-token duplicate this exists to avoid).
+	if runID != "" { // workflow / chatflow: reconcile by workflow run id
+		r, err = p.reconcile(ctx, runID)
+		if err != nil {
+			return batch.RunResult{}, permanentRunErr{fmt.Errorf("reconcile dify run %s: %w", runID, err)}
+		}
+		return difyResultToBatch(r), nil
 	}
-	// A run has STARTED. Never re-run it — reconcile the true outcome by polling. Any
-	// reconcile failure is returned as PERMANENT so the engine can't retry (a retry
-	// would re-run the started workflow — the ~1M-token duplicate this exists to avoid).
-	r, err = p.reconcile(ctx, runID)
-	if err != nil {
-		return batch.RunResult{}, permanentRunErr{fmt.Errorf("reconcile dify run %s: %w", runID, err)}
+	if p.chat && convID != "" { // pure agent/chat: no run id — reconcile via message history
+		r, err = p.reconcileChat(ctx, convID)
+		if err != nil {
+			return batch.RunResult{}, permanentRunErr{fmt.Errorf("reconcile dify chat %s: %w", convID, err)}
+		}
+		return difyResultToBatch(r), nil
 	}
-	return difyResultToBatch(r), nil
+	// A task id means a run demonstrably STARTED but left us no id to reconcile it with
+	// (e.g. the stream was torn down before the run/conversation id was emitted). Retrying
+	// would re-run it, so fail PERMANENTLY — no duplicate burn.
+	if taskID != "" {
+		return batch.RunResult{}, permanentRunErr{fmt.Errorf("dify run started (task %s) but the stream ended before an id to reconcile; not retried to avoid a duplicate run: %w", taskID, err)}
+	}
+	// Nothing started (no ids at all) → safe to let the engine classify and retry.
+	return batch.RunResult{}, classifyDifyErr(err)
 }
 
-// reconcile polls a started run to its terminal state so a dropped stream never
-// triggers a re-run. Transient poll failures (5xx / 429 / network) are retried within
-// the reconcile deadline; only a permanent error (e.g. an unknown run id) gives up.
+// reconcile polls a started WORKFLOW/chatflow run to its terminal state by its run id.
 func (p difyProvider) reconcile(ctx context.Context, runID string) (dify.RunResult, error) {
+	return p.reconcileLoop(ctx, func(ctx context.Context) (dify.RunResult, error) {
+		return p.c.GetWorkflowRun(ctx, runID)
+	})
+}
+
+// reconcileChat polls a started pure agent/chat run to its terminal state by its
+// conversation id — it has no workflow run id, so GetWorkflowRun can't reconcile it;
+// the outcome is read from the conversation's message history instead.
+func (p difyProvider) reconcileChat(ctx context.Context, convID string) (dify.RunResult, error) {
+	return p.reconcileLoop(ctx, func(ctx context.Context) (dify.RunResult, error) {
+		return p.c.GetChatOutcome(ctx, convID, p.user)
+	})
+}
+
+// reconcileLoop polls fetch until it reports a terminal state so a dropped stream never
+// triggers a re-run. Transient poll failures (5xx / 429 / network) and a still-"running"
+// status are retried within the reconcile deadline; only a permanent error (e.g. an
+// unknown id) gives up early.
+func (p difyProvider) reconcileLoop(ctx context.Context, fetch func(context.Context) (dify.RunResult, error)) (dify.RunResult, error) {
 	poll, deadline := p.reconcilePoll, p.reconcileTimeout
 	if poll <= 0 {
 		poll = difyReconcilePoll
@@ -130,12 +159,12 @@ func (p difyProvider) reconcile(ctx context.Context, runID string) (dify.RunResu
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	for {
-		r, err := p.c.GetWorkflowRun(ctx, runID)
+		r, err := fetch(ctx)
 		if err == nil && r.Status != "" && r.Status != "running" {
 			return r, nil // terminal: succeeded / failed / stopped
 		}
 		if err != nil && isPermanentDifyErr(err) {
-			return dify.RunResult{}, err // e.g. run id not found — polling won't help
+			return dify.RunResult{}, err // e.g. id not found — polling won't help
 		}
 		// A transient error or a still-running status: wait and poll again until the
 		// deadline (whereupon ctx.Done fires and we give up — permanently, per Run).
