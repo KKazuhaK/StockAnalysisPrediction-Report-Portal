@@ -1,4 +1,7 @@
-const CACHE_NAME = 'report-portal-pwa-v2'
+// Bump this on any change to the caching strategy (or to force a one-time flush of
+// stale precached assets): `activate` deletes every cache whose name isn't the current
+// one, so a new version wipes the old app-shell/asset cache on the next deploy.
+const CACHE_NAME = 'report-portal-pwa-v3'
 const APP_SHELL = ['/', '/favicon.svg']
 
 self.addEventListener('install', (event) => {
