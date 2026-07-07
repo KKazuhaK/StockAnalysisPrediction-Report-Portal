@@ -124,7 +124,15 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 	if taskID != "" {
 		return batch.RunResult{}, permanentRunErr{fmt.Errorf("dify run started (task %s) but the stream ended before an id to reconcile; not retried to avoid a duplicate run: %w", taskID, err)}
 	}
-	// Nothing started (no ids at all) → safe to let the engine classify and retry.
+	// No ids at all — but if the STREAM OPENED (Dify returned 2xx and accepted the request),
+	// a run was almost certainly created and is running blind (e.g. it stalled before emitting
+	// any event under DB pressure). Re-running duplicates it, so fail PERMANENTLY. This is the
+	// runaway amplifier: without it, an overloaded Dify makes every run look "unstarted", the
+	// engine re-fires them, and that piles on more load + burns tokens on duplicate runs.
+	if errors.Is(err, dify.ErrStreamEnded) {
+		return batch.RunResult{}, permanentRunErr{fmt.Errorf("dify accepted the run but the stream ended before any id; not retried to avoid a duplicate run: %w", err)}
+	}
+	// A genuine pre-stream failure (connection refused / non-2xx) → nothing started → safe to retry.
 	return batch.RunResult{}, classifyDifyErr(err)
 }
 
@@ -225,10 +233,12 @@ func classifyDifyErr(err error) error {
 type transientRunErr struct{ error }
 
 func (transientRunErr) Transient() bool { return true }
+func (e transientRunErr) Unwrap() error { return e.error }
 
 type permanentRunErr struct{ error }
 
 func (permanentRunErr) Transient() bool { return false }
+func (e permanentRunErr) Unwrap() error { return e.error }
 
 // buildDifyProvider constructs the provider for a Dify target from its config JSON.
 // user is the end-user identity Dify records for each run (resolved from the

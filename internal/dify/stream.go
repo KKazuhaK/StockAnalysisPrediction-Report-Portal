@@ -5,10 +5,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 )
+
+// ErrStreamEnded means the SSE stream OPENED (Dify returned 2xx and accepted the request)
+// but closed before any terminal event. Dify creates the run the moment it accepts the
+// POST, so a run has almost certainly STARTED even when we captured no run/task id (e.g. it
+// stalled before emitting workflow_started under DB pressure). Callers must NOT re-run on
+// this — it would duplicate a live run. It is distinct from a pre-stream failure (connection
+// refused / non-2xx), where nothing started and a retry is safe.
+var ErrStreamEnded = errors.New("dify stream ended before completion")
 
 // Streaming run + reconcile + stop (docs/adr/0006-dify-native.md). Streaming mode is
 // what lets the portal (a) capture the run id the instant a workflow starts — so a
@@ -140,7 +149,7 @@ func (c *Client) RunWorkflowStream(ctx context.Context, inputs map[string]any, u
 	if err := sc.Err(); err != nil {
 		return res, runID, err // stream dropped mid-run; runID lets the caller reconcile
 	}
-	return res, runID, fmt.Errorf("dify stream ended before workflow_finished")
+	return res, runID, fmt.Errorf("dify stream ended before workflow_finished: %w", ErrStreamEnded)
 }
 
 // RunChatStream runs a chat/agent app (/chat-messages) in streaming mode. `query` is
@@ -240,7 +249,7 @@ func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user 
 	if err := sc.Err(); err != nil {
 		return partial(), runID, err
 	}
-	return partial(), runID, fmt.Errorf("dify chat stream ended before completion")
+	return partial(), runID, fmt.Errorf("dify chat stream ended before completion: %w", ErrStreamEnded)
 }
 
 func firstNonEmpty(a, b string) string {

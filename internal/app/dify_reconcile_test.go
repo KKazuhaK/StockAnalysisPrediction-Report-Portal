@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -83,9 +84,14 @@ func TestDifyProviderStartedButUnreconcilableIsPermanent(t *testing.T) {
 	}
 }
 
-// A stream that never started anything (no task id, no ids at all — e.g. the upstream
-// closed before any event) stays TRANSIENT: nothing ran, so retrying is safe and correct.
-func TestDifyProviderNothingStartedStaysTransient(t *testing.T) {
+// A 200 to /workflows/run means Dify ACCEPTED the request and created the run — so even a
+// stream that immediately closes with zero events (e.g. it stalled before emitting anything
+// under DB pressure) has a run that started. Retrying would duplicate a live run, so this
+// must be PERMANENT. (The proven runaway: an overloaded Dify emits no events, the engine
+// re-fires every "unstarted"-looking run, and the duplicates pile more load on until the DB
+// falls over.) Only a pre-stream failure (connection refused / non-2xx) is safe to retry —
+// covered by TestDifyProviderErrorClassification.
+func TestDifyProviderStreamOpenedButEmptyIsPermanent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 200 + event-stream header, then an immediate clean close with zero events.
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -97,7 +103,10 @@ func TestDifyProviderNothingStartedStaysTransient(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when the stream yields nothing")
 	}
-	if !batch.IsTransient(err) {
-		t.Error("a run that never started must stay TRANSIENT (safe to retry)")
+	if batch.IsTransient(err) {
+		t.Error("a run Dify accepted (200) but that streamed nothing must be PERMANENT — retrying re-fires a live run")
+	}
+	if !errors.Is(err, dify.ErrStreamEnded) {
+		t.Errorf("error should wrap dify.ErrStreamEnded, got: %v", err)
 	}
 }
