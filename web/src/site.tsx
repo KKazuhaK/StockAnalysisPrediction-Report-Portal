@@ -1,13 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
-import type { AnnouncementLevel, SiteSettings } from './api/types'
+import type { AnnouncementLevel, HomeMoreStyle, SiteSettings } from './api/types'
 import { BrandIcon } from './components/icons'
 
 const DEFAULT_FAVICON = '/favicon.svg'
 const DEFAULT_SETTINGS: SiteSettings = {
   siteTitle: '',
   siteLogoUrl: '',
+  homeMoreStyle: 'expand',
   footerText: '',
   footerShowInfo: true,
   footerShowVersion: true,
@@ -31,9 +32,11 @@ const Ctx = createContext<SiteCtx | null>(null)
 
 function normalizeSettings(s?: Partial<SiteSettings> | null): SiteSettings {
   const level = String(s?.announcementLevel ?? '').trim().toLowerCase()
+  const moreStyle = String(s?.homeMoreStyle ?? '').trim().toLowerCase()
   return {
     siteTitle: (s?.siteTitle ?? '').trim(),
     siteLogoUrl: (s?.siteLogoUrl ?? '').trim(),
+    homeMoreStyle: (['expand', 'modal', 'popover'].includes(moreStyle) ? moreStyle : 'expand') as HomeMoreStyle,
     footerText: (s?.footerText ?? '').trim(),
     footerShowInfo: s?.footerShowInfo !== false,
     footerShowVersion: s?.footerShowVersion !== false,

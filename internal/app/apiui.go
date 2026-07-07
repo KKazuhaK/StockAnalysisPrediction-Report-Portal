@@ -103,10 +103,22 @@ func (s *Server) canQuery(r *http.Request) bool {
 
 // ---------- Public site chrome ----------
 
+// normalizeHomeMoreStyle validates how the home-page "More" button reveals folded quick
+// links; anything unrecognized falls back to inline expand.
+func normalizeHomeMoreStyle(v string) string {
+	switch strings.TrimSpace(strings.ToLower(v)) {
+	case "modal", "popover":
+		return strings.TrimSpace(strings.ToLower(v))
+	default:
+		return "expand"
+	}
+}
+
 func (s *Server) siteSettingsJSON() map[string]any {
 	return map[string]any{
 		"siteTitle":           s.st.GetSetting("site_title", ""),
 		"siteLogoUrl":         s.st.GetSetting("site_logo_url", ""),
+		"homeMoreStyle":       normalizeHomeMoreStyle(s.st.GetSetting("home_more_style", "")),
 		"footerText":          s.st.GetSetting("footer_text", ""),
 		"footerShowInfo":      settingBool(s.st.GetSetting("footer_show_info", ""), true),
 		"footerShowVersion":   settingBool(s.st.GetSetting("footer_show_version", ""), true),
@@ -744,7 +756,7 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
 	var in struct {
 		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText, PwaIconUrl   *string
-		AnnouncementLevel, AnnouncementTitle, AnnouncementContent                             *string
+		AnnouncementLevel, AnnouncementTitle, AnnouncementContent, HomeMoreStyle              *string
 		FooterShowInfo, FooterShowVersion, PwaEnabled, AnnouncementEnabled, AnnouncementPopup *bool
 	}
 	readJSON(r, &in)
@@ -802,6 +814,9 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	if in.SiteLogoUrl != nil { // "" clears → built-in SVG mark
 		s.st.SetSetting("site_logo_url", strings.TrimSpace(*in.SiteLogoUrl))
+	}
+	if in.HomeMoreStyle != nil {
+		s.st.SetSetting("home_more_style", normalizeHomeMoreStyle(*in.HomeMoreStyle))
 	}
 	if in.FooterText != nil { // "" clears → use the site title as footer text
 		s.st.SetSetting("footer_text", strings.TrimSpace(*in.FooterText))

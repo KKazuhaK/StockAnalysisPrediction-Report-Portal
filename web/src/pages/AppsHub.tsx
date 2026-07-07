@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Card, Col, Empty, Row, Space, Tag, Typography, theme } from 'antd'
-import { AppstoreOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -25,7 +25,7 @@ const BUILTINS: BuiltinApp[] = [
     key: 'batch',
     perm: 'run_batch',
     to: '/apps/batch',
-    icon: <ThunderboltOutlined />,
+    icon: <PlayCircleOutlined />,
     titleKey: 'nav.batch',
     descKey: 'apps.batchDesc',
   },

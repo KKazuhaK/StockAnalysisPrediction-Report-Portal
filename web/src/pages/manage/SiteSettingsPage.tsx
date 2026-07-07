@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Divider, Form, Input, Select, Space, Spin, Switch, Typography, Upload } from 'antd'
+import { App, Button, Divider, Form, Input, Radio, Select, Space, Spin, Switch, Typography, Upload } from 'antd'
 import { DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
@@ -37,6 +37,7 @@ export default function SiteSettingsPage() {
         form.setFieldsValue({
           siteTitle: r.siteTitle || '',
           siteLogoUrl: r.siteLogoUrl || '',
+          homeMoreStyle: r.homeMoreStyle || 'expand',
           footerText: r.footerText || '',
           footerShowInfo: r.footerShowInfo !== false,
           footerShowVersion: r.footerShowVersion !== false,
@@ -55,6 +56,7 @@ export default function SiteSettingsPage() {
       await api.post('/api/admin/settings', {
         siteTitle: v.siteTitle || '',
         siteLogoUrl: v.siteLogoUrl || '',
+        homeMoreStyle: v.homeMoreStyle || 'expand',
         footerText: v.footerText || '',
         footerShowInfo: v.footerShowInfo !== false,
         footerShowVersion: v.footerShowVersion !== false,
@@ -193,6 +195,16 @@ export default function SiteSettingsPage() {
         </Form.Item>
         <Form.Item name="footerShowVersion" label={t('settings.footerShowVersion')} valuePropName="checked">
           <Switch />
+        </Form.Item>
+        <Divider orientation="left" orientationMargin={0}>
+          {t('settings.homeSection')}
+        </Divider>
+        <Form.Item name="homeMoreStyle" label={t('settings.homeMoreStyle')} extra={t('settings.homeMoreStyleHint')}>
+          <Radio.Group optionType="button" buttonStyle="solid">
+            <Radio.Button value="expand">{t('settings.homeMoreExpand')}</Radio.Button>
+            <Radio.Button value="modal">{t('settings.homeMoreModal')}</Radio.Button>
+            <Radio.Button value="popover">{t('settings.homeMorePopover')}</Radio.Button>
+          </Radio.Group>
         </Form.Item>
         <Form.Item name="timezone" label={t('settings.timezone')} style={{ marginBottom: 8 }}>
           <Select

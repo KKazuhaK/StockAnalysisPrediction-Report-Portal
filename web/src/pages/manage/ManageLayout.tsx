@@ -15,8 +15,8 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   NotificationOutlined,
+  PlayCircleOutlined,
   TeamOutlined,
-  ThunderboltOutlined,
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -116,7 +116,7 @@ export default function ManageLayout() {
       type: 'group',
       label: t('nav.group.batch'),
       children: [
-        { key: 'batch', label: t('nav.batchAdmin'), icon: <ThunderboltOutlined /> },
+        { key: 'batch', label: t('nav.batchAdmin'), icon: <PlayCircleOutlined /> },
         { key: 'runqueue', label: t('nav.runQueue'), icon: <ControlOutlined /> },
         { key: 'assistant', label: t('nav.chat'), icon: <MessageOutlined /> },
       ],

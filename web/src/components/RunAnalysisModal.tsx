@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, App, Checkbox, DatePicker, Form, Input, Modal, Radio, Select, Space, Tag, Typography } from 'antd'
-import { ThunderboltOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { Dayjs } from 'dayjs'
 import { api } from '../api/client'
@@ -142,7 +142,7 @@ export default function RunAnalysisModal({
     <Modal
       title={
         <Space>
-          <ThunderboltOutlined />
+          <PlayCircleOutlined />
           {t('run.title')}
         </Space>
       }
