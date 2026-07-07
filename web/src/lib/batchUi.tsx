@@ -65,3 +65,21 @@ export function fmtInputs(s?: string) {
 export function isTerminal(status: string) {
   return status === 'finished' || status === 'cancelled'
 }
+
+// difyModeKind maps a Dify target's raw app mode to the three run types the portal
+// supports: "workflow" (/workflows/run), or the two conversational types "agent" and
+// "chat" (both run via /chat-messages, with the row's `query` column as the message).
+// Dify reports "workflow", "agent-chat", "chat"/"advanced-chat", etc.
+export function difyModeKind(mode?: string): 'workflow' | 'agent' | 'chat' {
+  if (!mode || mode === 'workflow') return 'workflow'
+  if (mode.includes('agent')) return 'agent'
+  return 'chat'
+}
+
+// difyModeTag labels a non-workflow target as Agent (purple) or Chat (geekblue); a
+// workflow target carries no tag (it is the default).
+export function difyModeTag(t: TFunction, mode?: string) {
+  const kind = difyModeKind(mode)
+  if (kind === 'workflow') return null
+  return <Tag color={kind === 'agent' ? 'purple' : 'geekblue'}>{t(`batch.dify.${kind}Tag`)}</Tag>
+}

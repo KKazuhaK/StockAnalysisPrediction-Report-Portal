@@ -4,6 +4,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, DeleteOutlined, EditOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
+import { difyModeTag } from '../../lib/batchUi'
 import type { BatchPlugin, BatchTarget, DifyInput, DifyTargetEdit } from '../../api/types'
 
 export default function BatchAdminPage() {
@@ -171,7 +172,7 @@ export default function BatchAdminPage() {
       render: (_: unknown, tg: BatchTarget) => (
         <Space size={6}>
           {tg.name}
-          {tg.mode && tg.mode !== 'workflow' && <Tag color="purple">{t('batch.dify.chatTag')}</Tag>}
+          {difyModeTag(t, tg.mode)}
         </Space>
       ),
     },
@@ -290,7 +291,7 @@ export default function BatchAdminPage() {
                 <Input placeholder={t('batch.admin.targetNamePlaceholder')} />
               </Form.Item>
               {isChat && (
-                <Alert type="info" showIcon style={{ marginBottom: 10 }} message={<><Tag color="purple">{t('batch.dify.chatTag')}</Tag>{t('batch.dify.chatHint')}</>} />
+                <Alert type="info" showIcon style={{ marginBottom: 10 }} message={<>{difyModeTag(t, mode)}{t('batch.dify.chatHint')}</>} />
               )}
               <div style={{ marginBottom: 6 }}>
                 <Typography.Text type="secondary">{t('batch.dify.inputsLabel')}</Typography.Text>

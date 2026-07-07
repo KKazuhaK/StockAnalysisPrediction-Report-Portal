@@ -215,6 +215,7 @@
   "batch.dify.newTarget": "New Dify workflow",
   "batch.dify.editTarget": "Edit Dify workflow",
   "batch.dify.chatTag": "Chat",
+  "batch.dify.agentTag": "Agent",
   "batch.dify.chatHint": "This is a chat / agent app — each row's `query` column is the message it runs.",
   "batch.dify.targetsHint": "No targets yet. Add a Dify workflow with its API key and its inputs are discovered automatically.",
   "batch.dify.baseUrl": "Dify API base URL",
