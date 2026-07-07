@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type { Dayjs } from 'dayjs'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
+import { difyModeKind } from '../lib/batchUi'
 import type { BatchQueueSummary, BatchTarget, BatchTickets } from '../api/types'
 
 // The home-page run-analysis modal (docs/adr/0007-run-analysis-and-scheduling.md):
@@ -41,6 +42,10 @@ export default function RunAnalysisModal({
     api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
   }, [open])
 
+  // 运行分析 generates a report (Dify ingests it). Agent (agent-chat) apps are
+  // conversational and don't post a report to the portal, so they're excluded here — they
+  // belong in the 助手 chat page. Workflow and chat (e.g. a Deep Research chatflow) stay.
+  const runnable = useMemo(() => targets.filter((tg) => difyModeKind(tg.mode) !== 'agent'), [targets])
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputs = target?.inputs || []
 
@@ -138,7 +143,7 @@ export default function RunAnalysisModal({
       destroyOnClose
     >
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
-        {targets.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}
+        {runnable.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}
 
         <div>
           <Typography.Text type="secondary">{t('run.workflow')}</Typography.Text>
@@ -147,7 +152,7 @@ export default function RunAnalysisModal({
             placeholder={t('run.selectWorkflow')}
             value={targetId}
             onChange={pickTarget}
-            options={targets.map((tg) => ({ value: tg.id, label: tg.name }))}
+            options={runnable.map((tg) => ({ value: tg.id, label: tg.name }))}
           />
         </div>
 

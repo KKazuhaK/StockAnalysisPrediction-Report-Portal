@@ -69,6 +69,18 @@ export function SiteProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     refresh().catch(() => setSettings(DEFAULT_SETTINGS))
+    // Keep site chrome + the announcement live without a full reload: poll periodically and
+    // on tab refocus (same cadence as the home feed's auto-refresh), so an admin's edit
+    // reaches everyone shortly — and a changed announcement re-shows its popup.
+    const id = setInterval(() => refresh().catch(() => {}), 60000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh().catch(() => {})
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [refresh])
 
   const title = settings.siteTitle || t('brand')
