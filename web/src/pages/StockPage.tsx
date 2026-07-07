@@ -73,8 +73,9 @@ export default function StockPage() {
 
   return (
     <Spin spinning={loading}>
-      <div className="rp-reader" style={layoutVars}>
-        {/* Narrow: the timeline is a horizontal strip on top (container query in index.css). */}
+      <div className={`rp-reader${wide ? ' rp-reader--wide' : ''}`} style={layoutVars}>
+        {/* Narrow / wide mode: the timeline is a horizontal strip on top; normal mode on a
+            roomy screen floats it as a left rail (container query in index.css). */}
         <div className="rp-reader__strip">
           <Card size="small" title={t('stock.timeline')} styles={{ body: { paddingTop: 12 } }}>
             <TimelinePanel nodes={data.timeline} selected={data.selDate} onSelect={setDate} horizontal />

@@ -64,7 +64,7 @@ export default function RunPage() {
     <Spin spinning={loading}>
       {/* No timeline → just the centered reading column (same width/centering as the stock
           page's, so the two readers match). */}
-      <div className="rp-reader" style={{ '--rp-doc-max': `${docMax}px` } as CSSProperties}>
+      <div className={`rp-reader${wide ? ' rp-reader--wide' : ''}`} style={{ '--rp-doc-max': `${docMax}px` } as CSSProperties}>
         <div className="rp-reader__doc">
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>

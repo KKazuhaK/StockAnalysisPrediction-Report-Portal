@@ -186,31 +186,34 @@ body {
 .rp-reader__rail {
   display: none;
 }
-/* The reading column is ALWAYS centered on the page (never shifted left or right) and its
-   width follows --rp-doc-max, so "wide" mode simply makes the centered column wider. The
-   timeline is a horizontal strip on top by default. Both timeline and non-timeline reports
-   center the same way, so they line up. */
+/* The reading column is centered on the page; its width follows --rp-doc-max, so "wide"
+   mode makes the centered column wider. The timeline is a strip on top by default (this is
+   also what "wide" mode uses — a wide column leaves no room for a side rail). Timeline and
+   non-timeline reports center identically, so they line up. */
 .rp-reader__doc {
   min-width: 0;
   width: min(100% - 32px, var(--rp-doc-max, 1080px));
   margin: 0 auto;
 }
-/* Only on a very wide container is there room for the timeline as a left rail WITHOUT
-   pushing the centered reading column off-center (the rail floats in the wide left gutter,
-   which is otherwise empty). Below this the timeline stays a strip on top. 1900px guarantees
-   the gutter clears the rail even when "wide" mode makes the column ~1440. */
-@container (min-width: 1900px) {
-  .rp-reader__strip {
+/* Normal mode on a roomy container: the timeline is a slim rail floating in the left gutter
+   next to the centered column (which reserves room for it, so nothing overlaps and the
+   column stays centered). "wide" mode (.rp-reader--wide) opts out — the column takes the
+   full width and the timeline stays a top strip. */
+@container (min-width: 1280px) {
+  .rp-reader:not(.rp-reader--wide) .rp-reader__strip {
     display: none;
   }
-  .rp-reader__body {
+  .rp-reader:not(.rp-reader--wide) .rp-reader__body {
     position: relative;
   }
-  .rp-reader__rail {
+  .rp-reader:not(.rp-reader--wide) .rp-reader__rail {
     display: block;
     position: absolute;
     top: 0;
     left: 0;
     width: 180px;
+  }
+  .rp-reader:not(.rp-reader--wide) .rp-reader__doc {
+    width: min(100% - 420px, var(--rp-doc-max, 1080px));
   }
 }
