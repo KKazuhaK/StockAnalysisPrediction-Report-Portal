@@ -67,3 +67,36 @@ func TestChatConversationCRUD(t *testing.T) {
 		t.Fatal("conversation still present after delete")
 	}
 }
+
+// Starring a conversation is per-row (reflected by Get + List) and sorts starred
+// conversations ahead of the rest, independent of recency.
+func TestChatConversationStar(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+
+	older, _ := st.CreateConversation(tgt, "alice")
+	newer, _ := st.CreateConversation(tgt, "alice")
+	// By default the newest lists first and nothing is starred.
+	if got := st.ListConversations("alice", 0); got[0].ID != newer || got[0].Starred {
+		t.Fatalf("default order: want newest (%d) first and unstarred, got %+v", newer, got[0])
+	}
+
+	// Star the older one — it jumps ahead of the newer, unstarred one.
+	if err := st.SetConversationStarred(older, true); err != nil {
+		t.Fatalf("SetConversationStarred: %v", err)
+	}
+	if got := st.ListConversations("alice", 0); got[0].ID != older || !got[0].Starred {
+		t.Fatalf("after star: want %d first and starred, got %+v", older, got[0])
+	}
+	if c, _ := st.GetConversation(older); !c.Starred {
+		t.Fatal("GetConversation: starred = false, want true")
+	}
+
+	// Unstarring restores recency order.
+	if err := st.SetConversationStarred(older, false); err != nil {
+		t.Fatalf("unstar: %v", err)
+	}
+	if got := st.ListConversations("alice", 0); got[0].ID != newer {
+		t.Fatalf("after unstar: want newest (%d) first, got %d", newer, got[0].ID)
+	}
+}

@@ -1,35 +1,55 @@
-import { useEffect, useRef, useState } from 'react'
-import { App, Button, Drawer, Empty, Grid, Input, Popconfirm, Select, Spin, Typography, theme } from 'antd'
-import { DeleteOutlined, MessageOutlined, PlusOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { App, Avatar, Button, Drawer, Dropdown, Empty, Grid, Input, Modal, Select, Spin, Typography, theme } from 'antd'
+import type { MenuProps } from 'antd'
+import { ArrowUpOutlined, DeleteOutlined, EditOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError } from '../api/client'
+import { useAuth } from '../auth'
 import Markdown from '../components/Markdown'
 import { difyModeTag } from '../lib/batchUi'
 import type { ChatConversation, ChatTarget, ChatTurn } from '../api/types'
 
 type Msg = { role: 'user' | 'assistant'; content: string }
 
+// Starred conversations pin to the top; within each group the server's recency order is kept
+// (Array.prototype.sort is stable), so this mirrors the backend ORDER BY.
+const sortConvs = (cs: ChatConversation[]) => [...cs].sort((a, b) => Number(b.starred) - Number(a.starred))
+
 // An interactive chat/assistant surface (docs/adr/0012-interactive-chat.md): pick a Dify
 // chat/agent target and hold a continuous, context-keeping conversation. The portal is a
 // passthrough — Dify owns the history/memory (via conversation_id); this page just lists
 // the user's conversations and renders the turns.
+//
+// Layout is modeled on a modern chat assistant: a new conversation opens as a centered
+// greeting hero with the composer in the middle; once messages exist the composer docks at
+// the bottom and the thread scrolls above it, filling the panel width. Assistant replies
+// render as full-width markdown next to an avatar (best for long reports); the user's own
+// messages sit in a soft right-aligned bubble. Each conversation has a context menu to
+// rename, star (pin to top), or delete it.
 export default function ChatPage() {
   const { t } = useTranslation()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const { token } = theme.useToken()
+  const { name } = useAuth()
   const [sp] = useSearchParams()
   const compact = !Grid.useBreakpoint().md // phone / small tablet: fold the sidebar into a drawer
+  const padX = compact ? 16 : 32 // the thread/composer fill the panel width with this side gutter
   const [navOpen, setNavOpen] = useState(false)
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [targetId, setTargetId] = useState<number>()
   const [convs, setConvs] = useState<ChatConversation[]>([])
   const [convId, setConvId] = useState<number>()
+  const [hoverConv, setHoverConv] = useState<number | null>(null)
+  const [menuConv, setMenuConv] = useState<number | null>(null) // which row's ⋮ menu is open
+  const [renameId, setRenameId] = useState<number | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
+  const [focused, setFocused] = useState(false)
   const [sending, setSending] = useState(false)
   const [loadingHist, setLoadingHist] = useState(false)
-  const [intro, setIntro] = useState<{ opening: string; suggested: string[] } | null>(null)
+  const [intro, setIntro] = useState<{ opening: string } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // Whether the thread is scrolled to (near) the bottom. Auto-scroll only follows when it is,
   // so a poll refresh or a new message never yanks the user back down while they read above.
@@ -78,8 +98,8 @@ export default function ChatPage() {
     loadConvs(targetId)
     if (targetId) {
       api
-        .get<{ opening: string; suggested: string[] }>(`/api/chat/targets/${targetId}/intro`)
-        .then(setIntro)
+        .get<{ opening: string }>(`/api/chat/targets/${targetId}/intro`)
+        .then((r) => setIntro({ opening: r.opening }))
         .catch(() => setIntro(null))
     }
   }, [targetId])
@@ -209,7 +229,52 @@ export default function ChatPage() {
     }
   }
 
+  const confirmDelete = (c: ChatConversation) =>
+    modal.confirm({
+      title: t('chat.deleteConfirm'),
+      okText: t('common.delete'),
+      okButtonProps: { danger: true },
+      onOk: () => delConv(c.id),
+    })
+
+  // Star/unstar optimistically (snappy pin), reverting the local flag if the write fails.
+  const toggleStar = async (c: ChatConversation) => {
+    const next = !c.starred
+    setConvs((cs) => sortConvs(cs.map((x) => (x.id === c.id ? { ...x, starred: next } : x))))
+    try {
+      await api.post(`/api/chat/conversations/${c.id}/star`, { starred: next })
+    } catch (e) {
+      setConvs((cs) => sortConvs(cs.map((x) => (x.id === c.id ? { ...x, starred: c.starred } : x))))
+      message.error((e as Error).message || 'failed')
+    }
+  }
+
+  const openRename = (c: ChatConversation) => {
+    setRenameValue(c.title || '')
+    setRenameId(c.id)
+  }
+  const submitRename = async () => {
+    if (renameId == null) return
+    const id = renameId
+    const title = renameValue.trim()
+    setRenameId(null)
+    if (!title) return
+    try {
+      await api.post(`/api/chat/conversations/${id}/rename`, { title })
+      setConvs((cs) => cs.map((x) => (x.id === id ? { ...x, title } : x)))
+    } catch (e) {
+      message.error((e as Error).message || 'failed')
+    }
+  }
+
   const target = targets.find((tg) => tg.id === targetId)
+
+  // Time-of-day greeting, computed once per render from the browser clock.
+  const greeting = useMemo(() => {
+    const h = new Date().getHours()
+    const key = h < 12 ? 'greetingMorning' : h < 18 ? 'greetingAfternoon' : 'greetingEvening'
+    return t(`chat.${key}`, { name: name || '' }).replace(/[，,、]\s*$/, '')
+  }, [t, name])
 
   if (targets.length === 0) {
     return (
@@ -219,25 +284,95 @@ export default function ChatPage() {
     )
   }
 
+  const assistantAvatar = (size: number) => (
+    <Avatar
+      size={size}
+      icon={<RobotOutlined />}
+      style={{ flexShrink: 0, background: token.colorPrimary, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+    />
+  )
+
   const bubble = (m: Msg, i: number) => {
-    const mine = m.role === 'user'
+    if (m.role === 'user') {
+      return (
+        <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 22 }}>
+          <div
+            style={{
+              maxWidth: '84%',
+              padding: '10px 15px',
+              borderRadius: 18,
+              borderTopRightRadius: 6,
+              background: token.colorFillSecondary,
+              color: token.colorText,
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
+              fontSize: 15,
+              lineHeight: 1.6,
+            }}
+          >
+            {m.content}
+          </div>
+        </div>
+      )
+    }
     return (
-      <div key={i} style={{ display: 'flex', justifyContent: mine ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
-        <div
-          style={{
-            maxWidth: '78%',
-            padding: '8px 12px',
-            borderRadius: 10,
-            background: mine ? token.colorPrimary : token.colorFillSecondary,
-            color: mine ? token.colorTextLightSolid : token.colorText,
-            overflowWrap: 'anywhere',
-          }}
-        >
-          {mine ? <span style={{ whiteSpace: 'pre-wrap' }}>{m.content}</span> : <Markdown md={m.content} />}
+      <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 26 }}>
+        {assistantAvatar(30)}
+        <div style={{ flex: 1, minWidth: 0, paddingTop: 3 }}>
+          <Markdown md={m.content} />
         </div>
       </div>
     )
   }
+
+  // The composer: a rounded, elevated box with the textarea and a circular send button. It
+  // fills the panel width; `hero` = the centered new-conversation variant (taller default).
+  const composer = (hero: boolean) => (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        padding: 8,
+        borderRadius: 22,
+        background: token.colorBgContainer,
+        border: `1px solid ${focused ? token.colorPrimary : token.colorBorder}`,
+        boxShadow: focused ? `0 0 0 3px ${token.colorPrimaryBg}` : token.boxShadowTertiary,
+        transition: 'border-color .15s, box-shadow .15s',
+      }}
+    >
+      <Input.TextArea
+        value={input}
+        variant="borderless"
+        onChange={(e) => setInput(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onPressEnter={(e) => {
+          if (!e.shiftKey) {
+            e.preventDefault()
+            send()
+          }
+        }}
+        autoSize={{ minRows: hero ? 2 : 1, maxRows: 8 }}
+        placeholder={t('chat.inputPlaceholder')}
+        style={{ fontSize: 15, padding: '6px 8px', background: 'transparent', resize: 'none' }}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingInline: 6, paddingBottom: 2 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t('chat.enterHint')}
+        </Typography.Text>
+        <Button
+          type="primary"
+          shape="circle"
+          icon={<ArrowUpOutlined />}
+          loading={sending}
+          disabled={!input.trim()}
+          onClick={() => send()}
+          title={t('chat.send')}
+        />
+      </div>
+    </div>
+  )
 
   const pickConv = (id: number) => {
     setNavOpen(false)
@@ -247,6 +382,40 @@ export default function ChatPage() {
     setNavOpen(false)
     newConv()
   }
+
+  // The per-conversation context menu: rename, star/unstar, delete. domEvent.stopPropagation
+  // keeps a menu click from also opening the conversation (the row's onClick).
+  const convMenu = (c: ChatConversation): MenuProps['items'] => [
+    {
+      key: 'rename',
+      icon: <EditOutlined />,
+      label: t('chat.rename'),
+      onClick: ({ domEvent }) => {
+        domEvent.stopPropagation()
+        openRename(c)
+      },
+    },
+    {
+      key: 'star',
+      icon: c.starred ? <StarFilled /> : <StarOutlined />,
+      label: c.starred ? t('chat.unstar') : t('chat.star'),
+      onClick: ({ domEvent }) => {
+        domEvent.stopPropagation()
+        toggleStar(c)
+      },
+    },
+    { type: 'divider' },
+    {
+      key: 'delete',
+      icon: <DeleteOutlined />,
+      danger: true,
+      label: t('common.delete'),
+      onClick: ({ domEvent }) => {
+        domEvent.stopPropagation()
+        confirmDelete(c)
+      },
+    },
+  ]
 
   // Sidebar: target picker + new-conversation + conversation list. A left column on desktop,
   // folded into a drawer on mobile.
@@ -258,7 +427,7 @@ export default function ChatPage() {
         onChange={setTargetId}
         options={targets.map((tg) => ({ value: tg.id, label: tg.name }))}
       />
-      <Button icon={<PlusOutlined />} onClick={startNew} block>
+      <Button type="primary" ghost icon={<PlusOutlined />} onClick={startNew} block style={{ fontWeight: 500 }}>
         {t('chat.newConversation')}
       </Button>
       <div style={{ overflowY: 'auto', flex: 1, borderTop: `1px solid ${token.colorBorderSecondary}`, paddingTop: 8 }}>
@@ -267,39 +436,62 @@ export default function ChatPage() {
             {t('chat.noConversations')}
           </Typography.Text>
         ) : (
-          convs.map((c) => (
-            <div
-              key={c.id}
-              onClick={() => pickConv(c.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '6px 8px',
-                borderRadius: 8,
-                cursor: 'pointer',
-                background: c.id === convId ? token.colorFillSecondary : 'transparent',
-              }}
-            >
-              <Typography.Text ellipsis style={{ flex: 1, fontSize: 13 }}>
-                {c.title || t('chat.untitled')}
-              </Typography.Text>
-              <Popconfirm title={t('chat.deleteConfirm')} onConfirm={() => delConv(c.id)}>
-                <Button
-                  size="small"
-                  type="text"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={(e) => e.stopPropagation()}
-                  title={t('common.delete')}
-                />
-              </Popconfirm>
-            </div>
-          ))
+          convs.map((c) => {
+            const active = c.id === convId
+            const hovered = hoverConv === c.id
+            const showMenu = hovered || active || menuConv === c.id
+            return (
+              <div
+                key={c.id}
+                onClick={() => pickConv(c.id)}
+                onMouseEnter={() => setHoverConv(c.id)}
+                onMouseLeave={() => setHoverConv((h) => (h === c.id ? null : h))}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '7px 10px',
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  background: active ? token.colorFillSecondary : hovered ? token.colorFillTertiary : 'transparent',
+                  transition: 'background .12s',
+                }}
+              >
+                {c.starred ? (
+                  <StarFilled style={{ fontSize: 13, color: token.colorWarning, flexShrink: 0 }} />
+                ) : (
+                  <MessageOutlined style={{ fontSize: 13, color: token.colorTextTertiary, flexShrink: 0 }} />
+                )}
+                <Typography.Text
+                  ellipsis
+                  style={{ flex: 1, fontSize: 13, color: active ? token.colorText : token.colorTextSecondary }}
+                >
+                  {c.title || t('chat.untitled')}
+                </Typography.Text>
+                <Dropdown
+                  menu={{ items: convMenu(c) }}
+                  trigger={['click']}
+                  placement="bottomRight"
+                  onOpenChange={(open) => setMenuConv(open ? c.id : null)}
+                >
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<MoreOutlined />}
+                    onClick={(e) => e.stopPropagation()}
+                    title={t('common.more')}
+                    style={{ opacity: showMenu ? 1 : 0, transition: 'opacity .12s', flexShrink: 0 }}
+                  />
+                </Dropdown>
+              </div>
+            )
+          })
         )}
       </div>
     </div>
   )
+
+  const showHero = !loadingHist && msgs.length === 0
 
   return (
     <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
@@ -320,81 +512,111 @@ export default function ChatPage() {
       )}
 
       {/* Message thread + composer */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 10, overflow: 'hidden' }}>
-        <div style={{ padding: '8px 14px', borderBottom: `1px solid ${token.colorBorderSecondary}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: 12,
+          overflow: 'hidden',
+          background: token.colorBgContainer,
+        }}
+      >
+        <div
+          style={{
+            padding: '10px 16px',
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
           {compact && (
             <Button type="text" size="small" icon={<MessageOutlined />} onClick={() => setNavOpen(true)} title={t('chat.conversations')} />
           )}
-          <RobotOutlined />
+          {assistantAvatar(26)}
           <Typography.Text strong ellipsis style={{ flex: 1, minWidth: 0 }}>
             {target?.name}
           </Typography.Text>
           {difyModeTag(t, target?.mode)}
         </div>
-        <div ref={scrollRef} onScroll={onThreadScroll} style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+
+        <div ref={scrollRef} onScroll={onThreadScroll} style={{ flex: 1, overflowY: 'auto' }}>
           {loadingHist ? (
-            <div style={{ textAlign: 'center', paddingTop: 40 }}>
+            <div style={{ textAlign: 'center', paddingTop: 60 }}>
               <Spin />
             </div>
-          ) : msgs.length === 0 ? (
-            intro && (intro.opening || intro.suggested.length > 0) ? (
-              // The assistant's opening statement + suggested questions (Dify's greeting).
-              <div>
-                {intro.opening && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
-                    <div style={{ maxWidth: '78%', padding: '8px 12px', borderRadius: 10, background: token.colorFillSecondary, color: token.colorText, overflowWrap: 'anywhere' }}>
-                      <Markdown md={intro.opening} />
-                    </div>
-                  </div>
-                )}
-                {intro.suggested.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {intro.suggested.map((q) => (
-                      <Button key={q} size="small" onClick={() => send(q)}>
-                        {q}
-                      </Button>
-                    ))}
-                  </div>
-                )}
+          ) : showHero ? (
+            // New conversation: a centered greeting hero with the composer in the middle and
+            // the assistant's opening line (Dify's greeting) above it.
+            <div
+              style={{
+                minHeight: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                padding: `24px ${padX}px 40px`,
+                gap: 20,
+              }}
+            >
+              <div style={{ textAlign: 'center' }}>
+                {assistantAvatar(52)}
+                <Typography.Title level={3} style={{ margin: '16px 0 6px', fontWeight: 600 }}>
+                  {greeting}
+                </Typography.Title>
+                <Typography.Text type="secondary" style={{ fontSize: 15 }}>
+                  {intro?.opening || t('chat.emptyThread')}
+                </Typography.Text>
               </div>
-            ) : (
-              <div style={{ textAlign: 'center', color: token.colorTextTertiary, paddingTop: 60 }}>
-                <RobotOutlined style={{ fontSize: 32 }} />
-                <div style={{ marginTop: 8 }}>{t('chat.emptyThread')}</div>
-              </div>
-            )
+              <div style={{ width: '100%' }}>{composer(true)}</div>
+            </div>
           ) : (
-            <>
+            <div style={{ padding: `${compact ? 20 : 24}px ${padX}px 8px` }}>
               {msgs.map(bubble)}
               {sending && (
-                <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-                  <div style={{ padding: '8px 12px', borderRadius: 10, background: token.colorFillSecondary }}>
-                    <Spin size="small" />
+                <div style={{ display: 'flex', gap: 12, marginBottom: 26 }}>
+                  {assistantAvatar(30)}
+                  <div className="rp-typing" style={{ height: 30, color: token.colorTextTertiary }}>
+                    <span />
+                    <span />
+                    <span />
                   </div>
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
-        <div style={{ padding: 12, borderTop: `1px solid ${token.colorBorderSecondary}`, display: 'flex', gap: 8 }}>
-          <Input.TextArea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onPressEnter={(e) => {
-              if (!e.shiftKey) {
-                e.preventDefault()
-                send()
-              }
-            }}
-            autoSize={{ minRows: 1, maxRows: 6 }}
-            placeholder={t('chat.inputPlaceholder')}
-            disabled={sending}
-          />
-          <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={() => send()} disabled={!input.trim()}>
-            {t('chat.send')}
-          </Button>
-        </div>
+
+        {/* The docked composer only appears once a conversation is under way — a new chat keeps
+            its composer centered in the hero above. */}
+        {!showHero && (
+          <div style={{ padding: `${compact ? 10 : 12}px ${padX}px ${compact ? 12 : 16}px`, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+            {composer(false)}
+          </div>
+        )}
       </div>
+
+      {/* Rename dialog (opened from a conversation's context menu). */}
+      <Modal
+        open={renameId != null}
+        title={t('chat.renameTitle')}
+        onOk={submitRename}
+        onCancel={() => setRenameId(null)}
+        okButtonProps={{ disabled: !renameValue.trim() }}
+        destroyOnClose
+      >
+        <Input
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onPressEnter={submitRename}
+          maxLength={80}
+          autoFocus
+          placeholder={t('chat.renameTitle')}
+        />
+      </Modal>
     </div>
   )
 }

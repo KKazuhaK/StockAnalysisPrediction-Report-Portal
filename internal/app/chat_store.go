@@ -15,6 +15,7 @@ type ChatConversation struct {
 	ConvID    string // Dify's conversation_id ("" until the first reply assigns one)
 	CreatedBy string
 	Title     string
+	Starred   bool // pinned to the top of the user's list
 	CreatedAt string
 	UpdatedAt string
 }
@@ -30,14 +31,15 @@ func (s *Store) CreateConversation(targetID int64, user string) (int64, error) {
 // ListConversations returns a user's conversations, most-recently-updated first,
 // optionally scoped to one target (targetID 0 = all targets).
 func (s *Store) ListConversations(user string, targetID int64) []ChatConversation {
-	q := `SELECT id, target_id, COALESCE(conv_id,''), COALESCE(title,''), created_at, updated_at
+	q := `SELECT id, target_id, COALESCE(conv_id,''), COALESCE(title,''), COALESCE(starred,0), created_at, updated_at
 		FROM chat_conversations WHERE created_by=?`
 	args := []any{user}
 	if targetID != 0 {
 		q += ` AND target_id=?`
 		args = append(args, targetID)
 	}
-	q += ` ORDER BY updated_at DESC, id DESC`
+	// Starred conversations pin to the top; within each group it stays recency-ordered.
+	q += ` ORDER BY starred DESC, updated_at DESC, id DESC`
 	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil
@@ -46,7 +48,9 @@ func (s *Store) ListConversations(user string, targetID int64) []ChatConversatio
 	var out []ChatConversation
 	for rows.Next() {
 		c := ChatConversation{CreatedBy: user}
-		if rows.Scan(&c.ID, &c.TargetID, &c.ConvID, &c.Title, &c.CreatedAt, &c.UpdatedAt) == nil {
+		var starred int
+		if rows.Scan(&c.ID, &c.TargetID, &c.ConvID, &c.Title, &starred, &c.CreatedAt, &c.UpdatedAt) == nil {
+			c.Starred = starred != 0
 			out = append(out, c)
 		}
 	}
@@ -57,14 +61,15 @@ func (s *Store) ListConversations(user string, targetID int64) []ChatConversatio
 func (s *Store) GetConversation(id int64) (ChatConversation, bool) {
 	var c ChatConversation
 	var conv, title, by sql.NullString
+	var starred int
 	err := s.queryRow(
-		`SELECT id, target_id, conv_id, created_by, title, created_at, updated_at
+		`SELECT id, target_id, conv_id, created_by, title, COALESCE(starred,0), created_at, updated_at
 		 FROM chat_conversations WHERE id=?`, id).
-		Scan(&c.ID, &c.TargetID, &conv, &by, &title, &c.CreatedAt, &c.UpdatedAt)
+		Scan(&c.ID, &c.TargetID, &conv, &by, &title, &starred, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return ChatConversation{}, false
 	}
-	c.ConvID, c.CreatedBy, c.Title = conv.String, by.String, title.String
+	c.ConvID, c.CreatedBy, c.Title, c.Starred = conv.String, by.String, title.String, starred != 0
 	return c, true
 }
 
@@ -85,6 +90,16 @@ func (s *Store) AfterTurn(id int64, convID, titleIfEmpty string) error {
 // RenameConversation sets a conversation's title.
 func (s *Store) RenameConversation(id int64, title string) error {
 	_, err := s.exec(`UPDATE chat_conversations SET title=? WHERE id=?`, title, id)
+	return err
+}
+
+// SetConversationStarred pins/unpins a conversation to the top of its owner's list.
+func (s *Store) SetConversationStarred(id int64, starred bool) error {
+	v := 0
+	if starred {
+		v = 1
+	}
+	_, err := s.exec(`UPDATE chat_conversations SET starred=? WHERE id=?`, v, id)
 	return err
 }
 

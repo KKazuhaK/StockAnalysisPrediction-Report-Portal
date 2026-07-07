@@ -44,7 +44,7 @@ func chatTitle(q string) string {
 
 func convJSON(c ChatConversation) map[string]any {
 	return map[string]any{
-		"id": c.ID, "target_id": c.TargetID, "title": c.Title,
+		"id": c.ID, "target_id": c.TargetID, "title": c.Title, "starred": c.Starred,
 		"created_at": c.CreatedAt, "updated_at": c.UpdatedAt, "started": c.ConvID != "",
 	}
 }
@@ -165,6 +165,26 @@ func (s *Server) apiChatConversationRename(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := s.st.RenameConversation(conv.ID, strings.TrimSpace(in.Title)); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, okJSON)
+}
+
+// apiChatConversationStar pins/unpins a conversation to the top of the caller's list.
+func (s *Server) apiChatConversationStar(w http.ResponseWriter, r *http.Request, user string) {
+	conv, ok := s.ownConversation(w, pathID(r, "id"), user)
+	if !ok {
+		return
+	}
+	var in struct {
+		Starred bool `json:"starred"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if err := s.st.SetConversationStarred(conv.ID, in.Starred); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

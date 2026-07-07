@@ -251,6 +251,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/chat/conversations", s.requirePermJSON(PermRunBatch, s.apiChatConversationCreate))
 	mux.HandleFunc("DELETE /api/chat/conversations/{id}", s.requirePermJSON(PermRunBatch, s.apiChatConversationDelete))
 	mux.HandleFunc("POST /api/chat/conversations/{id}/rename", s.requirePermJSON(PermRunBatch, s.apiChatConversationRename))
+	mux.HandleFunc("POST /api/chat/conversations/{id}/star", s.requirePermJSON(PermRunBatch, s.apiChatConversationStar))
 	mux.HandleFunc("GET /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatHistory))
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatSend))
 	// Assistant admin: the concurrency ceiling + the live "who is chatting now" view (ADR 0012).

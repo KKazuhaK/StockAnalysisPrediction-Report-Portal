@@ -309,6 +309,10 @@ func (s *Store) init() error {
 	if _, err := s.exec(`ALTER TABLE links ADD COLUMN collapsed INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
 		return fmt.Errorf("upgrade links (collapsed): %w", err)
 	}
+	// Chat conversations can be starred (pinned to the top of the list): additive, defaulted.
+	if _, err := s.exec(`ALTER TABLE chat_conversations ADD COLUMN starred INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
+		return fmt.Errorf("upgrade chat_conversations (starred): %w", err)
+	}
 	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
 	return nil
 }
