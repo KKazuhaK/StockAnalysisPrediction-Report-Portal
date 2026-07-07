@@ -110,6 +110,23 @@ export function SiteProvider({ children }: { children: ReactNode }) {
     }
   }, [settings.pwaEnabled])
 
+  // Force-update on deploy: each build ships a service worker with a new versioned cache,
+  // and once it activates it claims the page — firing controllerchange. If the page was
+  // already controlled at load (i.e. this is an update, not the first install), reload once
+  // so it runs the fresh build instead of the assets it booted with.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    const hadController = !!navigator.serviceWorker.controller
+    let reloaded = false
+    const onChange = () => {
+      if (!hadController || reloaded) return
+      reloaded = true
+      window.location.reload()
+    }
+    navigator.serviceWorker.addEventListener('controllerchange', onChange)
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', onChange)
+  }, [])
+
   const value = useMemo<SiteCtx>(() => ({ settings, title, logoUrl, refresh }), [settings, title, logoUrl, refresh])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

@@ -25,7 +25,7 @@ func testDist() fstest.MapFS {
 // directly (skipping per-request gzip CPU work), with an accurate Content-Length and
 // the correct Content-Type (lost otherwise, since we bypass http.FileServer's sniffing).
 func TestSpaServesPrecompressedGzipForEligibleAsset(t *testing.T) {
-	h := spaHandlerFS(testDist())
+	h := spaHandlerFS(testDist(), nil, "test")
 	req := httptest.NewRequest("GET", "/assets/app.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
@@ -57,7 +57,7 @@ func TestSpaServesPrecompressedGzipForEligibleAsset(t *testing.T) {
 
 // A client that doesn't advertise gzip support gets the plain bytes.
 func TestSpaServesPlainWhenClientDoesNotAcceptGzip(t *testing.T) {
-	h := spaHandlerFS(testDist())
+	h := spaHandlerFS(testDist(), nil, "test")
 	req := httptest.NewRequest("GET", "/assets/app.js", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -74,7 +74,7 @@ func TestSpaServesPlainWhenClientDoesNotAcceptGzip(t *testing.T) {
 // A Range request must fall back to plain (whole-file precompressed gzip breaks
 // byte-range semantics), so http.FileServer's Range handling stays correct.
 func TestSpaSkipsPrecompressedOnRangeRequest(t *testing.T) {
-	h := spaHandlerFS(testDist())
+	h := spaHandlerFS(testDist(), nil, "test")
 	req := httptest.NewRequest("GET", "/assets/app.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Range", "bytes=0-99")
@@ -88,7 +88,7 @@ func TestSpaSkipsPrecompressedOnRangeRequest(t *testing.T) {
 
 // Unknown app routes (client-side React Router paths) fall back to index.html, unchanged.
 func TestSpaFallbackToIndexForUnknownRoute(t *testing.T) {
-	h := spaHandlerFS(testDist())
+	h := spaHandlerFS(testDist(), nil, "test")
 	req := httptest.NewRequest("GET", "/stock/300750", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -104,10 +104,59 @@ func TestSpaFallbackToIndexForUnknownRoute(t *testing.T) {
 	}
 }
 
+// /sw.js is served with the build version stamped into its cache name (so every deploy
+// ships a fresh SW) and marked no-cache. Non-token characters in the version are stripped.
+func TestSpaInjectsServiceWorkerVersion(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": {Data: []byte("<html></html>")},
+		"sw.js":      {Data: []byte("const CACHE_NAME = 'rp-cache-__RP_SW_VERSION__'")},
+	}
+	h := spaHandlerFS(fsys, nil, "abc123!!")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/sw.js", nil))
+
+	body := rec.Body.String()
+	if strings.Contains(body, "__RP_SW_VERSION__") {
+		t.Fatalf("placeholder not replaced: %q", body)
+	}
+	if !strings.Contains(body, "rp-cache-abc123'") { // '!!' sanitized away
+		t.Fatalf("version not injected/sanitized: %q", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Errorf("Content-Type = %q, want javascript", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", cc)
+	}
+}
+
+// The shell's default title + favicon are replaced with the configured branding, so the
+// first paint isn't the default (no flash, and the default favicon isn't fetched).
+func TestSpaInjectsBranding(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": {Data: []byte(`<head><title>` + defaultSiteTitle + `</title><link rel="icon" type="image/svg+xml" href="/favicon.svg" /></head>`)},
+	}
+	brand := func() (string, string) { return "MyPortal", "/site-assets/logo.png" }
+	h := spaHandlerFS(fsys, brand, "test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/anything", nil))
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "<title>MyPortal</title>") {
+		t.Errorf("title not injected: %q", body)
+	}
+	if strings.Contains(body, "/favicon.svg") {
+		t.Errorf("default favicon still present after a custom logo was set: %q", body)
+	}
+	if !strings.Contains(body, `href="/site-assets/logo.png"`) {
+		t.Errorf("custom logo favicon not injected: %q", body)
+	}
+}
+
 // A non-hashed static file (no /assets/ prefix) still gets precompressed-gzip
 // serving (by extension), but must NOT get the immutable long-cache header.
 func TestSpaPrecompressedAssetOutsideAssetsDirHasNoImmutableCache(t *testing.T) {
-	h := spaHandlerFS(testDist())
+	h := spaHandlerFS(testDist(), nil, "test")
 	req := httptest.NewRequest("GET", "/favicon.svg", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
