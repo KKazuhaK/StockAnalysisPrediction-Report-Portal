@@ -5,6 +5,7 @@ import { ApiOutlined, DeleteOutlined, EditOutlined, PlusOutlined, UploadOutlined
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import { difyModeTag } from '../../lib/batchUi'
+import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
 import type { BatchPlugin, BatchTarget, DifyInput, DifyTargetEdit } from '../../api/types'
 
 export default function BatchAdminPage() {
@@ -166,7 +167,17 @@ export default function BatchAdminPage() {
     loadTargets()
   }
 
+  // Persist the admin's drag order; optimistically reflect it, then save (same pattern as
+  // links / report types).
+  const reorderTargets = async (orderedIds: string[]) => {
+    const byId = new Map(targets.map((tg) => [String(tg.id), tg]))
+    setTargets(orderedIds.map((id) => byId.get(id)!).filter(Boolean))
+    await api.post('/api/admin/batch/targets/reorder', { ids: orderedIds.map(Number) })
+    loadTargets()
+  }
+
   const targetCols: ColumnsType<BatchTarget> = [
+    { key: 'sort', width: 44, align: 'center', render: () => <DragHandle /> },
     {
       title: t('common.name'),
       render: (_: unknown, tg: BatchTarget) => (
@@ -225,7 +236,17 @@ export default function BatchAdminPage() {
                   </Button>
                 </div>
                 {targets.length === 0 && <Typography.Text type="secondary">{t('batch.dify.targetsHint')}</Typography.Text>}
-                <Table rowKey="id" size="small" dataSource={targets} columns={targetCols} pagination={false} scroll={{ x: 'max-content' }} />
+                <SortableWrapper ids={targets.map((tg) => String(tg.id))} onReorder={reorderTargets}>
+                  <Table
+                    rowKey="id"
+                    size="small"
+                    dataSource={targets}
+                    columns={targetCols}
+                    pagination={false}
+                    components={sortableTableComponents}
+                    scroll={{ x: 'max-content' }}
+                  />
+                </SortableWrapper>
               </Space>
             ),
           },
