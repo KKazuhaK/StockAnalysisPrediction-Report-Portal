@@ -199,6 +199,10 @@ func (s *Store) init() error {
 			enabled INTEGER DEFAULT 1, source TEXT DEFAULT 'imported', imported_at TEXT)`, pk),
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_targets(
 			id %s, plugin_slug TEXT, name TEXT, config TEXT, created_at TEXT)`, pk),
+		// Admin-defined display order for targets (drag-to-sort). An additive side table so
+		// batch_targets is never altered; a target with no row here sorts after ordered ones
+		// (newest-first), matching the pre-ordering default.
+		`CREATE TABLE IF NOT EXISTS target_order(target_id BIGINT PRIMARY KEY, ord INTEGER)`,
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_jobs(
 			id %s, target_id BIGINT, status TEXT, concurrency INTEGER DEFAULT 1, max_retries INTEGER DEFAULT 0,
 			total INTEGER DEFAULT 0, succeeded INTEGER DEFAULT 0, partial INTEGER DEFAULT 0, failed INTEGER DEFAULT 0,

@@ -563,7 +563,11 @@ func (s *Store) CreateTarget(pluginSlug, name, config string) (int64, error) {
 }
 
 func (s *Store) ListTargets() []BatchTarget {
-	rows, err := s.query(`SELECT id,plugin_slug,name,config,created_at FROM batch_targets ORDER BY id DESC`)
+	// Admin drag-order first (target_order.ord), then any not-yet-ordered target newest-first
+	// — the pre-ordering default. 2147483647 = "unordered, sort last".
+	rows, err := s.query(`SELECT b.id, b.plugin_slug, b.name, b.config, b.created_at
+		FROM batch_targets b LEFT JOIN target_order o ON o.target_id=b.id
+		ORDER BY COALESCE(o.ord, 2147483647) ASC, b.id DESC`)
 	if err != nil {
 		return nil
 	}
@@ -577,6 +581,14 @@ func (s *Store) ListTargets() []BatchTarget {
 		out = append(out, t)
 	}
 	return out
+}
+
+// SetTargetOrder records a target's admin-set display position (drag-to-sort). Upsert so
+// re-ordering just overwrites; the side table keeps batch_targets untouched.
+func (s *Store) SetTargetOrder(id int64, ord int) error {
+	_, err := s.exec(`INSERT INTO target_order(target_id,ord) VALUES(?,?)
+		ON CONFLICT(target_id) DO UPDATE SET ord=excluded.ord`, id, ord)
+	return err
 }
 
 func (s *Store) GetTarget(id int64) (BatchTarget, bool) {

@@ -91,6 +91,32 @@ func TestBatchJobLifecycleWithEngine(t *testing.T) {
 	}
 }
 
+// Targets list newest-first by default, but honour an admin's drag order once set.
+func TestTargetDragOrdering(t *testing.T) {
+	st := newTestStore(t)
+	a := seedTarget(t, st)
+	b := seedTarget(t, st)
+	c := seedTarget(t, st)
+	ids := func() []int64 {
+		var out []int64
+		for _, tg := range st.ListTargets() {
+			out = append(out, tg.ID)
+		}
+		return out
+	}
+	// Default: newest-first (c, b, a).
+	if got := ids(); len(got) != 3 || got[0] != c || got[2] != a {
+		t.Fatalf("default order = %v, want newest-first [%d %d %d]", got, c, b, a)
+	}
+	// Admin drags them into b, a, c.
+	st.SetTargetOrder(b, 0)
+	st.SetTargetOrder(a, 1)
+	st.SetTargetOrder(c, 2)
+	if got := ids(); got[0] != b || got[1] != a || got[2] != c {
+		t.Fatalf("after reorder = %v, want [%d %d %d]", got, b, a, c)
+	}
+}
+
 // Crash recovery: items left running are requeued and the job is resumable.
 func TestResetInFlightItemsRequeues(t *testing.T) {
 	st := newTestStore(t)

@@ -200,6 +200,22 @@ func (s *Server) apiBatchTargets(w http.ResponseWriter, r *http.Request, user st
 	writeJSON(w, map[string]any{"targets": out})
 }
 
+// apiBatchTargetReorder persists the admin's drag-to-sort order of targets: it stores each
+// id's position, so the list keeps that order everywhere ListTargets is read.
+func (s *Server) apiBatchTargetReorder(w http.ResponseWriter, r *http.Request, user string) {
+	var in struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	for i, id := range in.IDs {
+		s.st.SetTargetOrder(id, i)
+	}
+	writeJSON(w, okJSON)
+}
+
 func (s *Server) apiBatchTargetAdd(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		PluginSlug string            `json:"plugin_slug"`
