@@ -62,13 +62,11 @@ export default function RunPage() {
 
   return (
     <Spin spinning={loading}>
-      {/* Same reader layout as the stock page (an empty rail where its timeline would be),
-          so timeline and non-timeline reports get an identical, wide-mode-aware column. */}
+      {/* No timeline → just the centered reading column (same width/centering as the stock
+          page's, so the two readers match). */}
       <div className="rp-reader" style={{ '--rp-doc-max': `${docMax}px` } as CSSProperties}>
-        <div className="rp-reader__body">
-          <div className="rp-reader__rail" aria-hidden />
-          <div className="rp-reader__doc">
-            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <div className="rp-reader__doc">
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
           <Space size={12} wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>
@@ -110,13 +108,12 @@ export default function RunPage() {
             />
           </div>
         )}
-              <Card title={rep?.title} extra={rep ? <ReaderControls /> : undefined} style={readerVars}>
-                {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
-              </Card>
-            </Space>
-          </div>
-        </div>
+          <Card title={rep?.title} extra={rep ? <ReaderControls /> : undefined} style={readerVars}>
+            {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
+          </Card>
+        </Space>
       </div>
-    </Spin>
+    </div>
+  </Spin>
   )
 }
