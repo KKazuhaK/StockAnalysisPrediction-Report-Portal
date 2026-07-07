@@ -31,6 +31,7 @@ const loadedSettings = {
   timezone: 'Asia/Shanghai',
   siteTitle: '智研平台',
   siteLogoUrl: '/brand/logo.png',
+  homeMoreStyle: 'popover',
   footerText: '<strong>备案</strong>',
   footerShowInfo: false,
   footerShowVersion: false,
@@ -77,6 +78,7 @@ describe('SiteSettingsPage', () => {
     expect(apiMock.post).toHaveBeenCalledWith('/api/admin/settings', {
       siteTitle: '新站点名',
       siteLogoUrl: '/brand/logo.png',
+      homeMoreStyle: 'popover',
       footerText: '<strong>备案</strong>',
       footerShowInfo: false,
       footerShowVersion: false,

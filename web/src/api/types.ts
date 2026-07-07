@@ -355,6 +355,7 @@ export interface SettingsResp {
   timezone: string // '' = follow system zone
   siteTitle: string
   siteLogoUrl: string
+  homeMoreStyle: HomeMoreStyle
   footerText: string
   footerShowInfo: boolean
   footerShowVersion: boolean
@@ -370,9 +371,13 @@ export interface SettingsResp {
 
 export type AnnouncementLevel = 'notice' | 'success' | 'warning' | 'error'
 
+// How the home-page "More" button reveals folded quick links.
+export type HomeMoreStyle = 'expand' | 'modal' | 'popover'
+
 export interface SiteSettings {
   siteTitle: string
   siteLogoUrl: string
+  homeMoreStyle: HomeMoreStyle
   footerText: string
   footerShowInfo: boolean
   footerShowVersion: boolean

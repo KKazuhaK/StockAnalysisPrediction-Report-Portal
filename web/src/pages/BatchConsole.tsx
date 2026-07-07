@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { App, Button, Card, Checkbox, DatePicker, Input, InputNumber, Radio, Select, Space, Tag, Typography, Upload } from 'antd'
 import type { Dayjs } from 'dayjs'
 import { useTranslation } from 'react-i18next'
-import { ThunderboltOutlined, UploadOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, ThunderboltOutlined, UploadOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, BatchTickets } from '../api/types'
@@ -104,7 +104,7 @@ export default function BatchConsole() {
       <Card
         title={
           <Space>
-            <ThunderboltOutlined />
+            <PlayCircleOutlined />
             {t('batch.runTitle')}
           </Space>
         }
@@ -184,7 +184,7 @@ export default function BatchConsole() {
               )}
               <Button
                 type="primary"
-                icon={<ThunderboltOutlined />}
+                icon={<PlayCircleOutlined />}
                 loading={submitting}
                 disabled={!targetId || rows.length === 0}
                 onClick={run}

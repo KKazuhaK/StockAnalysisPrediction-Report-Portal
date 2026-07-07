@@ -22,6 +22,7 @@ const POPUP_DISMISSED_KEY = 'report-portal.site-announcement.popup.dismissed'
 const baseSettings: SiteSettings = {
   siteTitle: '',
   siteLogoUrl: '',
+  homeMoreStyle: 'expand',
   footerText: '',
   footerShowInfo: true,
   footerShowVersion: true,
