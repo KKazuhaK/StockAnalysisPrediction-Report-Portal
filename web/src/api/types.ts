@@ -129,6 +129,7 @@ export interface ChatConversation {
   id: number
   target_id: number
   title: string
+  starred: boolean // pinned to the top of the user's list
   created_at: string
   updated_at: string
   started: boolean // has a Dify conversation_id yet (i.e. at least one turn sent)
