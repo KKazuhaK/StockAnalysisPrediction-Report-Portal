@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -179,7 +180,15 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	reply, err := client.Chat(r.Context(), query, nil, s.difyEndUser(conv.CreatedBy), conv.ConvID)
+	// Detach from the browser connection: a chat turn should finish — and be stored by
+	// Dify + have its conversation_id saved here — even if the user navigates away
+	// mid-generation, so the result is there when they return. (net/http cancels
+	// r.Context() on client disconnect but keeps the handler goroutine running; using a
+	// fresh context means the Dify call isn't aborted with the browser.) The turn is not
+	// persisted across a server restart, only across the client leaving.
+	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
+	defer cancel()
+	reply, err := client.Chat(ctx, query, nil, s.difyEndUser(conv.CreatedBy), conv.ConvID)
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, "dify: "+err.Error())
 		return

@@ -76,6 +76,12 @@ table is touched (ADR: additive-only schema).
   request/response.
 - The portal stays a thin orchestrator: it indexes conversations, Dify holds the messages —
   the same "Dify owns the data" split as reports and runs.
+- **Durable across leaving the page.** The send handler runs the Dify call on a detached
+  context (not the request's), so a turn finishes and is stored by Dify even if the user
+  navigates away mid-generation; on return, reopening the conversation refetches it from
+  Dify's `/messages`. (Not durable across a *server* restart mid-turn — a chat turn is not
+  persisted as resumable work the way a batch run is; the user re-asks. Streaming/async
+  turns are a follow-up.)
 - **Agent caveat (inherited):** agent-chat apps don't emit a `workflow_run_id`; irrelevant here
   because chat is blocking (no run-id reconcile needed), but the batch-side caveat still stands
   for agent apps run as workflows.
