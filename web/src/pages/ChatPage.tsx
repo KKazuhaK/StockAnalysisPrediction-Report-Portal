@@ -143,6 +143,9 @@ export default function ChatPage() {
     if (!id) return
     setInput('')
     setMsgs((m) => [...m, { role: 'user', content: q }])
+    // Title an untitled conversation from its first message right away (the backend does the
+    // same; loadConvs later reconciles) — so the list shows the message, not "Untitled".
+    setConvs((cs) => cs.map((c) => (c.id === id && !c.title ? { ...c, title: q.length > 24 ? q.slice(0, 24) + '…' : q } : c)))
     setSending(true)
     try {
       const r = await api.post<{ answer: string }>(`/api/chat/conversations/${id}/messages`, { query: q })
