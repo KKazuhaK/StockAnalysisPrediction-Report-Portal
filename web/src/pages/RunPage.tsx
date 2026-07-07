@@ -62,7 +62,9 @@ export default function RunPage() {
 
   return (
     <Spin spinning={loading}>
-      <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: docMax, margin: '0 auto' }}>
+      {/* Centered reading column that keeps a gutter at every width, so it never sprawls
+          edge-to-edge — and wide mode widens it (up to docMax) instead of going full-width. */}
+      <Space direction="vertical" size={16} style={{ width: `min(100% - 48px, ${docMax}px)`, margin: '0 auto' }}>
         <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
           <Space size={12} wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>

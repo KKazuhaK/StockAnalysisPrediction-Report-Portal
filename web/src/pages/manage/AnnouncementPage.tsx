@@ -82,7 +82,6 @@ export default function AnnouncementPage() {
         <Form.Item
           name="announcementContent"
           label={t('settings.announcementContent')}
-          extra={t('settings.announcementHint')}
           rules={[{ max: 2000, message: t('settings.announcementContentTooLong') }]}
         >
           <Input.TextArea
@@ -92,6 +91,11 @@ export default function AnnouncementPage() {
             placeholder={t('settings.announcementContentPlaceholder')}
           />
         </Form.Item>
+        {/* Hint rendered outside the Form.Item so the TextArea's char-count (bottom-right)
+            doesn't overlap it. */}
+        <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: -8, marginBottom: 16 }}>
+          {t('settings.announcementHint')}
+        </Typography.Text>
         <Form.Item shouldUpdate noStyle>
           {({ getFieldValue }) => {
             const enabled = getFieldValue('announcementEnabled') === true

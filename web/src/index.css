@@ -170,7 +170,9 @@ body {
 }
 .rp-reader__doc {
   min-width: 0;
-  max-width: var(--rp-doc-max, 1080px);
+  /* Keep a gutter at every width so the column never sprawls edge-to-edge; wide mode then
+     widens it (up to --rp-doc-max) and stays centered instead of going full-width. */
+  width: min(100% - 48px, var(--rp-doc-max, 1080px));
   margin: 0 auto;
 }
 /* Roomy enough (≥1280 → the centered column is ≥900) → the reading column (header + tabs
