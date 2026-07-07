@@ -6,6 +6,7 @@ import {
   DatePicker,
   Drawer,
   Empty,
+  Grid,
   Input,
   InputNumber,
   Modal,
@@ -47,6 +48,7 @@ const itemActive = (s: string) => s === 'queued' || s === 'running'
 function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; admin: boolean; user: string | null; onClose: () => void }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const fullWidth = !Grid.useBreakpoint().md // phone: the 680px drawer would overflow the screen
   const [detail, setDetail] = useState<BatchJobDetail | null>(null)
   const [selected, setSelected] = useState<Key[]>([])
   const open = jobId != null
@@ -120,7 +122,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
   return (
     <Drawer
       title={detail ? t('batch.jobTitle', { id: detail.job.id }) : t('batch.jobDetail')}
-      width={680}
+      width={fullWidth ? '100%' : 680}
       open={open}
       onClose={onClose}
       destroyOnClose
@@ -142,6 +144,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
           dataSource={detail.items}
           columns={cols}
           pagination={{ pageSize: 20, size: 'small' }}
+          scroll={{ x: 560 }}
         />
       )}
     </Drawer>
@@ -456,7 +459,10 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
             dataSource={rows}
             columns={cols}
             pagination={{ pageSize: 15 }}
-            scroll={{ x: 900 }}
+            // The fixed columns sum to ~900px; give the flexible workflow column real room
+            // (and let the table scroll horizontally on phones) instead of crushing it to a
+            // one-character-per-line sliver.
+            scroll={{ x: 1160 }}
           />
         )}
       </Card>

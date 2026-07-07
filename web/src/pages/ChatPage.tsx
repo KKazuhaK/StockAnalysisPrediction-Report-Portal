@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { App, Avatar, Button, Drawer, Dropdown, Empty, Grid, Input, Modal, Select, Spin, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
-import { ArrowUpOutlined, DeleteOutlined, EditOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined } from '@ant-design/icons'
+import { ArrowUpOutlined, DeleteOutlined, EditOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError } from '../api/client'
@@ -534,7 +534,9 @@ export default function ChatPage() {
           }}
         >
           {compact && (
-            <Button type="text" size="small" icon={<MessageOutlined />} onClick={() => setNavOpen(true)} title={t('chat.conversations')} />
+            <Button icon={<UnorderedListOutlined />} onClick={() => setNavOpen(true)}>
+              {t('chat.conversations')}
+            </Button>
           )}
           {assistantAvatar(26)}
           <Typography.Text strong ellipsis style={{ flex: 1, minWidth: 0 }}>

@@ -108,7 +108,7 @@ export default function RunPage() {
             />
           </div>
         )}
-          <Card title={rep?.title} extra={rep ? <ReaderControls /> : undefined} style={readerVars}>
+          <Card className="rp-doc-card" title={rep?.title} extra={rep ? <ReaderControls /> : undefined} style={readerVars}>
             {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
           </Card>
         </Space>

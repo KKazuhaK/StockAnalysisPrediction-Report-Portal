@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { Button, Card, Empty, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
+import { Button, Card, Empty, Grid, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -70,10 +70,50 @@ export default function StockPage() {
   const setKind = (k: string) => setSp({ date: data.selDate, kind: k })
   const setRid = (rid: string) => setSp({ date: data.selDate, kind: data.selKind, r: rid })
   const rep = data.rep
+  const compact = !Grid.useBreakpoint().md // phone / small tablet
+
+  // Back + stock name/code + export. On desktop it sits inside the reading column (so the
+  // export buttons line up with the report's right edge); on mobile it moves to the very
+  // top — above the timeline — so navigation is the first thing you see.
+  const headerBar = (
+    <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
+      <Space size={12} wrap>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>
+          {t('stock.back')}
+        </Button>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          {data.name}{' '}
+          <Typography.Text type="secondary" style={{ fontSize: 15 }}>
+            {data.symbol}
+          </Typography.Text>
+        </Typography.Title>
+        {rep && rep.name && rep.name !== data.name && (
+          <Tag color="orange">
+            {t('stock.asOf')}: {rep.name}
+          </Tag>
+        )}
+      </Space>
+      {rep && (
+        <Space wrap>
+          <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
+            {t('stock.exportMd')}
+          </Button>
+          <ExportPdfButton
+            rid={rep.rid}
+            report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+          />
+          <ExportDayButton symbol={data.symbol} date={data.selDate} name={data.name} />
+        </Space>
+      )}
+    </Space>
+  )
 
   return (
     <Spin spinning={loading}>
       <div className={`rp-reader${wide ? ' rp-reader--wide' : ''}`} style={layoutVars}>
+        {/* Mobile: back + stock name/code + export sit above the timeline. */}
+        {compact && <div style={{ marginBottom: 12 }}>{headerBar}</div>}
+
         {/* Narrow / wide mode: the timeline is a horizontal strip on top; normal mode on a
             roomy screen floats it as a left rail (container query in index.css). */}
         <div className="rp-reader__strip">
@@ -92,38 +132,8 @@ export default function StockPage() {
 
           <div className="rp-reader__doc">
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
-              {/* Header sits inside the reading column, so the export buttons line up with
-                  the report's right edge and the whole thing reads as one group. */}
-              <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
-                <Space size={12} wrap>
-                  <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>
-                    {t('stock.back')}
-                  </Button>
-                  <Typography.Title level={4} style={{ margin: 0 }}>
-                    {data.name}{' '}
-                    <Typography.Text type="secondary" style={{ fontSize: 15 }}>
-                      {data.symbol}
-                    </Typography.Text>
-                  </Typography.Title>
-                  {rep && rep.name && rep.name !== data.name && (
-                    <Tag color="orange">
-                      {t('stock.asOf')}: {rep.name}
-                    </Tag>
-                  )}
-                </Space>
-                {rep && (
-                  <Space wrap>
-                    <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
-                      {t('stock.exportMd')}
-                    </Button>
-                    <ExportPdfButton
-                      rid={rep.rid}
-                      report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
-                    />
-                    <ExportDayButton symbol={data.symbol} date={data.selDate} name={data.name} />
-                  </Space>
-                )}
-              </Space>
+              {/* Desktop keeps the header inside the reading column. */}
+              {!compact && headerBar}
 
               {data.kinds.length > 1 && (
                   <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
@@ -147,6 +157,7 @@ export default function StockPage() {
                   </div>
                 )}
                 <Card
+                  className="rp-doc-card"
                   styles={{ body: { paddingTop: 8 } }}
                   title={rep?.title}
                   extra={rep ? <ReaderControls /> : undefined}

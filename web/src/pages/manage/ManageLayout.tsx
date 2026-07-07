@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Button, Menu, Spin, Tooltip, Typography, theme } from 'antd'
+import { Button, Drawer, Menu, Spin, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   ApiOutlined,
@@ -54,6 +54,7 @@ export default function ManageLayout() {
     }
   })
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const active = loc.pathname.split('/')[2] || 'site'
 
   useEffect(() => {
@@ -132,6 +133,69 @@ export default function ManageLayout() {
     },
   ]
 
+  // The nav menu, shared by the desktop rail and the mobile drawer. On mobile a click also
+  // closes the drawer (so it behaves like a page switch, not a persistent sidebar).
+  const menu = (
+    <Menu
+      mode="inline"
+      inlineCollapsed={railCollapsed}
+      selectedKeys={[active]}
+      onClick={({ key }) => {
+        navigate(`/manage/${key}`)
+        setDrawerOpen(false)
+      }}
+      items={items}
+      style={{ border: 'none', background: 'transparent' }}
+    />
+  )
+
+  // The label of the current leaf, for the mobile top bar (so you can see where you are
+  // without opening the drawer).
+  const leaves = items.flatMap((g) => (g && 'children' in g ? g.children ?? [] : []))
+  const activeLeaf = leaves.find((l) => l && 'key' in l && l.key === active)
+  const activeLabel = (activeLeaf && 'label' in activeLeaf ? (activeLeaf.label as string) : undefined) ?? t('nav.manage')
+
+  // Mobile: the grouped rail is too tall to stack above the content — fold it into a drawer
+  // opened from a slim top bar, so the active page is visible immediately.
+  if (narrow) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: `calc(100dvh - ${HEADER_VAR})`, background: token.colorBgContainer }}>
+        <div
+          style={{
+            position: 'sticky',
+            top: HEADER_VAR,
+            zIndex: 5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 12px',
+            background: token.colorBgContainer,
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+          }}
+        >
+          <Button icon={<MenuUnfoldOutlined />} onClick={() => setDrawerOpen(true)}>
+            {activeLabel}
+          </Button>
+        </div>
+        <Drawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          placement="left"
+          width={260}
+          title={t('nav.manage')}
+          styles={{ body: { padding: 8 } }}
+        >
+          {menu}
+        </Drawer>
+        <div style={{ flex: '1 1 auto', minWidth: 0, padding: 16 }}>
+          <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
+            <Outlet />
+          </Suspense>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       style={{
@@ -156,16 +220,7 @@ export default function ManageLayout() {
           transition: 'flex-basis .2s ease, width .2s ease',
         }}
       >
-        <div style={{ flex: '1 1 auto', overflowY: 'auto', overflowX: 'hidden', paddingTop: 8 }}>
-          <Menu
-            mode="inline"
-            inlineCollapsed={railCollapsed}
-            selectedKeys={[active]}
-            onClick={({ key }) => navigate(`/manage/${key}`)}
-            items={items}
-            style={{ border: 'none', background: 'transparent' }}
-          />
-        </div>
+        <div style={{ flex: '1 1 auto', overflowY: 'auto', overflowX: 'hidden', paddingTop: 8 }}>{menu}</div>
         {!narrow && (
           <div
             style={{

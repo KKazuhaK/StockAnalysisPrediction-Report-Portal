@@ -317,8 +317,12 @@ export default function AppLayout() {
 
       <Content
         style={{
-          padding: onChat ? '16px 16px 12px' : onManage ? 0 : '24px 20px',
-          maxWidth: onManage ? 'none' : contentMaxWidth,
+          // Phones get a slimmer side gutter so reading/content fills more of the narrow
+          // screen; desktop keeps the roomier padding.
+          padding: onChat ? '16px 16px 12px' : onManage ? 0 : compact ? '16px 12px' : '24px 20px',
+          // Chat (like the admin console) runs full-bleed — it's a fixed-height app that should
+          // use the entire screen width, not the reader's centered 1240 column.
+          maxWidth: onManage || onChat ? 'none' : contentMaxWidth,
           width: '100%',
           margin: '0 auto',
           // Chat fills the remaining viewport height and owns its own (single) scroll.

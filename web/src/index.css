@@ -192,7 +192,10 @@ body {
    non-timeline reports center identically, so they line up. */
 .rp-reader__doc {
   min-width: 0;
-  width: min(100% - 32px, var(--rp-doc-max, 1080px));
+  /* Fill the content area up to the readable cap. The page padding already provides the
+     side gutter, so the column itself takes the full width on narrow screens (no double
+     gutter that wasted horizontal space on phones). */
+  width: min(100%, var(--rp-doc-max, 1080px));
   margin: 0 auto;
   /* Smoothly expand/collapse the reading column when the "wide" switch is toggled. */
   transition: width 0.28s ease;
@@ -222,6 +225,15 @@ body {
   }
   .rp-reader:not(.rp-reader--wide) .rp-reader__doc {
     width: min(100% - 420px, var(--rp-doc-max, 1080px));
+  }
+}
+/* On phones the reading card trades its roomy desktop padding for a tighter one so the
+   report text uses more of the narrow screen. Scoped to the report card so the small
+   timeline card keeps its own (already compact) padding. */
+@media (max-width: 575px) {
+  .rp-doc-card > .ant-card-body {
+    padding-left: 14px;
+    padding-right: 14px;
   }
 }
 
