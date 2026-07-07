@@ -9,6 +9,7 @@ import { useReaderPrefs } from '../reader'
 import { useAuth } from '../auth'
 import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
+import { QUEUE_EVENT, RUN_ANALYSIS_EVENT } from '../lib/shortcuts'
 import Omnibox from './Omnibox'
 import RunAnalysisModal from './RunAnalysisModal'
 import QueueDrawer from './QueueDrawer'
@@ -81,6 +82,19 @@ export default function AppLayout() {
     const id = setInterval(load, 12000)
     return () => clearInterval(id)
   }, [canRun, queueOpen])
+
+  // Run Analysis + the queue live here as a modal/drawer, but an entry-link shortcut (from
+  // the home page) needs to open them — it fires a window event we listen for.
+  useEffect(() => {
+    const openRun = () => setRunOpen(true)
+    const openQueue = () => setQueueOpen(true)
+    window.addEventListener(RUN_ANALYSIS_EVENT, openRun)
+    window.addEventListener(QUEUE_EVENT, openQueue)
+    return () => {
+      window.removeEventListener(RUN_ANALYSIS_EVENT, openRun)
+      window.removeEventListener(QUEUE_EVENT, openQueue)
+    }
+  }, [])
   const footerText = settings.footerText || title
   const footerHtml = settings.footerText ? sanitizeFooterHtml(settings.footerText) : ''
   const showFooterInfo = settings.footerShowInfo
