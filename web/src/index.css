@@ -188,33 +188,35 @@ body {
 }
 .rp-reader__doc {
   min-width: 0;
-  /* Keep a gutter at every width so the column never sprawls edge-to-edge; wide mode then
-     widens it (up to --rp-doc-max) and stays centered instead of going full-width. */
-  width: min(100% - 48px, var(--rp-doc-max, 1080px));
+  /* Keep a gutter at every width so the column never sprawls edge-to-edge. */
+  width: min(100% - 32px, var(--rp-doc-max, 1080px));
   margin: 0 auto;
 }
-/* Roomy enough (≥1280 → the centered column is ≥900) → the reading column (header + tabs
-   + report, so the export buttons line up with its right edge) is centered on the page and
-   the timeline floats in the left gutter beside it, using space that would otherwise be
-   empty. Narrower → the timeline collapses to a horizontal strip on top and the reading
-   column spans the full width. */
+/* Wide enough (≥1280) → a real two-column layout: the timeline is a fixed 180px left column
+   and the reading column FILLS the remaining space up to --rp-doc-max, so "wide" mode
+   actually widens it (instead of being capped by a reserved gutter). The [rail + doc] group
+   is centered, so on an ultra-wide screen the doc caps at --rp-doc-max and the group sits in
+   the middle. Non-timeline reports (RunPage) render the same structure with an empty rail,
+   so both readers line up identically. Narrower → the timeline is a strip on top and the
+   reading column spans the width. */
 @container (min-width: 1280px) {
   .rp-reader__strip {
     display: none;
   }
   .rp-reader__body {
-    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 24px;
   }
   .rp-reader__rail {
     display: block;
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 180px;
+    flex: 0 0 180px;
   }
   .rp-reader__doc {
-    width: min(100% - 380px, var(--rp-doc-max, 1080px));
-    max-width: none;
-    margin: 0 auto;
+    flex: 1 1 auto;
+    width: auto;
+    max-width: var(--rp-doc-max, 1080px);
+    margin: 0;
   }
 }
