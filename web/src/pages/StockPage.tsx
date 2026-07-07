@@ -17,6 +17,8 @@ export default function StockPage() {
   const { symbol = '' } = useParams()
   const [sp, setSp] = useSearchParams()
   const navigate = useNavigate()
+  const compact = !Grid.useBreakpoint().md // phone / small tablet — a hook, so it must run
+  // unconditionally (before any early return below), not beside the data-dependent code.
   const { fontSize, fontWeight, wide } = useReaderPrefs()
   const readerVars = { '--md-fs': `${fontSize}px`, '--md-fw': String(fontWeight) } as CSSProperties
   // Optimal reading width the centered column fluidly grows up to, then caps at (so it
@@ -70,7 +72,6 @@ export default function StockPage() {
   const setKind = (k: string) => setSp({ date: data.selDate, kind: k })
   const setRid = (rid: string) => setSp({ date: data.selDate, kind: data.selKind, r: rid })
   const rep = data.rep
-  const compact = !Grid.useBreakpoint().md // phone / small tablet
 
   // Back + stock name/code + export. On desktop it sits inside the reading column (so the
   // export buttons line up with the report's right edge); on mobile it moves to the very
