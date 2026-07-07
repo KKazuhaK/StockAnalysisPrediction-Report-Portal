@@ -79,6 +79,15 @@ export default function Markdown({ md, html }: { md?: string; html?: string }) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath, remarkReportMathCompat]}
             rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false }]]}
+            components={{
+              // Wrap tables so a wide one scrolls sideways instead of squishing columns
+              // (which forces CJK headers to wrap one character per line, reading vertical).
+              table: ({ node: _node, ...props }) => (
+                <div className="md-table-wrap">
+                  <table {...props} />
+                </div>
+              ),
+            }}
           >
             {normalizeDisplayMath(md)}
           </ReactMarkdown>
