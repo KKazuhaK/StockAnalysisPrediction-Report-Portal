@@ -189,6 +189,20 @@ export default function AppLayout() {
                 {/* On mobile the primary nav folds in here (the header buttons are hidden). */}
                 {compact && (
                   <>
+                    {canRun && (
+                      <Button
+                        type="text"
+                        block
+                        icon={<MessageOutlined />}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
+                        onClick={() => {
+                          setAccountOpen(false)
+                          navigate('/chat')
+                        }}
+                      >
+                        {t('nav.chat')}
+                      </Button>
+                    )}
                     <Button
                       type="text"
                       block

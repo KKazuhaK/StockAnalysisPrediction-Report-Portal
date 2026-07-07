@@ -151,6 +151,12 @@ body {
 .rp-announcement.ant-alert-with-description .ant-alert-message {
   margin-bottom: 2px;
 }
+/* The announcement popup should always zoom in from the top, not from wherever the user
+   last clicked — antd defaults a Modal's transform-origin to the click point, so returning
+   home via the top-left "back" button flew the popup in from the corner. */
+.rp-announce-popup .ant-modal {
+  transform-origin: 50% 0 !important;
+}
 
 /* ── Stock reading layout (StockPage) ──────────────────────────────────────────
    A container query on the available width, not the viewport, so it also reacts to

@@ -91,6 +91,7 @@ export default function SiteAnnouncement({ style }: { style?: CSSProperties }) {
         style={{ borderRadius: 8, paddingBlock: 8, ...style }}
       />
       <Modal
+        rootClassName="rp-announce-popup"
         open={popupOpen && popupDismissed !== announcementKey}
         title={<Typography.Text style={{ fontWeight: 700 }}>{title || t('announcement.popupTitle')}</Typography.Text>}
         onCancel={() => closePopup(false)}
