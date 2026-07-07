@@ -186,37 +186,31 @@ body {
 .rp-reader__rail {
   display: none;
 }
+/* The reading column is ALWAYS centered on the page (never shifted left or right) and its
+   width follows --rp-doc-max, so "wide" mode simply makes the centered column wider. The
+   timeline is a horizontal strip on top by default. Both timeline and non-timeline reports
+   center the same way, so they line up. */
 .rp-reader__doc {
   min-width: 0;
-  /* Keep a gutter at every width so the column never sprawls edge-to-edge. */
   width: min(100% - 32px, var(--rp-doc-max, 1080px));
   margin: 0 auto;
 }
-/* Wide enough (≥1280) → a real two-column layout: the timeline is a fixed 180px left column
-   and the reading column FILLS the remaining space up to --rp-doc-max, so "wide" mode
-   actually widens it (instead of being capped by a reserved gutter). The [rail + doc] group
-   is centered, so on an ultra-wide screen the doc caps at --rp-doc-max and the group sits in
-   the middle. Non-timeline reports (RunPage) render the same structure with an empty rail,
-   so both readers line up identically. Narrower → the timeline is a strip on top and the
-   reading column spans the width. */
-@container (min-width: 1280px) {
+/* Only on a very wide container is there room for the timeline as a left rail WITHOUT
+   pushing the centered reading column off-center (the rail floats in the wide left gutter,
+   which is otherwise empty). Below this the timeline stays a strip on top. 1900px guarantees
+   the gutter clears the rail even when "wide" mode makes the column ~1440. */
+@container (min-width: 1900px) {
   .rp-reader__strip {
     display: none;
   }
   .rp-reader__body {
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    gap: 24px;
+    position: relative;
   }
   .rp-reader__rail {
     display: block;
-    flex: 0 0 180px;
-  }
-  .rp-reader__doc {
-    flex: 1 1 auto;
-    width: auto;
-    max-width: var(--rp-doc-max, 1080px);
-    margin: 0;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 180px;
   }
 }
