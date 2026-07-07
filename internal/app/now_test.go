@@ -283,9 +283,11 @@ func TestPWAManifestAndIcon(t *testing.T) {
 		t.Errorf("manifest = %v", m)
 	}
 
+	// The default icon is a raster PNG (browsers won't treat an SVG advertised at fixed
+	// pixel sizes as installable).
 	rec = httptest.NewRecorder()
 	s.pwaIcon(rec, httptest.NewRequest("GET", "/pwa-icon", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "image/svg+xml") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "image/png") {
 		t.Fatalf("default icon status=%d type=%q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 
