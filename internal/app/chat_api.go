@@ -75,6 +75,27 @@ func (s *Server) apiChatTargets(w http.ResponseWriter, r *http.Request, user str
 	writeJSON(w, map[string]any{"targets": out})
 }
 
+// apiChatTargetIntro returns a chat/agent target's opening statement + suggested questions
+// (Dify's start-of-conversation greeting), for the empty-thread state. A Dify error is
+// non-fatal — the chat just opens without a greeting.
+func (s *Server) apiChatTargetIntro(w http.ResponseWriter, r *http.Request, user string) {
+	tgt, ok := s.st.GetTarget(pathID(r, "id"))
+	if !ok || tgt.PluginSlug != difyPluginSlug {
+		jsonError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	client, err := difyChatClient(tgt.Config)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	opening, suggested, err := client.ChatIntro(r.Context())
+	if err != nil || suggested == nil {
+		suggested = []string{}
+	}
+	writeJSON(w, map[string]any{"opening": opening, "suggested": suggested})
+}
+
 // apiChatConversations lists the caller's conversations, newest first, optionally scoped
 // to one target via ?target_id=.
 func (s *Server) apiChatConversations(w http.ResponseWriter, r *http.Request, user string) {

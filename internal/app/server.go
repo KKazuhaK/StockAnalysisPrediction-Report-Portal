@@ -243,6 +243,7 @@ func RunServer(cfgPath string) {
 	// Cookie session, gated by PermRunBatch (a chat turn runs a Dify app). Conversations
 	// are personal — each handler is scoped to the caller's own rows.
 	mux.HandleFunc("GET /api/chat/targets", s.requirePermJSON(PermRunBatch, s.apiChatTargets))
+	mux.HandleFunc("GET /api/chat/targets/{id}/intro", s.requirePermJSON(PermRunBatch, s.apiChatTargetIntro))
 	mux.HandleFunc("GET /api/chat/conversations", s.requirePermJSON(PermRunBatch, s.apiChatConversations))
 	mux.HandleFunc("POST /api/chat/conversations", s.requirePermJSON(PermRunBatch, s.apiChatConversationCreate))
 	mux.HandleFunc("DELETE /api/chat/conversations/{id}", s.requirePermJSON(PermRunBatch, s.apiChatConversationDelete))

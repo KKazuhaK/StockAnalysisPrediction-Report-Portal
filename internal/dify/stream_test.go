@@ -84,6 +84,19 @@ func TestChatStreamCapturesConvIDEarly(t *testing.T) {
 	}
 }
 
+// ChatIntro pulls the opening statement + suggested questions from /parameters.
+func TestChatIntro(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"opening_statement":"provide a code","suggested_questions":["分析 600519","评估回调"]}`)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k", srv.Client())
+	op, sug, err := c.ChatIntro(context.Background())
+	if err != nil || op != "provide a code" || len(sug) != 2 || sug[0] != "分析 600519" {
+		t.Fatalf("intro = {opening:%q suggested:%v} err=%v", op, sug, err)
+	}
+}
+
 // A stream `error` event surfaces as a failure carrying Dify's message.
 func TestChatStreamErrorEvent(t *testing.T) {
 	srv := sseStub(t, []string{`{"event":"error","message":"model quota exceeded"}`})

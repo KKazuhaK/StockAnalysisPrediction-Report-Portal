@@ -27,6 +27,24 @@ type ChatReply struct {
 	MessageID      string
 }
 
+// ChatIntro fetches a chat/agent app's opening statement and suggested opening questions
+// from /parameters — the greeting Dify shows at the start of a new conversation. Both are
+// optional (empty when the app configures none).
+func (c *Client) ChatIntro(ctx context.Context) (opening string, suggested []string, err error) {
+	raw, err := c.do(ctx, http.MethodGet, "/parameters", nil)
+	if err != nil {
+		return "", nil, err
+	}
+	var doc struct {
+		OpeningStatement   string   `json:"opening_statement"`
+		SuggestedQuestions []string `json:"suggested_questions"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return "", nil, fmt.Errorf("dify /parameters: bad JSON: %w", err)
+	}
+	return doc.OpeningStatement, doc.SuggestedQuestions, nil
+}
+
 // ChatStream sends a message in STREAMING mode so the conversation_id is captured the
 // moment Dify assigns it (the first event) and handed to onMeta — letting the caller
 // persist the conversation↔Dify linkage BEFORE a possibly-long turn finishes, so it

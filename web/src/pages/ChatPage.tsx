@@ -27,7 +27,15 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [loadingHist, setLoadingHist] = useState(false)
+  const [intro, setIntro] = useState<{ opening: string; suggested: string[] } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Whether the thread is scrolled to (near) the bottom. Auto-scroll only follows when it is,
+  // so a poll refresh or a new message never yanks the user back down while they read above.
+  const pinnedRef = useRef(true)
+  const onThreadScroll = () => {
+    const el = scrollRef.current
+    if (el) pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  }
   // Mirrors of state read inside the poll interval (so the closure sees current values).
   const sendingRef = useRef(false)
   const msgsLenRef = useRef(0)
@@ -58,11 +66,18 @@ export default function ChatPage() {
   useEffect(() => {
     setConvId(undefined)
     setMsgs([])
+    setIntro(null)
     loadConvs(targetId)
+    if (targetId) {
+      api
+        .get<{ opening: string; suggested: string[] }>(`/api/chat/targets/${targetId}/intro`)
+        .then(setIntro)
+        .catch(() => setIntro(null))
+    }
   }, [targetId])
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+    if (pinnedRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [msgs, sending])
 
   // Dify's history for a conversation, flattened into a message thread.
@@ -136,12 +151,13 @@ export default function ChatPage() {
     setInput('')
   }
 
-  const send = async () => {
-    const q = input.trim()
+  const send = async (text?: string) => {
+    const q = (text ?? input).trim()
     if (!q || sending) return
     const id = await ensureConv()
     if (!id) return
-    setInput('')
+    if (text == null) setInput('')
+    pinnedRef.current = true // follow one's own new message to the bottom
     setMsgs((m) => [...m, { role: 'user', content: q }])
     // Title an untitled conversation from its first message right away (the backend does the
     // same; loadConvs later reconciles) — so the list shows the message, not "Untitled".
@@ -290,16 +306,38 @@ export default function ChatPage() {
           </Typography.Text>
           {difyModeTag(t, target?.mode)}
         </div>
-        <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+        <div ref={scrollRef} onScroll={onThreadScroll} style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
           {loadingHist ? (
             <div style={{ textAlign: 'center', paddingTop: 40 }}>
               <Spin />
             </div>
           ) : msgs.length === 0 ? (
-            <div style={{ textAlign: 'center', color: token.colorTextTertiary, paddingTop: 60 }}>
-              <RobotOutlined style={{ fontSize: 32 }} />
-              <div style={{ marginTop: 8 }}>{t('chat.emptyThread')}</div>
-            </div>
+            intro && (intro.opening || intro.suggested.length > 0) ? (
+              // The assistant's opening statement + suggested questions (Dify's greeting).
+              <div>
+                {intro.opening && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
+                    <div style={{ maxWidth: '78%', padding: '8px 12px', borderRadius: 10, background: token.colorFillSecondary, color: token.colorText, overflowWrap: 'anywhere' }}>
+                      <Markdown md={intro.opening} />
+                    </div>
+                  </div>
+                )}
+                {intro.suggested.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {intro.suggested.map((q) => (
+                      <Button key={q} size="small" onClick={() => send(q)}>
+                        {q}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', color: token.colorTextTertiary, paddingTop: 60 }}>
+                <RobotOutlined style={{ fontSize: 32 }} />
+                <div style={{ marginTop: 8 }}>{t('chat.emptyThread')}</div>
+              </div>
+            )
           ) : (
             <>
               {msgs.map(bubble)}
@@ -327,7 +365,7 @@ export default function ChatPage() {
             placeholder={t('chat.inputPlaceholder')}
             disabled={sending}
           />
-          <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send} disabled={!input.trim()}>
+          <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={() => send()} disabled={!input.trim()}>
             {t('chat.send')}
           </Button>
         </div>
