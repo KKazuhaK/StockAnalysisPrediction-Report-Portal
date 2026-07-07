@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
 import { Badge, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -163,6 +163,11 @@ export default function AppLayout() {
           {/* On mobile these fold into the account menu below to keep the header light. */}
           {!compact && (
             <>
+              {canRun && (
+                <Button icon={<MessageOutlined />} onClick={() => navigate('/chat')} title={t('nav.chat')}>
+                  {t('nav.chat')}
+                </Button>
+              )}
               <Button icon={<AppstoreOutlined />} onClick={() => navigate('/apps')} title={t('nav.apps')}>
                 {t('nav.apps')}
               </Button>

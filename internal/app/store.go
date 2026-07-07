@@ -269,6 +269,15 @@ func (s *Store) init() error {
 		// from period_start on access. See docs/adr/0005-priority-tickets.md.
 		`CREATE TABLE IF NOT EXISTS priority_tickets(
 			username TEXT PRIMARY KEY, remaining INTEGER DEFAULT 0, period_start TEXT)`,
+		// Interactive chat/assistant conversations (docs/adr/0012-interactive-chat.md): a
+		// THIN index only. Dify owns the messages (keyed by conv_id + user) and the whole
+		// context/memory; this table just lets the portal list a user's conversations per
+		// target and reopen them. No message content is stored here. conv_id is empty until
+		// Dify assigns one on the first reply.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS chat_conversations(
+			id %s, target_id BIGINT, conv_id TEXT DEFAULT '', created_by TEXT,
+			title TEXT DEFAULT '', created_at TEXT, updated_at TEXT)`, pk),
+		`CREATE INDEX IF NOT EXISTS idx_chat_conv_user ON chat_conversations(created_by, target_id, updated_at)`,
 	}
 	for _, st := range stmts {
 		if _, err := s.exec(st); err != nil {

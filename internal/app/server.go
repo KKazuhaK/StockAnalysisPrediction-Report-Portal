@@ -238,6 +238,17 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/priority", s.requireAdminJSON(s.apiBatchJobReprioritize))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/schedule", s.requireAdminJSON(s.apiBatchJobSchedule))
 
+	// ---- Interactive chat / assistant (docs/adr/0012-interactive-chat.md) ----
+	// Cookie session, gated by PermRunBatch (a chat turn runs a Dify app). Conversations
+	// are personal — each handler is scoped to the caller's own rows.
+	mux.HandleFunc("GET /api/chat/targets", s.requirePermJSON(PermRunBatch, s.apiChatTargets))
+	mux.HandleFunc("GET /api/chat/conversations", s.requirePermJSON(PermRunBatch, s.apiChatConversations))
+	mux.HandleFunc("POST /api/chat/conversations", s.requirePermJSON(PermRunBatch, s.apiChatConversationCreate))
+	mux.HandleFunc("DELETE /api/chat/conversations/{id}", s.requirePermJSON(PermRunBatch, s.apiChatConversationDelete))
+	mux.HandleFunc("POST /api/chat/conversations/{id}/rename", s.requirePermJSON(PermRunBatch, s.apiChatConversationRename))
+	mux.HandleFunc("GET /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatHistory))
+	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatSend))
+
 	// ---- Downloadable iframe apps (see docs/adr/0003-downloadable-apps.md) ----
 	// List/open is any-user; install/uninstall is admin; assets are served publicly.
 	mux.HandleFunc("GET /api/apps", s.requireUserJSON(s.apiApps))

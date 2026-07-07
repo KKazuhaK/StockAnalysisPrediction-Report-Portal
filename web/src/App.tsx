@@ -33,6 +33,7 @@ const AppView = lazyRetry(() => import('./pages/AppView'))
 const AppsAdminPage = lazyRetry(() => import('./pages/manage/AppsAdminPage'))
 const BatchConsole = lazyRetry(() => import('./pages/BatchConsole'))
 const QueuePage = lazyRetry(() => import('./pages/QueuePage'))
+const ChatPage = lazyRetry(() => import('./pages/ChatPage'))
 
 function FullSpin() {
   return (
@@ -93,6 +94,14 @@ function AppRoutes() {
           element={
             <RequirePerm perm="run_batch">
               <QueuePage />
+            </RequirePerm>
+          }
+        />
+        <Route
+          path="/chat"
+          element={
+            <RequirePerm perm="run_batch">
+              <ChatPage />
             </RequirePerm>
           }
         />

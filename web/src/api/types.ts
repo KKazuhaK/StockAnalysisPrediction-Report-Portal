@@ -117,6 +117,29 @@ export interface BatchItem {
   finished_at: string
 }
 
+// Interactive chat/assistant (docs/adr/0012). A ChatTarget is a Dify chat/agent app;
+// a ChatConversation is the portal's thin index row (Dify holds the messages).
+export interface ChatTarget {
+  id: number
+  name: string
+  mode: string // Dify app mode (e.g. "agent-chat", "chat")
+}
+
+export interface ChatConversation {
+  id: number
+  target_id: number
+  title: string
+  created_at: string
+  updated_at: string
+  started: boolean // has a Dify conversation_id yet (i.e. at least one turn sent)
+}
+
+export interface ChatTurn {
+  query: string // the user's message
+  answer: string // the assistant's reply
+  created_at: number
+}
+
 export interface BatchJobDetail {
   job: BatchJob
   counts: { queued: number; running: number; succeeded: number; partial: number; failed: number; cancelled: number }
