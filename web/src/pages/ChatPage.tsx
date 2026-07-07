@@ -104,25 +104,34 @@ export default function ChatPage() {
     }
   }
 
-  // While a conversation is open, gently poll Dify's history so a turn that finishes after
-  // the user reloaded / opened another tab shows up on its own. Skip while a send is in
-  // flight (the optimistic bubbles are authoritative then), and never shrink the thread —
-  // so a momentarily-empty history (eventual consistency) can't blank a fresh answer.
+  // When a conversation is opened, briefly poll Dify's history so a turn that finished while
+  // the user was away (reloaded / another tab) shows up on its own — then STOP, so an idle
+  // conversation isn't hitting Dify forever. Only a short window is needed: a turn sent in
+  // this tab is shown directly by send(); polling only backstops the arrive-from-elsewhere
+  // case. Skips while a send is in flight, never shrinks the thread, and stops once an answer
+  // lands. Re-opening the conversation restarts the window.
   useEffect(() => {
     if (convId == null) return
     let cancelled = false
-    const id = setInterval(async () => {
-      if (sendingRef.current) return
-      try {
-        const m = await fetchHistory(convId)
-        if (!cancelled && m.length >= msgsLenRef.current) setMsgs(m)
-      } catch {
-        /* ignore transient errors */
+    let attempts = 0
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      if (cancelled) return
+      if (!sendingRef.current) {
+        attempts += 1
+        try {
+          const m = await fetchHistory(convId)
+          if (!cancelled && m.length >= msgsLenRef.current) setMsgs(m)
+        } catch {
+          /* ignore transient errors */
+        }
       }
-    }, 5000)
+      if (!cancelled && attempts < 6) timer = setTimeout(tick, 5000) // ~30s window, then stop
+    }
+    timer = setTimeout(tick, 5000)
     return () => {
       cancelled = true
-      clearInterval(id)
+      clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convId])
