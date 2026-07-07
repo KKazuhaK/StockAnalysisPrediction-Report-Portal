@@ -385,7 +385,7 @@ func repJSON(rep *Rep, nameOf func(string) string) map[string]any {
 func linksJSON(ls []Link) []map[string]any {
 	out := make([]map[string]any, 0, len(ls))
 	for _, l := range ls {
-		out = append(out, map[string]any{"id": l.ID, "label": l.Label, "url": l.URL, "icon": l.Icon, "newTab": l.NewTab, "ord": l.Ord})
+		out = append(out, map[string]any{"id": l.ID, "label": l.Label, "url": l.URL, "icon": l.Icon, "newTab": l.NewTab, "collapsed": l.Collapsed, "ord": l.Ord})
 	}
 	return out
 }
@@ -398,13 +398,14 @@ func (s *Server) apiLinkAdd(w http.ResponseWriter, r *http.Request, user string)
 	var in struct {
 		Label, URL, Icon string
 		NewTab           *bool // pointer so an omitted field defaults to true (open in new tab)
+		Collapsed        bool  // fold into the home-page "More" dropdown (default false)
 	}
 	readJSON(r, &in)
 	ord := 0
 	if ls := s.st.Links(); len(ls) > 0 {
 		ord = ls[len(ls)-1].Ord + 1
 	}
-	s.st.AddLink(strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab, ord)
+	s.st.AddLink(strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab, in.Collapsed, ord)
 	writeJSON(w, okJSON)
 }
 
@@ -412,9 +413,10 @@ func (s *Server) apiLinkEdit(w http.ResponseWriter, r *http.Request, user string
 	var in struct {
 		Label, URL, Icon string
 		NewTab           *bool
+		Collapsed        bool
 	}
 	readJSON(r, &in)
-	s.st.UpdateLinkFields(pathID(r, "id"), strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab)
+	s.st.UpdateLinkFields(pathID(r, "id"), strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab, in.Collapsed)
 	writeJSON(w, okJSON)
 }
 

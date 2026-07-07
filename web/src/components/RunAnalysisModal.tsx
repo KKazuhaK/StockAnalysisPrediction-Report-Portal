@@ -16,10 +16,12 @@ export default function RunAnalysisModal({
   open,
   onClose,
   onSubmitted,
+  initialTargetId,
 }: {
   open: boolean
   onClose: () => void
   onSubmitted?: (jobId: number) => void
+  initialTargetId?: number // pre-select this workflow when opened from a pinned entry-button shortcut
 }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -48,6 +50,16 @@ export default function RunAnalysisModal({
   const runnable = useMemo(() => targets.filter((tg) => difyModeKind(tg.mode) !== 'agent'), [targets])
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputs = target?.inputs || []
+
+  // A pinned entry-button shortcut opens the modal with a specific workflow already chosen.
+  // Apply it once the targets have loaded; silently fall back to the picker if it's gone/unrunnable.
+  useEffect(() => {
+    if (!open || initialTargetId == null) return
+    if (runnable.some((tg) => tg.id === initialTargetId)) {
+      setTargetId(initialTargetId)
+      form.resetFields()
+    }
+  }, [open, initialTargetId, runnable])
 
   const urgentEnabled = tickets?.urgent_enabled !== false
   // Urgent runs need a ticket unless the user belongs to an unlimited group; disable + uncheck at 0.

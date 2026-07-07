@@ -262,6 +262,7 @@ export interface LinkItem {
   url: string
   icon?: string
   newTab?: boolean // open in a new tab (default true)
+  collapsed?: boolean // fold into the home-page "More" dropdown instead of showing inline
   ord: number
 }
 

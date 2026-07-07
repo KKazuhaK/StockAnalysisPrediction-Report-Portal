@@ -41,6 +41,7 @@ type Link struct {
 	Label, URL string
 	Icon       string // icon name chosen in the admin UI (empty = default link glyph)
 	NewTab     bool   // open in a new browser tab (default true)
+	Collapsed  bool   // fold into the home-page "More" dropdown instead of showing inline
 	Ord        int
 }
 
@@ -303,6 +304,10 @@ func (s *Store) init() error {
 		if _, err := s.exec(ddl); err != nil && !duplicateColumnErr(err) {
 			return fmt.Errorf("upgrade user_groups governance: %w", err)
 		}
+	}
+	// Entry buttons can fold into a home-page "More" dropdown: additive, defaulted.
+	if _, err := s.exec(`ALTER TABLE links ADD COLUMN collapsed INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
+		return fmt.Errorf("upgrade links (collapsed): %w", err)
 	}
 	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
 	return nil
@@ -1201,7 +1206,7 @@ func (s *Store) FreezeReportNames() (int64, error) {
 // ---------- Entry buttons ----------
 
 func (s *Store) Links() []Link {
-	rows, err := s.query("SELECT id,label,url,icon,new_tab,ord FROM links ORDER BY ord,id")
+	rows, err := s.query("SELECT id,label,url,icon,new_tab,ord,collapsed FROM links ORDER BY ord,id")
 	if err != nil {
 		return nil
 	}
@@ -1210,23 +1215,24 @@ func (s *Store) Links() []Link {
 	for rows.Next() {
 		var l Link
 		var icon sql.NullString
-		var newTab sql.NullInt64
-		rows.Scan(&l.ID, &l.Label, &l.URL, &icon, &newTab, &l.Ord)
+		var newTab, collapsed sql.NullInt64
+		rows.Scan(&l.ID, &l.Label, &l.URL, &icon, &newTab, &l.Ord, &collapsed)
 		l.Icon = icon.String
 		l.NewTab = !newTab.Valid || newTab.Int64 != 0 // default: open in new tab
+		l.Collapsed = collapsed.Valid && collapsed.Int64 != 0
 		out = append(out, l)
 	}
 	return out
 }
 
-func (s *Store) AddLink(label, url, icon string, newTab bool, ord int) error {
-	_, err := s.exec("INSERT INTO links(label,url,icon,new_tab,ord) VALUES(?,?,?,?,?)", label, url, icon, boolInt(newTab), ord)
+func (s *Store) AddLink(label, url, icon string, newTab, collapsed bool, ord int) error {
+	_, err := s.exec("INSERT INTO links(label,url,icon,new_tab,ord,collapsed) VALUES(?,?,?,?,?,?)", label, url, icon, boolInt(newTab), ord, boolInt(collapsed))
 	return err
 }
 
-// UpdateLinkFields changes the label/URL/icon/newTab, preserving the sort position (ordering is handled by drag).
-func (s *Store) UpdateLinkFields(id int64, label, url, icon string, newTab bool) error {
-	_, err := s.exec("UPDATE links SET label=?,url=?,icon=?,new_tab=? WHERE id=?", label, url, icon, boolInt(newTab), id)
+// UpdateLinkFields changes the label/URL/icon/newTab/collapsed, preserving the sort position (ordering is handled by drag).
+func (s *Store) UpdateLinkFields(id int64, label, url, icon string, newTab, collapsed bool) error {
+	_, err := s.exec("UPDATE links SET label=?,url=?,icon=?,new_tab=?,collapsed=? WHERE id=?", label, url, icon, boolInt(newTab), boolInt(collapsed), id)
 	return err
 }
 

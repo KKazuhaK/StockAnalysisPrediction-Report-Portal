@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
 import { Badge, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, ThunderboltOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -44,6 +44,7 @@ export default function AppLayout() {
   const contentMaxWidth = onReader ? (wide ? 1760 : 1440) : 1240
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
   const [runOpen, setRunOpen] = useState(false)
+  const [runTargetId, setRunTargetId] = useState<number | undefined>() // pinned workflow from an entry-button shortcut
   const [queueOpen, setQueueOpen] = useState(false)
   const [queue, setQueue] = useState<BatchQueueSummary | null>(null)
   const [showTop, setShowTop] = useState(false)
@@ -90,7 +91,11 @@ export default function AppLayout() {
   // Run Analysis + the queue live here as a modal/drawer, but an entry-link shortcut (from
   // the home page) needs to open them — it fires a window event we listen for.
   useEffect(() => {
-    const openRun = () => setRunOpen(true)
+    const openRun = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { targetId?: number } | undefined
+      setRunTargetId(detail?.targetId)
+      setRunOpen(true)
+    }
     const openQueue = () => setQueueOpen(true)
     window.addEventListener(RUN_ANALYSIS_EVENT, openRun)
     window.addEventListener(QUEUE_EVENT, openQueue)
@@ -162,8 +167,11 @@ export default function AppLayout() {
             // nav buttons, which collapse to icons when compact).
             <Button
               type="primary"
-              icon={<ThunderboltOutlined />}
-              onClick={() => setRunOpen(true)}
+              icon={<PlayCircleOutlined />}
+              onClick={() => {
+                setRunTargetId(undefined) // the header button is the generic entry — never inherit a pinned target
+                setRunOpen(true)
+              }}
               title={t('nav.runAnalysis')}
             >
               {t('nav.runAnalysis')}
@@ -322,7 +330,16 @@ export default function AppLayout() {
         </Suspense>
       </Content>
 
-      {canRun && <RunAnalysisModal open={runOpen} onClose={() => setRunOpen(false)} />}
+      {canRun && (
+        <RunAnalysisModal
+          open={runOpen}
+          onClose={() => {
+            setRunOpen(false)
+            setRunTargetId(undefined)
+          }}
+          initialTargetId={runTargetId}
+        />
+      )}
       {canRun && <QueueDrawer open={queueOpen} onClose={() => setQueueOpen(false)} />}
 
       {/* Back-to-top appears once scrolled down. Data refreshes automatically (queue

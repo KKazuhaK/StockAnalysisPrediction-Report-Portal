@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { App, Button, Drawer, Empty, Grid, Input, Popconfirm, Select, Spin, Typography, theme } from 'antd'
 import { DeleteOutlined, MessageOutlined, PlusOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons'
+import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import Markdown from '../components/Markdown'
 import { difyModeTag } from '../lib/batchUi'
 import type { ChatConversation, ChatTarget, ChatTurn } from '../api/types'
@@ -17,6 +18,7 @@ export default function ChatPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { token } = theme.useToken()
+  const [sp] = useSearchParams()
   const compact = !Grid.useBreakpoint().md // phone / small tablet: fold the sidebar into a drawer
   const [navOpen, setNavOpen] = useState(false)
   const [targets, setTargets] = useState<ChatTarget[]>([])
@@ -51,9 +53,15 @@ export default function ChatPage() {
       .get<{ targets: ChatTarget[] }>('/api/chat/targets')
       .then((r) => {
         setTargets(r.targets || [])
-        if (r.targets?.length) setTargetId(r.targets[0].id)
+        // A pinned entry-button shortcut may deep-link to a specific assistant via ?target=<id>;
+        // fall back to the first target if it's absent, unknown, or no longer accessible.
+        const want = Number(sp.get('target'))
+        const initial = r.targets?.find((tg) => tg.id === want) ?? r.targets?.[0]
+        if (initial) setTargetId(initial.id)
       })
       .catch(() => {})
+    // Read ?target once on mount (the intended "open pre-selected" UX); later manual switching wins.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadConvs = (tid?: number) => {
@@ -177,7 +185,15 @@ export default function ChatPage() {
       setMsgs((m) => [...m, { role: 'assistant', content: r.answer || '' }])
       loadConvs(targetId) // refresh titles + ordering
     } catch (e) {
-      setMsgs((m) => [...m, { role: 'assistant', content: '⚠️ ' + ((e as Error).message || t('chat.sendFailed')) }])
+      // The assistant is at its concurrency ceiling — nothing was sent. Undo the optimistic
+      // user bubble, restore what they typed, and ask them to retry (don't queue interactively).
+      if (e instanceof ApiError && e.status === 429) {
+        setMsgs((m) => m.slice(0, -1))
+        if (text == null) setInput(q)
+        message.warning(t('chat.busy'))
+      } else {
+        setMsgs((m) => [...m, { role: 'assistant', content: '⚠️ ' + ((e as Error).message || t('chat.sendFailed')) }])
+      }
     } finally {
       setSending(false)
     }

@@ -201,6 +201,18 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Chat is interactive — it must not queue behind the batch run system (that queue exists to
+	// DEFER slow report runs; a chat turn can't wait). An independent ceiling instead sheds load
+	// when too many turns are already in flight, so a burst can't overwhelm Dify (0 = unlimited).
+	turnID, ok := s.chatAcquire(&chatTurn{
+		User: user, TargetID: tgt.ID, TargetName: tgt.Name,
+		ConvID: conv.ID, ConvTitle: conv.Title, Started: time.Now(),
+	})
+	if !ok {
+		jsonError(w, http.StatusTooManyRequests, "assistant is busy: too many chats in progress, please retry shortly")
+		return
+	}
+	defer s.chatRelease(turnID)
 	// Detach from the browser connection so the turn finishes and lands at Dify even if the
 	// user navigates away mid-generation (net/http cancels r.Context() on disconnect but
 	// keeps the handler goroutine running; a fresh context isn't aborted with the browser).

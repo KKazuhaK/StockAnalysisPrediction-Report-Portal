@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   Pagination,
+  Popover,
   Row,
   Select,
   Space,
@@ -15,11 +16,12 @@ import {
   theme,
   Typography,
 } from 'antd'
+import { EllipsisOutlined } from '@ant-design/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, qs } from '../api/client'
-import type { HomeResp } from '../api/types'
+import type { HomeResp, LinkItem } from '../api/types'
 import { SiteLogo, useSite } from '../site'
 import { useAuth } from '../auth'
 import Omnibox from '../components/Omnibox'
@@ -116,6 +118,33 @@ export default function HomePage() {
   const kindOptions = (data?.kinds || []).map((x) => ({ value: x, label: x }))
   const typeOptions = (data?.types || []).map((x) => ({ value: x, label: x }))
 
+  // Render one entry button. A shortcut link (url = "rp:<action>[:<target>]") triggers an
+  // internal action, optionally pre-selected on a specific target; a shortcut the user can't
+  // run (e.g. run-analysis without run_batch) is hidden (returns null).
+  const renderLink = (l: LinkItem) => {
+    const Icon = linkIconComponent(l.icon)
+    const res = shortcutOfUrl(l.url)
+    if (res) {
+      if (res.shortcut.requiresRun && !canRun) return null
+      return (
+        <Button key={l.id} icon={<Icon />} onClick={() => triggerShortcut(res.shortcut, navigate, res.param)}>
+          {l.label}
+        </Button>
+      )
+    }
+    const newTab = l.newTab !== false // default: open in a new tab
+    return (
+      <Button key={l.id} icon={<Icon />} href={l.url} target={newTab ? '_blank' : undefined} rel={newTab ? 'noreferrer' : undefined}>
+        {l.label}
+      </Button>
+    )
+  }
+  const allLinks = data?.links || []
+  const inlineLinks = allLinks.filter((l) => !l.collapsed)
+  // Collapsed links fold into a "More" popover; drop any hidden by run-batch gating so the
+  // popover (and its trigger) never render empty.
+  const moreButtons = allLinks.filter((l) => l.collapsed).map(renderLink).filter(Boolean)
+
   return (
     <Space direction="vertical" size={24} style={{ width: '100%' }}>
       {/* Hero: main search */}
@@ -132,36 +161,23 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Quick links */}
-      {!!data?.links?.length && (
+      {/* Quick links: inline buttons, with less-used ones folded into a "More" popover */}
+      {!!allLinks.length && (
         <div style={{ textAlign: 'center' }}>
           <Space size={[8, 8]} wrap>
-            {data.links.map((l) => {
-              const Icon = linkIconComponent(l.icon)
-              // A shortcut link (url = "rp:<action>") triggers an internal action; a
-              // shortcut the user can't run (e.g. run-analysis without run_batch) is hidden.
-              const sc = shortcutOfUrl(l.url)
-              if (sc) {
-                if (sc.requiresRun && !canRun) return null
-                return (
-                  <Button key={l.id} icon={<Icon />} onClick={() => triggerShortcut(sc, navigate)}>
-                    {l.label}
-                  </Button>
-                )
-              }
-              const newTab = l.newTab !== false // default: open in a new tab
-              return (
-                <Button
-                  key={l.id}
-                  icon={<Icon />}
-                  href={l.url}
-                  target={newTab ? '_blank' : undefined}
-                  rel={newTab ? 'noreferrer' : undefined}
-                >
-                  {l.label}
-                </Button>
-              )
-            })}
+            {inlineLinks.map(renderLink)}
+            {moreButtons.length > 0 && (
+              <Popover
+                trigger="click"
+                content={
+                  <Space size={[8, 8]} wrap style={{ maxWidth: 320 }}>
+                    {moreButtons}
+                  </Space>
+                }
+              >
+                <Button icon={<EllipsisOutlined />}>{t('home.more')}</Button>
+              </Popover>
+            )}
           </Space>
         </div>
       )}

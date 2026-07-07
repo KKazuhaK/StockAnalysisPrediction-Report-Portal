@@ -24,27 +24,27 @@ func newTestStore(t *testing.T) *Store {
 func TestLinkIconRoundTrip(t *testing.T) {
 	st := newTestStore(t)
 
-	if err := st.AddLink("GitHub", "https://github.com", "github", true, 0); err != nil {
+	if err := st.AddLink("GitHub", "https://github.com", "github", true, false, 0); err != nil {
 		t.Fatalf("AddLink: %v", err)
 	}
 	ls := st.Links()
 	if len(ls) != 1 {
 		t.Fatalf("Links len = %d, want 1", len(ls))
 	}
-	if ls[0].Icon != "github" || !ls[0].NewTab {
-		t.Errorf("got Icon=%q NewTab=%v, want github/true", ls[0].Icon, ls[0].NewTab)
+	if ls[0].Icon != "github" || !ls[0].NewTab || ls[0].Collapsed {
+		t.Errorf("got Icon=%q NewTab=%v Collapsed=%v, want github/true/false", ls[0].Icon, ls[0].NewTab, ls[0].Collapsed)
 	}
 
-	// Editing label/URL/icon/newTab preserves the row and updates the fields.
-	if err := st.UpdateLinkFields(ls[0].ID, "GH", "https://gh.io", "book", false); err != nil {
+	// Editing label/URL/icon/newTab/collapsed preserves the row and updates the fields.
+	if err := st.UpdateLinkFields(ls[0].ID, "GH", "https://gh.io", "book", false, true); err != nil {
 		t.Fatalf("UpdateLinkFields: %v", err)
 	}
 	ls = st.Links()
 	if len(ls) != 1 {
 		t.Fatalf("Links len = %d, want 1", len(ls))
 	}
-	if ls[0].Icon != "book" || ls[0].Label != "GH" || ls[0].URL != "https://gh.io" || ls[0].NewTab {
-		t.Errorf("after edit = %+v, want {Label:GH URL:https://gh.io Icon:book NewTab:false}", ls[0])
+	if ls[0].Icon != "book" || ls[0].Label != "GH" || ls[0].URL != "https://gh.io" || ls[0].NewTab || !ls[0].Collapsed {
+		t.Errorf("after edit = %+v, want {Label:GH URL:https://gh.io Icon:book NewTab:false Collapsed:true}", ls[0])
 	}
 }
 
@@ -52,7 +52,7 @@ func TestLinkIconRoundTrip(t *testing.T) {
 // the frontend can fall back to the default link glyph.
 func TestLinkEmptyIcon(t *testing.T) {
 	st := newTestStore(t)
-	if err := st.AddLink("Docs", "https://docs", "", true, 0); err != nil {
+	if err := st.AddLink("Docs", "https://docs", "", true, false, 0); err != nil {
 		t.Fatalf("AddLink: %v", err)
 	}
 	ls := st.Links()

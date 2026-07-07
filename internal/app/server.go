@@ -46,6 +46,9 @@ type Server struct {
 	schedMu      sync.Mutex                                        // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
 	mailFn       func(to []string, subject, htmlBody string) error // test seam; nil → real SMTP send
 	appTok       *appTokens                                        // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
+	chatMu       sync.Mutex                                        // guards chatLive/chatSeq
+	chatLive     map[int64]*chatTurn                               // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
+	chatSeq      int64                                             // monotonic in-flight chat-turn id
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -250,6 +253,9 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/rename", s.requirePermJSON(PermRunBatch, s.apiChatConversationRename))
 	mux.HandleFunc("GET /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatHistory))
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatSend))
+	// Assistant admin: the concurrency ceiling + the live "who is chatting now" view (ADR 0012).
+	mux.HandleFunc("GET /api/admin/chat/live", s.requireAdminJSON(s.apiAdminChatLive))
+	mux.HandleFunc("POST /api/admin/chat/config", s.requireAdminJSON(s.apiAdminChatConfigSave))
 
 	// ---- Downloadable iframe apps (see docs/adr/0003-downloadable-apps.md) ----
 	// List/open is any-user; install/uninstall is admin; assets are served publicly.

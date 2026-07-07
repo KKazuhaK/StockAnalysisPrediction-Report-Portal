@@ -3,7 +3,9 @@ import { App, Button, Checkbox, Form, Input, Modal, Popconfirm, Radio, Select, S
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import type { LinkItem } from '../../api/types'
+import { useAuth } from '../../auth'
+import type { AppSummary, AppsResp, BatchTarget, ChatTarget, LinkItem } from '../../api/types'
+import { difyModeKind } from '../../lib/batchUi'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
 import { LINK_ICON_OPTIONS, linkIconComponent } from '../../components/linkIcons'
 import { APP_SHORTCUTS, shortcutOfUrl, shortcutUrl } from '../../lib/shortcuts'
@@ -25,11 +27,17 @@ const iconSelectOptions = LINK_ICON_OPTIONS.map(({ value }) => {
 export default function LinksPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const { can } = useAuth()
+  const canRun = can('run_batch')
   const [links, setLinks] = useState<LinkItem[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<LinkItem | null>(null)
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
+  // Target lists so a shortcut can be pinned to a specific workflow / assistant / app.
+  const [batchTargets, setBatchTargets] = useState<BatchTarget[]>([])
+  const [chatTargets, setChatTargets] = useState<ChatTarget[]>([])
+  const [appList, setAppList] = useState<AppSummary[]>([])
 
   const load = () =>
     api
@@ -41,38 +49,68 @@ export default function LinksPage() {
     load()
   }, [])
 
+  // Populate the pinned-target picker. batch/chat targets need run_batch (admins usually have
+  // it); apps are readable by any user. Failures are non-fatal — the picker just stays empty.
+  useEffect(() => {
+    api.get<AppsResp>('/api/apps').then((r) => setAppList(r.apps || [])).catch(() => {})
+    if (canRun) {
+      api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setBatchTargets(r.targets || [])).catch(() => {})
+      api.get<{ targets: ChatTarget[] }>('/api/chat/targets').then((r) => setChatTargets(r.targets || [])).catch(() => {})
+    }
+  }, [canRun])
+
+  // The specific-target options for a given shortcut key. run-analysis matches the run modal's
+  // filter (non-agent); chat lists assistants; apps lists installed apps (string ids).
+  const targetOptionsFor = (key?: string): { value: string; label: string }[] => {
+    if (key === 'run-analysis') return batchTargets.filter((tg) => difyModeKind(tg.mode) !== 'agent').map((tg) => ({ value: String(tg.id), label: tg.name }))
+    if (key === 'chat') return chatTargets.map((tg) => ({ value: String(tg.id), label: tg.name }))
+    if (key === 'apps') return appList.map((a) => ({ value: a.id, label: a.name }))
+    return []
+  }
+
   const openAdd = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ kind: 'url', newTab: true }) // default: an external link, new tab
+    form.setFieldsValue({ kind: 'url', newTab: true, collapsed: false }) // default: an external link, new tab, shown inline
     setOpen(true)
   }
   const openEdit = (l: LinkItem) => {
     setEditing(l)
-    const sc = shortcutOfUrl(l.url)
+    const res = shortcutOfUrl(l.url)
     form.setFieldsValue({
       label: l.label,
       icon: l.icon,
-      kind: sc ? 'shortcut' : 'url',
-      shortcut: sc?.key,
-      url: sc ? '' : l.url,
+      kind: res ? 'shortcut' : 'url',
+      shortcut: res?.shortcut.key,
+      shortcutTarget: res?.param,
+      url: res ? '' : l.url,
       newTab: l.newTab !== false,
+      collapsed: !!l.collapsed,
     })
     setOpen(true)
   }
 
   const submit = async () => {
     const v = await form.validateFields()
-    // A shortcut is stored as url = "rp:<key>"; a plain link keeps its URL + new-tab flag.
+    // A shortcut is stored as url = "rp:<key>[:<target>]"; a plain link keeps its URL + new-tab flag.
     const payload =
       v.kind === 'shortcut'
-        ? { label: v.label, url: shortcutUrl(v.shortcut), icon: v.icon, newTab: false }
-        : { label: v.label, url: v.url, icon: v.icon, newTab: v.newTab }
+        ? { label: v.label, url: shortcutUrl(v.shortcut, v.shortcutTarget), icon: v.icon, newTab: false, collapsed: !!v.collapsed }
+        : { label: v.label, url: v.url, icon: v.icon, newTab: v.newTab, collapsed: !!v.collapsed }
     if (editing) await api.put(`/api/admin/links/${editing.id}`, payload)
     else await api.post('/api/admin/links', payload)
     setOpen(false)
     message.success(t('common.saved'))
     load()
+  }
+
+  // When a target is picked and the button has no name yet, offer the target's name as a
+  // convenience — always editable, never overwriting a name the admin already typed.
+  const onValuesChange = (changed: Record<string, unknown>) => {
+    if ('shortcutTarget' in changed && changed.shortcutTarget && !form.getFieldValue('label')) {
+      const name = targetOptionsFor(form.getFieldValue('shortcut')).find((o) => o.value === changed.shortcutTarget)?.label
+      if (name) form.setFieldValue('label', name)
+    }
   }
 
   const remove = async (id: number) => {
@@ -118,13 +156,22 @@ export default function LinksPage() {
               title: t('links.url'),
               dataIndex: 'url',
               render: (u: string) => {
-                const sc = shortcutOfUrl(u)
-                return sc ? (
-                  <Tag color="blue">{t('links.shortcutTag', { name: t(sc.labelKey) })}</Tag>
-                ) : (
-                  <a href={u} target="_blank" rel="noreferrer">
-                    {u}
-                  </a>
+                const res = shortcutOfUrl(u)
+                if (!res) {
+                  return (
+                    <a href={u} target="_blank" rel="noreferrer">
+                      {u}
+                    </a>
+                  )
+                }
+                // Resolve a pinned target to its name (falling back to #id if the list is
+                // unloaded or the target was removed).
+                const suffix = res.param ? ` · ${targetOptionsFor(res.shortcut.key).find((o) => o.value === res.param)?.label ?? '#' + res.param}` : ''
+                return (
+                  <Tag color="blue">
+                    {t('links.shortcutTag', { name: t(res.shortcut.labelKey) })}
+                    {suffix}
+                  </Tag>
                 )
               },
             },
@@ -134,6 +181,13 @@ export default function LinksPage() {
               width: 96,
               align: 'center',
               render: (v: boolean) => <Checkbox checked={v !== false} disabled />,
+            },
+            {
+              title: t('links.collapsed'),
+              dataIndex: 'collapsed',
+              width: 96,
+              align: 'center',
+              render: (v: boolean) => <Checkbox checked={!!v} disabled />,
             },
             {
               title: '',
@@ -161,7 +215,7 @@ export default function LinksPage() {
         cancelText={t('common.cancel')}
         destroyOnClose
       >
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" onValuesChange={onValuesChange}>
           <Form.Item name="label" label={t('links.label')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -171,21 +225,39 @@ export default function LinksPage() {
               <Radio.Button value="shortcut">{t('links.typeShortcut')}</Radio.Button>
             </Radio.Group>
           </Form.Item>
-          <Form.Item noStyle shouldUpdate={(a, b) => a.kind !== b.kind}>
-            {({ getFieldValue }) =>
-              getFieldValue('kind') === 'shortcut' ? (
-                <Form.Item name="shortcut" label={t('links.shortcut')} rules={[{ required: true }]}>
-                  <Select
-                    placeholder={t('links.shortcutPlaceholder')}
-                    options={APP_SHORTCUTS.map((s) => ({ value: s.key, label: t(s.labelKey) }))}
-                  />
-                </Form.Item>
-              ) : (
-                <Form.Item name="url" label={t('links.url')} rules={[{ required: true }]}>
-                  <Input placeholder="https://…" />
-                </Form.Item>
+          <Form.Item noStyle shouldUpdate={(a, b) => a.kind !== b.kind || a.shortcut !== b.shortcut}>
+            {({ getFieldValue }) => {
+              if (getFieldValue('kind') !== 'shortcut') {
+                return (
+                  <Form.Item name="url" label={t('links.url')} rules={[{ required: true }]}>
+                    <Input placeholder="https://…" />
+                  </Form.Item>
+                )
+              }
+              const key = getFieldValue('shortcut') as string | undefined
+              const sc = APP_SHORTCUTS.find((s) => s.key === key)
+              return (
+                <>
+                  <Form.Item name="shortcut" label={t('links.shortcut')} rules={[{ required: true }]}>
+                    <Select
+                      placeholder={t('links.shortcutPlaceholder')}
+                      options={APP_SHORTCUTS.map((s) => ({ value: s.key, label: t(s.labelKey) }))}
+                    />
+                  </Form.Item>
+                  {sc?.hasTarget && (
+                    <Form.Item name="shortcutTarget" label={t('links.shortcutTarget')}>
+                      <Select
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        placeholder={t('links.shortcutTargetPlaceholder')}
+                        options={targetOptionsFor(key)}
+                      />
+                    </Form.Item>
+                  )}
+                </>
               )
-            }
+            }}
           </Form.Item>
           <Form.Item name="icon" label={t('links.icon')}>
             <Select allowClear showSearch placeholder={t('links.iconPlaceholder')} options={iconSelectOptions} optionFilterProp="value" />
@@ -198,6 +270,9 @@ export default function LinksPage() {
                 </Form.Item>
               )
             }
+          </Form.Item>
+          <Form.Item name="collapsed" valuePropName="checked">
+            <Checkbox>{t('links.collapsed')}</Checkbox>
           </Form.Item>
         </Form>
       </Modal>

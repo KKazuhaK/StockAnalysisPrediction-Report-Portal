@@ -11,6 +11,7 @@ import {
   KeyOutlined,
   LinkOutlined,
   MailOutlined,
+  MessageOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   NotificationOutlined,
@@ -117,6 +118,7 @@ export default function ManageLayout() {
       children: [
         { key: 'batch', label: t('nav.batchAdmin'), icon: <ThunderboltOutlined /> },
         { key: 'runqueue', label: t('nav.runQueue'), icon: <ControlOutlined /> },
+        { key: 'assistant', label: t('nav.chat'), icon: <MessageOutlined /> },
       ],
     },
     {
