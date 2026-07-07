@@ -76,10 +76,10 @@ export function difyModeKind(mode?: string): 'workflow' | 'agent' | 'chat' {
   return 'chat'
 }
 
-// difyModeTag labels a non-workflow target as Agent (purple) or Chat (geekblue); a
-// workflow target carries no tag (it is the default).
+// difyModeTag labels a target by its Dify app mode so every target reads at a glance:
+// Workflow (cyan), Agent (purple), or Chat (geekblue).
 export function difyModeTag(t: TFunction, mode?: string) {
   const kind = difyModeKind(mode)
-  if (kind === 'workflow') return null
-  return <Tag color={kind === 'agent' ? 'purple' : 'geekblue'}>{t(`batch.dify.${kind}Tag`)}</Tag>
+  const color = kind === 'agent' ? 'purple' : kind === 'chat' ? 'geekblue' : 'cyan'
+  return <Tag color={color}>{t(`batch.dify.${kind}Tag`)}</Tag>
 }

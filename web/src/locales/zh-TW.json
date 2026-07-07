@@ -228,6 +228,7 @@
   "batch.dify.editTarget": "編輯 Dify 工作流",
   "batch.dify.chatTag": "對話",
   "batch.dify.agentTag": "智慧體",
+  "batch.dify.workflowTag": "工作流",
   "batch.dify.chatHint": "這是對話／智能體應用 —— 每列的 query 欄即為要執行的訊息。",
   "batch.dify.targetsHint": "還沒有目標。填入 Dify 工作流的 API Key，其輸入參數會自動探測。",
   "batch.dify.baseUrl": "Dify API 位址",
