@@ -236,8 +236,17 @@ func (s *Server) v1QueryReports(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.TrimSpace(q.Get("symbol"))
 	kw := strings.TrimSpace(q.Get("q"))
 	runID := strings.TrimSpace(q.Get("run_id"))
-	if symbol == "" && kw == "" && runID == "" {
-		v1err(w, http.StatusBadRequest, "missing_param", "one of symbol, q or run_id is required")
+	subtype := firstNonEmpty(strings.TrimSpace(q.Get("subtype")), strings.TrimSpace(q.Get("rtype")))
+	// A query must be scoped by at least one selector so it can't scan the whole store.
+	// symbol/q/run_id or any category/time filter all qualify — dedup tools legitimately
+	// query by subtype alone for symbol-less reports (e.g. 行业分析 has no stock code), so
+	// requiring specifically symbol/q/run_id wrongly 400s those (missing_param).
+	scoped := symbol != "" || kw != "" || runID != "" || subtype != "" ||
+		strings.TrimSpace(q.Get("kind")) != "" || strings.TrimSpace(q.Get("source")) != "" ||
+		strings.TrimSpace(q.Get("date")) != "" || strings.TrimSpace(q.Get("since")) != "" ||
+		strings.TrimSpace(q.Get("until")) != ""
+	if !scoped {
+		v1err(w, http.StatusBadRequest, "missing_param", "at least one filter is required (symbol, q, run_id, subtype, kind, source, or date)")
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
@@ -257,7 +266,7 @@ func (s *Server) v1QueryReports(w http.ResponseWriter, r *http.Request) {
 		since, until = d, d
 	}
 	reps, total, err := s.st.QueryReports(ReportQuery{
-		Symbol: symbol, Q: kw, Kind: q.Get("kind"), RType: firstNonEmpty(q.Get("subtype"), q.Get("rtype")),
+		Symbol: symbol, Q: kw, Kind: q.Get("kind"), RType: subtype,
 		Source: strings.TrimSpace(q.Get("source")), RunID: runID, Since: since, Until: until,
 		Limit: limit, Offset: offset, WithBody: withBody,
 	})

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -243,5 +244,50 @@ func TestV1GetReportDerivesHTMLOnRead(t *testing.T) {
 	}
 	if html, _ := m["body_html"].(string); html != "<h1>hi</h1>\n" {
 		t.Errorf("body_html = %q, want rendered <h1>hi</h1>", html)
+	}
+}
+
+// v1 query scope: a query must be scoped by at least one selector, but subtype (or
+// kind/source/date) alone is enough — a dedup tool queries by subtype for symbol-less
+// reports (e.g. 行业分析), and requiring specifically symbol/q/run_id wrongly 400s those.
+func TestV1QueryScope(t *testing.T) {
+	s := newV1Server(t)
+	ingest := func(body string) {
+		req := httptest.NewRequest("POST", "/api/v1/reports", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer tok-all")
+		rec := httptest.NewRecorder()
+		s.v1Ingest(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("ingest → %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	query := func(qs string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/v1/reports?"+qs, nil)
+		req.Header.Set("Authorization", "Bearer tok-all")
+		rec := httptest.NewRecorder()
+		s.v1QueryReports(rec, req)
+		return rec
+	}
+
+	// A symbol-less industry report (identified by title + subtype).
+	ingest(`{"date":"2026-07-02","subtype":"行业分析","title":"某行业深度","body_md":"x"}`)
+
+	// No filters at all → still rejected (can't scan the whole store).
+	if rec := query(""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no-filter query = %d, want 400", rec.Code)
+	}
+
+	// subtype alone is now a valid scope → 200, and it finds the report.
+	rec := query("subtype=" + url.QueryEscape("行业分析") + "&limit=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("subtype-only query = %d: %s", rec.Code, rec.Body.String())
+	}
+	var m struct {
+		OK    bool `json:"ok"`
+		Count int  `json:"count"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &m)
+	if !m.OK || m.Count < 1 {
+		t.Fatalf("subtype-only query returned ok=%v count=%d, want the ingested report", m.OK, m.Count)
 	}
 }
