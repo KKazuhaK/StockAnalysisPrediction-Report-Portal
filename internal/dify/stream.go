@@ -30,11 +30,13 @@ type StreamEvent struct {
 // the workflow and the chat streams; chat adds message_id/answer and a top-level
 // error message).
 type streamEnvelope struct {
-	Event         string `json:"event"`
-	TaskID        string `json:"task_id"`
-	WorkflowRunID string `json:"workflow_run_id"`
-	MessageID     string `json:"message_id"`
-	Message       string `json:"message"` // top-level text of an `error` event
+	Event          string `json:"event"`
+	TaskID         string `json:"task_id"`
+	WorkflowRunID  string `json:"workflow_run_id"`
+	ConversationID string `json:"conversation_id"` // chat/agent apps: assigned on the first event
+	MessageID      string `json:"message_id"`
+	Answer         string `json:"answer"`  // chat/agent apps: a chunk of the reply
+	Message        string `json:"message"` // top-level text of an `error` event
 	Data          struct {
 		Title   string         `json:"title"`
 		Index   int            `json:"index"`

@@ -37,9 +37,15 @@ Pick a chat/agent target, hold a continuous conversation; workflow targets are e
   owns the entire context/memory** — it looks up the conversation, assembles the prompt
   (system + history + memory/summary + the new query), and stores the turn. The portal never
   assembles a prompt, threads history into the model, or manages a token window.
-- **Blocking mode**, not streaming: one request → the whole answer + the `conversation_id`.
-  Simpler than SSE and proxy-friendly (no long-held stream — the failure mode that forced
-  poll mode on batch). Token-by-token streaming and agent tool-thoughts are a later layer.
+- **Server-side streaming, aggregated to the browser.** The send handler streams
+  `/chat-messages` (`ChatStream`) so it captures the `conversation_id` the instant Dify
+  assigns it (the first event) and **persists the conversation↔Dify linkage immediately**
+  — before a possibly-long turn (e.g. a Deep Research chatflow) finishes. It accumulates the
+  answer chunks and returns one aggregated response, so the browser stays request/response
+  (no SSE to the client yet — token-streaming + agent tool-thoughts are a later layer). This
+  early-capture is what makes a long turn survive a reload: without it, the linkage was only
+  saved when the whole turn returned, so a reload mid-generation stranded an untitled,
+  unlinked conversation.
 - `user` is `difyEndUser(created_by)`, held constant across turns so Dify ties them to one
   person's conversation.
 
@@ -76,12 +82,13 @@ table is touched (ADR: additive-only schema).
   request/response.
 - The portal stays a thin orchestrator: it indexes conversations, Dify holds the messages —
   the same "Dify owns the data" split as reports and runs.
-- **Durable across leaving the page.** The send handler runs the Dify call on a detached
-  context (not the request's), so a turn finishes and is stored by Dify even if the user
-  navigates away mid-generation; on return, reopening the conversation refetches it from
-  Dify's `/messages`. (Not durable across a *server* restart mid-turn — a chat turn is not
-  persisted as resumable work the way a batch run is; the user re-asks. Streaming/async
-  turns are a follow-up.)
+- **Durable across leaving the page.** Two things combine: the send handler runs the Dify
+  call on a detached context (not the request's), so the turn finishes even if the user
+  navigates away; and streaming persists the `conversation_id` up front, so the conversation
+  is linked + titled within a second. On return, reopening refetches from Dify's `/messages`,
+  and the chat page gently polls the open conversation so a turn that completes after the
+  user left appears on its own. (Not durable across a *server* restart mid-turn — a chat turn
+  is not persisted as resumable work the way a batch run is; the user re-asks.)
 - **Agent caveat (inherited):** agent-chat apps don't emit a `workflow_run_id`; irrelevant here
   because chat is blocking (no run-id reconcile needed), but the batch-side caveat still stands
   for agent apps run as workflows.
