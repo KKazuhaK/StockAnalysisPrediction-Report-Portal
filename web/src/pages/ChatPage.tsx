@@ -286,7 +286,7 @@ export default function ChatPage() {
   )
 
   return (
-    <div style={{ display: 'flex', gap: 16, height: 'calc(100dvh - 130px)', minHeight: 380 }}>
+    <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
       {/* Conversation list: a fixed left column on desktop, a drawer on mobile. */}
       {compact ? (
         <Drawer

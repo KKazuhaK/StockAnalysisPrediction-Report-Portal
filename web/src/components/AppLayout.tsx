@@ -37,6 +37,10 @@ export default function AppLayout() {
   // comfortably-wide column with the timeline in the left gutter; "wide" mode widens more.
   const { wide } = useReaderPrefs()
   const onReader = /^\/(stock|run)\//.test(loc.pathname)
+  // The chat page is a fixed full-height app (like a messenger): it fills the viewport
+  // below the header, has no page footer, and only its message thread scrolls — so there's
+  // a single scrollbar, not one for the page plus one for the thread.
+  const onChat = loc.pathname === '/chat'
   const contentMaxWidth = onReader ? (wide ? 1760 : 1440) : 1240
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
   const [runOpen, setRunOpen] = useState(false)
@@ -102,7 +106,7 @@ export default function AppLayout() {
   const showFooter = showFooterInfo || showFooterVersion
 
   return (
-    <Layout style={{ minHeight: '100vh', background: token.colorBgLayout }}>
+    <Layout style={{ minHeight: onChat ? undefined : '100vh', height: onChat ? '100dvh' : undefined, background: token.colorBgLayout }}>
       <Header
         id="rp-app-header"
         style={{
@@ -305,10 +309,12 @@ export default function AppLayout() {
 
       <Content
         style={{
-          padding: onManage ? 0 : '24px 20px',
+          padding: onChat ? '16px 16px 12px' : onManage ? 0 : '24px 20px',
           maxWidth: onManage ? 'none' : contentMaxWidth,
           width: '100%',
           margin: '0 auto',
+          // Chat fills the remaining viewport height and owns its own (single) scroll.
+          ...(onChat ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } : {}),
         }}
       >
         <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
@@ -330,7 +336,7 @@ export default function AppLayout() {
         />
       )}
 
-      {showFooter && !onManage && (
+      {showFooter && !onManage && !onChat && (
         <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
           <Space size={6} wrap align="center" style={{ justifyContent: 'center' }}>
             {showFooterInfo && (
