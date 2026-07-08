@@ -245,6 +245,13 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/retry", s.requireAdminJSON(s.apiBatchJobRetry))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/priority", s.requireAdminJSON(s.apiBatchJobReprioritize))
 	mux.HandleFunc("POST /api/admin/batch/jobs/{id}/schedule", s.requireAdminJSON(s.apiBatchJobSchedule))
+	// Preset low-peak scheduling windows (ADR 0014): the run form reads the list (PermRunBatch);
+	// admins manage them.
+	mux.HandleFunc("GET /api/admin/batch/presets", s.requirePermJSON(PermRunBatch, s.apiRunPresets))
+	mux.HandleFunc("POST /api/admin/batch/presets", s.requireAdminJSON(s.apiRunPresetCreate))
+	mux.HandleFunc("POST /api/admin/batch/presets/reorder", s.requireAdminJSON(s.apiRunPresetReorder))
+	mux.HandleFunc("PUT /api/admin/batch/presets/{id}", s.requireAdminJSON(s.apiRunPresetUpdate))
+	mux.HandleFunc("DELETE /api/admin/batch/presets/{id}", s.requireAdminJSON(s.apiRunPresetDelete))
 
 	// ---- Interactive chat / assistant (docs/adr/0012-interactive-chat.md) ----
 	// Cookie session, gated by PermRunBatch (a chat turn runs a Dify app). Conversations

@@ -35,6 +35,7 @@ type BatchJob struct {
 	Total, Succeeded, Partial, Failed           int
 	CreatedBy, CreatedAt, StartedAt, FinishedAt string
 	RunAt                                       string // one-shot scheduled start (ADR 0007); "" = run ASAP
+	RunPreset                                   string // JSON preset-window snapshot (ADR 0014); "" = none
 }
 
 type BatchItem struct {
@@ -389,6 +390,50 @@ func (s *Store) ScheduleJob(jobID int64, runAt string) error {
 func (s *Store) ClearSchedule(jobID int64) error {
 	_, err := s.exec("UPDATE batch_jobs SET run_at='' WHERE id=?", jobID)
 	return err
+}
+
+// SetJobWindow attaches a preset low-peak window to a job: run_at = the occurrence start (the
+// job stays hidden until it opens) and run_preset = the JSON snapshot (rule + on_overrun +
+// until). Rolling the window forward (on_overrun 'next') calls this again with the recomputed
+// values. See docs/adr/0014-idle-lane-and-preset-windows.md.
+func (s *Store) SetJobWindow(jobID int64, runAt, runPreset string) error {
+	_, err := s.exec("UPDATE batch_jobs SET run_at=?, run_preset=? WHERE id=?", runAt, runPreset, jobID)
+	return err
+}
+
+// ClearJobWindow drops both the schedule and the preset window (on_overrun 'continue': the run
+// becomes a normal ASAP job once its window has closed without it starting).
+func (s *Store) ClearJobWindow(jobID int64) error {
+	_, err := s.exec("UPDATE batch_jobs SET run_at='', run_preset='' WHERE id=?", jobID)
+	return err
+}
+
+// ExpireJob marks a still-queued preset job terminal 'expired' (on_overrun 'cancel': its window
+// closed before it ever started). Guarded on status='queued' so it never touches a run that
+// began inside the window.
+func (s *Store) ExpireJob(jobID int64) error {
+	_, err := s.exec("UPDATE batch_jobs SET status='expired', finished_at=? WHERE id=? AND status='queued'", nowStr(), jobID)
+	return err
+}
+
+// QueuedPresetJobs lists still-queued jobs that carry a preset window, for the scheduler's
+// overrun sweep (has the window closed before this run started?). Only queued jobs matter — a
+// running job already opened its window; a finished/expired one is done.
+func (s *Store) QueuedPresetJobs() []BatchJob {
+	rows, err := s.query(`SELECT id, COALESCE(run_at,''), COALESCE(run_preset,'')
+		FROM batch_jobs WHERE status='queued' AND COALESCE(run_preset,'')<>'' ORDER BY id`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []BatchJob
+	for rows.Next() {
+		j := BatchJob{Status: "queued"}
+		if rows.Scan(&j.ID, &j.RunAt, &j.RunPreset) == nil {
+			out = append(out, j)
+		}
+	}
+	return out
 }
 
 // DeleteBatchJob removes a job and its item rows. Intended for terminal jobs

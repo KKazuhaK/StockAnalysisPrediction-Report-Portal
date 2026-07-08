@@ -27,6 +27,41 @@ func TestScoreCombinesFactorsAndUrgentDominates(t *testing.T) {
 	}
 }
 
+// An idle run sinks below every non-idle run: even a maxed-out idle score stays under
+// a zero-factor normal run, while 加急 still dominates it. Among idle runs the base/
+// age/fair terms still order them (an orderly FIFO-ish backlog). Symmetric to urgent.
+func TestScoreIdleSinksBelowEverything(t *testing.T) {
+	w := Weights{Base: 1000, Age: 1000, Fair: 1000}
+	idleMax := w.Score(Factors{Base: 1, Age: 1, Fair: 1, Idle: true}) // best possible idle
+	normalFloor := w.Score(Factors{})                                 // worst possible non-idle (all zero)
+	if idleMax >= normalFloor {
+		t.Fatalf("a maxed-out idle run (%v) must still sink below a zero non-idle run (%v)", idleMax, normalFloor)
+	}
+	if urgent := w.Score(Factors{Urgent: true}); urgent <= idleMax {
+		t.Fatalf("加急 (%v) must outrank idle (%v)", urgent, idleMax)
+	}
+	if idleHigh, idleLow := w.Score(Factors{Age: 1, Idle: true}), w.Score(Factors{Age: 0, Idle: true}); idleHigh <= idleLow {
+		t.Fatalf("idle runs still order among themselves by factors: high=%v low=%v", idleHigh, idleLow)
+	}
+}
+
+// In Admit an idle run takes a slot only after every non-idle waiting run — when a
+// normal run also waits it wins the free slot (the run-when-queue-idle contract).
+func TestAdmitIdleRunsLast(t *testing.T) {
+	w := Weights{Base: 1000, Age: 1000, Fair: 1000}
+	waiting := []Item{
+		{ID: 1, Score: w.Score(Factors{Idle: true})},
+		{ID: 2, Score: w.Score(Factors{Base: 0.01})}, // a barely-there normal run
+	}
+	if got := Admit(waiting, 0, Plan{Budget: 1}); len(got) != 1 || got[0].ID != 2 {
+		t.Fatalf("a normal run must beat an idle run for the last slot, got %v", ids(got))
+	}
+	// Nothing non-idle waiting → the idle run finally takes the free slot.
+	if got := Admit(waiting[:1], 0, Plan{Budget: 1}); len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("with only idle waiting it should take the free slot, got %v", ids(got))
+	}
+}
+
 // Admit takes the highest-scoring items first, up to the free budget.
 func TestAdmitHighestScoreFirst(t *testing.T) {
 	waiting := []Item{{ID: 1, Score: 5}, {ID: 2, Score: 20}, {ID: 3, Score: 12}}

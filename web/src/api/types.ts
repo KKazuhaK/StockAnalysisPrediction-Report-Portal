@@ -347,6 +347,40 @@ export interface BatchConfig {
   prio_w_fair: number
   prio_age_hours: number
   prio_fair_halflife_hours: number
+  run_default_mode?: RunMode // run form default button: now|preset|scheduled (ADR 0014)
+  run_default_idle?: boolean // pre-check "run when queue idle" (immediate mode only)
+}
+
+// Preset low-peak scheduling window (docs/adr/0014-idle-lane-and-preset-windows.md). Which anchor
+// fields apply depends on freq: daily uses only time; weekly adds weekday (0=Sun..6=Sat); monthly
+// adds day (1..31); yearly adds month (1..12) + day. time is "HH:mm" in the panel timezone.
+export type RunMode = 'now' | 'preset' | 'scheduled'
+export type RunFreq = 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type RunOverrun = 'continue' | 'next' | 'cancel'
+
+export interface RunPresetAnchor {
+  weekday?: number
+  month?: number
+  day?: number
+  time: string
+}
+
+export interface RunPreset {
+  id: number
+  label: string
+  freq: RunFreq
+  start: RunPresetAnchor
+  stop: RunPresetAnchor
+  on_overrun: RunOverrun
+  enabled: boolean
+  ord: number
+}
+
+// GET /api/admin/batch/presets — the preset list plus the run-form defaults, in one fetch.
+export interface RunPresetsResp {
+  presets: RunPreset[]
+  default_mode: RunMode
+  default_idle: boolean
 }
 
 // Urgent ticket balance for the batch run form (ADR 0005).

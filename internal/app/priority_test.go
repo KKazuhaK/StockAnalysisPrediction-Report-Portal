@@ -2,26 +2,29 @@ package app
 
 import "testing"
 
-// parsePriority reads a stored priority string as (base, urgent), mapping the legacy
-// tier names and clamping numbers (docs/adr/0008-multifactor-priority.md).
+// parsePriority reads a stored priority string as (base, urgent, idle), mapping the legacy
+// tier names and clamping numbers (docs/adr/0008, 0014). urgent and idle are the two
+// dominating lanes; both carry base 0.
 func TestParsePriority(t *testing.T) {
 	cases := []struct {
 		in   string
 		base int
 		urg  bool
+		idle bool
 	}{
-		{"urgent", 0, true},
-		{"normal", 50, false}, // legacy tier
-		{"other", 20, false},  // legacy tier
-		{"", 50, false},       // empty → default base
-		{"75", 75, false},
-		{"150", 100, false}, // clamped high
-		{"-5", 0, false},    // clamped low
-		{"bogus", 50, false},
+		{"urgent", 0, true, false},
+		{"idle", 0, false, true},   // run-when-queue-idle lane (ADR 0014)
+		{"normal", 50, false, false}, // legacy tier
+		{"other", 20, false, false},  // legacy tier
+		{"", 50, false, false},       // empty → default base
+		{"75", 75, false, false},
+		{"150", 100, false, false}, // clamped high
+		{"-5", 0, false, false},    // clamped low
+		{"bogus", 50, false, false},
 	}
 	for _, c := range cases {
-		if b, u := parsePriority(c.in); b != c.base || u != c.urg {
-			t.Errorf("parsePriority(%q) = (%d,%v), want (%d,%v)", c.in, b, u, c.base, c.urg)
+		if b, u, idle := parsePriority(c.in); b != c.base || u != c.urg || idle != c.idle {
+			t.Errorf("parsePriority(%q) = (%d,%v,%v), want (%d,%v,%v)", c.in, b, u, idle, c.base, c.urg, c.idle)
 		}
 	}
 }

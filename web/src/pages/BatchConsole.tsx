@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { App, Button, Card, Checkbox, DatePicker, Input, InputNumber, Radio, Select, Space, Tag, Typography, Upload } from 'antd'
-import type { Dayjs } from 'dayjs'
+import { App, Button, Card, Checkbox, Input, InputNumber, Select, Space, Tag, Typography, Upload } from 'antd'
 import { useTranslation } from 'react-i18next'
-import { PlayCircleOutlined, ThunderboltOutlined, UploadOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, UploadOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
-import type { BatchTarget, BatchTickets } from '../api/types'
+import type { BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
 import { csvToRows } from '../lib/csv'
 import { BASE_MAX } from '../lib/batchUi'
+import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
+import RunScheduleControls from '../components/RunScheduleControls'
 import QueueTable from '../components/QueueTable'
 
 function download(name: string, text: string) {
@@ -28,11 +29,10 @@ export default function BatchConsole() {
   const [targetId, setTargetId] = useState<number | undefined>()
   const [maxRetries, setMaxRetries] = useState(2)
   const [rowConcurrency, setRowConcurrency] = useState(1)
-  const [urgent, setUrgent] = useState(false)
   const [basePriority, setBasePriority] = useState(50)
   const [tickets, setTickets] = useState<BatchTickets | null>(null)
-  const [mode, setMode] = useState<'now' | 'scheduled'>('now')
-  const [runAt, setRunAt] = useState<Dayjs | null>(null)
+  const [presets, setPresets] = useState<RunPreset[]>([])
+  const [schedule, setSchedule] = useState<RunSchedule>(emptySchedule)
   const [notify, setNotify] = useState(false)
   const [csvText, setCsvText] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -44,16 +44,23 @@ export default function BatchConsole() {
   useEffect(() => {
     loadTargets()
     loadTickets()
+    api
+      .get<RunPresetsResp>('/api/admin/batch/presets')
+      .then((r) => {
+        setPresets(r.presets || [])
+        setSchedule((s) => ({ ...s, mode: r.default_mode || 'now', idle: !!r.default_idle }))
+      })
+      .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const urgentEnabled = tickets?.urgent_enabled !== false
-  // Urgent runs need a ticket unless the user belongs to an unlimited group; disable at 0.
   const urgentDisabled = urgentEnabled && tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
   useEffect(() => {
-    if ((!urgentEnabled || urgentDisabled) && urgent) setUrgent(false)
-  }, [urgentEnabled, urgentDisabled, urgent])
+    if ((!urgentEnabled || urgentDisabled) && schedule.urgent) setSchedule((s) => ({ ...s, urgent: false }))
+  }, [urgentEnabled, urgentDisabled, schedule.urgent])
 
+  const enabledPresets = useMemo(() => presets.filter((p) => p.enabled), [presets])
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputKeys = useMemo(() => (target?.inputs || []).map((i) => i.key), [target])
   const rows = useMemo(() => (inputKeys.length ? csvToRows(csvText, inputKeys) : []), [csvText, inputKeys])
@@ -67,20 +74,24 @@ export default function BatchConsole() {
 
   const run = async () => {
     if (!targetId || rows.length === 0) return
-    if (mode === 'scheduled' && !runAt) {
-      message.error(t('run.pickTime'))
+    const err = scheduleError(schedule)
+    if (err) {
+      message.error(t(err))
       return
     }
     setSubmitting(true)
     try {
-      // Per-batch row concurrency chosen here (default 1); the backend caps it at the
-      // global "max at once" budget so a batch can't overrun the queue.
+      const sp = schedulePayload(schedule)
+      // Per-batch row concurrency chosen here (default 1); the backend caps it at the global
+      // "max at once" budget so a batch can't overrun the queue. urgent/idle win the priority
+      // lane; else an admin may set a base number; else the backend resolves the group default.
       const res = await api.post<{ job_id: number; concurrency: number; downgraded?: boolean; run_at?: string }>('/api/admin/batch/jobs', {
         target_id: targetId,
         concurrency: rowConcurrency,
         max_retries: maxRetries,
-        priority: urgent ? 'urgent' : admin ? String(basePriority) : '', // non-admins can't set priority; backend resolves it
-        run_at: mode === 'scheduled' && runAt ? runAt.format('YYYY-MM-DD HH:mm:ss') : '',
+        priority: sp.priority || (admin ? String(basePriority) : ''),
+        run_at: sp.run_at,
+        preset_id: sp.preset_id,
         notify,
         rows,
       })
@@ -88,8 +99,7 @@ export default function BatchConsole() {
       else message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
       if (res.downgraded) message.warning(t('batch.ticketDowngraded'))
       setCsvText('')
-      setMode('now')
-      setRunAt(null)
+      setSchedule(emptySchedule)
       setNotify(false)
       loadTickets() // an urgent run may have spent a ticket; the embedded queue self-refreshes
     } catch (e) {
@@ -132,19 +142,13 @@ export default function BatchConsole() {
               {admin && (
                 <>
                   <span>{t('batch.priorityLabel')}：</span>
-                  <InputNumber min={0} max={BASE_MAX} value={basePriority} onChange={(v) => setBasePriority(v ?? 50)} disabled={urgent} />
-                </>
-              )}
-              {urgentEnabled && (
-                <>
-                  <Checkbox checked={urgent} disabled={urgentDisabled} onChange={(e) => setUrgent(e.target.checked)}>
-                    {t('run.urgent')}
-                  </Checkbox>
-                  {tickets && !tickets.unlimited && (
-                    <Tag color={(tickets.remaining ?? 0) > 0 ? 'gold' : 'default'} icon={<ThunderboltOutlined />}>
-                      {t('batch.ticketsLeft', { n: tickets.remaining ?? 0, total: tickets.allocation ?? 0 })}
-                    </Tag>
-                  )}
+                  <InputNumber
+                    min={0}
+                    max={BASE_MAX}
+                    value={basePriority}
+                    onChange={(v) => setBasePriority(v ?? 50)}
+                    disabled={schedule.urgent || schedule.idle}
+                  />
                 </>
               )}
             </Space>
@@ -170,13 +174,9 @@ export default function BatchConsole() {
                 <Button icon={<UploadOutlined />}>{t('batch.uploadCsv')}</Button>
               </Upload>
               <Typography.Text type="secondary">{t('batch.parsedRows', { n: rows.length })}</Typography.Text>
-              <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} optionType="button" buttonStyle="solid">
-                <Radio.Button value="now">{t('run.now')}</Radio.Button>
-                <Radio.Button value="scheduled">{t('run.scheduled')}</Radio.Button>
-              </Radio.Group>
-              {mode === 'scheduled' && (
-                <DatePicker showTime value={runAt} onChange={setRunAt} format="YYYY-MM-DD HH:mm:ss" placeholder={t('run.pickTime')} />
-              )}
+            </Space>
+            <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} />
+            <Space wrap>
               {mailEnabled && email && (
                 <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>
                   {t('batch.notifyDone')}
@@ -189,7 +189,7 @@ export default function BatchConsole() {
                 disabled={!targetId || rows.length === 0}
                 onClick={run}
               >
-                {mode === 'scheduled' ? t('run.scheduled') : t('batch.run')}
+                {schedule.mode === 'now' ? t('batch.run') : t('run.schedule')}
               </Button>
             </Space>
           </Space>

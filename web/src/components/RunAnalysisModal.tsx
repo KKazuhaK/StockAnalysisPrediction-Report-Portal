@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, App, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Radio, Select, Space, Tag, Typography } from 'antd'
-import { PlayCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Typography } from 'antd'
+import { PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import type { Dayjs } from 'dayjs'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
 import { difyModeKind } from '../lib/batchUi'
-import type { BatchQueueSummary, BatchTarget, BatchTickets } from '../api/types'
+import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
+import RunScheduleControls from './RunScheduleControls'
+import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
 
-// The home-page run-analysis modal (docs/adr/0007-run-analysis-and-scheduling.md):
-// pick a Dify workflow, fill its discovered inputs, run now or schedule, optionally
-// escalate to urgent (ticket-gated unless the user is in an unlimited group), with
-// the live queue depth shown inline.
+// The home-page run-analysis modal (docs/adr/0007 + 0014): pick a Dify workflow, fill its
+// discovered inputs, choose when to run (now / a preset low-peak window / an explicit 定时 time)
+// and the priority lane (加急 / 队列空闲), with the live queue depth shown inline. The run-time +
+// priority controls are the shared RunScheduleControls, reused by the batch console.
 export default function RunAnalysisModal({
   open,
   onClose,
@@ -31,9 +32,8 @@ export default function RunAnalysisModal({
   const [targetId, setTargetId] = useState<number | undefined>()
   const [tickets, setTickets] = useState<BatchTickets | null>(null)
   const [queue, setQueue] = useState<BatchQueueSummary | null>(null)
-  const [mode, setMode] = useState<'now' | 'scheduled'>('now')
-  const [runAt, setRunAt] = useState<Dayjs | null>(null)
-  const [urgent, setUrgent] = useState(false)
+  const [presets, setPresets] = useState<RunPreset[]>([])
+  const [schedule, setSchedule] = useState<RunSchedule>(emptySchedule)
   const [notify, setNotify] = useState(false)
   const [retries, setRetries] = useState(0) // failure retries; 0 = never auto-retry (a single run maps 1:1 to the click)
   const [submitting, setSubmitting] = useState(false)
@@ -43,17 +43,24 @@ export default function RunAnalysisModal({
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
     api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
     api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
+    // Presets + the admin-set run-form defaults (default mode button + idle pre-check).
+    api
+      .get<RunPresetsResp>('/api/admin/batch/presets')
+      .then((r) => {
+        setPresets(r.presets || [])
+        setSchedule((s) => ({ ...s, mode: r.default_mode || 'now', idle: !!r.default_idle }))
+      })
+      .catch(() => {})
   }, [open])
 
-  // 运行分析 generates a report (Dify ingests it). Agent (agent-chat) apps are
-  // conversational and don't post a report to the portal, so they're excluded here — they
-  // belong in the 助手 chat page. Workflow and chat (e.g. a Deep Research chatflow) stay.
+  // 运行分析 generates a report (Dify ingests it). Agent (agent-chat) apps are conversational and
+  // don't post a report to the portal, so they're excluded here — they belong in the 助手 chat page.
   const runnable = useMemo(() => targets.filter((tg) => difyModeKind(tg.mode) !== 'agent'), [targets])
+  const enabledPresets = useMemo(() => presets.filter((p) => p.enabled), [presets])
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputs = target?.inputs || []
 
   // A pinned entry-button shortcut opens the modal with a specific workflow already chosen.
-  // Apply it once the targets have loaded; silently fall back to the picker if it's gone/unrunnable.
   useEffect(() => {
     if (!open || initialTargetId == null) return
     if (runnable.some((tg) => tg.id === initialTargetId)) {
@@ -63,11 +70,10 @@ export default function RunAnalysisModal({
   }, [open, initialTargetId, runnable])
 
   const urgentEnabled = tickets?.urgent_enabled !== false
-  // Urgent runs need a ticket unless the user belongs to an unlimited group; disable + uncheck at 0.
   const urgentDisabled = urgentEnabled && tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
   useEffect(() => {
-    if (!urgentEnabled || urgentDisabled) setUrgent(false)
-  }, [urgentEnabled, urgentDisabled])
+    if ((!urgentEnabled || urgentDisabled) && schedule.urgent) setSchedule((s) => ({ ...s, urgent: false }))
+  }, [urgentEnabled, urgentDisabled, schedule.urgent])
 
   const pickTarget = (id: number) => {
     setTargetId(id)
@@ -76,11 +82,9 @@ export default function RunAnalysisModal({
 
   const reset = () => {
     setTargetId(undefined)
-    setUrgent(false)
     setNotify(false)
     setRetries(0)
-    setMode('now')
-    setRunAt(null)
+    setSchedule(emptySchedule)
     form.resetFields()
   }
 
@@ -95,8 +99,9 @@ export default function RunAnalysisModal({
     } catch {
       return
     }
-    if (mode === 'scheduled' && !runAt) {
-      message.error(t('run.pickTime'))
+    const err = scheduleError(schedule)
+    if (err) {
+      message.error(t(err))
       return
     }
     setSubmitting(true)
@@ -105,12 +110,14 @@ export default function RunAnalysisModal({
       inputs.forEach((i) => {
         row[i.key] = String(vals[i.key] ?? '').trim()
       })
+      const sp = schedulePayload(schedule)
       const res = await api.post<{ job_id: number; downgraded?: boolean; run_at?: string }>('/api/admin/batch/jobs', {
         target_id: targetId,
         concurrency: 1,
         max_retries: retries, // default 0 (no auto-retry); user can opt into failure retries, same as batch
-        priority: urgent ? 'urgent' : '', // "" → backend resolves group/system default
-        run_at: mode === 'scheduled' && runAt ? runAt.format('YYYY-MM-DD HH:mm:ss') : '',
+        priority: sp.priority, // "urgent" | "idle" | "" (backend resolves the "" default)
+        run_at: sp.run_at,
+        preset_id: sp.preset_id,
         notify,
         rows: [row],
       })
@@ -127,13 +134,13 @@ export default function RunAnalysisModal({
     }
   }
 
-  // Three distinct states so the banner never misleads: a run can start immediately only
-  // when a run slot is free (concurrent runs < the run cap); otherwise it queues. Count
-  // actual concurrent runs (rows), the unit the cap governs — not whole jobs.
+  // Three distinct states so the banner never misleads: a run starts immediately only when a run
+  // slot is free (concurrent runs < the run cap); otherwise it queues. Count actual concurrent
+  // runs (rows), the unit the cap governs — not whole jobs.
   const waiting = queue?.waiting ?? 0
   const running = queue?.running_rows ?? queue?.running ?? 0
   const budget = queue?.budget ?? 1
-  const busy = running >= budget // no free slot → this submit will wait in the queue
+  const busy = running >= budget
   const queueMsg = busy
     ? t('run.queueBusy', { n: running, ahead: waiting })
     : running + waiting === 0
@@ -150,7 +157,7 @@ export default function RunAnalysisModal({
       }
       open={open}
       onOk={submit}
-      okText={mode === 'scheduled' ? t('run.schedule') : t('run.run')}
+      okText={schedule.mode === 'now' ? t('run.run') : t('run.schedule')}
       okButtonProps={{ loading: submitting, disabled: !targetId }}
       cancelText={t('common.cancel')}
       onCancel={onClose}
@@ -186,45 +193,12 @@ export default function RunAnalysisModal({
           </Form>
         )}
 
-        <div>
-          <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} optionType="button" buttonStyle="solid">
-            <Radio.Button value="now">{t('run.now')}</Radio.Button>
-            <Radio.Button value="scheduled">{t('run.scheduled')}</Radio.Button>
-          </Radio.Group>
-          {mode === 'scheduled' && (
-            <DatePicker
-              showTime
-              style={{ marginLeft: 10 }}
-              value={runAt}
-              onChange={setRunAt}
-              format="YYYY-MM-DD HH:mm:ss"
-              placeholder={t('run.pickTime')}
-            />
-          )}
-        </div>
+        <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} />
 
         <div>
           <span style={{ marginRight: 8 }}>{t('batch.maxRetries')}：</span>
           <InputNumber min={0} max={5} value={retries} onChange={(v) => setRetries(v ?? 0)} />
         </div>
-
-        {urgentEnabled && (
-          <div>
-            <Checkbox checked={urgent} disabled={urgentDisabled} onChange={(e) => setUrgent(e.target.checked)}>
-              {t('run.urgent')}
-            </Checkbox>
-            {tickets && !tickets.unlimited && (
-              <Tag style={{ marginLeft: 8 }} color={(tickets.remaining ?? 0) > 0 ? 'gold' : 'default'} icon={<ThunderboltOutlined />}>
-                {t('batch.ticketsLeft', { n: tickets.remaining ?? 0, total: tickets.allocation ?? 0 })}
-              </Tag>
-            )}
-            {urgentDisabled && (
-              <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                {t('run.noTickets')}
-              </Typography.Text>
-            )}
-          </div>
-        )}
 
         {mailEnabled && email && (
           <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>

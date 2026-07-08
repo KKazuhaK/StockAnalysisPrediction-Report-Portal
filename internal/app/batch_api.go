@@ -101,6 +101,8 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 		"dify_end_user":            s.st.GetSetting("dify_end_user", "report-portal"), // Dify end-user template ([username] var)
 		"dify_poll_seconds":        s.difyPollSeconds(),                               // 0 = streaming; >0 = poll the run status every N s (proxy-friendly)
 		"dify_run_timeout_minutes": int(s.difyRunTimeoutDur() / time.Minute),          // cap on one run: portal HTTP client + reconcile poll window
+		"run_default_mode":         s.st.GetSetting("run_default_mode", "now"),        // run form default: now|preset|scheduled (ADR 0014)
+		"run_default_idle":         s.st.GetSetting("run_default_idle", "0") == "1",   // pre-check "run when queue idle" (immediate mode only)
 		// Multifactor priority weights + factor tuning (ADR 0008).
 		"prio_w_base":              pw.Base,
 		"prio_w_age":               pw.Age,
@@ -120,6 +122,8 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		DifyEndUser           *string `json:"dify_end_user"`            // Dify end-user template ([username] var)
 		DifyPollSeconds       *int    `json:"dify_poll_seconds"`        // 0 = streaming; >0 = poll the run status every N s
 		DifyRunTimeoutMinutes *int    `json:"dify_run_timeout_minutes"` // cap on one run (HTTP client + reconcile window)
+		RunDefaultMode        *string `json:"run_default_mode"`         // run form default button: now|preset|scheduled
+		RunDefaultIdle        *bool   `json:"run_default_idle"`         // pre-check "run when queue idle" (immediate mode)
 		// Multifactor priority tuning; pointers so an omitted field is left unchanged
 		// (a weight of 0 is meaningful — it disables that factor). See ADR 0008.
 		PrioWBase             *float64 `json:"prio_w_base"`
@@ -163,6 +167,15 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	}
 	if in.DifyEndUser != nil {
 		s.st.SetSetting("dify_end_user", *in.DifyEndUser) // difyEndUser trims + defaults on read
+	}
+	if in.RunDefaultMode != nil {
+		switch *in.RunDefaultMode {
+		case "now", "preset", "scheduled":
+			s.st.SetSetting("run_default_mode", *in.RunDefaultMode)
+		}
+	}
+	if in.RunDefaultIdle != nil {
+		s.st.SetSetting("run_default_idle", strconv.Itoa(boolInt(*in.RunDefaultIdle)))
 	}
 	setFloat := func(key string, v *float64, min float64) {
 		if v != nil && *v >= min {
@@ -328,8 +341,9 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		Concurrency int                 `json:"concurrency"`
 		MaxRetries  int                 `json:"max_retries"`
 		Priority    string              `json:"priority"`
-		RunAt       string              `json:"run_at"` // one-shot 定时运行; "" = run now
-		Notify      bool                `json:"notify"` // email the submitter when the job finishes
+		RunAt       string              `json:"run_at"`    // one-shot 定时运行; "" = run now
+		PresetID    int64               `json:"preset_id"` // preset low-peak window to schedule into (ADR 0014); 0 = none
+		Notify      bool                `json:"notify"`    // email the submitter when the job finishes
 		Rows        []map[string]string `json:"rows"`
 	}
 	if err := readJSON(r, &in); err != nil {
@@ -344,8 +358,10 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 	base := s.resolveBasePriority(user)
 	stored := strconv.Itoa(base)
 	if in.Priority != "" {
-		if b, urgent := parsePriority(in.Priority); urgent {
+		if b, urgent, idle := parsePriority(in.Priority); urgent {
 			stored = "urgent"
+		} else if idle {
+			stored = "idle" // run-when-queue-idle bottom lane; anyone may pick it (it only lowers priority, ADR 0014)
 		} else if s.isAdmin(user) {
 			base, stored = b, strconv.Itoa(b)
 		}
@@ -354,9 +370,26 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusBadRequest, "no rows to run")
 		return
 	}
-	// Validate the optional schedule up front so a bad time never leaves an orphan job.
-	runAt := ""
-	if in.RunAt != "" {
+	// Resolve the optional schedule up front so a bad time never leaves an orphan job. A preset
+	// window (preset_id) resolves to run_at + a run_preset snapshot in the panel timezone (ADR
+	// 0014); an explicit run_at is the plain 定时 path. They're mutually exclusive (preset wins).
+	runAt, runPreset := "", ""
+	if in.PresetID != 0 {
+		p, ok := s.st.GetRunPreset(in.PresetID)
+		if !ok || !p.Enabled {
+			jsonError(w, http.StatusBadRequest, "unknown or disabled preset")
+			return
+		}
+		var start, stop presetAnchor
+		json.Unmarshal([]byte(p.StartSpec), &start)
+		json.Unmarshal([]byte(p.StopSpec), &stop)
+		ra, snap, ok := resolvePresetWindow(p.Freq, start, stop, p.OnOverrun, time.Now(), s.panelLocation())
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "preset window is misconfigured")
+			return
+		}
+		runAt, runPreset = ra, snap
+	} else if in.RunAt != "" {
 		rt, ok := normalizeRunAt(in.RunAt)
 		if !ok {
 			jsonError(w, http.StatusBadRequest, "bad run_at")
@@ -415,7 +448,9 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if runAt != "" {
+	if runPreset != "" {
+		s.st.SetJobWindow(jobID, runAt, runPreset) // preset window: run_at + snapshot (ADR 0014)
+	} else if runAt != "" {
 		s.st.ScheduleJob(jobID, runAt) // hidden from admission until run_at passes
 	}
 	if in.Notify {

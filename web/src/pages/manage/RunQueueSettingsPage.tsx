@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Card, Divider, Input, InputNumber, Space, Typography } from 'antd'
+import { App, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import type { BatchConfig } from '../../api/types'
+import type { BatchConfig, RunMode } from '../../api/types'
+import RunPresetsEditor from './RunPresetsEditor'
 
 // Standalone run-queue settings (docs/adr/0007 + 0008): the queue concurrency budget,
 // the default base priority, the Dify end-user template, and the Slurm-style multifactor
@@ -22,6 +23,8 @@ export default function RunQueueSettingsPage() {
   const [wFair, setWFair] = useState(1000)
   const [ageHours, setAgeHours] = useState(24)
   const [fairHalflife, setFairHalflife] = useState(168)
+  const [runDefaultMode, setRunDefaultMode] = useState<RunMode>('now')
+  const [runDefaultIdle, setRunDefaultIdle] = useState(false)
 
   const load = () =>
     api
@@ -37,6 +40,8 @@ export default function RunQueueSettingsPage() {
         setWFair(r.prio_w_fair)
         setAgeHours(r.prio_age_hours)
         setFairHalflife(r.prio_fair_halflife_hours)
+        setRunDefaultMode(r.run_default_mode ?? 'now')
+        setRunDefaultIdle(!!r.run_default_idle)
       })
   useEffect(() => {
     load()
@@ -54,6 +59,8 @@ export default function RunQueueSettingsPage() {
       prio_w_fair: wFair,
       prio_age_hours: ageHours,
       prio_fair_halflife_hours: fairHalflife,
+      run_default_mode: runDefaultMode,
+      run_default_idle: runDefaultIdle,
     })
     message.success(t('common.saved'))
     load()
@@ -79,6 +86,29 @@ export default function RunQueueSettingsPage() {
           t('batch.admin.defaultPriority'),
           t('batch.admin.defaultPriorityHint'),
           <InputNumber min={0} max={100} value={defaultPriority} onChange={(v) => setDefaultPriority(v ?? 50)} />,
+        )}
+
+        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
+          {t('batch.admin.runDefaultsTitle')}
+        </Divider>
+        {row(
+          t('batch.admin.runDefaultMode'),
+          t('batch.admin.runDefaultModeHint'),
+          <Select
+            value={runDefaultMode}
+            onChange={(v) => setRunDefaultMode(v as RunMode)}
+            style={{ width: 140 }}
+            options={[
+              { value: 'now', label: t('run.now') },
+              { value: 'preset', label: t('run.preset') },
+              { value: 'scheduled', label: t('run.scheduled') },
+            ]}
+          />,
+        )}
+        {row(
+          t('batch.admin.runDefaultIdle'),
+          t('batch.admin.runDefaultIdleHint'),
+          <Switch checked={runDefaultIdle} onChange={setRunDefaultIdle} />,
         )}
 
         <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
@@ -138,6 +168,12 @@ export default function RunQueueSettingsPage() {
         <Button type="primary" onClick={save}>
           {t('common.save')}
         </Button>
+
+        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
+          {t('batch.admin.presetsTitle')}
+        </Divider>
+        <Typography.Text type="secondary">{t('batch.admin.presetsHint')}</Typography.Text>
+        <RunPresetsEditor />
       </Space>
     </Card>
   )

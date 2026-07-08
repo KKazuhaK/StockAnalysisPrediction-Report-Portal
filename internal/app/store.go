@@ -254,12 +254,16 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, plugin_slug TEXT, name TEXT, config TEXT, created_at TEXT, ord INTEGER)`, pk),
 		// batch_jobs. priority (run-queue level, folded from the former job_queue side table;
 		// default 'normal') and run_at (one-shot scheduled start, folded from job_schedule;
-		// default '' = run ASAP) — see docs/adr/0013-v2-schema-consolidation.md.
+		// default '' = run ASAP) — see docs/adr/0013-v2-schema-consolidation.md. run_preset (default
+		// '' = none) is a JSON snapshot of a chosen preset low-peak window (rule + on_overrun +
+		// the occurrence end) so a run stays in its window and rolls/continues/cancels if it closes
+		// before starting — see docs/adr/0014-idle-lane-and-preset-windows.md; picked up on existing
+		// databases by ensureColumns (no migration step).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_jobs(
 			id %s, target_id BIGINT, status TEXT, concurrency INTEGER DEFAULT 1, max_retries INTEGER DEFAULT 0,
 			total INTEGER DEFAULT 0, succeeded INTEGER DEFAULT 0, partial INTEGER DEFAULT 0, failed INTEGER DEFAULT 0,
 			created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,
-			priority TEXT DEFAULT 'normal', run_at TEXT DEFAULT '')`, pk),
+			priority TEXT DEFAULT 'normal', run_at TEXT DEFAULT '', run_preset TEXT DEFAULT '')`, pk),
 		// run_id / conversation_id / task_id are the Dify handles for a run, persisted the
 		// instant they stream in (not just at finish) so a crash/restart mid-run can reconcile
 		// the true outcome instead of re-running it — the restart-durable half of the
@@ -271,6 +275,16 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, job_id BIGINT, row_index INTEGER, inputs TEXT, status TEXT DEFAULT 'queued',
 			attempts INTEGER DEFAULT 0, run_id TEXT, conversation_id TEXT, task_id TEXT,
 			error TEXT, started_at TEXT, finished_at TEXT)`, pk),
+		// Preset low-peak scheduling windows (docs/adr/0014-idle-lane-and-preset-windows.md): an
+		// admin-managed, ordered list a user picks from to schedule a run into a recurring window —
+		// structurally like type_config/links (a table with ord), not a meta blob. start_spec/
+		// stop_spec are JSON anchors ({weekday?,month?,day?,time:"HH:mm"}); the used fields depend
+		// on freq (daily|weekly|monthly|yearly). on_overrun (continue|next|cancel) decides what
+		// happens if the window closes before the run started. The job snapshots the rule, so this
+		// row is never referenced by a job (no FK); id is a plain surrogate for CRUD/reorder/pick.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS run_presets(
+			id %s, label TEXT, freq TEXT, start_spec TEXT, stop_spec TEXT,
+			on_overrun TEXT DEFAULT 'next', enabled INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id, status)`,
 		// The batch console polls AllJobsFirstInputs (first row of every job) every 2s;
 		// without this the WHERE row_index=0 lookup is a full scan of batch_items — the

@@ -66,23 +66,27 @@ func clampBase(n int) int {
 	return n
 }
 
-// parsePriority interprets a stored priority string as (base 0..100, urgent). "urgent"
-// is the 加急 escalation; a bare number is the base priority; the legacy tier names map
-// on read (normal→50, other→20) so pre-0008 rows keep working.
-func parsePriority(p string) (base int, urgent bool) {
+// parsePriority interprets a stored priority string as (base 0..100, urgent, idle). "urgent"
+// is the 加急 escalation and "idle" is the run-when-queue-idle bottom lane (mutually exclusive,
+// ADR 0014); a bare number is the base priority; the legacy tier names map on read (normal→50,
+// other→20) so pre-0008 rows keep working. urgent/idle carry base 0 (their Score anchor
+// dominates, so base is irrelevant to their ordering).
+func parsePriority(p string) (base int, urgent, idle bool) {
 	switch strings.TrimSpace(p) {
 	case "urgent":
-		return 0, true
+		return 0, true, false
+	case "idle":
+		return 0, false, true
 	case "normal", "":
-		return 50, false
+		return 50, false, false
 	case "other":
-		return 20, false
+		return 20, false, false
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(p))
 	if err != nil {
-		return 50, false
+		return 50, false, false
 	}
-	return clampBase(n), false
+	return clampBase(n), false, false
 }
 
 // normalizePriorityInput canonicalizes a client-supplied priority to its stored form:
@@ -264,7 +268,7 @@ func parseRunWindow(win string) (int, int, bool) {
 // runDefaultPriority is the system-wide fallback base priority (0..100) for a run
 // whose submitter is in no group with a default (admin setting; ADR 0008).
 func (s *Server) runDefaultPriority() int {
-	base, _ := parsePriority(s.st.GetSetting("run_default_priority", "50"))
+	base, _, _ := parsePriority(s.st.GetSetting("run_default_priority", "50"))
 	return base
 }
 
@@ -300,7 +304,7 @@ func (s *Server) groupPriorityValid(p string) string {
 func (s *Server) resolveBasePriority(user string) int {
 	if gid := s.st.PrimaryGroupOf(user); gid != 0 && gid != s.st.DefaultGroupID() {
 		if p := s.st.GroupPriority(gid); p != "" {
-			if b, urgent := parsePriority(p); !urgent {
+			if b, urgent, _ := parsePriority(p); !urgent {
 				return b
 			}
 		}
@@ -354,7 +358,7 @@ func (s *Server) userUsage(now time.Time) map[string]float64 {
 // jobFactors computes a queued job's normalized priority factors at `now`. usage is the
 // precomputed decayed-usage map (see userUsage); an absent user has usage 0 → fair 1.
 func (s *Server) jobFactors(j BatchJob, now time.Time, usage map[string]float64) queue.Factors {
-	base, urgent := parsePriority(j.Priority)
+	base, urgent, idle := parsePriority(j.Priority)
 	// A 定时 job "arrives" at its run_at, so it ages from then — not from when it was
 	// created — otherwise a long-scheduled job would unfairly jump ahead of runs
 	// submitted after it (ADR 0007). Immediate jobs age from created_at.
@@ -374,6 +378,7 @@ func (s *Server) jobFactors(j BatchJob, now time.Time, usage map[string]float64)
 		Age:    age,
 		Fair:   math.Exp2(-usage[j.CreatedBy]),
 		Urgent: urgent,
+		Idle:   idle,
 	}
 }
 
@@ -416,6 +421,7 @@ func (s *Server) scheduleLoop() {
 // (docs/adr/0011-run-level-scheduling.md).
 func (s *Server) scheduleTick() {
 	s.schedMu.Lock()
+	s.sweepPresetWindowsLocked(time.Now())
 	s.admitLocked()
 	// Backstop: finalize any active job that has no runs left to do but that no run's
 	// afterItem will ever close out — an all-done straggler, or a job whose rows all
@@ -443,6 +449,35 @@ func (s *Server) scheduleTick() {
 			"succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed,
 		})
 		s.notifyJobDone(j)
+	}
+}
+
+// sweepPresetWindowsLocked handles preset-windowed runs (ADR 0014) whose window closed before
+// they ever started. Only still-queued jobs are swept — a run that began inside its window is
+// left to finish (non-preemptive). Per the snapshot's on_overrun: "continue" drops the window
+// and runs ASAP, "next" rolls to the next occurrence (keep waiting), "cancel" marks 'expired'.
+// The 30s scheduleLoop bounds how long after a window closes this fires. Caller holds schedMu.
+func (s *Server) sweepPresetWindowsLocked(now time.Time) {
+	for _, j := range s.st.QueuedPresetJobs() {
+		var snap runPresetSnapshot
+		if json.Unmarshal([]byte(j.RunPreset), &snap) != nil {
+			continue // unparseable snapshot: never strand a job on our own bug
+		}
+		if snap.Until == "" || !runAtDue(snap.Until, now) {
+			continue // window still open — normal admission handles it
+		}
+		switch snap.OnOverrun {
+		case "continue":
+			s.st.ClearJobWindow(j.ID) // window was a preferred start; now run ASAP
+		case "cancel":
+			s.st.ExpireJob(j.ID)
+		default: // "next" (and any unrecognized value) rolls to the next occurrence
+			if runAt, next, ok := resolvePresetWindow(snap.Freq, snap.Start, snap.Stop, snap.OnOverrun, now, s.panelLocation()); ok {
+				s.st.SetJobWindow(j.ID, runAt, next)
+			} else {
+				s.st.ClearJobWindow(j.ID) // a rule we can no longer roll → fall back to run ASAP
+			}
+		}
 	}
 }
 
