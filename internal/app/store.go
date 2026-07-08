@@ -267,7 +267,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// run_id / conversation_id / task_id are the Dify handles for a run, persisted the
 		// instant they stream in (not just at finish) so a crash/restart mid-run can reconcile
 		// the true outcome instead of re-running it — the restart-durable half of the
-		// reconcile-not-retry money invariant (ADR 0006). They co-exist and are independent:
+		// reconcile-not-retry money invariant (ADR 0015). They co-exist and are independent:
 		// a workflow/chatflow run has run_id (+task_id); a pure agent/basic chat has only
 		// conversation_id (+task_id). conversation_id/task_id are pure-additive (nullable, no
 		// backfill), so existing databases pick them up via ensureColumns — no migration step.

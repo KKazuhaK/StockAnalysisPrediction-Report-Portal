@@ -12,7 +12,7 @@ export const JOB_STATUS_COLOR: Record<string, string> = {
   cancelled: 'default',
   finished: 'success',
   // 'untracked': the run reached Dify but its outcome couldn't be confirmed — neutral gold (not a
-  // red failure), and never re-run to avoid a duplicate charged run. See docs/adr/0006-dify-native.md.
+  // red failure), and never re-run to avoid a duplicate charged run. See docs/adr/0015-reconcile-not-retry-untracked.md.
   untracked: 'warning',
 }
 

@@ -22,7 +22,7 @@ type Item struct {
 // It retries ONLY transient transport errors, up to maxRetries; a backend that ran but
 // reported failure (RunResult with no error) is terminal and never retried — the
 // money-invariant "a started run is reconciled, never re-run" lives inside the Dify
-// provider (docs/adr/0006-dify-native.md), not here. RunItem is stateless: the caller
+// provider (docs/adr/0015-reconcile-not-retry-untracked.md), not here. RunItem is stateless: the caller
 // persists the result. A nil backoff uses the default capped exponential; a nil logf
 // is a no-op.
 func RunItem(ctx context.Context, prov Provider, inputs map[string]string, maxRetries int, backoff func(attempt int) time.Duration, logf func(string, ...any)) (RunResult, int) {

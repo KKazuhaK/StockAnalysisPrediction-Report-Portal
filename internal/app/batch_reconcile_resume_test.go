@@ -13,7 +13,7 @@ import (
 
 // reconcileProv implements both Provider.Run and Reconciler.Reconcile with counters, so a test can
 // assert a resumed / manually-reconciled run is SETTLED by reconcile and NEVER re-Run (the
-// restart-durable half of the reconcile-not-retry money invariant, ADR 0006).
+// restart-durable half of the reconcile-not-retry money invariant, ADR 0015).
 type reconcileProv struct {
 	runs, recs *int32
 	status     batch.Outcome

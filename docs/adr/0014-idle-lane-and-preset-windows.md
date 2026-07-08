@@ -2,9 +2,9 @@
 
 ## Status
 
-Proposed — 2026-07-08. Targets the v0.2 line (schema generation 2). Extends the run
-subsystem of ADR 0004 (queue), 0007 (run-analysis + one-shot scheduling), 0008
-(multifactor priority) and 0011 (run-level scheduling); relocated `priority`/`run_at`
+Accepted — 2026-07-08. Shipped in v0.2.2. Targets the v0.2 line (schema generation 2).
+Extends the run subsystem of ADR 0004 (queue), 0007 (run-analysis + one-shot scheduling),
+0008 (multifactor priority) and 0011 (run-level scheduling); relocated `priority`/`run_at`
 onto `batch_jobs` per ADR 0013.
 
 ## Context

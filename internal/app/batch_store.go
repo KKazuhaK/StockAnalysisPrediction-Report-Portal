@@ -102,7 +102,7 @@ func (s *Store) FinishItem(id int64, st batch.Outcome, attempts int, runID, deta
 
 // SaveItemDifyRef persists the Dify handles (run / conversation / task id) for an in-flight run the
 // moment they stream in, so a crash or restart can reconcile the run by id instead of re-running it
-// (the restart-durable half of reconcile-not-retry, ADR 0006). Each id is written only when
+// (the restart-durable half of reconcile-not-retry, ADR 0015). Each id is written only when
 // non-empty, so a later event that lacks one never clobbers an already-captured value.
 func (s *Store) SaveItemDifyRef(itemID int64, runID, convID, taskID string) error {
 	_, err := s.exec(`UPDATE batch_items SET

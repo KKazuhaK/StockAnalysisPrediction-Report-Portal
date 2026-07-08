@@ -57,7 +57,7 @@ type difyProvider struct {
 	reconcileTimeout time.Duration
 	// onRef is called the instant a run/conversation/task id streams in, so the caller can
 	// persist it immediately — a crash/restart mid-run then reconciles by that id instead of
-	// re-running (the restart-durable half of reconcile-not-retry). nil disables it. It may be
+	// re-running (the restart-durable half of reconcile-not-retry, ADR 0015). nil disables it. It may be
 	// called repeatedly as ids accumulate; each call carries every id known so far.
 	onRef func(runID, convID, taskID string)
 	// onStarted is called once the instant the stream opens (2xx), BEFORE any id — the caller

@@ -25,7 +25,7 @@ const (
 	// opened) but its true outcome could not be determined — no reconcilable handle, or a
 	// reconcile that never reached a terminal state. It is terminal-but-neutral: NOT a failure
 	// (the run may well have succeeded and cost tokens) and never retried, so a started run is
-	// never duplicated. The operator can reconcile it manually. See docs/adr/0006-dify-native.md.
+	// never duplicated. The operator can reconcile it manually. See docs/adr/0015-reconcile-not-retry-untracked.md.
 	Untracked
 )
 
