@@ -41,8 +41,20 @@ type Link struct {
 	Label, URL string
 	Icon       string // icon name chosen in the admin UI (empty = default link glyph)
 	NewTab     bool   // open in a new browser tab (default true)
-	Collapsed  bool   // fold into the home-page "More" dropdown instead of showing inline
+	GroupID    int64  // the link group it belongs to, or 0 = ungrouped (top-level, shown inline)
 	Ord        int
+}
+
+// LinkGroup is a named, foldable group of home-page entry buttons (replacing the old single
+// "More"). Mode decides how it renders: "row" (its own always-visible row) | "expand"
+// (inline reveal) | "popover" (floating) | "modal" (dialog). ShowLabel toggles whether the
+// group name is shown (mainly for row mode; the folding modes always label their trigger).
+type LinkGroup struct {
+	ID        int64
+	Name      string
+	Mode      string
+	ShowLabel bool
+	Ord       int
 }
 
 type Store struct {
@@ -168,6 +180,9 @@ func (s *Store) init() error {
 		`CREATE INDEX IF NOT EXISTS idx_reports_sym  ON reports(symbol)`,
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
 			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
+		// Named, foldable groups of entry buttons on the home page (mode: row/expand/popover/modal).
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS link_groups(
+			id %s, name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
 		`CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)`,
 		// Report type registry: subtype (name, unique) → explicit category (kind) + display name/order/default page.
 		// Auto-registered on ingest, editable in the admin backend; replaces runKind guessing (runKind only serves as the fallback default for new types).
@@ -305,9 +320,14 @@ func (s *Store) init() error {
 			return fmt.Errorf("upgrade user_groups governance: %w", err)
 		}
 	}
-	// Entry buttons can fold into a home-page "More" dropdown: additive, defaulted.
+	// Entry buttons can fold into a home-page "More" dropdown: additive, defaulted. (Legacy —
+	// superseded by link groups; kept so existing DBs still open.)
 	if _, err := s.exec(`ALTER TABLE links ADD COLUMN collapsed INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
 		return fmt.Errorf("upgrade links (collapsed): %w", err)
+	}
+	// Entry buttons can belong to a named group (0 = ungrouped/top-level): additive, defaulted.
+	if _, err := s.exec(`ALTER TABLE links ADD COLUMN group_id INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
+		return fmt.Errorf("upgrade links (group_id): %w", err)
 	}
 	// Chat conversations can be starred (pinned to the top of the list): additive, defaulted.
 	if _, err := s.exec(`ALTER TABLE chat_conversations ADD COLUMN starred INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
@@ -1210,7 +1230,7 @@ func (s *Store) FreezeReportNames() (int64, error) {
 // ---------- Entry buttons ----------
 
 func (s *Store) Links() []Link {
-	rows, err := s.query("SELECT id,label,url,icon,new_tab,ord,collapsed FROM links ORDER BY ord,id")
+	rows, err := s.query("SELECT id,label,url,icon,new_tab,ord,COALESCE(group_id,0) FROM links ORDER BY ord,id")
 	if err != nil {
 		return nil
 	}
@@ -1219,34 +1239,75 @@ func (s *Store) Links() []Link {
 	for rows.Next() {
 		var l Link
 		var icon sql.NullString
-		var newTab, collapsed sql.NullInt64
-		rows.Scan(&l.ID, &l.Label, &l.URL, &icon, &newTab, &l.Ord, &collapsed)
+		var newTab sql.NullInt64
+		rows.Scan(&l.ID, &l.Label, &l.URL, &icon, &newTab, &l.Ord, &l.GroupID)
 		l.Icon = icon.String
 		l.NewTab = !newTab.Valid || newTab.Int64 != 0 // default: open in new tab
-		l.Collapsed = collapsed.Valid && collapsed.Int64 != 0
 		out = append(out, l)
 	}
 	return out
 }
 
-func (s *Store) AddLink(label, url, icon string, newTab, collapsed bool, ord int) error {
-	_, err := s.exec("INSERT INTO links(label,url,icon,new_tab,ord,collapsed) VALUES(?,?,?,?,?,?)", label, url, icon, boolInt(newTab), ord, boolInt(collapsed))
+func (s *Store) AddLink(label, url, icon string, newTab bool, groupID int64, ord int) error {
+	_, err := s.exec("INSERT INTO links(label,url,icon,new_tab,ord,group_id) VALUES(?,?,?,?,?,?)", label, url, icon, boolInt(newTab), ord, groupID)
 	return err
 }
 
-// UpdateLinkFields changes the label/URL/icon/newTab/collapsed, preserving the sort position (ordering is handled by drag).
-func (s *Store) UpdateLinkFields(id int64, label, url, icon string, newTab, collapsed bool) error {
-	_, err := s.exec("UPDATE links SET label=?,url=?,icon=?,new_tab=?,collapsed=? WHERE id=?", label, url, icon, boolInt(newTab), boolInt(collapsed), id)
+// UpdateLinkFields changes the label/URL/icon/newTab, preserving position + group (both are
+// handled by the layout drag, not the edit form).
+func (s *Store) UpdateLinkFields(id int64, label, url, icon string, newTab bool) error {
+	_, err := s.exec("UPDATE links SET label=?,url=?,icon=?,new_tab=? WHERE id=?", label, url, icon, boolInt(newTab), id)
 	return err
 }
 
-// SetLinkOrder persists the sort position on drag.
-func (s *Store) SetLinkOrder(id int64, ord int) error {
-	_, err := s.exec("UPDATE links SET ord=? WHERE id=?", ord, id)
+// SetLinkGroupAndOrder persists a link's group membership + sort position on drag.
+func (s *Store) SetLinkGroupAndOrder(id, groupID int64, ord int) error {
+	_, err := s.exec("UPDATE links SET group_id=?,ord=? WHERE id=?", groupID, ord, id)
 	return err
 }
 func (s *Store) DeleteLink(id int64) error {
 	_, err := s.exec("DELETE FROM links WHERE id=?", id)
+	return err
+}
+
+// ---------- Entry-button groups ----------
+
+func (s *Store) LinkGroups() []LinkGroup {
+	rows, err := s.query("SELECT id,COALESCE(name,''),COALESCE(mode,'row'),COALESCE(show_label,1),ord FROM link_groups ORDER BY ord,id")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []LinkGroup
+	for rows.Next() {
+		var g LinkGroup
+		var showLabel sql.NullInt64
+		rows.Scan(&g.ID, &g.Name, &g.Mode, &showLabel, &g.Ord)
+		g.ShowLabel = !showLabel.Valid || showLabel.Int64 != 0
+		out = append(out, g)
+	}
+	return out
+}
+
+func (s *Store) AddLinkGroup(name, mode string, showLabel bool, ord int) (int64, error) {
+	return s.insertID("INSERT INTO link_groups(name,mode,show_label,ord) VALUES(?,?,?,?)", name, mode, boolInt(showLabel), ord)
+}
+
+func (s *Store) UpdateLinkGroup(id int64, name, mode string, showLabel bool) error {
+	_, err := s.exec("UPDATE link_groups SET name=?,mode=?,show_label=? WHERE id=?", name, mode, boolInt(showLabel), id)
+	return err
+}
+
+// SetLinkGroupOrder persists a group's sort position on drag.
+func (s *Store) SetLinkGroupOrder(id int64, ord int) error {
+	_, err := s.exec("UPDATE link_groups SET ord=? WHERE id=?", ord, id)
+	return err
+}
+
+// DeleteLinkGroup removes a group and returns its links to the top level (ungrouped).
+func (s *Store) DeleteLinkGroup(id int64) error {
+	s.exec("UPDATE links SET group_id=0 WHERE group_id=?", id)
+	_, err := s.exec("DELETE FROM link_groups WHERE id=?", id)
 	return err
 }
 

@@ -1,56 +1,56 @@
-import { useEffect, useState } from 'react'
-import { App, Button, Checkbox, Form, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tag, Typography } from 'antd'
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
+import { useEffect, useMemo, useState } from 'react'
+import { App, Button, Checkbox, Empty, Form, Input, Modal, Popconfirm, Radio, Select, Space, Switch, Tag, Typography, theme } from 'antd'
+import { DeleteOutlined, EditOutlined, FolderAddOutlined, FolderOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
+import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { api } from '../../api/client'
 import { useAuth } from '../../auth'
-import type { AppSummary, AppsResp, BatchTarget, ChatTarget, LinkItem } from '../../api/types'
+import type { AppSummary, AppsResp, BatchTarget, ChatTarget, LinkGroup, LinkGroupMode, LinkItem } from '../../api/types'
 import { difyModeKind } from '../../lib/batchUi'
-import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
+import { DragHandle, SortableItem } from './dnd'
 import { LINK_ICON_OPTIONS, linkIconComponent } from '../../components/linkIcons'
 import { APP_SHORTCUTS, shortcutOfUrl, shortcutUrl } from '../../lib/shortcuts'
 
-// Options for the icon picker: each renders its glyph + name.
 const iconSelectOptions = LINK_ICON_OPTIONS.map(({ value }) => {
   const Icon = linkIconComponent(value)
-  return {
-    value,
-    label: (
-      <Space size={8}>
-        <Icon />
-        {value}
-      </Space>
-    ),
-  }
+  return { value, label: <Space size={8}><Icon />{value}</Space> }
 })
+
+// One row in the admin's single drag list: either a group header or an entry button.
+type Row = { key: string; type: 'group'; group: LinkGroup } | { key: string; type: 'link'; link: LinkItem }
 
 export default function LinksPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const { token } = theme.useToken()
   const { can } = useAuth()
   const canRun = can('run_batch')
   const [links, setLinks] = useState<LinkItem[]>([])
+  const [groups, setGroups] = useState<LinkGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<LinkItem | null>(null)
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
-  // Target lists so a shortcut can be pinned to a specific workflow / assistant / app.
   const [batchTargets, setBatchTargets] = useState<BatchTarget[]>([])
   const [chatTargets, setChatTargets] = useState<ChatTarget[]>([])
   const [appList, setAppList] = useState<AppSummary[]>([])
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
   const load = () =>
     api
-      .get<{ links: LinkItem[] }>('/api/admin/links')
-      .then((r) => setLinks(r.links || []))
+      .get<{ links: LinkItem[]; groups: LinkGroup[] }>('/api/admin/links')
+      .then((r) => {
+        setLinks(r.links || [])
+        setGroups(r.groups || [])
+      })
       .finally(() => setLoading(false))
 
   useEffect(() => {
     load()
   }, [])
 
-  // Populate the pinned-target picker. batch/chat targets need run_batch (admins usually have
-  // it); apps are readable by any user. Failures are non-fatal — the picker just stays empty.
   useEffect(() => {
     api.get<AppsResp>('/api/apps').then((r) => setAppList(r.apps || [])).catch(() => {})
     if (canRun) {
@@ -59,8 +59,6 @@ export default function LinksPage() {
     }
   }, [canRun])
 
-  // The specific-target options for a given shortcut key. run-analysis matches the run modal's
-  // filter (non-agent); chat lists assistants; apps lists installed apps (string ids).
   const targetOptionsFor = (key?: string): { value: string; label: string }[] => {
     if (key === 'run-analysis') return batchTargets.filter((tg) => difyModeKind(tg.mode) !== 'agent').map((tg) => ({ value: String(tg.id), label: tg.name }))
     if (key === 'chat') return chatTargets.map((tg) => ({ value: String(tg.id), label: tg.name }))
@@ -68,10 +66,90 @@ export default function LinksPage() {
     return []
   }
 
+  const modeOptions: { value: LinkGroupMode; label: string }[] = [
+    { value: 'row', label: t('links.mode.row') },
+    { value: 'expand', label: t('links.mode.expand') },
+    { value: 'popover', label: t('links.mode.popover') },
+    { value: 'modal', label: t('links.mode.modal') },
+  ]
+
+  // The flat display list: ungrouped links first (top level), then each group header
+  // followed by its own links. A link's group is whichever header sits above it.
+  const rows = useMemo<Row[]>(() => {
+    const linksIn = (gid: number) => links.filter((l) => (l.groupId || 0) === gid).sort((a, b) => a.ord - b.ord)
+    const out: Row[] = []
+    for (const l of linksIn(0)) out.push({ key: 'l:' + l.id, type: 'link', link: l })
+    for (const g of [...groups].sort((a, b) => a.ord - b.ord)) {
+      out.push({ key: 'g:' + g.id, type: 'group', group: g })
+      for (const l of linksIn(g.id)) out.push({ key: 'l:' + l.id, type: 'link', link: l })
+    }
+    return out
+  }, [links, groups])
+  const ids = rows.map((r) => r.key)
+
+  // Persist the whole layout after a drag: the backend re-derives each link's group + order
+  // and each group's order from the item sequence.
+  const persistLayout = (orderedIds: string[]) =>
+    api.post('/api/admin/links/layout', { items: orderedIds.map((k) => ({ kind: k.startsWith('g:') ? 'group' : 'link', id: Number(k.slice(2)) })) }).catch(() => {})
+
+  // Optimistically rebuild links (group + order) and groups (order) from a new sequence.
+  const applyOrder = (orderedIds: string[]) => {
+    const linkById = new Map(links.map((l) => [l.id, l]))
+    const groupById = new Map(groups.map((g) => [g.id, g]))
+    let current = 0
+    const nextLinks: LinkItem[] = []
+    const groupOrder: number[] = []
+    orderedIds.forEach((key) => {
+      const id = Number(key.slice(2))
+      if (key.startsWith('g:')) {
+        current = id
+        groupOrder.push(id)
+      } else {
+        const l = linkById.get(id)
+        if (l) nextLinks.push({ ...l, groupId: current, ord: nextLinks.length })
+      }
+    })
+    setLinks(nextLinks)
+    setGroups(groupOrder.map((id, i) => ({ ...(groupById.get(id) as LinkGroup), ord: i })))
+  }
+
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from === -1 || to === -1) return
+    let next = arrayMove(ids, from, to)
+    // Moving a group header carries its links: pull them out and reinsert right after the
+    // header, so the whole group travels as a block (links alone drag normally).
+    if (String(active.id).startsWith('g:')) {
+      const gid = Number(String(active.id).slice(2))
+      const childKeys = links.filter((l) => (l.groupId || 0) === gid).map((l) => 'l:' + l.id)
+      next = next.filter((k) => !childKeys.includes(k))
+      const at = next.indexOf(String(active.id))
+      next.splice(at + 1, 0, ...childKeys)
+    }
+    applyOrder(next)
+    persistLayout(next)
+  }
+
+  const addGroup = async () => {
+    await api.post('/api/admin/link-groups', { name: '', mode: 'expand', showLabel: true })
+    load()
+  }
+  const persistGroup = async (id: number, patch: Partial<LinkGroup>) => {
+    const g = { ...(groups.find((x) => x.id === id) as LinkGroup), ...patch }
+    setGroups((gs) => gs.map((x) => (x.id === id ? g : x)))
+    await api.put(`/api/admin/link-groups/${id}`, { name: g.name, mode: g.mode, showLabel: g.showLabel }).catch((e) => message.error((e as Error).message || 'failed'))
+  }
+  const deleteGroup = async (id: number) => {
+    await api.del(`/api/admin/link-groups/${id}`)
+    load()
+  }
+
   const openAdd = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ kind: 'url', newTab: true, collapsed: false }) // default: an external link, new tab, shown inline
+    form.setFieldsValue({ kind: 'url', newTab: true })
     setOpen(true)
   }
   const openEdit = (l: LinkItem) => {
@@ -85,136 +163,154 @@ export default function LinksPage() {
       shortcutTarget: res?.param,
       url: res ? '' : l.url,
       newTab: l.newTab !== false,
-      collapsed: !!l.collapsed,
     })
     setOpen(true)
   }
-
   const submit = async () => {
     const v = await form.validateFields()
-    // A shortcut is stored as url = "rp:<key>[:<target>]"; a plain link keeps its URL + new-tab flag.
     const payload =
       v.kind === 'shortcut'
-        ? { label: v.label, url: shortcutUrl(v.shortcut, v.shortcutTarget), icon: v.icon, newTab: false, collapsed: !!v.collapsed }
-        : { label: v.label, url: v.url, icon: v.icon, newTab: v.newTab, collapsed: !!v.collapsed }
+        ? { label: v.label, url: shortcutUrl(v.shortcut, v.shortcutTarget), icon: v.icon, newTab: false }
+        : { label: v.label, url: v.url, icon: v.icon, newTab: v.newTab }
     if (editing) await api.put(`/api/admin/links/${editing.id}`, payload)
     else await api.post('/api/admin/links', payload)
     setOpen(false)
     message.success(t('common.saved'))
     load()
   }
-
-  // When a target is picked and the button has no name yet, offer the target's name as a
-  // convenience — always editable, never overwriting a name the admin already typed.
   const onValuesChange = (changed: Record<string, unknown>) => {
     if ('shortcutTarget' in changed && changed.shortcutTarget && !form.getFieldValue('label')) {
       const name = targetOptionsFor(form.getFieldValue('shortcut')).find((o) => o.value === changed.shortcutTarget)?.label
       if (name) form.setFieldValue('label', name)
     }
   }
-
   const remove = async (id: number) => {
     await api.del(`/api/admin/links/${id}`)
     load()
   }
 
-  const reorder = async (orderedIds: string[]) => {
-    setLinks((prev) => orderedIds.map((id) => prev.find((l) => String(l.id) === id)!).filter(Boolean))
-    await api.post('/api/admin/links/reorder', { ids: orderedIds.map(Number) })
+  // A link's URL rendered as a link or a shortcut tag.
+  const urlDisplay = (u: string) => {
+    const res = shortcutOfUrl(u)
+    if (!res)
+      return (
+        <a href={u} target="_blank" rel="noreferrer">
+          {u}
+        </a>
+      )
+    const suffix = res.param ? ` · ${targetOptionsFor(res.shortcut.key).find((o) => o.value === res.param)?.label ?? '#' + res.param}` : ''
+    return (
+      <Tag color="blue">
+        {t('links.shortcutTag', { name: t(res.shortcut.labelKey) })}
+        {suffix}
+      </Tag>
+    )
+  }
+
+  const groupHeader = (g: LinkGroup) => (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
+        padding: '8px 10px',
+        borderRadius: 8,
+        background: token.colorFillSecondary,
+        border: `1px solid ${token.colorBorderSecondary}`,
+      }}
+    >
+      <DragHandle />
+      <FolderOutlined style={{ color: token.colorTextTertiary }} />
+      <Input
+        size="small"
+        style={{ width: 180 }}
+        placeholder={t('links.groupNamePlaceholder')}
+        value={g.name}
+        onChange={(e) => setGroups((gs) => gs.map((x) => (x.id === g.id ? { ...x, name: e.target.value } : x)))}
+        onBlur={(e) => persistGroup(g.id, { name: e.target.value.trim() })}
+        onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
+      />
+      <Select<LinkGroupMode> size="small" style={{ width: 120 }} value={g.mode} onChange={(v) => persistGroup(g.id, { mode: v })} options={modeOptions} />
+      <Space size={4}>
+        <Switch size="small" checked={g.showLabel} onChange={(v) => persistGroup(g.id, { showLabel: v })} />
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t('links.showName')}
+        </Typography.Text>
+      </Space>
+      <div style={{ flex: 1 }} />
+      <Popconfirm title={t('links.deleteGroupConfirm')} onConfirm={() => deleteGroup(g.id)}>
+        <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+      </Popconfirm>
+    </div>
+  )
+
+  const linkRow = (l: LinkItem) => {
+    const Icon = linkIconComponent(l.icon)
+    const grouped = !!(l.groupId && l.groupId > 0)
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '6px 10px',
+          paddingInlineStart: grouped ? 30 : 10, // indent grouped links to show nesting
+          borderRadius: 8,
+          border: `1px solid ${token.colorBorderSecondary}`,
+          background: token.colorBgContainer,
+        }}
+      >
+        <DragHandle />
+        <Icon />
+        <Typography.Text style={{ minWidth: 120, flexShrink: 0 }} ellipsis>
+          {l.label}
+        </Typography.Text>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{urlDisplay(l.url)}</span>
+        {l.newTab === false ? null : (
+          <Typography.Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+            {t('links.newTab')}
+          </Typography.Text>
+        )}
+        <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(l)} />
+        <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => remove(l.id)}>
+          <Button size="small" danger icon={<DeleteOutlined />} />
+        </Popconfirm>
+      </div>
+    )
   }
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Space style={{ justifyContent: 'space-between', width: '100%' }}>
+      <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
         <Typography.Text type="secondary">{t('links.hint')}</Typography.Text>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
-          {t('common.add')}
-        </Button>
+        <Space>
+          <Button icon={<FolderAddOutlined />} onClick={addGroup}>
+            {t('links.addGroup')}
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
+            {t('common.add')}
+          </Button>
+        </Space>
       </Space>
 
-      <SortableWrapper ids={links.map((l) => String(l.id))} onReorder={reorder}>
-        <Table<LinkItem>
-          rowKey={(r) => String(r.id)}
-          loading={loading}
-          dataSource={links}
-          pagination={false}
-          components={sortableTableComponents}
-          columns={[
-            { key: 'sort', width: 48, align: 'center', render: () => <DragHandle /> },
-            {
-              title: t('links.icon'),
-              dataIndex: 'icon',
-              width: 60,
-              align: 'center',
-              render: (icon: string) => {
-                const Icon = linkIconComponent(icon)
-                return <Icon />
-              },
-            },
-            { title: t('links.label'), dataIndex: 'label' },
-            {
-              title: t('links.url'),
-              dataIndex: 'url',
-              render: (u: string) => {
-                const res = shortcutOfUrl(u)
-                if (!res) {
-                  return (
-                    <a href={u} target="_blank" rel="noreferrer">
-                      {u}
-                    </a>
-                  )
-                }
-                // Resolve a pinned target to its name (falling back to #id if the list is
-                // unloaded or the target was removed).
-                const suffix = res.param ? ` · ${targetOptionsFor(res.shortcut.key).find((o) => o.value === res.param)?.label ?? '#' + res.param}` : ''
-                return (
-                  <Tag color="blue">
-                    {t('links.shortcutTag', { name: t(res.shortcut.labelKey) })}
-                    {suffix}
-                  </Tag>
-                )
-              },
-            },
-            {
-              title: t('links.newTab'),
-              dataIndex: 'newTab',
-              width: 96,
-              align: 'center',
-              render: (v: boolean) => <Checkbox checked={v !== false} disabled />,
-            },
-            {
-              title: t('links.collapsed'),
-              dataIndex: 'collapsed',
-              width: 96,
-              align: 'center',
-              render: (v: boolean) => <Checkbox checked={!!v} disabled />,
-            },
-            {
-              title: '',
-              width: 120,
-              align: 'right',
-              render: (_, l) => (
-                <Space>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(l)} />
-                  <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => remove(l.id)}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                </Space>
-              ),
-            },
-          ]}
-        />
-      </SortableWrapper>
+      {!loading && rows.length === 0 ? (
+        <Empty description={t('links.empty')} />
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis, restrictToParentElement]} onDragEnd={onDragEnd}>
+          <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {rows.map((row) => (
+                <SortableItem key={row.key} id={row.key}>
+                  {row.type === 'group' ? groupHeader(row.group) : linkRow(row.link)}
+                </SortableItem>
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
 
-      <Modal
-        open={open}
-        title={editing ? t('common.edit') : t('common.add')}
-        onOk={submit}
-        onCancel={() => setOpen(false)}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
-        destroyOnClose
-      >
+      <Modal open={open} title={editing ? t('common.edit') : t('common.add')} onOk={submit} onCancel={() => setOpen(false)} okText={t('common.save')} cancelText={t('common.cancel')} destroyOnClose>
         <Form form={form} layout="vertical" onValuesChange={onValuesChange}>
           <Form.Item name="label" label={t('links.label')} rules={[{ required: true }]}>
             <Input />
@@ -239,20 +335,11 @@ export default function LinksPage() {
               return (
                 <>
                   <Form.Item name="shortcut" label={t('links.shortcut')} rules={[{ required: true }]}>
-                    <Select
-                      placeholder={t('links.shortcutPlaceholder')}
-                      options={APP_SHORTCUTS.map((s) => ({ value: s.key, label: t(s.labelKey) }))}
-                    />
+                    <Select placeholder={t('links.shortcutPlaceholder')} options={APP_SHORTCUTS.map((s) => ({ value: s.key, label: t(s.labelKey) }))} />
                   </Form.Item>
                   {sc?.hasTarget && (
                     <Form.Item name="shortcutTarget" label={t('links.shortcutTarget')}>
-                      <Select
-                        allowClear
-                        showSearch
-                        optionFilterProp="label"
-                        placeholder={t('links.shortcutTargetPlaceholder')}
-                        options={targetOptionsFor(key)}
-                      />
+                      <Select allowClear showSearch optionFilterProp="label" placeholder={t('links.shortcutTargetPlaceholder')} options={targetOptionsFor(key)} />
                     </Form.Item>
                   )}
                 </>
@@ -270,9 +357,6 @@ export default function LinksPage() {
                 </Form.Item>
               )
             }
-          </Form.Item>
-          <Form.Item name="collapsed" valuePropName="checked">
-            <Checkbox>{t('links.collapsed')}</Checkbox>
           </Form.Item>
         </Form>
       </Modal>
