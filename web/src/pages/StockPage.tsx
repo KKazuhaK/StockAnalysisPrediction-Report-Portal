@@ -8,7 +8,7 @@ import type { StockResp } from '../api/types'
 import Markdown from '../components/Markdown'
 import ReaderControls from '../components/ReaderControls'
 import TimelinePanel from '../components/TimelinePanel'
-import { ExportPdfButton, ExportDayButton } from '../components/ExportButtons'
+import { ExportPdfButton, ExportDayButton, ExportMenu } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
 
@@ -73,47 +73,60 @@ export default function StockPage() {
   const setRid = (rid: string) => setSp({ date: data.selDate, kind: data.selKind, r: rid })
   const rep = data.rep
 
-  // Back + stock name/code + export. On desktop it sits inside the reading column (so the
-  // export buttons line up with the report's right edge); on mobile it moves to the very
-  // top — above the timeline — so navigation is the first thing you see.
-  const headerBar = (
-    <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
-      <Space size={12} wrap>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>
-          {t('stock.back')}
-        </Button>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          {data.name}{' '}
-          <Typography.Text type="secondary" style={{ fontSize: 15 }}>
-            {data.symbol}
-          </Typography.Text>
-        </Typography.Title>
-        {rep && rep.name && rep.name !== data.name && (
-          <Tag color="orange">
-            {t('stock.asOf')}: {rep.name}
-          </Tag>
-        )}
-      </Space>
-      {rep && (
-        <Space wrap>
-          <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
-            {t('stock.exportMd')}
-          </Button>
-          <ExportPdfButton
-            rid={rep.rid}
-            report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
-          />
-          <ExportDayButton symbol={data.symbol} date={data.selDate} name={data.name} />
-        </Space>
+  // Back + stock name/code. This is the page's identity/nav header — it sits at the very
+  // top of every layout (above the timeline), so "where am I / go back" is the first thing
+  // you see. Exports used to live here too, but they belong to the report you're reading,
+  // so they moved down into the report card's header (see `exportControls` below).
+  const navBar = (
+    <Space size={12} wrap>
+      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>
+        {t('stock.back')}
+      </Button>
+      <Typography.Title level={4} style={{ margin: 0 }}>
+        {data.name}{' '}
+        <Typography.Text type="secondary" style={{ fontSize: 15 }}>
+          {data.symbol}
+        </Typography.Text>
+      </Typography.Title>
+      {rep && rep.name && rep.name !== data.name && (
+        <Tag color="orange">
+          {t('stock.asOf')}: {rep.name}
+        </Tag>
       )}
     </Space>
   )
 
+  // Export controls, shown in the report card header next to the reading settings. On a
+  // phone the three actions collapse into one "Export ▾" dropdown (three labeled buttons
+  // ate a whole row); desktop keeps the three standalone buttons since there's room.
+  const exportControls = rep ? (
+    compact ? (
+      <ExportMenu
+        rid={rep.rid}
+        report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+        symbol={data.symbol}
+        date={data.selDate}
+        name={data.name}
+      />
+    ) : (
+      <>
+        <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
+          {t('stock.exportMd')}
+        </Button>
+        <ExportPdfButton
+          rid={rep.rid}
+          report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+        />
+        <ExportDayButton symbol={data.symbol} date={data.selDate} name={data.name} />
+      </>
+    )
+  ) : null
+
   return (
     <Spin spinning={loading}>
       <div className={`rp-reader${wide ? ' rp-reader--wide' : ''}`} style={layoutVars}>
-        {/* Mobile: back + stock name/code + export sit above the timeline. */}
-        {compact && <div style={{ marginBottom: 12 }}>{headerBar}</div>}
+        {/* Back + stock name/code lead every layout, above the timeline. */}
+        <div style={{ marginBottom: 12 }}>{navBar}</div>
 
         {/* Narrow / wide mode: the timeline is a horizontal strip on top; normal mode on a
             roomy screen floats it as a left rail (container query in index.css). */}
@@ -133,50 +146,56 @@ export default function StockPage() {
 
           <div className="rp-reader__doc">
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
-              {/* Desktop keeps the header inside the reading column. */}
-              {!compact && headerBar}
-
               {data.kinds.length > 1 && (
-                  <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
-                    <Segmented
-                      value={data.selKind}
-                      onChange={(v) => setKind(String(v))}
-                      options={data.kinds.map((k) => ({ label: k, value: k }))}
-                    />
-                  </div>
+                <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
+                  <Segmented
+                    value={data.selKind}
+                    onChange={(v) => setKind(String(v))}
+                    options={data.kinds.map((k) => ({ label: k, value: k }))}
+                  />
+                </div>
+              )}
+              {data.subtabs.length > 1 && (
+                // Report-type strip: a horizontal-scroll Segmented (same pattern as the
+                // category strip above) so it swipes smoothly on mobile instead of
+                // dragging the whole page.
+                <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
+                  <Segmented
+                    value={data.selRID}
+                    onChange={(v) => setRid(String(v))}
+                    options={data.subtabs.map((s) => ({ label: s.label, value: s.rid }))}
+                  />
+                </div>
+              )}
+              <Card
+                className="rp-doc-card"
+                styles={{ body: { paddingTop: 8 } }}
+                title={rep?.title}
+                // Report actions live in the card header: exports + reading settings, the
+                // two things you do to the report you're looking at.
+                extra={
+                  rep ? (
+                    <Space size={8} wrap>
+                      {exportControls}
+                      <ReaderControls />
+                    </Space>
+                  ) : undefined
+                }
+                style={readerVars}
+              >
+                {rep && isInstant(rep.time) && (
+                  <Typography.Text
+                    type="secondary"
+                    title={formatReportDateTime(rep.time)}
+                    style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
+                  >
+                    <ClockCircleOutlined /> {formatReportDateTime(rep.time)}
+                  </Typography.Text>
                 )}
-                {data.subtabs.length > 1 && (
-                  // Report-type strip: a horizontal-scroll Segmented (same pattern as the
-                  // category strip above) so it swipes smoothly on mobile instead of
-                  // dragging the whole page.
-                  <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
-                    <Segmented
-                      value={data.selRID}
-                      onChange={(v) => setRid(String(v))}
-                      options={data.subtabs.map((s) => ({ label: s.label, value: s.rid }))}
-                    />
-                  </div>
-                )}
-                <Card
-                  className="rp-doc-card"
-                  styles={{ body: { paddingTop: 8 } }}
-                  title={rep?.title}
-                  extra={rep ? <ReaderControls /> : undefined}
-                  style={readerVars}
-                >
-                  {rep && isInstant(rep.time) && (
-                    <Typography.Text
-                      type="secondary"
-                      title={formatReportDateTime(rep.time)}
-                      style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
-                    >
-                      <ClockCircleOutlined /> {formatReportDateTime(rep.time)}
-                    </Typography.Text>
-                  )}
-                  {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
-                </Card>
-              </Space>
-            </div>
+                {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
+              </Card>
+            </Space>
+          </div>
           </div>
         </div>
     </Spin>

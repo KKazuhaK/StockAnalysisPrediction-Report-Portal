@@ -54,6 +54,7 @@ type LinkGroup struct {
 	Name      string
 	Mode      string
 	ShowLabel bool
+	Icon      string
 	Ord       int
 }
 
@@ -169,7 +170,8 @@ func (s *Store) groupConcatDistinct(col string) string {
 }
 
 // init opens/upgrades the database: it lays down the current-generation base schema, runs any
-// pending migration to bring an older database up to it, then guarantees the fallback group.
+// pending migration to bring an older database up to it, reconciles pure-additive columns, then
+// guarantees the fallback group.
 func (s *Store) init() error {
 	if err := s.createBaseSchema(); err != nil {
 		return err
@@ -177,19 +179,26 @@ func (s *Store) init() error {
 	if err := s.migrate(); err != nil {
 		return err
 	}
+	// Additive columns need no versioned migration — they are auto-reconciled here (guarded, so a
+	// no-op once present). Only data moves/drops go through migrate().
+	if err := s.ensureColumns(); err != nil {
+		return err
+	}
 	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
 	return nil
 }
 
-// createBaseSchema creates the current schema generation from scratch (CREATE TABLE IF NOT
-// EXISTS, so existing tables are left untouched — migrate() upgrades those). Per the squash
-// contract (CLAUDE.md hard rules), this base schema equals the fully-migrated final state of
-// the previous release line: the six former 1:1 side tables are folded into parent columns, the
-// dead user_group_members table and links.collapsed column are gone, and the reports surrogate
-// key is `id`. See docs/adr/0013-v2-schema-consolidation.md.
-func (s *Store) createBaseSchema() error {
+// baseSchemaStmts returns the full current-generation schema as CREATE statements — the single
+// source of truth for the DB shape. createBaseSchema execs it on a fresh database; ensureColumns
+// (migrate.go) reads the SAME statements to auto-add any column an older database lacks, so a new
+// additive column is declared here ONCE and picked up everywhere without a hand-written migration.
+// Per the squash contract (CLAUDE.md hard rules), this base schema equals the fully-migrated final
+// state of the previous release line: the six former 1:1 side tables are folded into parent
+// columns, the dead user_group_members table and links.collapsed column are gone, and the reports
+// surrogate key is `id`. See docs/adr/0013-v2-schema-consolidation.md.
+func (s *Store) baseSchemaStmts() []string {
 	pk := s.pkAuto()
-	stmts := []string{
+	return []string{
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS reports(
 			id %s,
 			uid TEXT UNIQUE, title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
@@ -203,7 +212,7 @@ func (s *Store) createBaseSchema() error {
 			ord INTEGER DEFAULT 0, group_id INTEGER DEFAULT 0)`, pk),
 		// Named, foldable groups of entry buttons on the home page (mode: row/expand/popover/modal).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS link_groups(
-			id %s, name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
+			id %s, name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, icon TEXT DEFAULT '', ord INTEGER DEFAULT 0)`, pk),
 		`CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)`,
 		// Report type registry: subtype (name, unique) → explicit category (kind) + display name/order/default page.
 		// Auto-registered on ingest, editable in the admin backend; replaces runKind guessing (runKind only serves as the fallback default for new types).
@@ -251,9 +260,17 @@ func (s *Store) createBaseSchema() error {
 			total INTEGER DEFAULT 0, succeeded INTEGER DEFAULT 0, partial INTEGER DEFAULT 0, failed INTEGER DEFAULT 0,
 			created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,
 			priority TEXT DEFAULT 'normal', run_at TEXT DEFAULT '')`, pk),
+		// run_id / conversation_id / task_id are the Dify handles for a run, persisted the
+		// instant they stream in (not just at finish) so a crash/restart mid-run can reconcile
+		// the true outcome instead of re-running it — the restart-durable half of the
+		// reconcile-not-retry money invariant (ADR 0006). They co-exist and are independent:
+		// a workflow/chatflow run has run_id (+task_id); a pure agent/basic chat has only
+		// conversation_id (+task_id). conversation_id/task_id are pure-additive (nullable, no
+		// backfill), so existing databases pick them up via ensureColumns — no migration step.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_items(
 			id %s, job_id BIGINT, row_index INTEGER, inputs TEXT, status TEXT DEFAULT 'queued',
-			attempts INTEGER DEFAULT 0, run_id TEXT, error TEXT, started_at TEXT, finished_at TEXT)`, pk),
+			attempts INTEGER DEFAULT 0, run_id TEXT, conversation_id TEXT, task_id TEXT,
+			error TEXT, started_at TEXT, finished_at TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id, status)`,
 		// The batch console polls AllJobsFirstInputs (first row of every job) every 2s;
 		// without this the WHERE row_index=0 lookup is a full scan of batch_items — the
@@ -307,7 +324,13 @@ func (s *Store) createBaseSchema() error {
 			title TEXT DEFAULT '', created_at TEXT, updated_at TEXT, starred INTEGER DEFAULT 0)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_chat_conv_user ON chat_conversations(created_by, target_id, updated_at)`,
 	}
-	for _, st := range stmts {
+}
+
+// createBaseSchema lays down the current-generation schema on a fresh database (CREATE ... IF NOT
+// EXISTS, so existing tables are left untouched — migrate() folds older shapes up and
+// ensureColumns tops up any missing additive column).
+func (s *Store) createBaseSchema() error {
+	for _, st := range s.baseSchemaStmts() {
 		if _, err := s.exec(st); err != nil {
 			return fmt.Errorf("create base schema: %w\nSQL: %s", err, st)
 		}
@@ -1248,7 +1271,7 @@ func (s *Store) DeleteLink(id int64) error {
 // ---------- Entry-button groups ----------
 
 func (s *Store) LinkGroups() []LinkGroup {
-	rows, err := s.query("SELECT id,COALESCE(name,''),COALESCE(mode,'row'),COALESCE(show_label,1),ord FROM link_groups ORDER BY ord,id")
+	rows, err := s.query("SELECT id,COALESCE(name,''),COALESCE(mode,'row'),COALESCE(show_label,1),COALESCE(icon,''),ord FROM link_groups ORDER BY ord,id")
 	if err != nil {
 		return nil
 	}
@@ -1257,19 +1280,19 @@ func (s *Store) LinkGroups() []LinkGroup {
 	for rows.Next() {
 		var g LinkGroup
 		var showLabel sql.NullInt64
-		rows.Scan(&g.ID, &g.Name, &g.Mode, &showLabel, &g.Ord)
+		rows.Scan(&g.ID, &g.Name, &g.Mode, &showLabel, &g.Icon, &g.Ord)
 		g.ShowLabel = !showLabel.Valid || showLabel.Int64 != 0
 		out = append(out, g)
 	}
 	return out
 }
 
-func (s *Store) AddLinkGroup(name, mode string, showLabel bool, ord int) (int64, error) {
-	return s.insertID("INSERT INTO link_groups(name,mode,show_label,ord) VALUES(?,?,?,?)", name, mode, boolInt(showLabel), ord)
+func (s *Store) AddLinkGroup(name, mode string, showLabel bool, icon string, ord int) (int64, error) {
+	return s.insertID("INSERT INTO link_groups(name,mode,show_label,icon,ord) VALUES(?,?,?,?,?)", name, mode, boolInt(showLabel), icon, ord)
 }
 
-func (s *Store) UpdateLinkGroup(id int64, name, mode string, showLabel bool) error {
-	_, err := s.exec("UPDATE link_groups SET name=?,mode=?,show_label=? WHERE id=?", name, mode, boolInt(showLabel), id)
+func (s *Store) UpdateLinkGroup(id int64, name, mode string, showLabel bool, icon string) error {
+	_, err := s.exec("UPDATE link_groups SET name=?,mode=?,show_label=?,icon=? WHERE id=?", name, mode, boolInt(showLabel), icon, id)
 	return err
 }
 

@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
-import { App, Button, Modal, Space, Spin, Typography } from 'antd'
-import { FilePdfOutlined, FileZipOutlined } from '@ant-design/icons'
+import { App, Button, Dropdown, Modal, Space, Spin, Typography } from 'antd'
+import { DownOutlined, DownloadOutlined, FilePdfOutlined, FileZipOutlined } from '@ant-design/icons'
+import type { MenuProps } from 'antd'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { exportReportPdf, exportDayZip, DayExportEmptyError, isAbortError, type ReportForPrint } from '../lib/exportPdf'
 
@@ -60,6 +62,37 @@ function ExportProgressModal({ open, text, onCancel }: { open: boolean; text: st
   )
 }
 
+// The two export actions as cancelable tasks, owning their own success/error toasts.
+// Factored out so the standalone buttons (desktop) and the collapsed dropdown (mobile)
+// share one source of truth instead of re-inlining the toast logic.
+type Message = ReturnType<typeof App.useApp>['message']
+
+function pdfTask(t: TFunction, message: Message, rid: string, report: ReportForPrint) {
+  return async (signal: AbortSignal) => {
+    try {
+      const result = await exportReportPdf(rid, report, signal)
+      message[result === 'printed' ? 'info' : 'success'](
+        t(result === 'printed' ? 'export.pdfPrinted' : 'export.pdfReady'),
+      )
+    } catch (e) {
+      message[isAbortError(e) ? 'info' : 'error'](t(isAbortError(e) ? 'export.cancelled' : 'export.pdfFailed'))
+    }
+  }
+}
+
+function dayTask(t: TFunction, message: Message, symbol: string, date: string, name?: string) {
+  return async (signal: AbortSignal) => {
+    try {
+      await exportDayZip(symbol, date, name, signal)
+      message.success(t('export.dayReady'))
+    } catch (e) {
+      if (isAbortError(e)) message.info(t('export.cancelled'))
+      else if (e instanceof DayExportEmptyError) message.error(t('export.dayEmpty'))
+      else message.error(t('export.dayFailed'))
+    }
+  }
+}
+
 // ExportPdfButton exports one report to PDF with a cancelable progress dialog. Shared by
 // the stock and run pages, which previously each inlined an identical fire-and-forget button.
 export function ExportPdfButton({ rid, report }: { rid: string; report: ReportForPrint }) {
@@ -67,21 +100,9 @@ export function ExportPdfButton({ rid, report }: { rid: string; report: ReportFo
   const { message } = App.useApp()
   const { busy, run, cancel } = useCancelableExport()
 
-  const onClick = () =>
-    run(async (signal) => {
-      try {
-        const result = await exportReportPdf(rid, report, signal)
-        message[result === 'printed' ? 'info' : 'success'](
-          t(result === 'printed' ? 'export.pdfPrinted' : 'export.pdfReady'),
-        )
-      } catch (e) {
-        message[isAbortError(e) ? 'info' : 'error'](t(isAbortError(e) ? 'export.cancelled' : 'export.pdfFailed'))
-      }
-    })
-
   return (
     <>
-      <Button icon={<FilePdfOutlined />} loading={busy} onClick={onClick}>
+      <Button icon={<FilePdfOutlined />} loading={busy} onClick={() => run(pdfTask(t, message, rid, report))}>
         {t('stock.exportPdf')}
       </Button>
       <ExportProgressModal open={busy} text={t('export.pdfGenerating')} onCancel={cancel} />
@@ -97,24 +118,63 @@ export function ExportDayButton({ symbol, date, name }: { symbol: string; date: 
   const { message } = App.useApp()
   const { busy, run, cancel } = useCancelableExport()
 
-  const onClick = () =>
-    run(async (signal) => {
-      try {
-        await exportDayZip(symbol, date, name, signal)
-        message.success(t('export.dayReady'))
-      } catch (e) {
-        if (isAbortError(e)) message.info(t('export.cancelled'))
-        else if (e instanceof DayExportEmptyError) message.error(t('export.dayEmpty'))
-        else message.error(t('export.dayFailed'))
-      }
-    })
-
   return (
     <>
-      <Button icon={<FileZipOutlined />} loading={busy} onClick={onClick}>
+      <Button icon={<FileZipOutlined />} loading={busy} onClick={() => run(dayTask(t, message, symbol, date, name))}>
         {t('stock.exportDay')}
       </Button>
       <ExportProgressModal open={busy} text={t('export.dayExporting')} onCancel={cancel} />
+    </>
+  )
+}
+
+// ExportMenu collapses the three exports (MD / PDF / day-zip) into one "Export ▾" button.
+// Used on phones, where three side-by-side labeled buttons ate a whole row; desktop still
+// shows the standalone buttons. MD is a plain download link; PDF and day-zip reuse the same
+// cancelable tasks + progress dialog as the buttons above.
+export function ExportMenu({
+  rid,
+  report,
+  symbol,
+  date,
+  name,
+}: {
+  rid: string
+  report: ReportForPrint
+  symbol: string
+  date: string
+  name?: string
+}) {
+  const { t } = useTranslation()
+  const { message } = App.useApp()
+  const { busy, run, cancel } = useCancelableExport()
+  const [text, setText] = useState('')
+
+  const items: MenuProps['items'] = [
+    { key: 'md', icon: <DownloadOutlined />, label: <a href={`/report/${rid}/md`}>{t('stock.exportMd')}</a> },
+    { key: 'pdf', icon: <FilePdfOutlined />, label: t('stock.exportPdf') },
+    { key: 'day', icon: <FileZipOutlined />, label: t('stock.exportDay') },
+  ]
+
+  const onClick: MenuProps['onClick'] = ({ key }) => {
+    if (key === 'pdf') {
+      setText(t('export.pdfGenerating'))
+      run(pdfTask(t, message, rid, report))
+    } else if (key === 'day') {
+      setText(t('export.dayExporting'))
+      run(dayTask(t, message, symbol, date, name))
+    }
+    // 'md' is handled by the anchor in its label.
+  }
+
+  return (
+    <>
+      <Dropdown menu={{ items, onClick }} trigger={['click']} disabled={busy}>
+        <Button icon={<DownloadOutlined />}>
+          {t('stock.export')} <DownOutlined />
+        </Button>
+      </Dropdown>
+      <ExportProgressModal open={busy} text={text} onCancel={cancel} />
     </>
   )
 }

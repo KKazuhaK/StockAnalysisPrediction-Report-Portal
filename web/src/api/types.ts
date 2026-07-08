@@ -112,6 +112,8 @@ export interface BatchItem {
   status: string
   attempts: number
   run_id: string
+  conversation_id: string // Dify chat/agent reconcile handle (empty for workflow runs)
+  task_id: string // Dify task id (server-side stop / tracing)
   error: string
   started_at: string
   finished_at: string
@@ -276,6 +278,7 @@ export interface LinkGroup {
   name: string
   mode: LinkGroupMode // row (own always-visible row) | expand | popover | modal
   showLabel: boolean // show the group name (mainly for row mode)
+  icon?: string // icon name shown on the group's trigger button (empty = default folder glyph)
   ord: number
 }
 

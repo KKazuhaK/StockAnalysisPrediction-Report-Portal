@@ -36,7 +36,11 @@ vi.mock('../lib/datetime', () => ({ isInstant: () => false, formatReportDateTime
 vi.mock('../components/Markdown', () => ({ default: () => <div>md</div> }))
 vi.mock('../components/TimelinePanel', () => ({ default: () => <div>timeline</div> }))
 vi.mock('../components/ReaderControls', () => ({ default: () => <div>controls</div> }))
-vi.mock('../components/ExportButtons', () => ({ ExportPdfButton: () => <div>pdf</div>, ExportDayButton: () => <div>day</div> }))
+vi.mock('../components/ExportButtons', () => ({
+  ExportPdfButton: () => <div>pdf</div>,
+  ExportDayButton: () => <div>day</div>,
+  ExportMenu: () => <div>export-menu</div>,
+}))
 
 describe('StockPage', () => {
   it('renders the report after data loads (no hook-order crash)', async () => {

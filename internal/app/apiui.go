@@ -405,7 +405,7 @@ func linksJSON(ls []Link) []map[string]any {
 func linkGroupsJSON(gs []LinkGroup) []map[string]any {
 	out := make([]map[string]any, 0, len(gs))
 	for _, g := range gs {
-		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "mode": g.Mode, "showLabel": g.ShowLabel, "ord": g.Ord})
+		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "mode": g.Mode, "showLabel": g.ShowLabel, "icon": g.Icon, "ord": g.Ord})
 	}
 	return out
 }
@@ -481,15 +481,15 @@ func normalizeLinkGroupMode(m string) string {
 
 func (s *Server) apiLinkGroupAdd(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		Name, Mode string
-		ShowLabel  *bool
+		Name, Mode, Icon string
+		ShowLabel        *bool
 	}
 	readJSON(r, &in)
 	ord := 0
 	if gs := s.st.LinkGroups(); len(gs) > 0 {
 		ord = gs[len(gs)-1].Ord + 1
 	}
-	id, err := s.st.AddLinkGroup(strings.TrimSpace(in.Name), normalizeLinkGroupMode(in.Mode), in.ShowLabel == nil || *in.ShowLabel, ord)
+	id, err := s.st.AddLinkGroup(strings.TrimSpace(in.Name), normalizeLinkGroupMode(in.Mode), in.ShowLabel == nil || *in.ShowLabel, strings.TrimSpace(in.Icon), ord)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -499,11 +499,11 @@ func (s *Server) apiLinkGroupAdd(w http.ResponseWriter, r *http.Request, user st
 
 func (s *Server) apiLinkGroupEdit(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		Name, Mode string
-		ShowLabel  *bool
+		Name, Mode, Icon string
+		ShowLabel        *bool
 	}
 	readJSON(r, &in)
-	s.st.UpdateLinkGroup(pathID(r, "id"), strings.TrimSpace(in.Name), normalizeLinkGroupMode(in.Mode), in.ShowLabel == nil || *in.ShowLabel)
+	s.st.UpdateLinkGroup(pathID(r, "id"), strings.TrimSpace(in.Name), normalizeLinkGroupMode(in.Mode), in.ShowLabel == nil || *in.ShowLabel, strings.TrimSpace(in.Icon))
 	writeJSON(w, okJSON)
 }
 

@@ -33,9 +33,10 @@ describe('LinksPage', () => {
         <LinksPage />
       </App>,
     )
-    // The link label and the group name (in its editable input) both render.
+    // The link label and the group name (now shown as static text, edited via the pencil→modal)
+    // both render.
     expect(await screen.findByText('GitHub')).toBeTruthy()
-    expect(screen.getByDisplayValue('External')).toBeTruthy()
+    expect(screen.getByText('External')).toBeTruthy()
     // The add-group action is present.
     expect(screen.getByText('links.addGroup')).toBeTruthy()
   })

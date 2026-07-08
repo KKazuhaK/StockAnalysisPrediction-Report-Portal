@@ -17,7 +17,7 @@ import {
   theme,
   Typography,
 } from 'antd'
-import { DownOutlined } from '@ant-design/icons'
+import { DownOutlined, FolderOutlined } from '@ant-design/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
@@ -152,21 +152,25 @@ export default function HomePage() {
       .map(renderLink)
       .filter(Boolean)
   const toggleGroup = (id: number) => setOpenGroups((o) => ({ ...o, [id]: !o[id] }))
-  // A folded group (expand/popover/modal) shows one trigger button labeled with its name.
+  // A folded group (expand/popover/modal) shows one trigger button: its admin-chosen icon (or a
+  // folder by default) + name, with a small down caret to signal it opens more. The caret points
+  // down and the popover opens downward (placement="bottom") so the two agree.
   const renderTrigger = (g: (typeof linkGroups)[number]) => {
     const buttons = groupButtons(g.id)
     if (buttons.length === 0) return null
     const label = g.name || t('home.more')
-    const trigger = (
-      <Button key={g.id} icon={<DownOutlined />} onClick={g.mode === 'popover' ? undefined : () => toggleGroup(g.id)}>
-        {label}
-      </Button>
+    const GroupIcon = g.icon ? linkIconComponent(g.icon) : FolderOutlined
+    const inner = (
+      <>
+        {label} <DownOutlined style={{ fontSize: 11 }} />
+      </>
     )
     if (g.mode === 'popover') {
       return (
         <Popover
           key={g.id}
           trigger="click"
+          placement="bottom"
           open={!!openGroups[g.id]}
           onOpenChange={(v) => setOpenGroups((o) => ({ ...o, [g.id]: v }))}
           content={
@@ -175,11 +179,15 @@ export default function HomePage() {
             </Space>
           }
         >
-          <Button icon={<DownOutlined />}>{label}</Button>
+          <Button icon={<GroupIcon />}>{inner}</Button>
         </Popover>
       )
     }
-    return trigger
+    return (
+      <Button key={g.id} icon={<GroupIcon />} onClick={() => toggleGroup(g.id)}>
+        {inner}
+      </Button>
+    )
   }
 
   return (

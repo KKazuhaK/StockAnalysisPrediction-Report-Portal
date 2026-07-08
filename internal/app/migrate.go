@@ -96,3 +96,93 @@ func duplicateColumnErr(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists")
 }
+
+// ensureColumns auto-reconciles pure-additive columns: for every column declared in the base
+// schema (baseSchemaStmts — the single source of truth) that an older database is missing, it runs
+// a plain ADD COLUMN. Adding a column carries no data, so it needs no versioned migration step —
+// declare the column in createBaseSchema and existing databases pick it up on the next startup.
+// Only data MOVES (folding a side table into a column) and DROPS still need an explicit,
+// generation-gated step in migrate(). Runs after migrate() so it sees the post-fold shape; a
+// column a plain ALTER can't add (a new PK/UNIQUE, or one needing a backfill) surfaces as a hard
+// error here — the signal that it genuinely needs a migration instead.
+func (s *Store) ensureColumns() error {
+	for _, stmt := range s.baseSchemaStmts() {
+		table, cols, ok := parseCreateTable(stmt)
+		if !ok {
+			continue // not a CREATE TABLE (e.g. a CREATE INDEX statement)
+		}
+		for _, c := range cols {
+			if s.columnExists(table, c.name) {
+				continue
+			}
+			ddl := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, c.def)
+			if _, err := s.exec(ddl); err != nil && !duplicateColumnErr(err) {
+				return fmt.Errorf("ensure column %s.%s [%s]: %w", table, c.name, ddl, err)
+			}
+		}
+	}
+	return nil
+}
+
+// schemaCol is one parsed column: its name and its full definition (name + type + constraints),
+// the latter reused verbatim as the ADD COLUMN body.
+type schemaCol struct{ name, def string }
+
+// parseCreateTable pulls the table name and its plain column definitions out of a
+// "CREATE TABLE IF NOT EXISTS name(...)" statement. ok=false for anything else (CREATE INDEX).
+// Table-level constraints (PRIMARY KEY(...)/UNIQUE(...)/FOREIGN/CHECK/CONSTRAINT) and the primary
+// -key column itself are skipped: reconcile only ever adds a plain column, never a key.
+func parseCreateTable(stmt string) (table string, cols []schemaCol, ok bool) {
+	norm := strings.Join(strings.Fields(stmt), " ") // collapse the multi-line literal to one line
+	const prefix = "CREATE TABLE IF NOT EXISTS "
+	if !strings.HasPrefix(norm, prefix) {
+		return "", nil, false
+	}
+	rest := norm[len(prefix):]
+	open := strings.IndexByte(rest, '(')
+	if open < 0 {
+		return "", nil, false
+	}
+	table = strings.TrimSpace(rest[:open])
+	inner := rest[open+1:]
+	if i := strings.LastIndexByte(inner, ')'); i >= 0 {
+		inner = inner[:i] // drop the matching outer ')'
+	}
+	for _, item := range splitTopLevel(inner) {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		name := strings.Fields(item)[0]
+		switch strings.ToUpper(name) { // a table-level constraint, not a column
+		case "PRIMARY", "UNIQUE", "FOREIGN", "CHECK", "CONSTRAINT":
+			continue
+		}
+		if strings.Contains(strings.ToUpper(item), "PRIMARY KEY") {
+			continue // the PK column: can't be ALTER-added and is always present
+		}
+		cols = append(cols, schemaCol{name: name, def: item})
+	}
+	return table, cols, true
+}
+
+// splitTopLevel splits a comma-separated list, ignoring commas nested inside parentheses (e.g. a
+// composite "PRIMARY KEY(app_id, path)" constraint) so each column definition stays intact.
+func splitTopLevel(s string) []string {
+	var out []string
+	depth, start := 0, 0
+	for i, r := range s {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(out, s[start:])
+}

@@ -315,6 +315,7 @@
   "card.now": "現",
   "stock.asOf": "報告當時",
   "stock.timeline": "時間線",
+  "stock.export": "匯出",
   "stock.exportMd": "匯出 MD",
   "stock.exportPdf": "匯出 PDF",
   "stock.exportDay": "匯出本日全部",
@@ -367,6 +368,10 @@
   "links.shortcutTargetPlaceholder": "任意（開啟選擇器）",
   "links.hint": "拖動可調整順序；把入口拖到某個分組標題下面即可歸入該組。",
   "links.addGroup": "新增分組",
+  "links.editGroup": "編輯分組",
+  "links.groupName": "分組名稱",
+  "links.groupMode": "顯示方式",
+  "links.unnamedGroup": "未命名分組",
   "links.groupNamePlaceholder": "分組名",
   "links.showName": "顯示名稱",
   "links.deleteGroupConfirm": "刪除這個分組？組內入口會回到頂層（未分組）。",
@@ -569,5 +574,13 @@
   "chatAdmin.liveCount": "進行中 {{n}}",
   "batch.admin.minutes": "分鐘",
   "batch.admin.difyRunTimeout": "執行超時：",
-  "batch.admin.difyRunTimeoutHint": "單次執行等待/輪詢結果的上限;超過就放棄。必須大於你最長的工作流 —— 提前放棄會被誤判為失敗。預設 180。"
+  "batch.admin.difyRunTimeoutHint": "單次執行等待/輪詢結果的上限;超過就放棄。必須大於你最長的工作流 —— 提前放棄會被誤判為失敗。預設 180。",
+  "queue.itemDetails": "詳情",
+  "queue.reconcile": "對賬",
+  "queue.reconcileConfirm": "從 Dify 拉取該執行的真實結果(不會重跑)?",
+  "queue.reconcileDone": "對賬完成：{{status}}",
+  "queue.reconcileStillRunning": "仍在 Dify 執行中,未改動",
+  "queue.attempts": "嘗試次數",
+  "queue.startedAt": "開始時間",
+  "queue.finishedAt": "完成時間"
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { App, Button, Checkbox, Empty, Form, Input, Modal, Popconfirm, Radio, Select, Space, Switch, Tag, Typography, theme } from 'antd'
+import { App, Button, Checkbox, Empty, Form, Input, Modal, Popconfirm, Radio, Select, Space, Tag, Typography, theme } from 'antd'
 import { DeleteOutlined, EditOutlined, FolderAddOutlined, FolderOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
@@ -33,6 +33,9 @@ export default function LinksPage() {
   const [editing, setEditing] = useState<LinkItem | null>(null)
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
+  const [groupEditing, setGroupEditing] = useState<LinkGroup | null>(null)
+  const [groupOpen, setGroupOpen] = useState(false)
+  const [groupForm] = Form.useForm()
   const [batchTargets, setBatchTargets] = useState<BatchTarget[]>([])
   const [chatTargets, setChatTargets] = useState<ChatTarget[]>([])
   const [appList, setAppList] = useState<AppSummary[]>([])
@@ -132,14 +135,27 @@ export default function LinksPage() {
     persistLayout(next)
   }
 
-  const addGroup = async () => {
-    await api.post('/api/admin/link-groups', { name: '', mode: 'expand', showLabel: true })
-    load()
+  // Groups are edited through the same button→modal flow as links (no more always-live inline
+  // fields): "add group" opens a blank modal, the pencil on a group row opens it pre-filled.
+  const openGroupAdd = () => {
+    setGroupEditing(null)
+    groupForm.resetFields()
+    groupForm.setFieldsValue({ mode: 'expand', showLabel: true, icon: undefined })
+    setGroupOpen(true)
   }
-  const persistGroup = async (id: number, patch: Partial<LinkGroup>) => {
-    const g = { ...(groups.find((x) => x.id === id) as LinkGroup), ...patch }
-    setGroups((gs) => gs.map((x) => (x.id === id ? g : x)))
-    await api.put(`/api/admin/link-groups/${id}`, { name: g.name, mode: g.mode, showLabel: g.showLabel }).catch((e) => message.error((e as Error).message || 'failed'))
+  const openGroupEdit = (g: LinkGroup) => {
+    setGroupEditing(g)
+    groupForm.setFieldsValue({ name: g.name, mode: g.mode, showLabel: g.showLabel, icon: g.icon || undefined })
+    setGroupOpen(true)
+  }
+  const submitGroup = async () => {
+    const v = await groupForm.validateFields()
+    const payload = { name: (v.name || '').trim(), mode: v.mode, showLabel: !!v.showLabel, icon: v.icon || '' }
+    if (groupEditing) await api.put(`/api/admin/link-groups/${groupEditing.id}`, payload)
+    else await api.post('/api/admin/link-groups', payload)
+    setGroupOpen(false)
+    message.success(t('common.saved'))
+    load()
   }
   const deleteGroup = async (id: number) => {
     await api.del(`/api/admin/link-groups/${id}`)
@@ -207,43 +223,41 @@ export default function LinksPage() {
     )
   }
 
-  const groupHeader = (g: LinkGroup) => (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        flexWrap: 'wrap',
-        padding: '8px 10px',
-        borderRadius: 8,
-        background: token.colorFillSecondary,
-        border: `1px solid ${token.colorBorderSecondary}`,
-      }}
-    >
-      <DragHandle />
-      <FolderOutlined style={{ color: token.colorTextTertiary }} />
-      <Input
-        size="small"
-        style={{ width: 180 }}
-        placeholder={t('links.groupNamePlaceholder')}
-        value={g.name}
-        onChange={(e) => setGroups((gs) => gs.map((x) => (x.id === g.id ? { ...x, name: e.target.value } : x)))}
-        onBlur={(e) => persistGroup(g.id, { name: e.target.value.trim() })}
-        onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
-      />
-      <Select<LinkGroupMode> size="small" style={{ width: 120 }} value={g.mode} onChange={(v) => persistGroup(g.id, { mode: v })} options={modeOptions} />
-      <Space size={4}>
-        <Switch size="small" checked={g.showLabel} onChange={(v) => persistGroup(g.id, { showLabel: v })} />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {t('links.showName')}
+  const groupHeader = (g: LinkGroup) => {
+    const GroupIcon = g.icon ? linkIconComponent(g.icon) : FolderOutlined
+    const modeLabel = modeOptions.find((m) => m.value === g.mode)?.label ?? g.mode
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          padding: '8px 10px',
+          borderRadius: 8,
+          background: token.colorFillSecondary,
+          border: `1px solid ${token.colorBorderSecondary}`,
+        }}
+      >
+        <DragHandle />
+        <GroupIcon style={{ color: token.colorTextTertiary }} />
+        <Typography.Text strong={!!g.name} type={g.name ? undefined : 'secondary'}>
+          {g.name || t('links.unnamedGroup')}
         </Typography.Text>
-      </Space>
-      <div style={{ flex: 1 }} />
-      <Popconfirm title={t('links.deleteGroupConfirm')} onConfirm={() => deleteGroup(g.id)}>
-        <Button size="small" type="text" danger icon={<DeleteOutlined />} />
-      </Popconfirm>
-    </div>
-  )
+        <Tag>{modeLabel}</Tag>
+        {g.showLabel && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t('links.showName')}
+          </Typography.Text>
+        )}
+        <div style={{ flex: 1 }} />
+        <Button size="small" icon={<EditOutlined />} onClick={() => openGroupEdit(g)} />
+        <Popconfirm title={t('links.deleteGroupConfirm')} onConfirm={() => deleteGroup(g.id)}>
+          <Button size="small" danger icon={<DeleteOutlined />} />
+        </Popconfirm>
+      </div>
+    )
+  }
 
   const linkRow = (l: LinkItem) => {
     const Icon = linkIconComponent(l.icon)
@@ -285,7 +299,7 @@ export default function LinksPage() {
       <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
         <Typography.Text type="secondary">{t('links.hint')}</Typography.Text>
         <Space>
-          <Button icon={<FolderAddOutlined />} onClick={addGroup}>
+          <Button icon={<FolderAddOutlined />} onClick={openGroupAdd}>
             {t('links.addGroup')}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
@@ -309,6 +323,31 @@ export default function LinksPage() {
           </SortableContext>
         </DndContext>
       )}
+
+      <Modal
+        open={groupOpen}
+        title={groupEditing ? t('links.editGroup') : t('links.addGroup')}
+        onOk={submitGroup}
+        onCancel={() => setGroupOpen(false)}
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
+        destroyOnClose
+      >
+        <Form form={groupForm} layout="vertical">
+          <Form.Item name="name" label={t('links.groupName')}>
+            <Input placeholder={t('links.groupNamePlaceholder')} />
+          </Form.Item>
+          <Form.Item name="mode" label={t('links.groupMode')} initialValue="expand">
+            <Select<LinkGroupMode> options={modeOptions} />
+          </Form.Item>
+          <Form.Item name="icon" label={t('links.icon')}>
+            <Select allowClear showSearch placeholder={t('links.iconPlaceholder')} options={iconSelectOptions} optionFilterProp="value" />
+          </Form.Item>
+          <Form.Item name="showLabel" valuePropName="checked" initialValue>
+            <Checkbox>{t('links.showName')}</Checkbox>
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal open={open} title={editing ? t('common.edit') : t('common.add')} onOk={submit} onCancel={() => setOpen(false)} okText={t('common.save')} cancelText={t('common.cancel')} destroyOnClose>
         <Form form={form} layout="vertical" onValuesChange={onValuesChange}>

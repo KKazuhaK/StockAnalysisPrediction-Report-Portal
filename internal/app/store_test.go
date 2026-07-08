@@ -52,19 +52,19 @@ func TestLinkIconRoundTrip(t *testing.T) {
 // group returns its links to the top level (ungrouped).
 func TestLinkGroups(t *testing.T) {
 	st := newTestStore(t)
-	gid, err := st.AddLinkGroup("决策分析", "popover", true, 0)
+	gid, err := st.AddLinkGroup("决策分析", "popover", true, "bulb", 0)
 	if err != nil {
 		t.Fatalf("AddLinkGroup: %v", err)
 	}
 	gs := st.LinkGroups()
-	if len(gs) != 1 || gs[0].Mode != "popover" || !gs[0].ShowLabel {
-		t.Fatalf("groups = %+v, want one popover/show-label group", gs)
+	if len(gs) != 1 || gs[0].Mode != "popover" || !gs[0].ShowLabel || gs[0].Icon != "bulb" {
+		t.Fatalf("groups = %+v, want one popover/show-label/bulb group", gs)
 	}
-	if err := st.UpdateLinkGroup(gid, "决策", "modal", false); err != nil {
+	if err := st.UpdateLinkGroup(gid, "决策", "modal", false, "rocket"); err != nil {
 		t.Fatalf("UpdateLinkGroup: %v", err)
 	}
-	if gs = st.LinkGroups(); gs[0].Name != "决策" || gs[0].Mode != "modal" || gs[0].ShowLabel {
-		t.Fatalf("after update = %+v, want 决策/modal/no-label", gs[0])
+	if gs = st.LinkGroups(); gs[0].Name != "决策" || gs[0].Mode != "modal" || gs[0].ShowLabel || gs[0].Icon != "rocket" {
+		t.Fatalf("after update = %+v, want 决策/modal/no-label/rocket", gs[0])
 	}
 
 	// Two links; assign one into the group, keep one top-level.

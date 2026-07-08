@@ -315,6 +315,7 @@
   "card.now": "now",
   "stock.asOf": "as of report",
   "stock.timeline": "Timeline",
+  "stock.export": "Export",
   "stock.exportMd": "Export MD",
   "stock.exportPdf": "Export PDF",
   "stock.exportDay": "Export all (this day)",
@@ -367,6 +368,10 @@
   "links.shortcutTargetPlaceholder": "Any (open picker)",
   "links.hint": "Drag to reorder; drop a link under a group header to put it in that group.",
   "links.addGroup": "Add group",
+  "links.editGroup": "Edit group",
+  "links.groupName": "Group name",
+  "links.groupMode": "Display style",
+  "links.unnamedGroup": "Unnamed group",
   "links.groupNamePlaceholder": "Group name",
   "links.showName": "Show name",
   "links.deleteGroupConfirm": "Delete this group? Its links move back to the top level.",
@@ -569,5 +574,13 @@
   "chatAdmin.liveCount": "{{n}} in progress",
   "batch.admin.minutes": "minutes",
   "batch.admin.difyRunTimeout": "Run timeout:",
-  "batch.admin.difyRunTimeoutHint": "Max time to wait/poll for one run before giving up. Must exceed your longest workflow — a run cut short is wrongly marked failed. Default 180."
+  "batch.admin.difyRunTimeoutHint": "Max time to wait/poll for one run before giving up. Must exceed your longest workflow — a run cut short is wrongly marked failed. Default 180.",
+  "queue.itemDetails": "Details",
+  "queue.reconcile": "Reconcile",
+  "queue.reconcileConfirm": "Fetch this run's true outcome from Dify without re-running it?",
+  "queue.reconcileDone": "Reconciled: {{status}}",
+  "queue.reconcileStillRunning": "Still running on Dify — left unchanged",
+  "queue.attempts": "Attempts",
+  "queue.startedAt": "Started",
+  "queue.finishedAt": "Finished"
 }
