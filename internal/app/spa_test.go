@@ -134,7 +134,8 @@ func TestSpaInjectsServiceWorkerVersion(t *testing.T) {
 // first paint isn't the default (no flash, and the default favicon isn't fetched).
 func TestSpaInjectsBranding(t *testing.T) {
 	fsys := fstest.MapFS{
-		"index.html": {Data: []byte(`<head><title>` + defaultSiteTitle + `</title><link rel="icon" type="image/svg+xml" href="/favicon.svg" /></head>`)},
+		"index.html": {Data: []byte(`<head><title>` + defaultSiteTitle + `</title><link rel="icon" type="image/svg+xml" href="/favicon.svg" /></head>` +
+			`<body><div id="boot-splash"><!--RP_BOOT_LOGO_START--><svg>default</svg><!--RP_BOOT_LOGO_END--></div></body>`)},
 	}
 	brand := func() (string, string) { return "MyPortal", "/site-assets/logo.png" }
 	h := spaHandlerFS(fsys, brand, "test")
@@ -150,6 +151,13 @@ func TestSpaInjectsBranding(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/site-assets/logo.png"`) {
 		t.Errorf("custom logo favicon not injected: %q", body)
+	}
+	// The boot splash shows the site logo, not the default mark.
+	if strings.Contains(body, "<svg>default</svg>") {
+		t.Errorf("default boot-splash mark still present: %q", body)
+	}
+	if !strings.Contains(body, `<img src="/site-assets/logo.png" alt="" />`) {
+		t.Errorf("boot-splash logo not injected: %q", body)
 	}
 }
 

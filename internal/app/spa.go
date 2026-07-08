@@ -174,6 +174,25 @@ func brandIndex(index []byte, brand spaBranding) []byte {
 		out = bytes.Replace(out,
 			[]byte(`<link rel="icon" type="image/svg+xml" href="/favicon.svg" />`),
 			[]byte(`<link rel="icon" href="`+html.EscapeString(favicon)+`" />`), 1)
+		out = replaceBootLogo(out, favicon)
 	}
 	return out
+}
+
+// replaceBootLogo swaps the marker-delimited default splash mark for the site logo, so the
+// boot splash (before the SPA mounts) shows the real brand instead of the default icon.
+func replaceBootLogo(html_ []byte, logo string) []byte {
+	start := []byte("<!--RP_BOOT_LOGO_START-->")
+	end := []byte("<!--RP_BOOT_LOGO_END-->")
+	i := bytes.Index(html_, start)
+	if i < 0 {
+		return html_
+	}
+	j := bytes.Index(html_[i:], end)
+	if j < 0 {
+		return html_
+	}
+	j = i + j + len(end)
+	img := []byte(`<img src="` + html.EscapeString(logo) + `" alt="" />`)
+	return append(append(append([]byte{}, html_[:i]...), img...), html_[j:]...)
 }
