@@ -241,7 +241,7 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 		"groups":   groupsJSON(groups[lo:hi]),
 		"newTotal": newTotal, "oldTotal": oldTotal, "totalRuns": totalRuns,
 		"page": page, "pages": pages, "size": size,
-		"types": types, "kinds": kinds, "links": linksJSON(s.st.Links()),
+		"types": types, "kinds": kinds, "links": linksJSON(s.st.Links()), "linkGroups": linkGroupsJSON(s.st.LinkGroups()),
 		"kindColors": s.st.KindColors(),
 	})
 }
@@ -397,27 +397,35 @@ func repJSON(rep *Rep, nameOf func(string) string) map[string]any {
 func linksJSON(ls []Link) []map[string]any {
 	out := make([]map[string]any, 0, len(ls))
 	for _, l := range ls {
-		out = append(out, map[string]any{"id": l.ID, "label": l.Label, "url": l.URL, "icon": l.Icon, "newTab": l.NewTab, "collapsed": l.Collapsed, "ord": l.Ord})
+		out = append(out, map[string]any{"id": l.ID, "label": l.Label, "url": l.URL, "icon": l.Icon, "newTab": l.NewTab, "groupId": l.GroupID, "ord": l.Ord})
+	}
+	return out
+}
+
+func linkGroupsJSON(gs []LinkGroup) []map[string]any {
+	out := make([]map[string]any, 0, len(gs))
+	for _, g := range gs {
+		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "mode": g.Mode, "showLabel": g.ShowLabel, "ord": g.Ord})
 	}
 	return out
 }
 
 func (s *Server) apiAdminLinks(w http.ResponseWriter, r *http.Request, user string) {
-	writeJSON(w, map[string]any{"links": linksJSON(s.st.Links())})
+	writeJSON(w, map[string]any{"links": linksJSON(s.st.Links()), "groups": linkGroupsJSON(s.st.LinkGroups())})
 }
 
 func (s *Server) apiLinkAdd(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		Label, URL, Icon string
 		NewTab           *bool // pointer so an omitted field defaults to true (open in new tab)
-		Collapsed        bool  // fold into the home-page "More" dropdown (default false)
 	}
 	readJSON(r, &in)
 	ord := 0
 	if ls := s.st.Links(); len(ls) > 0 {
 		ord = ls[len(ls)-1].Ord + 1
 	}
-	s.st.AddLink(strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab, in.Collapsed, ord)
+	// New links start ungrouped (top-level); grouping is done by dragging in the layout.
+	s.st.AddLink(strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab, 0, ord)
 	writeJSON(w, okJSON)
 }
 
@@ -425,10 +433,9 @@ func (s *Server) apiLinkEdit(w http.ResponseWriter, r *http.Request, user string
 	var in struct {
 		Label, URL, Icon string
 		NewTab           *bool
-		Collapsed        bool
 	}
 	readJSON(r, &in)
-	s.st.UpdateLinkFields(pathID(r, "id"), strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab, in.Collapsed)
+	s.st.UpdateLinkFields(pathID(r, "id"), strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab)
 	writeJSON(w, okJSON)
 }
 
@@ -437,14 +444,71 @@ func (s *Server) apiLinkDelete(w http.ResponseWriter, r *http.Request, user stri
 	writeJSON(w, okJSON)
 }
 
-func (s *Server) apiLinkReorder(w http.ResponseWriter, r *http.Request, user string) {
+// apiLinkLayout persists the whole entry-button layout in one shot: the ordered mix of group
+// headers and links (from the admin's single drag list). Walked once — each group gets its
+// order; each link is assigned to the most recent group above it (0 = top-level) + an order.
+func (s *Server) apiLinkLayout(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		IDs []int64 `json:"ids"`
+		Items []struct {
+			Kind string `json:"kind"` // "group" | "link"
+			ID   int64  `json:"id"`
+		} `json:"items"`
 	}
 	readJSON(r, &in)
-	for i, id := range in.IDs {
-		s.st.SetLinkOrder(id, i)
+	groupOrd, linkOrd := 0, 0
+	var current int64
+	for _, it := range in.Items {
+		if it.Kind == "group" {
+			s.st.SetLinkGroupOrder(it.ID, groupOrd)
+			groupOrd++
+			current = it.ID
+		} else {
+			s.st.SetLinkGroupAndOrder(it.ID, current, linkOrd)
+			linkOrd++
+		}
 	}
+	writeJSON(w, okJSON)
+}
+
+func normalizeLinkGroupMode(m string) string {
+	switch m {
+	case "row", "expand", "popover", "modal":
+		return m
+	default:
+		return "row"
+	}
+}
+
+func (s *Server) apiLinkGroupAdd(w http.ResponseWriter, r *http.Request, user string) {
+	var in struct {
+		Name, Mode string
+		ShowLabel  *bool
+	}
+	readJSON(r, &in)
+	ord := 0
+	if gs := s.st.LinkGroups(); len(gs) > 0 {
+		ord = gs[len(gs)-1].Ord + 1
+	}
+	id, err := s.st.AddLinkGroup(strings.TrimSpace(in.Name), normalizeLinkGroupMode(in.Mode), in.ShowLabel == nil || *in.ShowLabel, ord)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"id": id})
+}
+
+func (s *Server) apiLinkGroupEdit(w http.ResponseWriter, r *http.Request, user string) {
+	var in struct {
+		Name, Mode string
+		ShowLabel  *bool
+	}
+	readJSON(r, &in)
+	s.st.UpdateLinkGroup(pathID(r, "id"), strings.TrimSpace(in.Name), normalizeLinkGroupMode(in.Mode), in.ShowLabel == nil || *in.ShowLabel)
+	writeJSON(w, okJSON)
+}
+
+func (s *Server) apiLinkGroupDelete(w http.ResponseWriter, r *http.Request, user string) {
+	s.st.DeleteLinkGroup(pathID(r, "id"))
 	writeJSON(w, okJSON)
 }
 

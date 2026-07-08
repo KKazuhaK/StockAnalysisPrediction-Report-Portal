@@ -221,6 +221,7 @@ export interface HomeResp {
   types: string[]
   kinds: string[] // 大类 (top-level categories) for the home filter
   links: LinkItem[]
+  linkGroups: LinkGroup[] // named, foldable groups of entry buttons
   kindColors: Record<string, string> // 大类 → antd Tag preset color, admin-configured
 }
 
@@ -263,7 +264,18 @@ export interface LinkItem {
   url: string
   icon?: string
   newTab?: boolean // open in a new tab (default true)
-  collapsed?: boolean // fold into the home-page "More" dropdown instead of showing inline
+  groupId?: number // the group it belongs to, or 0/undefined = ungrouped (top-level, inline)
+  ord: number
+}
+
+// How a link group renders on the home page.
+export type LinkGroupMode = 'row' | 'expand' | 'popover' | 'modal'
+
+export interface LinkGroup {
+  id: number
+  name: string
+  mode: LinkGroupMode // row (own always-visible row) | expand | popover | modal
+  showLabel: boolean // show the group name (mainly for row mode)
   ord: number
 }
 

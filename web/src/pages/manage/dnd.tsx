@@ -56,6 +56,26 @@ export function SortableRow(props: React.HTMLAttributes<HTMLTableRowElement> & {
 
 export const sortableTableComponents = { body: { row: SortableRow } }
 
+// SortableItem is the non-table equivalent of SortableRow: a sortable <div> that exposes a
+// DragHandle via context. Use it inside SortableWrapper for custom lists (e.g. a mix of
+// group headers and links) that a Table can't model.
+export function SortableItem({ id, children }: { id: string; children: ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    ...(isDragging ? { position: 'relative', zIndex: 999 } : {}),
+  }
+  const ctx = useMemo<RowCtx>(() => ({ setActivatorNodeRef, listeners }), [setActivatorNodeRef, listeners])
+  return (
+    <RowContext.Provider value={ctx}>
+      <div ref={setNodeRef} style={style} {...attributes}>
+        {children}
+      </div>
+    </RowContext.Provider>
+  )
+}
+
 // SortableWrapper provides DndContext + SortableContext; onReorder receives the reordered key sequence.
 export function SortableWrapper({
   ids,

@@ -17,7 +17,7 @@ import {
   theme,
   Typography,
 } from 'antd'
-import { EllipsisOutlined } from '@ant-design/icons'
+import { DownOutlined } from '@ant-design/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
@@ -34,7 +34,7 @@ const { RangePicker } = DatePicker
 
 export default function HomePage() {
   const { t } = useTranslation()
-  const { title, settings } = useSite()
+  const { title } = useSite()
   const { token } = theme.useToken()
   const navigate = useNavigate()
   const { can } = useAuth()
@@ -42,7 +42,7 @@ export default function HomePage() {
   const [sp, setSp] = useSearchParams()
   const [data, setData] = useState<HomeResp | null>(null)
   const [loading, setLoading] = useState(true)
-  const [moreOpen, setMoreOpen] = useState(false) // home-page "More": expand/modal/popover reveal state
+  const [openGroups, setOpenGroups] = useState<Record<number, boolean>>({}) // per-group reveal state (expand/modal/popover)
   const [form] = Form.useForm()
 
   const params = useMemo(
@@ -142,10 +142,45 @@ export default function HomePage() {
     )
   }
   const allLinks = data?.links || []
-  const inlineLinks = allLinks.filter((l) => !l.collapsed)
-  // Collapsed links fold into a "More" popover; drop any hidden by run-batch gating so the
-  // popover (and its trigger) never render empty.
-  const moreButtons = allLinks.filter((l) => l.collapsed).map(renderLink).filter(Boolean)
+  const linkGroups = [...(data?.linkGroups || [])].sort((a, b) => a.ord - b.ord)
+  const topLinks = allLinks.filter((l) => !(l.groupId && l.groupId > 0))
+  // A group's buttons (run-batch-gated ones dropped), memo-free: recomputed per render is cheap.
+  const groupButtons = (gid: number) =>
+    allLinks
+      .filter((l) => l.groupId === gid)
+      .sort((a, b) => a.ord - b.ord)
+      .map(renderLink)
+      .filter(Boolean)
+  const toggleGroup = (id: number) => setOpenGroups((o) => ({ ...o, [id]: !o[id] }))
+  // A folded group (expand/popover/modal) shows one trigger button labeled with its name.
+  const renderTrigger = (g: (typeof linkGroups)[number]) => {
+    const buttons = groupButtons(g.id)
+    if (buttons.length === 0) return null
+    const label = g.name || t('home.more')
+    const trigger = (
+      <Button key={g.id} icon={<DownOutlined />} onClick={g.mode === 'popover' ? undefined : () => toggleGroup(g.id)}>
+        {label}
+      </Button>
+    )
+    if (g.mode === 'popover') {
+      return (
+        <Popover
+          key={g.id}
+          trigger="click"
+          open={!!openGroups[g.id]}
+          onOpenChange={(v) => setOpenGroups((o) => ({ ...o, [g.id]: v }))}
+          content={
+            <Space size={[8, 8]} wrap style={{ maxWidth: 320 }} onClickCapture={() => setOpenGroups((o) => ({ ...o, [g.id]: false }))}>
+              {buttons}
+            </Space>
+          }
+        >
+          <Button icon={<DownOutlined />}>{label}</Button>
+        </Popover>
+      )
+    }
+    return trigger
+  }
 
   return (
     <Space direction="vertical" size={24} style={{ width: '100%' }}>
@@ -163,51 +198,53 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Quick links: inline buttons, with less-used ones folded behind "More". How "More"
-          reveals them (inline expand / popup / floating) is an admin site setting. */}
-      {!!allLinks.length && (
+      {/* Quick links: ungrouped buttons inline + admin-defined groups, each shown per its
+          own mode (own row / inline expand / floating popover / modal dialog). */}
+      {(topLinks.length > 0 || linkGroups.length > 0) && (
         <div style={{ textAlign: 'center' }}>
-          <Space size={[8, 8]} wrap>
-            {inlineLinks.map(renderLink)}
-            {moreButtons.length > 0 &&
-              (settings.homeMoreStyle === 'popover' ? (
-                <Popover
-                  trigger="click"
-                  open={moreOpen}
-                  onOpenChange={setMoreOpen}
-                  content={
-                    <Space size={[8, 8]} wrap style={{ maxWidth: 320 }} onClickCapture={() => setMoreOpen(false)}>
-                      {moreButtons}
-                    </Space>
-                  }
-                >
-                  <Button icon={<EllipsisOutlined />}>{t('home.more')}</Button>
-                </Popover>
-              ) : (
-                <Button icon={<EllipsisOutlined />} onClick={() => setMoreOpen((o) => !o)}>
-                  {t('home.more')}
-                </Button>
-              ))}
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            {/* Main inline row: top-level links + the folding groups' triggers. */}
+            <Space size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
+              {topLinks.map(renderLink)}
+              {linkGroups.filter((g) => g.mode !== 'row').map(renderTrigger)}
+            </Space>
+            {/* Own-row groups, and inline-expand groups when open — each on its own line. */}
+            {linkGroups.map((g) => {
+              const buttons = groupButtons(g.id)
+              if (buttons.length === 0) return null
+              if (g.mode === 'row')
+                return (
+                  <Space key={g.id} size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
+                    {g.showLabel && g.name && (
+                      <Typography.Text type="secondary" style={{ marginInlineEnd: 4 }}>
+                        {g.name}
+                      </Typography.Text>
+                    )}
+                    {buttons}
+                  </Space>
+                )
+              if (g.mode === 'expand' && openGroups[g.id])
+                return (
+                  <Space key={g.id} size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
+                    {buttons}
+                  </Space>
+                )
+              return null
+            })}
           </Space>
-          {/* Inline: the folded links expand in a row right below the main row. */}
-          {settings.homeMoreStyle === 'expand' && moreOpen && moreButtons.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <Space size={[8, 8]} wrap onClickCapture={() => setMoreOpen(false)}>
-                {moreButtons}
-              </Space>
-            </div>
-          )}
         </div>
       )}
 
-      {/* Popup: the folded links open in a centered modal. */}
-      {settings.homeMoreStyle === 'modal' && (
-        <Modal open={moreOpen} onCancel={() => setMoreOpen(false)} footer={null} title={t('home.more')}>
-          <Space size={[8, 8]} wrap onClickCapture={() => setMoreOpen(false)}>
-            {moreButtons}
-          </Space>
-        </Modal>
-      )}
+      {/* Modal-mode groups open their buttons in a centered dialog. */}
+      {linkGroups
+        .filter((g) => g.mode === 'modal')
+        .map((g) => (
+          <Modal key={g.id} open={!!openGroups[g.id]} onCancel={() => setOpenGroups((o) => ({ ...o, [g.id]: false }))} footer={null} title={g.name || t('home.more')}>
+            <Space size={[8, 8]} wrap onClickCapture={() => setOpenGroups((o) => ({ ...o, [g.id]: false }))}>
+              {groupButtons(g.id)}
+            </Space>
+          </Modal>
+        ))}
 
       {/* Advanced search (collapsible) */}
       <Collapse
