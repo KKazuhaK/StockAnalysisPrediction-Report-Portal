@@ -171,9 +171,15 @@ func brandIndex(index []byte, brand spaBranding) []byte {
 			[]byte("<title>"+html.EscapeString(title)+"</title>"), 1)
 	}
 	if favicon != "" {
+		esc := html.EscapeString(favicon)
 		out = bytes.Replace(out,
 			[]byte(`<link rel="icon" type="image/svg+xml" href="/favicon.svg" />`),
-			[]byte(`<link rel="icon" href="`+html.EscapeString(favicon)+`" />`), 1)
+			[]byte(`<link rel="icon" href="`+esc+`" />`), 1)
+		// Point the apple-touch-icon at the same logo URL (not /pwa-icon), so every logo
+		// reference resolves to one cacheable URL — the browser fetches it once, no 302.
+		out = bytes.Replace(out,
+			[]byte(`<link rel="apple-touch-icon" href="/pwa-icon" />`),
+			[]byte(`<link rel="apple-touch-icon" href="`+esc+`" />`), 1)
 		out = replaceBootLogo(out, favicon)
 	}
 	return out

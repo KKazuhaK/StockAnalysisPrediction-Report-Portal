@@ -134,7 +134,9 @@ func TestSpaInjectsServiceWorkerVersion(t *testing.T) {
 // first paint isn't the default (no flash, and the default favicon isn't fetched).
 func TestSpaInjectsBranding(t *testing.T) {
 	fsys := fstest.MapFS{
-		"index.html": {Data: []byte(`<head><title>` + defaultSiteTitle + `</title><link rel="icon" type="image/svg+xml" href="/favicon.svg" /></head>` +
+		"index.html": {Data: []byte(`<head><title>` + defaultSiteTitle + `</title>` +
+			`<link rel="icon" type="image/svg+xml" href="/favicon.svg" />` +
+			`<link rel="apple-touch-icon" href="/pwa-icon" /></head>` +
 			`<body><div id="boot-splash"><!--RP_BOOT_LOGO_START--><svg>default</svg><!--RP_BOOT_LOGO_END--></div></body>`)},
 	}
 	brand := func() (string, string) { return "MyPortal", "/site-assets/logo.png" }
@@ -158,6 +160,13 @@ func TestSpaInjectsBranding(t *testing.T) {
 	}
 	if !strings.Contains(body, `<img src="/site-assets/logo.png" alt="" />`) {
 		t.Errorf("boot-splash logo not injected: %q", body)
+	}
+	// apple-touch-icon points at the logo (one cacheable URL), not /pwa-icon.
+	if strings.Contains(body, `href="/pwa-icon"`) {
+		t.Errorf("apple-touch-icon still points at /pwa-icon (extra 302): %q", body)
+	}
+	if !strings.Contains(body, `<link rel="apple-touch-icon" href="/site-assets/logo.png" />`) {
+		t.Errorf("apple-touch-icon not pointed at the logo: %q", body)
 	}
 }
 

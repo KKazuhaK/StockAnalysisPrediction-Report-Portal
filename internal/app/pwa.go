@@ -35,8 +35,23 @@ func (s *Server) pwaManifest(w http.ResponseWriter, r *http.Request) {
 		"background_color":            "#ffffff",
 		"theme_color":                 "#1677ff",
 		"prefer_related_applications": false,
-		"icons":                       pwaIconEntries(s.pwaIconMime()),
+		"icons":                       pwaIconEntries(s.pwaIconSrc(), s.pwaIconMime()),
 	})
+}
+
+// pwaIconSrc is the URL the manifest advertises for the app icon. When the logo is a
+// same-origin path it points straight at it (so the browser reuses the one cached logo and
+// skips the /pwa-icon 302); otherwise it uses /pwa-icon (which serves the generated default,
+// a data URL, or redirects to an external logo).
+func (s *Server) pwaIconSrc() string {
+	logo := strings.TrimSpace(s.st.GetSetting("pwa_icon_url", ""))
+	if logo == "" {
+		logo = strings.TrimSpace(s.st.GetSetting("site_logo_url", ""))
+	}
+	if strings.HasPrefix(logo, "/") && validSiteLogoURL(logo) {
+		return logo
+	}
+	return "/pwa-icon"
 }
 
 // pwaIconEntries builds the manifest `icons` array for the served icon's MIME type.
@@ -45,16 +60,16 @@ func (s *Server) pwaManifest(w http.ResponseWriter, r *http.Request) {
 // single scalable "any" icon with its own type (a fixed pixel `sizes` on an SVG fails
 // Chrome's install check, which is why the old SVG-as-192x192 manifest was never
 // installable).
-func pwaIconEntries(mime string) []map[string]string {
+func pwaIconEntries(src, mime string) []map[string]string {
 	if mime == "image/svg+xml" {
 		return []map[string]string{
-			{"src": "/pwa-icon", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
+			{"src": src, "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
 		}
 	}
 	return []map[string]string{
-		{"src": "/pwa-icon", "sizes": "192x192", "type": mime, "purpose": "any"},
-		{"src": "/pwa-icon", "sizes": "512x512", "type": mime, "purpose": "any"},
-		{"src": "/pwa-icon", "sizes": "512x512", "type": mime, "purpose": "maskable"},
+		{"src": src, "sizes": "192x192", "type": mime, "purpose": "any"},
+		{"src": src, "sizes": "512x512", "type": mime, "purpose": "any"},
+		{"src": src, "sizes": "512x512", "type": mime, "purpose": "maskable"},
 	}
 }
 

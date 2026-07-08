@@ -25,11 +25,14 @@ func TestDefaultPWAIconIsPNG(t *testing.T) {
 // The manifest advertises raster icons at the 192/512 sizes browsers require, and an SVG
 // only as a scalable "any" icon.
 func TestPWAIconEntries(t *testing.T) {
-	raster := pwaIconEntries("image/png")
+	raster := pwaIconEntries("/site-assets/logo.png", "image/png")
 	has192, has512 := false, false
 	for _, e := range raster {
 		if e["type"] != "image/png" {
 			t.Fatalf("raster entry type = %q, want image/png", e["type"])
+		}
+		if e["src"] != "/site-assets/logo.png" {
+			t.Fatalf("raster entry src = %q, want the passed logo url", e["src"])
 		}
 		if e["sizes"] == "192x192" {
 			has192 = true
@@ -42,7 +45,7 @@ func TestPWAIconEntries(t *testing.T) {
 		t.Fatalf("raster manifest missing 192/512 icons: %+v", raster)
 	}
 
-	svg := pwaIconEntries("image/svg+xml")
+	svg := pwaIconEntries("/pwa-icon", "image/svg+xml")
 	if len(svg) != 1 || svg[0]["sizes"] != "any" || svg[0]["type"] != "image/svg+xml" {
 		t.Fatalf("svg manifest = %+v, want a single any/svg entry", svg)
 	}
