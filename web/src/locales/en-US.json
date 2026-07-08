@@ -629,5 +629,10 @@
   "batch.admin.presetsHint": "Users can pick one of these when running; the run is scheduled into that window.",
   "common.ok": "OK",
   "preset.windows": "Windows",
-  "preset.addInterval": "Add window"
+  "preset.addInterval": "Add window",
+  "chat.stop": "Stop",
+  "chat.stopped": "stopped",
+  "chatAdmin.stop": "Stop",
+  "chatAdmin.stopConfirm": "Stop this chat turn?",
+  "chatAdmin.stopped": "Turn stopped"
 }

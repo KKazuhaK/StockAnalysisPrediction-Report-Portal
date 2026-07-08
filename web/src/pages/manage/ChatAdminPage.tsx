@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { App, Button, Card, Empty, InputNumber, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
+import { App, Button, Card, Empty, InputNumber, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
+import { ReloadOutlined, StopOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import { formatReportTime } from '../../lib/datetime'
@@ -62,6 +62,18 @@ export default function ChatAdminPage() {
     message.success(t('common.saved'))
   }
 
+  // Stop any in-flight turn from the live view: cancels the Dify stream + best-effort stops the
+  // run server-side (runs as the turn's own end-user, not the admin).
+  const stop = async (id: number) => {
+    try {
+      await api.post(`/api/admin/chat/stop/${id}`)
+      message.success(t('chatAdmin.stopped'))
+      load()
+    } catch (e) {
+      message.error((e as Error).message || 'failed')
+    }
+  }
+
   const columns = [
     { title: t('chatAdmin.colUser'), dataIndex: 'user', key: 'user' },
     { title: t('chatAdmin.colTarget'), dataIndex: 'target', key: 'target' },
@@ -79,6 +91,16 @@ export default function ChatAdminPage() {
         <Tooltip title={formatReportTime(v, true)}>
           <span>{elapsed(v)}</span>
         </Tooltip>
+      ),
+    },
+    {
+      title: '',
+      key: 'actions',
+      width: 48,
+      render: (_: unknown, r: ChatLiveTurn) => (
+        <Popconfirm title={t('chatAdmin.stopConfirm')} onConfirm={() => stop(r.id)} okButtonProps={{ danger: true }}>
+          <Button size="small" type="text" danger icon={<StopOutlined />} title={t('chatAdmin.stop')} />
+        </Popconfirm>
       ),
     },
   ]

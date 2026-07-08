@@ -629,5 +629,10 @@
   "batch.admin.presetsHint": "使用者可在執行時選擇這些時段，任務將排到該時段執行。",
   "common.ok": "確定",
   "preset.windows": "時段",
-  "preset.addInterval": "加一段"
+  "preset.addInterval": "加一段",
+  "chat.stop": "停止",
+  "chat.stopped": "已停止",
+  "chatAdmin.stop": "停止",
+  "chatAdmin.stopConfirm": "停止這個聊天回合?",
+  "chatAdmin.stopped": "已停止該回合"
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { App, Avatar, Button, Drawer, Dropdown, Empty, Grid, Input, Modal, Select, Spin, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
-import { ArrowUpOutlined, DeleteOutlined, EditOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined, UnorderedListOutlined } from '@ant-design/icons'
+import { ArrowUpOutlined, DeleteOutlined, EditOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined, StopOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError } from '../api/client'
@@ -201,8 +201,10 @@ export default function ChatPage() {
     setConvs((cs) => cs.map((c) => (c.id === id && !c.title ? { ...c, title: q.length > 24 ? q.slice(0, 24) + '…' : q } : c)))
     setSending(true)
     try {
-      const r = await api.post<{ answer: string }>(`/api/chat/conversations/${id}/messages`, { query: q })
-      setMsgs((m) => [...m, { role: 'assistant', content: r.answer || '' }])
+      const r = await api.post<{ answer: string; stopped?: boolean }>(`/api/chat/conversations/${id}/messages`, { query: q })
+      // A stopped turn returns its partial answer + stopped:true; show the partial, or a muted
+      // note if the turn was stopped before anything streamed.
+      setMsgs((m) => [...m, { role: 'assistant', content: r.answer || (r.stopped ? '_' + t('chat.stopped') + '_' : '') }])
       loadConvs(targetId) // refresh titles + ordering
     } catch (e) {
       // The assistant is at its concurrency ceiling — nothing was sent. Undo the optimistic
@@ -216,6 +218,18 @@ export default function ChatPage() {
       }
     } finally {
       setSending(false)
+    }
+  }
+
+  // Stop the in-flight turn: the backend cancels the Dify stream (the send() promise then
+  // resolves with the partial answer + stopped:true) and best-effort stops the Dify run so it
+  // stops billing.
+  const stopTurn = async () => {
+    if (!convId || !sending) return
+    try {
+      await api.post(`/api/chat/conversations/${convId}/stop`)
+    } catch {
+      /* best-effort — the pending send() still resolves and renders the partial */
     }
   }
 
@@ -361,15 +375,11 @@ export default function ChatPage() {
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {t('chat.enterHint')}
         </Typography.Text>
-        <Button
-          type="primary"
-          shape="circle"
-          icon={<ArrowUpOutlined />}
-          loading={sending}
-          disabled={!input.trim()}
-          onClick={() => send()}
-          title={t('chat.send')}
-        />
+        {sending ? (
+          <Button shape="circle" danger icon={<StopOutlined />} onClick={stopTurn} title={t('chat.stop')} />
+        ) : (
+          <Button type="primary" shape="circle" icon={<ArrowUpOutlined />} disabled={!input.trim()} onClick={() => send()} title={t('chat.send')} />
+        )}
       </div>
     </div>
   )
