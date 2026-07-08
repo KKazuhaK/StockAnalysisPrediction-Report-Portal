@@ -28,9 +28,11 @@
           background: #141414;
         }
       }
-      #boot-splash svg {
+      #boot-splash svg,
+      #boot-splash img {
         width: 40px;
         height: 40px;
+        object-fit: contain;
       }
       #boot-splash .ring {
         width: 28px;
@@ -50,6 +52,7 @@
   <body>
     <div id="root">
       <div id="boot-splash">
+        <!--RP_BOOT_LOGO_START-->
         <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <rect width="32" height="32" rx="7" fill="#1677ff" />
           <path
@@ -62,6 +65,7 @@
           />
           <circle cx="25" cy="9" r="2.1" fill="#fff" />
         </svg>
+        <!--RP_BOOT_LOGO_END-->
         <div class="ring"></div>
       </div>
     </div>
