@@ -191,7 +191,7 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	uid := deriveUID(firstNonEmpty(in.Symbol, in.Title), in.Date, rtype)
 	// Freeze the as-of name onto this report row: an explicit payload name wins,
 	// otherwise resolve the current live name (rename-safe; earlier reports keep theirs).
-	name := in.Name
+	name := cleanName(in.Name)
 	if name == "" {
 		name = s.names.Resolve(in.Symbol)
 	}

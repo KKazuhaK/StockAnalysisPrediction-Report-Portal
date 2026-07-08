@@ -951,7 +951,7 @@ func (s *Store) SyncStocks(m map[string]string) {
 	}
 	now := nowStr()
 	for code, name := range m {
-		stmt.Exec(code, name, now)
+		stmt.Exec(code, cleanName(name), now)
 	}
 	stmt.Close()
 	tx.Commit()

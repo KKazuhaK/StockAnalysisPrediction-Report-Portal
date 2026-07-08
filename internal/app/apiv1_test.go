@@ -156,6 +156,28 @@ func TestV1IngestDoesNotPersistDerivedHTML(t *testing.T) {
 	}
 }
 
+// An explicit payload name wins over a live-resolved one (see v1Ingest), but the caller's
+// company-info tool can itself return a padded name (eastmoney does) — that must come out
+// clean on the frozen row too, not just when report-portal resolves the name itself.
+func TestV1IngestCleansExplicitName(t *testing.T) {
+	s := newV1Server(t)
+	req := httptest.NewRequest("POST", "/api/v1/reports", strings.NewReader(
+		`{"symbol":"000528","date":"2026-07-02","subtype":"综合决策","name":"柳    工","body_md":"# hi"}`))
+	req.Header.Set("Authorization", "Bearer tok-all")
+	rec := httptest.NewRecorder()
+	s.v1Ingest(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ingest status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	rep := s.st.GetByUID("000528|2026-07-02|综合决策")
+	if rep == nil {
+		t.Fatal("report not found")
+	}
+	if rep.Name != "柳工" {
+		t.Errorf("stored Name = %q, want 柳工 (cleaned)", rep.Name)
+	}
+}
+
 // The v1 API's report identity is the numeric rid ("n123"): ingest returns it as
 // "uid", and GET/{id} resolves it — while the internal composite uid still works for
 // back-compat. The field/route name stays "uid" so external callers (Dify) don't change.

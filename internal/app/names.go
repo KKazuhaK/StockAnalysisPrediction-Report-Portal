@@ -166,6 +166,12 @@ func FetchAShareNames() (map[string]string, error) {
 	return m, nil
 }
 
+// cleanName strips whitespace eastmoney sometimes pads Chinese company names with
+// (leading/trailing/internal, e.g. "柳    工" for 柳工) — a real name never contains any.
+func cleanName(s string) string {
+	return strings.Join(strings.Fields(s), "")
+}
+
 // mergeDiff parses data.diff from the clist response (supporting both object {"0":{…}} and array [{…}] forms), merges into m, and returns the number of entries parsed.
 func mergeDiff(body []byte, m map[string]string) int {
 	var raw struct {
@@ -191,7 +197,7 @@ func mergeDiff(body []byte, m map[string]string) int {
 		code, _ := d["f12"].(string)
 		name, _ := d["f14"].(string)
 		if code != "" && name != "" {
-			m[code] = name
+			m[code] = cleanName(name)
 			n++
 		}
 	}
