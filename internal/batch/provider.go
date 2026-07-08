@@ -51,6 +51,15 @@ type Provider interface {
 	Run(ctx context.Context, inputs map[string]string) (RunResult, error)
 }
 
+// Reconciler is an optional Provider capability: recover a run's terminal outcome from a
+// persisted handle (run id / conversation id) WITHOUT re-running it. The run-queue uses it on
+// restart and for the admin's manual reconcile so a run that started before a crash is settled
+// by its true outcome instead of being fired again. A Provider that can't reconcile (e.g. the
+// manifest HTTP provider, whose runs are atomic) simply doesn't implement it.
+type Reconciler interface {
+	Reconcile(ctx context.Context, runID, convID string) (RunResult, error)
+}
+
 // runError carries a transient/permanent classification for the engine's retry
 // policy.
 type runError struct {

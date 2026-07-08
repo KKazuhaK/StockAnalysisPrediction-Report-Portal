@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   DatePicker,
+  Descriptions,
   Drawer,
   Empty,
   Grid,
@@ -24,9 +25,11 @@ import {
   ClockCircleOutlined,
   DeleteOutlined,
   EyeOutlined,
+  InfoCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   StopOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -51,6 +54,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
   const fullWidth = !Grid.useBreakpoint().md // phone: the 680px drawer would overflow the screen
   const [detail, setDetail] = useState<BatchJobDetail | null>(null)
   const [selected, setSelected] = useState<Key[]>([])
+  const [detailItem, setDetailItem] = useState<BatchItem | null>(null)
   const open = jobId != null
   const load = () => (jobId == null ? Promise.resolve() : api.get<BatchJobDetail>(`/api/admin/batch/jobs/${jobId}`).then(setDetail).catch(() => {}))
   useEffect(() => {
@@ -75,6 +79,28 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
       message.error((e as Error).message || 'failed')
     }
   }
+
+  // A row that has a Dify handle can be reconciled: fetch its true outcome from Dify without
+  // re-running it. Rescues a run wrongly marked failed by a short timeout / dropped stream.
+  const hasHandle = (it: BatchItem) => !!(it.run_id || it.conversation_id)
+  const canReconcile = (it: BatchItem) => admin && hasHandle(it) && !itemActive(it.status) && it.status !== 'succeeded'
+  const reconcile = async (it: BatchItem) => {
+    try {
+      const r = await api.post<{ status: string; note?: string }>(`/api/admin/batch/items/${it.id}/reconcile`)
+      message.success(r.note ? t('queue.reconcileStillRunning') : t('queue.reconcileDone', { status: t(`batch.status.${r.status}`) }))
+      await load()
+    } catch (e) {
+      message.error((e as Error).message || 'failed')
+    }
+  }
+  const idCell = (v: string) =>
+    v ? (
+      <Typography.Text copyable style={{ fontSize: 12 }}>
+        {v}
+      </Typography.Text>
+    ) : (
+      <Typography.Text type="secondary">—</Typography.Text>
+    )
 
   const symbolOf = (it: BatchItem) => {
     try {
@@ -103,13 +129,28 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
     },
     {
       title: '',
-      width: 40,
-      render: (_: unknown, it) =>
-        canCancel && itemActive(it.status) ? (
-          <Popconfirm title={t('queue.cancelRowConfirm')} onConfirm={() => cancelRows([it.id])}>
-            <Button size="small" type="text" danger icon={<StopOutlined />} title={t('queue.cancelRow')} />
-          </Popconfirm>
-        ) : null,
+      width: 96,
+      render: (_: unknown, it) => (
+        <Space size={0}>
+          <Button
+            size="small"
+            type="text"
+            icon={<InfoCircleOutlined />}
+            title={t('queue.itemDetails')}
+            onClick={() => setDetailItem(it)}
+          />
+          {canReconcile(it) ? (
+            <Popconfirm title={t('queue.reconcileConfirm')} onConfirm={() => reconcile(it)}>
+              <Button size="small" type="text" icon={<SyncOutlined />} title={t('queue.reconcile')} />
+            </Popconfirm>
+          ) : null}
+          {canCancel && itemActive(it.status) ? (
+            <Popconfirm title={t('queue.cancelRowConfirm')} onConfirm={() => cancelRows([it.id])}>
+              <Button size="small" type="text" danger icon={<StopOutlined />} title={t('queue.cancelRow')} />
+            </Popconfirm>
+          ) : null}
+        </Space>
+      ),
     },
   ]
   const rowSelection = canCancel
@@ -147,6 +188,28 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
           scroll={{ x: 560 }}
         />
       )}
+      <Modal open={detailItem != null} title={t('queue.itemDetails')} footer={null} width={560} onCancel={() => setDetailItem(null)}>
+        {detailItem && (
+          <Descriptions bordered size="small" column={1}>
+            <Descriptions.Item label={t('batch.col.row')}>{detailItem.row_index}</Descriptions.Item>
+            <Descriptions.Item label={t('batch.col.status')}>{statusTag(t, detailItem.status)}</Descriptions.Item>
+            <Descriptions.Item label={t('queue.attempts')}>{detailItem.attempts}</Descriptions.Item>
+            <Descriptions.Item label="run_id">{idCell(detailItem.run_id)}</Descriptions.Item>
+            <Descriptions.Item label="conversation_id">{idCell(detailItem.conversation_id)}</Descriptions.Item>
+            <Descriptions.Item label="task_id">{idCell(detailItem.task_id)}</Descriptions.Item>
+            <Descriptions.Item label={t('queue.startedAt')}>{detailItem.started_at || '—'}</Descriptions.Item>
+            <Descriptions.Item label={t('queue.finishedAt')}>{detailItem.finished_at || '—'}</Descriptions.Item>
+            <Descriptions.Item label={t('batch.col.inputs')}>{fmtInputs(detailItem.inputs)}</Descriptions.Item>
+            {detailItem.error ? (
+              <Descriptions.Item label={t('batch.col.error')}>
+                <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                  {detailItem.error}
+                </Typography.Text>
+              </Descriptions.Item>
+            ) : null}
+          </Descriptions>
+        )}
+      </Modal>
     </Drawer>
   )
 }

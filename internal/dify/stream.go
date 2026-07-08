@@ -30,6 +30,7 @@ type StreamEvent struct {
 	Event  string // workflow_started | node_started | node_finished | workflow_finished | ...
 	TaskID string
 	RunID  string
+	ConvID string // conversation id (chat/agent apps only) — the reconcile handle when there is no run id
 	Title  string // node title (a human-readable progress label)
 	Index  int    // node sequence index within the run
 	Status string // node/workflow status on a *_finished event
@@ -222,7 +223,7 @@ func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user 
 			convID = ev.ConversationID
 		}
 		if onEvent != nil {
-			onEvent(StreamEvent{Event: ev.Event, TaskID: taskID, RunID: runID, Title: ev.Data.Title, Index: ev.Data.Index, Status: ev.Data.Status})
+			onEvent(StreamEvent{Event: ev.Event, TaskID: taskID, RunID: runID, ConvID: convID, Title: ev.Data.Title, Index: ev.Data.Index, Status: ev.Data.Status})
 		}
 		if stopAtRunID && runID != "" {
 			return partial(), runID, nil // poll mode: hand off to status polling

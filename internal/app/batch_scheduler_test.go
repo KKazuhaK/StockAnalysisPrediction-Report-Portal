@@ -44,7 +44,7 @@ func TestSchedulerCapsConcurrentRunsAcrossJobs(t *testing.T) {
 	var cur, max int32
 	release := make(chan struct{})
 	srv := &Server{st: st}
-	srv.buildProv = func(BatchJob) (batch.Provider, error) {
+	srv.buildProv = func(BatchJob, func(string, string, string)) (batch.Provider, error) {
 		return provFn(func(ctx context.Context, _ map[string]string) (batch.RunResult, error) {
 			n := atomic.AddInt32(&cur, 1)
 			for {
@@ -96,7 +96,7 @@ func TestSchedulerAdmitsByRunPriority(t *testing.T) {
 
 	release := make(chan struct{})
 	srv := &Server{st: st}
-	srv.buildProv = func(BatchJob) (batch.Provider, error) {
+	srv.buildProv = func(BatchJob, func(string, string, string)) (batch.Provider, error) {
 		return provFn(func(context.Context, map[string]string) (batch.RunResult, error) {
 			<-release
 			return batch.RunResult{Status: batch.Ok}, nil
@@ -125,7 +125,7 @@ func TestSchedulerFinalizesJob(t *testing.T) {
 	job, _ := st.CreateBatchJob(tgt, 3, 0, "u", []map[string]string{{"c": "a"}, {"c": "b"}, {"c": "c"}}, "50")
 
 	srv := &Server{st: st}
-	srv.buildProv = func(BatchJob) (batch.Provider, error) {
+	srv.buildProv = func(BatchJob, func(string, string, string)) (batch.Provider, error) {
 		return provFn(func(_ context.Context, in map[string]string) (batch.RunResult, error) {
 			if in["c"] == "b" {
 				return batch.RunResult{Status: batch.Failed, Detail: "bad"}, nil
@@ -205,7 +205,9 @@ func TestCancelRunningRowAbortsOnlyThatRow(t *testing.T) {
 
 	release := make(chan struct{})
 	srv := &Server{st: st}
-	srv.buildProv = func(BatchJob) (batch.Provider, error) { return blockingProv(release), nil }
+	srv.buildProv = func(BatchJob, func(string, string, string)) (batch.Provider, error) {
+		return blockingProv(release), nil
+	}
 
 	srv.scheduleTick()
 	waitFor(t, "both rows running", func() bool {
@@ -238,7 +240,9 @@ func TestCancelQueuedRowSkips(t *testing.T) {
 
 	release := make(chan struct{})
 	srv := &Server{st: st}
-	srv.buildProv = func(BatchJob) (batch.Provider, error) { return blockingProv(release), nil }
+	srv.buildProv = func(BatchJob, func(string, string, string)) (batch.Provider, error) {
+		return blockingProv(release), nil
+	}
 
 	srv.scheduleTick() // budget 1 → row 0 runs, row 1 queued
 	waitFor(t, "row 0 running", func() bool {

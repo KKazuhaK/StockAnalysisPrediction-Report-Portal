@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,6 +12,11 @@ import (
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
 )
+
+// difyManualReconcileWait bounds a manual reconcile so the HTTP request stays responsive. A run
+// that already finished on Dify settles on the first status fetch; one still genuinely running is
+// reported as such rather than polled for the full run timeout.
+const difyManualReconcileWait = 60 * time.Second
 
 // HTTP handlers for the batch-run feature. Plugin/market/target/config management
 // is admin-only (PermManage); listing targets and running jobs is PermRunBatch.
@@ -445,8 +452,8 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 	for _, it := range s.st.BatchJobItems(id) {
 		row := map[string]any{
 			"id": it.ID, "row_index": it.RowIndex, "inputs": it.Inputs, "status": it.Status,
-			"attempts": it.Attempts, "run_id": it.RunID, "error": it.Error,
-			"started_at": it.StartedAt, "finished_at": it.FinishedAt,
+			"attempts": it.Attempts, "run_id": it.RunID, "conversation_id": it.ConvID, "task_id": it.TaskID,
+			"error": it.Error, "started_at": it.StartedAt, "finished_at": it.FinishedAt,
 		}
 		items = append(items, row)
 	}
@@ -462,6 +469,61 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 		"running_in_process": inProc,
 		"items":              items,
 	})
+}
+
+// apiBatchItemReconcile settles ONE row by reconciling its persisted Dify handle WITHOUT
+// re-running the workflow — the admin's manual counterpart to the restart-time reconcile. It
+// refuses a row with no run/conversation id (nothing to reconcile) and a row currently running
+// here (its own drop-reconcile owns the outcome). Bounded by difyManualReconcileWait so a run
+// still executing on Dify is reported "running" instead of hanging the request.
+func (s *Server) apiBatchItemReconcile(w http.ResponseWriter, r *http.Request, user string) {
+	itemID := pathID(r, "id")
+	ref, status, ok := s.st.ItemReconcileRef(itemID)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "item not found")
+		return
+	}
+	if ref.RunID == "" && ref.ConvID == "" {
+		jsonError(w, http.StatusBadRequest, "no dify run or conversation id to reconcile")
+		return
+	}
+	if _, live := s.itemCancels.Load(itemID); live && status == "running" {
+		jsonError(w, http.StatusConflict, "item is running here; it reconciles itself on drop")
+		return
+	}
+	job, ok := s.st.GetBatchJob(ref.JobID)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	prov, err := s.providerFor(job, nil)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rec, ok := prov.(batch.Reconciler)
+	if !ok {
+		jsonError(w, http.StatusBadRequest, "this target's provider cannot reconcile")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), difyManualReconcileWait)
+	defer cancel()
+	res, err := rec.Reconcile(ctx, ref.RunID, ref.ConvID)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Still executing on Dify — leave the row untouched and report it (don't mark failed).
+			writeJSON(w, map[string]any{"ok": true, "status": "running", "note": "still running on dify"})
+			return
+		}
+		jsonError(w, http.StatusBadGateway, "reconcile: "+err.Error())
+		return
+	}
+	if err := s.st.FinishItem(itemID, res.Status, 1, res.RunID, res.Detail); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.afterItem(ref.JobID)
+	writeJSON(w, map[string]any{"ok": true, "status": itemStatus(res.Status), "run_id": res.RunID, "detail": res.Detail})
 }
 
 // apiBatchItemsCancel cancels one or more individual rows of a job (ADR 0011): a queued

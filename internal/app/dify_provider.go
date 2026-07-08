@@ -55,6 +55,11 @@ type difyProvider struct {
 	poll             bool // poll mode: capture the run id then poll for the outcome (don't hold the stream open)
 	reconcilePoll    time.Duration
 	reconcileTimeout time.Duration
+	// onRef is called the instant a run/conversation/task id streams in, so the caller can
+	// persist it immediately — a crash/restart mid-run then reconciles by that id instead of
+	// re-running (the restart-durable half of reconcile-not-retry). nil disables it. It may be
+	// called repeatedly as ids accumulate; each call carries every id known so far.
+	onRef func(runID, convID, taskID string)
 }
 
 // runStream dispatches to the chat or workflow stream by the target's mode. Both
@@ -72,11 +77,23 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 	for k, v := range inputs {
 		in[k] = v
 	}
-	// Capture the task id as it streams so a cancel can stop the run server-side.
-	var taskID string
+	// Capture the ids as they stream: the task id lets a cancel stop the run server-side, and
+	// every id is handed to onRef the moment it appears so the caller can persist it before the
+	// run finishes — that is what makes a crash/restart mid-run reconcilable instead of re-run.
+	var taskID, evRunID, evConvID string
 	r, runID, err := p.runStream(ctx, in, func(e dify.StreamEvent) {
-		if e.TaskID != "" {
-			taskID = e.TaskID
+		changed := false
+		if e.TaskID != "" && e.TaskID != taskID {
+			taskID, changed = e.TaskID, true
+		}
+		if e.RunID != "" && e.RunID != evRunID {
+			evRunID, changed = e.RunID, true
+		}
+		if e.ConvID != "" && e.ConvID != evConvID {
+			evConvID, changed = e.ConvID, true
+		}
+		if changed && p.onRef != nil {
+			p.onRef(evRunID, evConvID, taskID)
 		}
 	})
 	convID := r.ConversationID // chat/agent apps: the handle to reconcile a dropped run
@@ -134,6 +151,27 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 	}
 	// A genuine pre-stream failure (connection refused / non-2xx) → nothing started → safe to retry.
 	return batch.RunResult{}, classifyDifyErr(err)
+}
+
+// Reconcile recovers a run's terminal outcome from a persisted handle WITHOUT re-running it —
+// by workflow run id if present, else by conversation id for a pure agent/chat app. It is the
+// restart/resume and manual-reconcile entry point (batch.Reconciler); an empty pair means there
+// is no handle to reconcile from.
+func (p difyProvider) Reconcile(ctx context.Context, runID, convID string) (batch.RunResult, error) {
+	var r dify.RunResult
+	var err error
+	switch {
+	case runID != "":
+		r, err = p.reconcile(ctx, runID)
+	case convID != "":
+		r, err = p.reconcileChat(ctx, convID)
+	default:
+		return batch.RunResult{}, fmt.Errorf("no run or conversation id to reconcile")
+	}
+	if err != nil {
+		return batch.RunResult{}, err
+	}
+	return difyResultToBatch(r), nil
 }
 
 // reconcile polls a started WORKFLOW/chatflow run to its terminal state by its run id.
@@ -243,7 +281,8 @@ func (e permanentRunErr) Unwrap() error { return e.error }
 // buildDifyProvider constructs the provider for a Dify target from its config JSON.
 // user is the end-user identity Dify records for each run (resolved from the
 // dify_end_user template); an empty user falls back to "report-portal" at run time.
-func buildDifyProvider(configJSON, user string, poll bool, pollInterval, runTimeout time.Duration) (batch.Provider, error) {
+// onRef (may be nil) persists the run/conversation/task ids as they stream in.
+func buildDifyProvider(configJSON, user string, poll bool, pollInterval, runTimeout time.Duration, onRef func(runID, convID, taskID string)) (batch.Provider, error) {
 	var cfg difyTargetConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return nil, fmt.Errorf("dify target config: %w", err)
@@ -260,6 +299,7 @@ func buildDifyProvider(configJSON, user string, poll bool, pollInterval, runTime
 		chat:             difyModeChat(cfg.Mode),
 		poll:             poll,
 		reconcileTimeout: runTimeout, // the reconcile poll window matches the run cap
+		onRef:            onRef,
 	}
 	if poll && pollInterval > 0 {
 		p.reconcilePoll = pollInterval

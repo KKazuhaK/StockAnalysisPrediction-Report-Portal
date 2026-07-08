@@ -514,10 +514,21 @@ func (s *Server) itemCandidates() ([]queue.Item, map[int64]candMeta) {
 	return cands, meta
 }
 
-// buildProvider constructs the Provider for a job from its target's plugin
-// manifest and config. Returns an error if the plugin/target is missing or the
-// manifest no longer compiles (e.g. a plugin was deleted after the job started).
-func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
+// providerFor builds the Provider for a job through the test seam when one is set (buildProv),
+// else the real buildProvider. All run + reconcile paths go through here so a test can inject a
+// fake provider once. onRef (may be nil) persists the streaming run/conversation/task ids.
+func (s *Server) providerFor(job BatchJob, onRef func(runID, convID, taskID string)) (batch.Provider, error) {
+	if s.buildProv != nil {
+		return s.buildProv(job, onRef)
+	}
+	return s.buildProvider(job, onRef)
+}
+
+// buildProvider constructs the Provider for a job from its target's plugin manifest and config.
+// onRef (may be nil) is handed to the Dify provider to persist the run/conversation/task ids as
+// they stream in — the restart-durable hook. Returns an error if the plugin/target is missing or
+// the manifest no longer compiles (e.g. a plugin was deleted after the job started).
+func (s *Server) buildProvider(job BatchJob, onRef func(runID, convID, taskID string)) (batch.Provider, error) {
 	tgt, ok := s.st.GetTarget(job.TargetID)
 	if !ok {
 		return nil, fmt.Errorf("target %d not found", job.TargetID)
@@ -525,7 +536,7 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	// Dify-native target (the default): talk to Dify directly via the typed client
 	// (docs/adr/0006-dify-native.md). The generic manifest below is the advanced path.
 	if tgt.PluginSlug == difyPluginSlug {
-		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy), s.difyPollSeconds() > 0, time.Duration(s.difyPollSeconds())*time.Second, s.difyRunTimeoutDur())
+		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy), s.difyPollSeconds() > 0, time.Duration(s.difyPollSeconds())*time.Second, s.difyRunTimeoutDur(), onRef)
 	}
 	plug, ok := s.st.GetPlugin(tgt.PluginSlug)
 	if !ok {
@@ -588,10 +599,6 @@ func (s *Server) startItem(job BatchJob, item batch.Item) {
 	// this row aborts this run — and marks it 'cancelled', not 'failed'.
 	itemCtx, itemCancel := context.WithCancel(jr.ctx)
 	s.itemCancels.Store(item.ID, itemCancel)
-	build := s.buildProv
-	if build == nil {
-		build = s.buildProvider
-	}
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -601,7 +608,14 @@ func (s *Server) startItem(job BatchJob, item batch.Item) {
 			itemCancel()
 			s.afterItem(job.ID)
 		}()
-		prov, err := build(job)
+		// Persist the Dify handles the instant they stream in, so a crash/restart mid-run
+		// reconciles this row by id instead of re-running it (the restart-durable money guard).
+		onRef := func(runID, convID, taskID string) {
+			if err := s.st.SaveItemDifyRef(item.ID, runID, convID, taskID); err != nil {
+				log.Printf("batch job %d item %d: persist dify ref: %v", job.ID, item.ID, err)
+			}
+		}
+		prov, err := s.providerFor(job, onRef)
 		if err != nil {
 			log.Printf("batch job %d item %d: cannot start: %v", job.ID, item.ID, err)
 			s.st.FinishItem(item.ID, batch.Failed, 1, "", err.Error())
@@ -671,10 +685,22 @@ func (s *Server) finalizeLocked(jobID int64) *BatchJob {
 	return &j
 }
 
-// resumeBatchJobs is called at startup: it requeues runs left in-flight by a crash, then
-// re-admits from the persisted item state and finalizes any job with nothing left to run
-// (all its runs had finished, or it was cancelling, when the server stopped).
+// resumeBatchJobs is called at startup to recover runs left in-flight by a crash. A run that had
+// already started on Dify (its run/conversation id was persisted mid-stream) is RECONCILED to its
+// true outcome instead of re-run — the restart-durable half of reconcile-not-retry, so a crash
+// never duplicates a charged run. Runs with no persisted id (never reached Dify, or crashed in the
+// window before its first event) are requeued and re-triggered. Then re-admit from the persisted
+// item state and finalize any job with nothing left to run.
 func (s *Server) resumeBatchJobs() {
+	// Snapshot the reconcilable runs BEFORE requeuing; ResetInFlightItems only requeues the
+	// id-less ones, so these stay 'running' (holding their slot) until reconcile settles them.
+	resumable := s.st.ResumableInFlightItems()
+	for _, ref := range resumable {
+		s.reconcileResumedItem(ref)
+	}
+	if len(resumable) > 0 {
+		log.Printf("batch resume: reconciling %d in-flight run(s) by id (no re-run)", len(resumable))
+	}
 	if err := s.st.ResetInFlightItems(); err != nil {
 		log.Printf("batch resume: reset in-flight items: %v", err)
 		return
@@ -683,4 +709,44 @@ func (s *Server) resumeBatchJobs() {
 	for _, id := range s.st.ResumableJobIDs() {
 		s.finalizeJob(id)
 	}
+}
+
+// reconcileResumedItem settles ONE crash-orphaned run by reconciling its persisted Dify handle in
+// the background — it never re-runs the workflow. On success (or a permanent reconcile failure) it
+// records the outcome and re-admits the freed slot; a provider that can't reconcile leaves the item
+// failed. Runs under the job's cancellable scope so a cancel still aborts the reconcile.
+func (s *Server) reconcileResumedItem(ref ResumeRef) {
+	job, ok := s.st.GetBatchJob(ref.JobID)
+	if !ok {
+		return
+	}
+	jr := s.jobRunFor(ref.JobID)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("batch resume: job %d item %d reconcile panicked: %v", ref.JobID, ref.ItemID, r)
+			}
+			s.afterItem(ref.JobID)
+		}()
+		prov, err := s.providerFor(job, nil)
+		if err != nil {
+			log.Printf("batch resume: job %d item %d: cannot build provider: %v", ref.JobID, ref.ItemID, err)
+			s.st.FinishItem(ref.ItemID, batch.Failed, 1, ref.RunID, "resume: "+err.Error())
+			return
+		}
+		rec, ok := prov.(batch.Reconciler)
+		if !ok {
+			log.Printf("batch resume: job %d item %d: provider cannot reconcile, marking failed", ref.JobID, ref.ItemID)
+			s.st.FinishItem(ref.ItemID, batch.Failed, 1, ref.RunID, "resume: provider cannot reconcile a started run")
+			return
+		}
+		res, err := rec.Reconcile(jr.ctx, ref.RunID, ref.ConvID)
+		if err != nil {
+			// Reconcile failed (deadline / unknown id). Do NOT re-run — record the failure so a
+			// started run is never fired twice; the admin can retry the reconcile manually.
+			s.st.FinishItem(ref.ItemID, batch.Failed, 1, ref.RunID, "resume reconcile: "+err.Error())
+			return
+		}
+		s.st.FinishItem(ref.ItemID, res.Status, 1, res.RunID, res.Detail)
+	}()
 }

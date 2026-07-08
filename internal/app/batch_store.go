@@ -43,7 +43,8 @@ type BatchItem struct {
 	Inputs                string
 	Status                string
 	Attempts              int
-	RunID, Error          string
+	RunID, ConvID, TaskID string // Dify handles, for tracing + manual reconcile + the details view
+	Error                 string
 	StartedAt, FinishedAt string
 }
 
@@ -89,8 +90,23 @@ func (s *Store) StartItem(id int64) error {
 }
 
 func (s *Store) FinishItem(id int64, st batch.Outcome, attempts int, runID, detail string) error {
-	_, err := s.exec("UPDATE batch_items SET status=?, attempts=?, run_id=?, error=?, finished_at=? WHERE id=?",
-		itemStatus(st), attempts, runID, detail, nowStr(), id)
+	// run_id is written only when non-empty so a finish that carries no id (e.g. a pure-chat run
+	// whose result has no workflow run id) never wipes the id already persisted mid-stream.
+	_, err := s.exec("UPDATE batch_items SET status=?, attempts=?, run_id=CASE WHEN ?<>'' THEN ? ELSE run_id END, error=?, finished_at=? WHERE id=?",
+		itemStatus(st), attempts, runID, runID, detail, nowStr(), id)
+	return err
+}
+
+// SaveItemDifyRef persists the Dify handles (run / conversation / task id) for an in-flight run the
+// moment they stream in, so a crash or restart can reconcile the run by id instead of re-running it
+// (the restart-durable half of reconcile-not-retry, ADR 0006). Each id is written only when
+// non-empty, so a later event that lacks one never clobbers an already-captured value.
+func (s *Store) SaveItemDifyRef(itemID int64, runID, convID, taskID string) error {
+	_, err := s.exec(`UPDATE batch_items SET
+		run_id=CASE WHEN ?<>'' THEN ? ELSE run_id END,
+		conversation_id=CASE WHEN ?<>'' THEN ? ELSE conversation_id END,
+		task_id=CASE WHEN ?<>'' THEN ? ELSE task_id END
+		WHERE id=?`, runID, runID, convID, convID, taskID, taskID, itemID)
 	return err
 }
 
@@ -120,11 +136,55 @@ func (s *Store) FinishJob(jobID int64, cancelled bool) error {
 
 // ---------- crash recovery ----------
 
-// ResetInFlightItems requeues items left in 'running' by a crash so a resumed job
-// re-triggers them (safe because report ingest is idempotent on uid).
+// ResetInFlightItems requeues crash-orphaned 'running' items that carry NO reconcilable Dify handle
+// (run/conversation id) so a resumed job re-triggers them from scratch — safe because they never
+// reached Dify (or crashed in the tiny window before its first event) and report ingest is idempotent
+// on uid. Items that DO carry an id are left 'running' for resumeBatchJobs to RECONCILE, not re-run,
+// so a run that already started (and cost tokens) is settled by its true outcome, never duplicated.
 func (s *Store) ResetInFlightItems() error {
-	_, err := s.exec("UPDATE batch_items SET status='queued' WHERE status='running'")
+	_, err := s.exec(`UPDATE batch_items SET status='queued'
+		WHERE status='running' AND COALESCE(run_id,'')='' AND COALESCE(conversation_id,'')=''`)
 	return err
+}
+
+// ResumeRef is a crash-orphaned in-flight run that CAN be reconciled: it carries a Dify handle
+// (run id and/or conversation id) that was persisted before the crash.
+type ResumeRef struct {
+	ItemID, JobID int64
+	RunID, ConvID string
+}
+
+// ResumableInFlightItems returns the 'running' items that carry a reconcilable Dify handle — the
+// runs resumeBatchJobs settles by reconciling their true outcome instead of re-running them.
+func (s *Store) ResumableInFlightItems() []ResumeRef {
+	rows, err := s.query(`SELECT id, job_id, COALESCE(run_id,''), COALESCE(conversation_id,'')
+		FROM batch_items WHERE status='running'
+		AND (COALESCE(run_id,'')<>'' OR COALESCE(conversation_id,'')<>'')`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []ResumeRef
+	for rows.Next() {
+		var r ResumeRef
+		if rows.Scan(&r.ItemID, &r.JobID, &r.RunID, &r.ConvID) == nil {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// ItemReconcileRef returns one item's persisted Dify handle and current status — the input to a
+// manual reconcile (settle the row by its true outcome without re-running). ok=false if absent.
+func (s *Store) ItemReconcileRef(itemID int64) (ref ResumeRef, status string, ok bool) {
+	var runID, convID, st sql.NullString
+	if err := s.queryRow(`SELECT job_id, COALESCE(run_id,''), COALESCE(conversation_id,''), status
+		FROM batch_items WHERE id=?`, itemID).Scan(&ref.JobID, &runID, &convID, &st); err != nil {
+		return ResumeRef{}, "", false
+	}
+	ref.ItemID = itemID
+	ref.RunID, ref.ConvID, status = runID.String, convID.String, st.String
+	return ref, status, true
 }
 
 // ResumableJobIDs lists jobs that were mid-flight when the server stopped.
@@ -324,7 +384,7 @@ func (s *Store) ScheduleJob(jobID int64, runAt string) error {
 	return err
 }
 
-// ClearSchedule drops a job's scheduled start (run_at back to the '' run-ASAP sentinel),
+// ClearSchedule drops a job's scheduled start (run_at back to the ” run-ASAP sentinel),
 // making it eligible on the next tick.
 func (s *Store) ClearSchedule(jobID int64) error {
 	_, err := s.exec("UPDATE batch_jobs SET run_at='' WHERE id=?", jobID)
@@ -388,7 +448,7 @@ func (s *Store) RequeueItems(jobID int64, statuses ...string) (int, error) {
 	for _, st := range statuses {
 		args = append(args, st)
 	}
-	res, err := s.exec("UPDATE batch_items SET status='queued', error='', run_id='', started_at='', finished_at='' WHERE job_id=? AND status IN ("+ph+")", args...)
+	res, err := s.exec("UPDATE batch_items SET status='queued', error='', run_id='', conversation_id='', task_id='', started_at='', finished_at='' WHERE job_id=? AND status IN ("+ph+")", args...)
 	if err != nil {
 		return 0, err
 	}
@@ -525,7 +585,7 @@ func (s *Store) AllJobsFirstInputs() map[int64]string {
 }
 
 func (s *Store) BatchJobItems(jobID int64) []BatchItem {
-	rows, err := s.query(`SELECT id,job_id,row_index,inputs,status,attempts,run_id,error,started_at,finished_at
+	rows, err := s.query(`SELECT id,job_id,row_index,inputs,status,attempts,run_id,conversation_id,task_id,error,started_at,finished_at
 		FROM batch_items WHERE job_id=? ORDER BY row_index`, jobID)
 	if err != nil {
 		return nil
@@ -534,10 +594,10 @@ func (s *Store) BatchJobItems(jobID int64) []BatchItem {
 	var out []BatchItem
 	for rows.Next() {
 		var it BatchItem
-		var inputs, status, runID, errMsg, startedAt, finishedAt sql.NullString
-		rows.Scan(&it.ID, &it.JobID, &it.RowIndex, &inputs, &status, &it.Attempts, &runID, &errMsg, &startedAt, &finishedAt)
-		it.Inputs, it.Status, it.RunID, it.Error, it.StartedAt, it.FinishedAt =
-			inputs.String, status.String, runID.String, errMsg.String, startedAt.String, finishedAt.String
+		var inputs, status, runID, convID, taskID, errMsg, startedAt, finishedAt sql.NullString
+		rows.Scan(&it.ID, &it.JobID, &it.RowIndex, &inputs, &status, &it.Attempts, &runID, &convID, &taskID, &errMsg, &startedAt, &finishedAt)
+		it.Inputs, it.Status, it.RunID, it.ConvID, it.TaskID, it.Error, it.StartedAt, it.FinishedAt =
+			inputs.String, status.String, runID.String, convID.String, taskID.String, errMsg.String, startedAt.String, finishedAt.String
 		out = append(out, it)
 	}
 	return out

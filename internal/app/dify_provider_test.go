@@ -68,10 +68,10 @@ func TestBuildDifyProviderAndInputs(t *testing.T) {
 		BaseURL: "https://dify.example/v1", APIKey: "app-key",
 		Inputs: []dify.Input{{Variable: "symbol", Label: "上市公司代码", Type: "text-input", Required: true}},
 	})
-	if _, err := buildDifyProvider(string(cfg), "report-portal", false, 0, 0); err != nil {
+	if _, err := buildDifyProvider(string(cfg), "report-portal", false, 0, 0, nil); err != nil {
 		t.Fatalf("buildDifyProvider: %v", err)
 	}
-	if _, err := buildDifyProvider(`{"base_url":"","api_key":""}`, "", false, 0, 0); err == nil {
+	if _, err := buildDifyProvider(`{"base_url":"","api_key":""}`, "", false, 0, 0, nil); err == nil {
 		t.Fatal("expected error for missing base_url/api_key")
 	}
 
@@ -311,7 +311,7 @@ func TestDifyChatProviderRunsChat(t *testing.T) {
 	defer srv.Close()
 
 	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: srv.URL, APIKey: "k", Mode: "chat"})
-	prov, err := buildDifyProvider(string(cfg), "u", false, 0, 0)
+	prov, err := buildDifyProvider(string(cfg), "u", false, 0, 0, nil)
 	if err != nil {
 		t.Fatalf("buildDifyProvider: %v", err)
 	}
