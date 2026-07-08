@@ -273,3 +273,25 @@ body {
     animation: none;
   }
 }
+
+/* Inline-expand reveal: an entry group opening below its trigger eases in (fade + slight
+   slide-down) instead of snapping open, so the row doesn't jump abruptly. Enter-only —
+   closing unmounts the row. */
+@keyframes rp-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rp-reveal {
+  animation: rp-reveal 220ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rp-reveal {
+    animation: none;
+  }
+}
