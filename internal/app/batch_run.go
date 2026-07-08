@@ -21,10 +21,13 @@ import (
 // docs/adr/0001-batch-run-engine.md.
 
 // difyRunTimeout bounds a single Dify run: it caps the streaming connection AND the
-// reconcile poll window (difyReconcileTimeout). Real workflows here run 30-40 minutes,
-// so this must comfortably exceed that — a shorter cap cuts the stream and lets the
-// reconcile expire while Dify is still running, marking a run failed that then succeeds.
-const difyRunTimeout = 60 * time.Minute
+// reconcile poll window (difyReconcileTimeout). Real workflows here run long — a Deep
+// Research run was observed at ~61 minutes — so this must comfortably exceed that. A
+// too-short cap cuts the stream and (worse) lets the reconcile poll expire while Dify is
+// still running, marking a run failed that then succeeds a minute later (a false negative
+// we hit at the old 60m cap). 3h gives generous headroom; in poll mode each GET is fast,
+// so a large cap only bounds a genuinely stuck run, not a healthy long one.
+const difyRunTimeout = 180 * time.Minute
 
 // batchMaxConcurrency is the admin-set ceiling a per-job concurrency is clamped to.
 func (s *Server) batchMaxConcurrency() int {
