@@ -365,12 +365,17 @@ export interface RunPresetAnchor {
   time: string
 }
 
+// One sub-window of a preset; a preset's eligible time is the union of its intervals.
+export interface RunPresetInterval {
+  start: RunPresetAnchor
+  stop: RunPresetAnchor
+}
+
 export interface RunPreset {
   id: number
   label: string
   freq: RunFreq
-  start: RunPresetAnchor
-  stop: RunPresetAnchor
+  intervals: RunPresetInterval[]
   on_overrun: RunOverrun
   enabled: boolean
   ord: number

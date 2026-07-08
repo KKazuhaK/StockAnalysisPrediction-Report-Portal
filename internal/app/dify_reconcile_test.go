@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -52,11 +51,11 @@ func TestDifyChatProviderReconcilesViaConversation(t *testing.T) {
 	}
 }
 
-// A stream that demonstrably STARTED a run (a task id was captured) but dropped with no
-// id to reconcile (no workflow_run_id, no conversation_id) must fail PERMANENTLY. A
-// transient error would let the engine re-run a live Dify run — the duplicate-token-burn
-// hazard the reconcile design exists to prevent.
-func TestDifyProviderStartedButUnreconcilableIsPermanent(t *testing.T) {
+// A stream that demonstrably STARTED a run (a task id was captured) but dropped with no id to
+// reconcile (no workflow_run_id, no conversation_id) has an UNKNOWN outcome — it comes back
+// Untracked with NO error. A nil error is what keeps the engine from re-running a live Dify run
+// (the duplicate-token-burn hazard the reconcile design exists to prevent).
+func TestDifyProviderStartedButUnreconcilableIsUntracked(t *testing.T) {
 	var runs int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -72,12 +71,12 @@ func TestDifyProviderStartedButUnreconcilableIsPermanent(t *testing.T) {
 	defer srv.Close()
 
 	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u", chat: true, reconcilePoll: time.Millisecond, reconcileTimeout: 200 * time.Millisecond}
-	_, err := p.Run(context.Background(), map[string]string{"query": "x"})
-	if err == nil {
-		t.Fatal("expected an error when a started run drops with no id to reconcile")
+	res, err := p.Run(context.Background(), map[string]string{"query": "x"})
+	if err != nil {
+		t.Fatalf("a started-but-unreconcilable run must NOT be an error (that would let the engine re-run it → duplicate burn): %v", err)
 	}
-	if batch.IsTransient(err) {
-		t.Error("a started-but-unreconcilable run must be PERMANENT (else the engine re-runs it → duplicate burn)")
+	if res.Status != batch.Untracked {
+		t.Errorf("status = %v, want Untracked (started, nothing to reconcile with)", res.Status)
 	}
 	if n := atomic.LoadInt32(&runs); n != 1 {
 		t.Errorf("run started %d times, want 1 (no re-run)", n)
@@ -86,12 +85,13 @@ func TestDifyProviderStartedButUnreconcilableIsPermanent(t *testing.T) {
 
 // A 200 to /workflows/run means Dify ACCEPTED the request and created the run — so even a
 // stream that immediately closes with zero events (e.g. it stalled before emitting anything
-// under DB pressure) has a run that started. Retrying would duplicate a live run, so this
-// must be PERMANENT. (The proven runaway: an overloaded Dify emits no events, the engine
-// re-fires every "unstarted"-looking run, and the duplicates pile more load on until the DB
-// falls over.) Only a pre-stream failure (connection refused / non-2xx) is safe to retry —
-// covered by TestDifyProviderErrorClassification.
-func TestDifyProviderStreamOpenedButEmptyIsPermanent(t *testing.T) {
+// under DB pressure) has a run that started. Its outcome is UNKNOWN, so it comes back Untracked
+// with NO error — a nil error is what stops the engine from re-firing (and duplicating) a live
+// run. (The proven runaway: an overloaded Dify emits no events, the engine re-fires every
+// "unstarted"-looking run, and the duplicates pile more load on until the DB falls over.) Only a
+// pre-stream failure (connection refused / non-2xx) is a retryable error — covered by
+// TestDifyProviderErrorClassification.
+func TestDifyProviderStreamOpenedButEmptyIsUntracked(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 200 + event-stream header, then an immediate clean close with zero events.
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -99,14 +99,11 @@ func TestDifyProviderStreamOpenedButEmptyIsPermanent(t *testing.T) {
 	defer srv.Close()
 
 	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u"}
-	_, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
-	if err == nil {
-		t.Fatal("expected an error when the stream yields nothing")
+	res, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
+	if err != nil {
+		t.Fatalf("a run Dify accepted (200) that streamed nothing must NOT be an error (retrying re-fires a live run): %v", err)
 	}
-	if batch.IsTransient(err) {
-		t.Error("a run Dify accepted (200) but that streamed nothing must be PERMANENT — retrying re-fires a live run")
-	}
-	if !errors.Is(err, dify.ErrStreamEnded) {
-		t.Errorf("error should wrap dify.ErrStreamEnded, got: %v", err)
+	if res.Status != batch.Untracked {
+		t.Errorf("status = %v, want Untracked (Dify accepted the run but it streamed nothing)", res.Status)
 	}
 }

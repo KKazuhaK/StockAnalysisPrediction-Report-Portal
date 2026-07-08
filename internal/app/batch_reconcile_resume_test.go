@@ -103,6 +103,92 @@ func TestResumeReconcilesStartedRunNoRerun(t *testing.T) {
 	}
 }
 
+// resumeUntrackedCase drives resumeBatchJobs on a single crash-orphaned run whose persisted state
+// is set up by `arrange`, and asserts it lands 'untracked' with neither Run nor Reconcile called —
+// the run started on Dify but left nothing to reconcile with, so it must never be re-run.
+func resumeUntrackedCase(t *testing.T, arrange func(st *Store, itemID int64)) {
+	t.Helper()
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"c": "a"}}, "normal")
+	st.MarkJobRunning(job)
+	items := st.BatchJobItems(job)
+	st.StartItem(items[0].ID)
+	arrange(st, items[0].ID)
+
+	var runs, recs int32
+	srv := &Server{st: st}
+	srv.buildProv = func(BatchJob, func(string, string, string)) (batch.Provider, error) {
+		return reconcileProv{runs: &runs, recs: &recs, status: batch.Ok}, nil
+	}
+
+	srv.resumeBatchJobs()
+
+	waitFor(t, "job finished", func() bool {
+		j, ok := st.GetBatchJob(job)
+		return ok && j.Status == "finished"
+	})
+	if its := st.BatchJobItems(job); its[0].Status != "untracked" {
+		t.Errorf("item status = %q, want untracked (started but unreconcilable, not re-run)", its[0].Status)
+	}
+	if got := atomic.LoadInt32(&runs); got != 0 {
+		t.Errorf("Run called %d times, want 0 — a started run must never be re-run", got)
+	}
+	if got := atomic.LoadInt32(&recs); got != 0 {
+		t.Errorf("Reconcile called %d times, want 0 — nothing to reconcile with", got)
+	}
+}
+
+// A run that captured ONLY a task_id (started on Dify, no reconcilable run/conversation id) resumes
+// as untracked — never re-run, never reconciled.
+func TestResumeTaskIDOnlyIsUntracked(t *testing.T) {
+	resumeUntrackedCase(t, func(st *Store, itemID int64) {
+		st.SaveItemDifyRef(itemID, "", "", "task-only")
+	})
+}
+
+// The residual gap, now closed: a run whose STREAM OPENED (dify_started_at stamped) but crashed
+// before any id was emitted resumes as untracked — the stream-open stamp proves it reached Dify, so
+// it is not re-run.
+func TestResumeStreamOpenedNoIDIsUntracked(t *testing.T) {
+	resumeUntrackedCase(t, func(st *Store, itemID int64) {
+		st.MarkItemDifyStarted(itemID) // stream opened (2xx) but no id captured before the crash
+	})
+}
+
+// A run with NO evidence it ever reached Dify (no id, no stream-open stamp) resumes by being
+// requeued and re-triggered from scratch — the only bucket that re-runs.
+func TestResumeNeverStartedIsRequeuedAndReRun(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"c": "a"}}, "normal")
+	st.MarkJobRunning(job)
+	items := st.BatchJobItems(job)
+	st.StartItem(items[0].ID) // 'running' but nothing captured — a crash before the stream opened
+
+	var runs, recs int32
+	srv := &Server{st: st}
+	srv.buildProv = func(BatchJob, func(string, string, string)) (batch.Provider, error) {
+		return reconcileProv{runs: &runs, recs: &recs, status: batch.Ok}, nil
+	}
+
+	srv.resumeBatchJobs()
+
+	waitFor(t, "job finished", func() bool {
+		j, ok := st.GetBatchJob(job)
+		return ok && j.Status == "finished"
+	})
+	if its := st.BatchJobItems(job); its[0].Status != "succeeded" {
+		t.Errorf("item status = %q, want succeeded (re-run from scratch)", its[0].Status)
+	}
+	if got := atomic.LoadInt32(&runs); got != 1 {
+		t.Errorf("Run called %d times, want 1 — a never-started run is safe to re-run", got)
+	}
+	if got := atomic.LoadInt32(&recs); got != 0 {
+		t.Errorf("Reconcile called %d times, want 0", got)
+	}
+}
+
 // The admin's manual Reconcile settles a row that looks failed in the portal but actually finished
 // on Dify — by reconciling its persisted handle, without re-running.
 func TestManualReconcileEndpoint(t *testing.T) {

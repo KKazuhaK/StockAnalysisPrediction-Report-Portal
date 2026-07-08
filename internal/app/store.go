@@ -271,19 +271,24 @@ func (s *Store) baseSchemaStmts() []string {
 		// a workflow/chatflow run has run_id (+task_id); a pure agent/basic chat has only
 		// conversation_id (+task_id). conversation_id/task_id are pure-additive (nullable, no
 		// backfill), so existing databases pick them up via ensureColumns — no migration step.
+		// dify_started_at is stamped the instant the Dify stream opens (2xx), BEFORE any id is
+		// emitted: it is the persisted "this run reached Dify and started" signal, so a crash in
+		// the tiny window before the first id can still tell a started run (→ untracked, never
+		// re-run) from one that never reached Dify (→ safe to re-run). Also pure-additive.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_items(
 			id %s, job_id BIGINT, row_index INTEGER, inputs TEXT, status TEXT DEFAULT 'queued',
 			attempts INTEGER DEFAULT 0, run_id TEXT, conversation_id TEXT, task_id TEXT,
-			error TEXT, started_at TEXT, finished_at TEXT)`, pk),
+			dify_started_at TEXT DEFAULT '', error TEXT, started_at TEXT, finished_at TEXT)`, pk),
 		// Preset low-peak scheduling windows (docs/adr/0014-idle-lane-and-preset-windows.md): an
 		// admin-managed, ordered list a user picks from to schedule a run into a recurring window —
-		// structurally like type_config/links (a table with ord), not a meta blob. start_spec/
-		// stop_spec are JSON anchors ({weekday?,month?,day?,time:"HH:mm"}); the used fields depend
-		// on freq (daily|weekly|monthly|yearly). on_overrun (continue|next|cancel) decides what
-		// happens if the window closes before the run started. The job snapshots the rule, so this
-		// row is never referenced by a job (no FK); id is a plain surrogate for CRUD/reorder/pick.
+		// structurally like type_config/links (a table with ord), not a meta blob. intervals is a
+		// JSON array [{start,stop}] of sub-windows (the union — e.g. 09:00–12:00 and 14:00–18:00);
+		// each anchor is {weekday?,month?,day?,time:"HH:mm"} and the used fields depend on freq
+		// (daily|weekly|monthly|yearly). on_overrun (continue|next|cancel) decides what happens when
+		// a whole period's sub-windows are all missed. The job snapshots the rule, so this row is
+		// never referenced by a job (no FK); id is a plain surrogate for CRUD/reorder/pick.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS run_presets(
-			id %s, label TEXT, freq TEXT, start_spec TEXT, stop_spec TEXT,
+			id %s, label TEXT, freq TEXT, intervals TEXT,
 			on_overrun TEXT DEFAULT 'next', enabled INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id, status)`,
 		// The batch console polls AllJobsFirstInputs (first row of every job) every 2s;

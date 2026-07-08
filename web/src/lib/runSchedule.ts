@@ -54,7 +54,9 @@ export function anchorSummary(a: RunPresetAnchor, freq: RunFreq, t: TFunc): stri
   }
 }
 
-// presetSummary is the compact "每天 00:30–08:30"-style description shown in the picker + editor.
+// presetSummary is the compact "每天 09:00–12:00、14:00–18:00"-style description shown in the
+// picker + editor: the frequency followed by each sub-window, joined by a separator.
 export function presetSummary(p: RunPreset, t: TFunc): string {
-  return `${t('run.freq.' + p.freq)} ${anchorSummary(p.start, p.freq, t)}–${anchorSummary(p.stop, p.freq, t)}`
+  const parts = (p.intervals || []).map((iv) => `${anchorSummary(iv.start, p.freq, t)}–${anchorSummary(iv.stop, p.freq, t)}`)
+  return `${t('run.freq.' + p.freq)} ${parts.join('、')}`
 }

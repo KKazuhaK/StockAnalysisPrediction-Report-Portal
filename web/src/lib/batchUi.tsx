@@ -1,4 +1,4 @@
-import { Tag } from 'antd'
+import { Tag, Tooltip } from 'antd'
 import type { TFunction } from 'i18next'
 
 // Shared presentation for run/queue views. Priority is a Slurm-style number now, not a
@@ -11,10 +11,18 @@ export const JOB_STATUS_COLOR: Record<string, string> = {
   cancelling: 'warning',
   cancelled: 'default',
   finished: 'success',
+  // 'untracked': the run reached Dify but its outcome couldn't be confirmed — neutral gold (not a
+  // red failure), and never re-run to avoid a duplicate charged run. See docs/adr/0006-dify-native.md.
+  untracked: 'warning',
 }
 
 export function statusTag(t: TFunction, s: string) {
-  return <Tag color={JOB_STATUS_COLOR[s] || 'default'}>{t(`batch.status.${s}`)}</Tag>
+  const tag = <Tag color={JOB_STATUS_COLOR[s] || 'default'}>{t(`batch.status.${s}`)}</Tag>
+  // 'untracked' is unusual enough to warrant an inline explanation on hover.
+  if (s === 'untracked') {
+    return <Tooltip title={t('batch.status.untrackedHint')}>{tag}</Tooltip>
+  }
+  return tag
 }
 
 // isUrgent reports whether a stored priority is the urgent escalation.

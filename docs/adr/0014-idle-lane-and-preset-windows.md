@@ -66,27 +66,32 @@ eligibility from a point (`run_at`) to a recurring range, where "recurring" is a
   ```sql
   CREATE TABLE IF NOT EXISTS run_presets(
     id <pk>, label TEXT, freq TEXT,              -- freq: daily|weekly|monthly|yearly
-    start_spec TEXT, stop_spec TEXT,             -- JSON anchor {weekday?,month?,day?,time:"HH:mm"}
+    intervals TEXT,                              -- JSON [{start:anchor, stop:anchor}] — the union of sub-windows
     on_overrun TEXT DEFAULT 'next',              -- continue|next|cancel
     enabled INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)
   ```
 
   `id` is a plain auto-increment surrogate (row addressing for CRUD/reorder and the submit-time
   `preset_id` pick, and the React list key) — **not** a foreign key: the job snapshots the rule,
-  so nothing references the preset long-term. Anchor fields used depend on `freq` (daily → `time`;
-  weekly → `weekday`+`time`; monthly → `day`+`time`; yearly → `month`+`day`+`time`), stored as
-  JSON in `start_spec`/`stop_spec` (like `batch_targets.config`) since the used fields vary by
-  `freq`. Anchors are interpreted in the **panel timezone** (`meta['timezone']`). All four `freq`
-  values are implemented now; adding one later is a resolver + UI branch, no schema change.
-  Month/leap edges (`day 31` in a short month, yearly `2/29`) **clamp** to the last valid day.
+  so nothing references the preset long-term.
 
-- **Resolution** (`nextWindow(spec, now, panelLoc) → (start, end)`): the current-or-next
-  occurrence as absolute instants. If `now` is inside an occurrence, that occurrence (start in the
-  past, so immediately due). Handles ranges that wrap the period boundary (`stop` earlier than
-  `start` → next day/week/month/year).
+  **A preset's eligible time is the *union* of one-or-more sub-windows** (`intervals`), so a split
+  low-peak like "09:00–12:00 **and** 14:00–18:00" is one preset. Each interval is a `{start, stop}`
+  anchor pair; anchor fields used depend on `freq` (daily → `time`; weekly → `weekday`+`time`;
+  monthly → `day`+`time`; yearly → `month`+`day`+`time`), interpreted in the **panel timezone**
+  (`meta['timezone']`). A single-window preset is just one interval. Stored as JSON (like
+  `batch_targets.config`) since the shape varies by `freq` and count. All four `freq` values are
+  implemented now; adding one later is a resolver + UI branch, no schema change. Month/leap edges
+  (`day 31` in a short month, yearly `2/29`) **clamp** to the last valid day.
+
+- **Resolution** — `nextInterval` resolves one sub-window's current-or-next occurrence (handling a
+  `stop` earlier than `start`, which wraps to the next day/week/month/year, and month/leap clamps);
+  `nextWindow(freq, intervals, now, panelLoc)` picks, across the union, the occurrence with the
+  **earliest end still after `now`** — the next moment the run becomes eligible. If `now` is inside
+  a sub-window, that one is returned (start in the past, so immediately due).
 
 - **Job storage — one new column** `batch_jobs.run_preset TEXT DEFAULT ''` holding a JSON
-  **snapshot** taken at submit: `{ freq, start, stop, on_overrun, until }`, where `until` = the
+  **snapshot** taken at submit: `{ freq, intervals, on_overrun, until }`, where `until` = the
   current occurrence's end. `run_at` (existing column) carries the occurrence **start**. Both
   instants are stored in the existing **local wall-clock** string form (`"2006-01-02 15:04:05"`),
   but their *values* are computed via the panel timezone — so `runAtDue`, the group-window gate,
@@ -95,15 +100,21 @@ eligibility from a point (`run_at`) to a recurring range, where "recurring" is a
   `report.name` snapshot philosophy: a later edit/delete of the preset never rewrites an in-flight
   run's window.
 
-- **Due gate:** `runAtDue(run_at)` (unchanged) keeps the job hidden until the window opens. A new
-  check in `scheduleTick` reads `run_preset.until`: for a **not-yet-started** job whose `until`
-  has passed, apply the snapshot's `on_overrun`:
-  - `continue` — clear `run_at` + `run_preset` → the run becomes a normal ASAP job (window was a
-    *preferred* start).
-  - `next` — recompute the next occurrence from the snapshot rule → new `run_at` + `run_preset.until`
-    (roll forward); keep waiting. Because `run_at` rolls with it, the age factor never accrues
-    across periods, so a rolled run competes fairly within each window rather than jumping ahead.
-  - `cancel` — mark the job terminal `expired`.
+- **Due gate + overrun (union semantics):** `runAtDue(run_at)` (unchanged) keeps the job hidden
+  until the current sub-window opens. A new check in `scheduleTick` reads `run_preset.until`: for a
+  **not-yet-started** job whose `until` has passed, it computes the next occurrence across the
+  union and asks `samePeriod(freq, now, nextStart)` — is there another sub-window later **in the
+  same period** (same civil day for daily / ISO week / month / year)?
+  - **More windows left this period** → **auto-advance** to the next sub-window (roll `run_at`/
+    `until`), *regardless of policy* — the run just tries the day's next window (09:00–12:00 missed →
+    wait for 14:00–18:00).
+  - **Period exhausted** (no more sub-windows until the next period) → apply `on_overrun`:
+    `next` rolls to the next period's first sub-window (keep waiting); `continue` clears the window
+    (run ASAP); `cancel` marks the job terminal `expired`.
+
+  A single-interval preset degenerates to the original behavior: every close is a period boundary,
+  so the policy fires each time. Because `run_at` rolls with each advance, the age factor never
+  accrues across windows, so a rolled run competes fairly rather than jumping ahead.
 - **Running runs are never touched** (non-preemptive, ADR 0004/0011): the overrun policy governs
   only runs that had not started when the window closed. A run that started inside the window and
   runs past `until` simply finishes.

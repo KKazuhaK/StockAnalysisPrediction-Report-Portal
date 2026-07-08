@@ -170,6 +170,8 @@
   "batch.status.cancelling": "Cancelling",
   "batch.status.cancelled": "Cancelled",
   "batch.status.finished": "Finished",
+  "batch.status.untracked": "Unconfirmed",
+  "batch.status.untrackedHint": "The run was dispatched to Dify but left no trackable handle, so its final outcome can't be confirmed. It was not re-run, to avoid a duplicate charged run. If a run handle was kept, you can reconcile it manually later.",
   "batch.msg.started": "Started batch job #{{id}} ({{n}} rows)",
   "batch.msg.clamped": "Concurrency capped to {{n}} by the admin limit",
   "batch.msg.startFailed": "Failed to start",
@@ -625,5 +627,7 @@
   "batch.admin.runDefaultIdleHint": "Only applies in immediate mode.",
   "batch.admin.presetsTitle": "Preset off-peak windows",
   "batch.admin.presetsHint": "Users can pick one of these when running; the run is scheduled into that window.",
-  "common.ok": "OK"
+  "common.ok": "OK",
+  "preset.windows": "Windows",
+  "preset.addInterval": "Add window"
 }

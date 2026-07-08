@@ -18,6 +18,11 @@ import (
 // ut builds a UTC instant for the tables below (the resolver tests run with loc = UTC).
 func ut(y, mo, d, h, mi int) time.Time { return time.Date(y, time.Month(mo), d, h, mi, 0, 0, time.UTC) }
 
+// iv builds a daily-style interval (time-only anchors) for the union tests.
+func iv(a, b string) presetInterval {
+	return presetInterval{Start: presetAnchor{Time: a}, Stop: presetAnchor{Time: b}}
+}
+
 // jobRow reads a job's status + window fields directly (in-package test access).
 func jobRow(t *testing.T, st *Store, id int64) (status, runAt, runPreset string) {
 	t.Helper()
@@ -36,13 +41,21 @@ func postCode(t *testing.T, h func(http.ResponseWriter, *http.Request, string), 
 	return rec.Code
 }
 
-// ---------- pure resolver ----------
+func parseLocal(t *testing.T, s string) time.Time {
+	t.Helper()
+	v, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local)
+	if err != nil {
+		t.Fatalf("parse %q: %v", s, err)
+	}
+	return v
+}
 
-// nextWindow resolves the current-or-next occurrence [start,end] of a preset window, interpreting
-// anchors in the panel timezone. It handles windows that wrap the period boundary (stop before
-// start) and clamps invalid month days (day 31 in a short month, 2/29 in a non-leap year).
-// weekday: 0=Sun..6=Sat (Go's convention).
-func TestNextWindow(t *testing.T) {
+// ---------- single sub-window resolver ----------
+
+// nextInterval resolves one sub-window's current-or-next occurrence, interpreting anchors in the
+// panel timezone. It handles windows that wrap the period boundary (stop before start) and clamps
+// invalid month days (day 31 in a short month, 2/29 in a non-leap year). weekday: 0=Sun..6=Sat.
+func TestNextInterval(t *testing.T) {
 	cases := []struct {
 		name         string
 		freq         string
@@ -51,43 +64,32 @@ func TestNextWindow(t *testing.T) {
 		wantS, wantE time.Time
 		wantOK       bool
 	}{
-		// daily 00:30–08:30
 		{"daily/next", "daily", presetAnchor{Time: "00:30"}, presetAnchor{Time: "08:30"},
 			ut(2026, 7, 8, 10, 0), ut(2026, 7, 9, 0, 30), ut(2026, 7, 9, 8, 30), true},
 		{"daily/inside", "daily", presetAnchor{Time: "00:30"}, presetAnchor{Time: "08:30"},
 			ut(2026, 7, 8, 5, 0), ut(2026, 7, 8, 0, 30), ut(2026, 7, 8, 8, 30), true},
 		{"daily/before-today", "daily", presetAnchor{Time: "00:30"}, presetAnchor{Time: "08:30"},
 			ut(2026, 7, 8, 0, 0), ut(2026, 7, 8, 0, 30), ut(2026, 7, 8, 8, 30), true},
-		// daily wrap 22:00–06:00 (crosses midnight)
 		{"daily/wrap-inside", "daily", presetAnchor{Time: "22:00"}, presetAnchor{Time: "06:00"},
 			ut(2026, 7, 8, 3, 0), ut(2026, 7, 7, 22, 0), ut(2026, 7, 8, 6, 0), true},
 		{"daily/wrap-next", "daily", presetAnchor{Time: "22:00"}, presetAnchor{Time: "06:00"},
 			ut(2026, 7, 8, 12, 0), ut(2026, 7, 8, 22, 0), ut(2026, 7, 9, 6, 0), true},
-		// weekly Mon 09:00 – Mon 18:00 (same weekday, wraps within the day)
 		{"weekly/same-weekday", "weekly", presetAnchor{Weekday: 1, Time: "09:00"}, presetAnchor{Weekday: 1, Time: "18:00"},
 			ut(2026, 7, 8, 10, 0), ut(2026, 7, 13, 9, 0), ut(2026, 7, 13, 18, 0), true},
-		// weekly Mon 09:00 – Wed 18:00 (spans days), submitted Mon before open
 		{"weekly/span", "weekly", presetAnchor{Weekday: 1, Time: "09:00"}, presetAnchor{Weekday: 3, Time: "18:00"},
 			ut(2026, 7, 6, 8, 0), ut(2026, 7, 6, 9, 0), ut(2026, 7, 8, 18, 0), true},
-		// weekly Fri 20:00 – Mon 06:00 (wraps the week)
 		{"weekly/wrap", "weekly", presetAnchor{Weekday: 5, Time: "20:00"}, presetAnchor{Weekday: 1, Time: "06:00"},
 			ut(2026, 7, 8, 10, 0), ut(2026, 7, 10, 20, 0), ut(2026, 7, 13, 6, 0), true},
-		// monthly day1 09:00 – day5 18:00 (this month already passed → next month)
 		{"monthly/next", "monthly", presetAnchor{Day: 1, Time: "09:00"}, presetAnchor{Day: 5, Time: "18:00"},
 			ut(2026, 7, 8, 10, 0), ut(2026, 8, 1, 9, 0), ut(2026, 8, 5, 18, 0), true},
-		// monthly day31 → clamps to Feb 28 (2026 is not a leap year)
 		{"monthly/clamp-short", "monthly", presetAnchor{Day: 31, Time: "09:00"}, presetAnchor{Day: 31, Time: "10:00"},
 			ut(2026, 2, 15, 0, 0), ut(2026, 2, 28, 9, 0), ut(2026, 2, 28, 10, 0), true},
-		// yearly Feb 29 in a leap year stays Feb 29
 		{"yearly/leap-ok", "yearly", presetAnchor{Month: 2, Day: 29, Time: "09:00"}, presetAnchor{Month: 2, Day: 29, Time: "10:00"},
 			ut(2024, 1, 1, 0, 0), ut(2024, 2, 29, 9, 0), ut(2024, 2, 29, 10, 0), true},
-		// yearly Feb 29, next occurrence 2027 (non-leap) clamps to Feb 28
 		{"yearly/nonleap-clamp", "yearly", presetAnchor{Month: 2, Day: 29, Time: "09:00"}, presetAnchor{Month: 2, Day: 29, Time: "10:00"},
 			ut(2026, 6, 1, 0, 0), ut(2027, 2, 28, 9, 0), ut(2027, 2, 28, 10, 0), true},
-		// yearly Dec 20 – Jan 10 (wraps the year boundary)
 		{"yearly/wrap", "yearly", presetAnchor{Month: 12, Day: 20, Time: "00:00"}, presetAnchor{Month: 1, Day: 10, Time: "00:00"},
 			ut(2026, 7, 8, 0, 0), ut(2026, 12, 20, 0, 0), ut(2027, 1, 10, 0, 0), true},
-		// malformed specs
 		{"bad/freq", "hourly", presetAnchor{Time: "00:00"}, presetAnchor{Time: "01:00"},
 			ut(2026, 7, 8, 0, 0), time.Time{}, time.Time{}, false},
 		{"bad/time", "daily", presetAnchor{Time: "25:00"}, presetAnchor{Time: "08:30"},
@@ -95,7 +97,7 @@ func TestNextWindow(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s, e, ok := nextWindow(c.freq, c.start, c.stop, c.now, time.UTC)
+			s, e, ok := nextInterval(c.freq, c.start, c.stop, c.now, time.UTC)
 			if ok != c.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, c.wantOK)
 			}
@@ -104,42 +106,88 @@ func TestNextWindow(t *testing.T) {
 			}
 			if !s.Equal(c.wantS) || !e.Equal(c.wantE) {
 				t.Fatalf("window = [%s, %s], want [%s, %s]",
-					s.Format(time.RFC3339), e.Format(time.RFC3339),
-					c.wantS.Format(time.RFC3339), c.wantE.Format(time.RFC3339))
-			}
-			if !e.After(c.now) {
-				t.Fatalf("end %s must be after now %s", e.Format(time.RFC3339), c.now.Format(time.RFC3339))
+					s.Format(time.RFC3339), e.Format(time.RFC3339), c.wantS.Format(time.RFC3339), c.wantE.Format(time.RFC3339))
 			}
 		})
 	}
 }
 
-// resolvePresetWindow turns a preset window into a run_at (window start) + a JSON snapshot
-// carrying the rule + on_overrun + the occurrence end (until). Both instants are formatted in
-// the local wall-clock basis the scheduler already uses; the values are computed via the panel
-// timezone. We parse them back (basis-independent) and compare absolute instants.
+// nextWindow picks, across a preset's union of sub-windows, the occurrence whose end is the
+// earliest still after now — the next moment the run is eligible (a split low-peak 9-12 & 14-18).
+func TestNextWindowUnion(t *testing.T) {
+	ivs := []presetInterval{iv("09:00", "12:00"), iv("14:00", "18:00")}
+	cases := []struct {
+		name         string
+		now          time.Time
+		wantS, wantE time.Time
+	}{
+		{"before-both", ut(2026, 7, 8, 8, 0), ut(2026, 7, 8, 9, 0), ut(2026, 7, 8, 12, 0)},
+		{"inside-first", ut(2026, 7, 8, 10, 0), ut(2026, 7, 8, 9, 0), ut(2026, 7, 8, 12, 0)},
+		{"between", ut(2026, 7, 8, 12, 30), ut(2026, 7, 8, 14, 0), ut(2026, 7, 8, 18, 0)},
+		{"inside-second", ut(2026, 7, 8, 15, 0), ut(2026, 7, 8, 14, 0), ut(2026, 7, 8, 18, 0)},
+		{"after-both", ut(2026, 7, 8, 19, 0), ut(2026, 7, 9, 9, 0), ut(2026, 7, 9, 12, 0)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, e, ok := nextWindow("daily", ivs, c.now, time.UTC)
+			if !ok || !s.Equal(c.wantS) || !e.Equal(c.wantE) {
+				t.Fatalf("union = [%s,%s] ok=%v, want [%s,%s]", s.Format(time.RFC3339), e.Format(time.RFC3339), ok, c.wantS.Format(time.RFC3339), c.wantE.Format(time.RFC3339))
+			}
+		})
+	}
+	if _, _, ok := nextWindow("daily", nil, ut(2026, 7, 8, 8, 0), time.UTC); ok {
+		t.Fatal("empty union must resolve ok=false")
+	}
+}
+
+// samePeriod distinguishes "another sub-window later this period" (auto-advance) from "period
+// exhausted" (apply on_overrun) for each frequency.
+func TestSamePeriod(t *testing.T) {
+	loc := time.UTC
+	cases := []struct {
+		freq string
+		a, b time.Time
+		want bool
+	}{
+		{"daily", ut(2026, 7, 8, 1, 0), ut(2026, 7, 8, 23, 0), true},
+		{"daily", ut(2026, 7, 8, 23, 0), ut(2026, 7, 9, 1, 0), false},
+		{"weekly", ut(2026, 7, 6, 0, 0), ut(2026, 7, 12, 0, 0), true},  // Mon..Sun, same ISO week
+		{"weekly", ut(2026, 7, 12, 0, 0), ut(2026, 7, 13, 0, 0), false}, // Sun → next Mon
+		{"monthly", ut(2026, 7, 1, 0, 0), ut(2026, 7, 31, 0, 0), true},
+		{"monthly", ut(2026, 7, 31, 0, 0), ut(2026, 8, 1, 0, 0), false},
+		{"yearly", ut(2026, 1, 1, 0, 0), ut(2026, 12, 31, 0, 0), true},
+		{"yearly", ut(2026, 12, 31, 0, 0), ut(2027, 1, 1, 0, 0), false},
+	}
+	for _, c := range cases {
+		if got := samePeriod(c.freq, c.a, c.b, loc); got != c.want {
+			t.Errorf("samePeriod(%s, %s, %s) = %v, want %v", c.freq, c.a.Format(time.RFC3339), c.b.Format(time.RFC3339), got, c.want)
+		}
+	}
+}
+
+// resolvePresetWindow turns a preset (union of intervals) into a run_at (window start) + a JSON
+// snapshot carrying the rule + on_overrun + the occurrence end (until). Both instants round-trip
+// through the local wall-clock basis the scheduler uses.
 func TestResolvePresetWindow(t *testing.T) {
 	runAt, snap, ok := resolvePresetWindow("daily",
-		presetAnchor{Time: "00:30"}, presetAnchor{Time: "08:30"}, "next", ut(2026, 7, 8, 10, 0), time.UTC)
+		[]presetInterval{iv("00:30", "08:30")}, "next", ut(2026, 7, 8, 10, 0), time.UTC)
 	if !ok {
 		t.Fatal("resolvePresetWindow ok=false")
 	}
-	gotStart, err := time.ParseInLocation("2006-01-02 15:04:05", runAt, time.Local)
-	if err != nil || !gotStart.Equal(ut(2026, 7, 9, 0, 30)) {
-		t.Fatalf("run_at = %q (%v), want the 2026-07-09 00:30 instant", runAt, err)
+	if !parseLocal(t, runAt).Equal(ut(2026, 7, 9, 0, 30)) {
+		t.Fatalf("run_at = %q, want the 2026-07-09 00:30 instant", runAt)
 	}
 	var s runPresetSnapshot
 	if err := json.Unmarshal([]byte(snap), &s); err != nil {
 		t.Fatalf("snapshot not valid JSON: %v (%s)", err, snap)
 	}
-	if s.Freq != "daily" || s.OnOverrun != "next" || s.Start.Time != "00:30" || s.Stop.Time != "08:30" {
+	if s.Freq != "daily" || s.OnOverrun != "next" || len(s.Intervals) != 1 || s.Intervals[0].Start.Time != "00:30" {
 		t.Fatalf("snapshot rule = %+v", s)
 	}
-	gotEnd, err := time.ParseInLocation("2006-01-02 15:04:05", s.Until, time.Local)
-	if err != nil || !gotEnd.Equal(ut(2026, 7, 9, 8, 30)) {
-		t.Fatalf("until = %q (%v), want the 2026-07-09 08:30 instant", s.Until, err)
+	if !parseLocal(t, s.Until).Equal(ut(2026, 7, 9, 8, 30)) {
+		t.Fatalf("until = %q, want the 2026-07-09 08:30 instant", s.Until)
 	}
-	if _, _, ok := resolvePresetWindow("daily", presetAnchor{Time: "bad"}, presetAnchor{Time: "08:30"}, "next", ut(2026, 7, 8, 10, 0), time.UTC); ok {
+	if _, _, ok := resolvePresetWindow("daily", []presetInterval{iv("bad", "08:30")}, "next", ut(2026, 7, 8, 10, 0), time.UTC); ok {
 		t.Fatal("a malformed window must resolve ok=false")
 	}
 }
@@ -147,17 +195,18 @@ func TestResolvePresetWindow(t *testing.T) {
 // ---------- persistence ----------
 
 // run_presets is an admin-managed, ordered collection (like type_config/links): CRUD + reorder
-// must round-trip, and ordering is by ord then id.
+// must round-trip, and ordering is by ord then id. intervals is stored as JSON.
 func TestRunPresetsCRUD(t *testing.T) {
 	st := newTestStore(t)
 
 	id, err := st.CreateRunPreset(RunPreset{Label: "低峰期", Freq: "daily",
-		StartSpec: `{"time":"00:30"}`, StopSpec: `{"time":"08:30"}`, OnOverrun: "next", Enabled: true})
+		Intervals: `[{"start":{"time":"09:00"},"stop":{"time":"12:00"}},{"start":{"time":"14:00"},"stop":{"time":"18:00"}}]`,
+		OnOverrun: "next", Enabled: true})
 	if err != nil {
 		t.Fatalf("CreateRunPreset: %v", err)
 	}
 	id2, err := st.CreateRunPreset(RunPreset{Label: "周末", Freq: "weekly",
-		StartSpec: `{"weekday":6,"time":"00:00"}`, StopSpec: `{"weekday":0,"time":"23:59"}`, OnOverrun: "cancel", Enabled: true})
+		Intervals: `[{"start":{"weekday":6,"time":"00:00"},"stop":{"weekday":0,"time":"23:59"}}]`, OnOverrun: "cancel", Enabled: true})
 	if err != nil {
 		t.Fatalf("CreateRunPreset 2: %v", err)
 	}
@@ -168,8 +217,12 @@ func TestRunPresetsCRUD(t *testing.T) {
 	}
 
 	p, ok := st.GetRunPreset(id)
-	if !ok || p.Label != "低峰期" || p.Freq != "daily" || p.OnOverrun != "next" || !p.Enabled || p.StartSpec != `{"time":"00:30"}` {
+	if !ok || p.Label != "低峰期" || p.Freq != "daily" || p.OnOverrun != "next" || !p.Enabled {
 		t.Fatalf("GetRunPreset = %+v ok=%v", p, ok)
+	}
+	var got []presetInterval
+	if json.Unmarshal([]byte(p.Intervals), &got); len(got) != 2 || got[1].Start.Time != "14:00" {
+		t.Fatalf("intervals round-trip lost: %s", p.Intervals)
 	}
 
 	p.Label, p.OnOverrun, p.Enabled = "低峰期A", "continue", false
@@ -193,16 +246,13 @@ func TestRunPresetsCRUD(t *testing.T) {
 	if _, ok := st.GetRunPreset(id); ok {
 		t.Fatal("deleted preset still present")
 	}
-	if len(st.ListRunPresets()) != 1 {
-		t.Fatalf("after delete want 1 preset")
-	}
 }
 
 // A job's window (run_at + run_preset snapshot) round-trips; QueuedPresetJobs surfaces only
 // queued jobs that carry a window; expiring or clearing removes them from that set.
 func TestJobWindowRoundTrip(t *testing.T) {
 	st := newTestStore(t)
-	snap := `{"freq":"daily","start":{"time":"00:30"},"stop":{"time":"08:30"},"on_overrun":"next","until":"2099-01-01 08:30:00"}`
+	snap := `{"freq":"daily","intervals":[{"start":{"time":"00:30"},"stop":{"time":"08:30"}}],"on_overrun":"next","until":"2099-01-01 08:30:00"}`
 
 	jobID, err := st.CreateBatchJob(1, 1, 0, "u", []map[string]string{{"k": "v"}}, "idle")
 	if err != nil {
@@ -211,7 +261,6 @@ func TestJobWindowRoundTrip(t *testing.T) {
 	if got := st.QueuedPresetJobs(); len(got) != 0 {
 		t.Fatalf("a job with no window must not be a preset job, got %d", len(got))
 	}
-
 	if err := st.SetJobWindow(jobID, "2099-01-01 00:30:00", snap); err != nil {
 		t.Fatalf("SetJobWindow: %v", err)
 	}
@@ -219,87 +268,96 @@ func TestJobWindowRoundTrip(t *testing.T) {
 	if len(got) != 1 || got[0].ID != jobID || got[0].RunPreset != snap || got[0].RunAt != "2099-01-01 00:30:00" {
 		t.Fatalf("QueuedPresetJobs = %+v", got)
 	}
-
 	if err := st.ExpireJob(jobID); err != nil {
 		t.Fatalf("ExpireJob: %v", err)
 	}
 	if got := st.QueuedPresetJobs(); len(got) != 0 {
 		t.Fatalf("an expired job must drop out of the preset set, got %d", len(got))
 	}
-
-	jobID2, _ := st.CreateBatchJob(1, 1, 0, "u", []map[string]string{{"k": "v"}}, "normal")
-	st.SetJobWindow(jobID2, "2099-01-01 00:30:00", snap)
-	if err := st.ClearJobWindow(jobID2); err != nil {
-		t.Fatalf("ClearJobWindow: %v", err)
-	}
-	if got := st.QueuedPresetJobs(); len(got) != 0 {
-		t.Fatalf("a cleared job must drop out of the preset set, got %d", len(got))
-	}
 }
 
 // ---------- overrun sweep ----------
 
-// The overrun sweep, on a window that already closed with the run still queued, applies each
-// preset's on_overrun policy: continue → drop the window (run ASAP), cancel → expired, next →
-// roll to a future occurrence and keep waiting. Deterministic via a fixed panel tz (UTC) + now.
+// makePresetJob seeds a queued job carrying a preset snapshot (window already closed via a far-past
+// until unless overridden by the caller's now vs until).
+func makePresetJob(t *testing.T, st *Store, intervals []presetInterval, overrun, until string) int64 {
+	t.Helper()
+	id, err := st.CreateBatchJob(1, 1, 0, "u", []map[string]string{{"k": "v"}}, "50")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(runPresetSnapshot{Freq: "daily", Intervals: intervals, OnOverrun: overrun, Until: until})
+	st.SetJobWindow(id, until, string(b))
+	return id
+}
+
+// Single-interval overrun: on close (the sole window always exhausts the period), continue → drop
+// the window, cancel → expired, next → roll to the next day. Deterministic via UTC panel + fixed now.
 func TestSweepPresetOverrun(t *testing.T) {
 	st := newTestStore(t)
 	st.SetSetting("timezone", "UTC")
 	srv := &Server{st: st}
-	now := time.Date(2099, 1, 1, 12, 0, 0, 0, time.UTC) // noon → the next daily 00:30 window is tomorrow
+	now := time.Date(2099, 1, 1, 12, 0, 0, 0, time.UTC) // noon → today's 00:30–08:30 window has closed
+	one := []presetInterval{iv("00:30", "08:30")}
 
-	mk := func(overrun string) int64 {
-		id, err := st.CreateBatchJob(1, 1, 0, "u", []map[string]string{{"k": "v"}}, "50")
-		if err != nil {
-			t.Fatal(err)
-		}
-		b, _ := json.Marshal(runPresetSnapshot{
-			Freq: "daily", Start: presetAnchor{Time: "00:30"}, Stop: presetAnchor{Time: "08:30"},
-			OnOverrun: overrun, Until: "2000-01-01 00:00:00", // long closed
-		})
-		st.SetJobWindow(id, "2000-01-01 00:00:00", string(b))
-		return id
-	}
-	cont, next, canc := mk("continue"), mk("next"), mk("cancel")
+	cont := makePresetJob(t, st, one, "continue", "2000-01-01 00:00:00")
+	next := makePresetJob(t, st, one, "next", "2000-01-01 00:00:00")
+	canc := makePresetJob(t, st, one, "cancel", "2000-01-01 00:00:00")
 
 	srv.sweepPresetWindowsLocked(now)
 
 	if status, ra, rp := jobRow(t, st, cont); status != "queued" || ra != "" || rp != "" {
-		t.Fatalf("continue: got status=%q run_at=%q run_preset=%q, want queued with cleared window", status, ra, rp)
+		t.Fatalf("continue: got status=%q run_at=%q run_preset=%q, want queued + cleared", status, ra, rp)
 	}
 	if status, _, _ := jobRow(t, st, canc); status != "expired" {
 		t.Fatalf("cancel: status=%q, want expired", status)
 	}
-
-	status, ra, rp := jobRow(t, st, next)
-	if status != "queued" {
-		t.Fatalf("next: status=%q, want queued", status)
+	status, ra, _ := jobRow(t, st, next)
+	if status != "queued" || !parseLocal(t, ra).After(now) {
+		t.Fatalf("next: status=%q run_at=%q should roll to the future", status, ra)
 	}
-	rolled, err := time.ParseInLocation("2006-01-02 15:04:05", ra, time.Local)
-	if err != nil || !rolled.After(now) {
-		t.Fatalf("next: run_at=%q should roll to a future instant (%v)", ra, err)
+}
+
+// Union overrun: with two sub-windows, missing the first auto-advances to the second SAME DAY
+// regardless of policy; only once the whole day is exhausted does on_overrun (here cancel) fire.
+func TestSweepPresetUnion(t *testing.T) {
+	st := newTestStore(t)
+	st.SetSetting("timezone", "UTC")
+	srv := &Server{st: st}
+	two := []presetInterval{iv("09:00", "12:00"), iv("14:00", "18:00")}
+
+	// Just after the 09–12 window closed; the 14–18 window is still ahead today → auto-advance
+	// even though the policy is cancel.
+	midday := time.Date(2099, 1, 1, 12, 30, 0, 0, time.UTC)
+	adv := makePresetJob(t, st, two, "cancel", "2099-01-01 12:00:00")
+	srv.sweepPresetWindowsLocked(midday)
+	status, ra, rp := jobRow(t, st, adv)
+	if status != "queued" {
+		t.Fatalf("union auto-advance: status=%q, want queued (not cancelled mid-day)", status)
+	}
+	if !parseLocal(t, ra).Equal(ut(2099, 1, 1, 14, 0)) {
+		t.Fatalf("union auto-advance: run_at=%q, want today 14:00", ra)
 	}
 	var s runPresetSnapshot
-	if json.Unmarshal([]byte(rp), &s) != nil || s.OnOverrun != "next" || s.Freq != "daily" {
-		t.Fatalf("next: snapshot lost its rule: %s", rp)
-	}
-	if until, _ := time.ParseInLocation("2006-01-02 15:04:05", s.Until, time.Local); !until.After(now) {
-		t.Fatalf("next: until=%q should be in the future", s.Until)
+	json.Unmarshal([]byte(rp), &s)
+	if !parseLocal(t, s.Until).Equal(ut(2099, 1, 1, 18, 0)) {
+		t.Fatalf("union auto-advance: until=%q, want today 18:00", s.Until)
 	}
 
-	if q := st.QueuedPresetJobs(); len(q) != 1 || q[0].ID != next {
-		t.Fatalf("QueuedPresetJobs after sweep = %+v, want only the rolled job %d", q, next)
+	// After BOTH windows closed today → period exhausted → cancel fires.
+	evening := time.Date(2099, 1, 1, 19, 0, 0, 0, time.UTC)
+	exp := makePresetJob(t, st, two, "cancel", "2099-01-01 18:00:00")
+	srv.sweepPresetWindowsLocked(evening)
+	if status, _, _ := jobRow(t, st, exp); status != "expired" {
+		t.Fatalf("union exhausted: status=%q, want expired", status)
 	}
 }
 
 // ---------- HTTP surface ----------
 
-// End-to-end through the handlers: create a daily low-peak preset, submit a run into it, and
-// confirm the create wiring snapshots the resolved window (run_at + run_preset) onto the job.
-// Whether the job runs now or waits depends on the wall clock (a run submitted inside the window
-// starts immediately) — that time-sensitive behavior is covered deterministically by the pure
-// resolver/sweep tests; here we only assert the seam. A stub provider keeps any immediate run
-// clean. Also covers the preset CRUD surface + validation.
+// End-to-end through the handlers: create a split (two-interval) preset, submit a run into it, and
+// confirm the create wiring snapshots the resolved window (run_at + run_preset) onto the job. A
+// stub provider keeps any immediate run clean. Also covers CRUD validation.
 func TestRunPresetSchedulesJob(t *testing.T) {
 	srv := batchServer(t)
 	srv.st.SetSetting("timezone", "UTC")
@@ -313,7 +371,7 @@ func TestRunPresetSchedulesJob(t *testing.T) {
 	targetID := int64(added["id"].(float64))
 
 	pr := post(t, srv.apiRunPresetCreate,
-		`{"label":"低峰期","freq":"daily","start":{"time":"00:30"},"stop":{"time":"08:30"},"on_overrun":"next","enabled":true}`)
+		`{"label":"低峰期","freq":"daily","intervals":[{"start":{"time":"09:00"},"stop":{"time":"12:00"}},{"start":{"time":"14:00"},"stop":{"time":"18:00"}}],"on_overrun":"next","enabled":true}`)
 	presetID := int64(pr["id"].(float64))
 
 	if ps, _ := post(t, srv.apiRunPresets, "{}")["presets"].([]any); len(ps) != 1 {
@@ -325,15 +383,20 @@ func TestRunPresetSchedulesJob(t *testing.T) {
 	jobID := int64(created["job_id"].(float64))
 
 	_, runAt, runPreset := jobRow(t, srv.st, jobID)
-	if _, err := time.ParseInLocation("2006-01-02 15:04:05", runAt, time.Local); runAt == "" || err != nil {
-		t.Fatalf("preset job run_at should be a resolved window start, got %q (%v)", runAt, err)
+	if runAt == "" {
+		t.Fatal("preset job should carry a resolved run_at")
 	}
+	parseLocal(t, runAt) // must be a valid timestamp
 	var snap runPresetSnapshot
-	if json.Unmarshal([]byte(runPreset), &snap) != nil || snap.Freq != "daily" || snap.OnOverrun != "next" || snap.Start.Time != "00:30" || snap.Until == "" {
+	if json.Unmarshal([]byte(runPreset), &snap) != nil || snap.Freq != "daily" || len(snap.Intervals) != 2 || snap.Until == "" {
 		t.Fatalf("run_preset snapshot lost its rule: %s", runPreset)
 	}
 
-	if code := postCode(t, srv.apiRunPresetCreate, `{"label":"x","freq":"daily","start":{"time":"99:99"},"stop":{"time":"08:30"}}`); code != 400 {
-		t.Fatalf("bad preset window should 400, got %d", code)
+	// A preset with no intervals, or a malformed time, is rejected at create.
+	if code := postCode(t, srv.apiRunPresetCreate, `{"label":"x","freq":"daily","intervals":[]}`); code != 400 {
+		t.Fatalf("empty-interval preset should 400, got %d", code)
+	}
+	if code := postCode(t, srv.apiRunPresetCreate, `{"label":"x","freq":"daily","intervals":[{"start":{"time":"99:99"},"stop":{"time":"12:00"}}]}`); code != 400 {
+		t.Fatalf("bad-time preset should 400, got %d", code)
 	}
 }

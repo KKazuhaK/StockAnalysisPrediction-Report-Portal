@@ -60,6 +60,10 @@ type difyProvider struct {
 	// re-running (the restart-durable half of reconcile-not-retry). nil disables it. It may be
 	// called repeatedly as ids accumulate; each call carries every id known so far.
 	onRef func(runID, convID, taskID string)
+	// onStarted is called once the instant the stream opens (2xx), BEFORE any id — the caller
+	// persists "this run reached Dify" so a crash before the first id still marks it started
+	// (→ untracked, never re-run) rather than un-started (→ re-run). nil disables it.
+	onStarted func()
 }
 
 // runStream dispatches to the chat or workflow stream by the target's mode. Both
@@ -82,6 +86,12 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 	// run finishes — that is what makes a crash/restart mid-run reconcilable instead of re-run.
 	var taskID, evRunID, evConvID string
 	r, runID, err := p.runStream(ctx, in, func(e dify.StreamEvent) {
+		if e.Event == dify.EventStreamOpen { // stream is open (2xx) — the run reached Dify
+			if p.onStarted != nil {
+				p.onStarted()
+			}
+			return
+		}
 		changed := false
 		if e.TaskID != "" && e.TaskID != taskID {
 			taskID, changed = e.TaskID, true
@@ -102,7 +112,9 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 	if p.poll && err == nil && runID != "" && !difyTerminal(r.Status) {
 		r, err = p.reconcile(ctx, runID)
 		if err != nil {
-			return batch.RunResult{}, permanentRunErr{fmt.Errorf("poll dify run %s: %w", runID, err)}
+			// Couldn't poll the started run to a terminal state — the outcome is unknown, not a
+			// failure. Untracked (no error → no re-run) keeps run_id so it can be reconciled later.
+			return batch.RunResult{Status: batch.Untracked, RunID: runID, Detail: fmt.Sprintf("poll dify run %s: %v", runID, err)}, nil
 		}
 		return difyResultToBatch(r), nil
 	}
@@ -117,37 +129,38 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 		}
 		return batch.RunResult{}, classifyDifyErr(err)
 	}
-	// The stream dropped mid-run. NEVER re-run a run that started — reconcile its true
-	// outcome by polling whatever handle we captured. A reconcile failure is returned as
-	// PERMANENT so the engine can't retry (a retry would re-run the started run — the
-	// ~1M-token duplicate this exists to avoid).
+	// The stream dropped mid-run. NEVER re-run a run that started — reconcile its true outcome by
+	// polling whatever handle we captured. If reconcile itself can't reach a terminal state the
+	// outcome is UNKNOWN, not failed: return Untracked (no error → the engine can't retry, so a
+	// retry never re-runs the started run — the ~1M-token duplicate this exists to avoid) and keep
+	// the handle so it can be reconciled later.
 	if runID != "" { // workflow / chatflow: reconcile by workflow run id
 		r, err = p.reconcile(ctx, runID)
 		if err != nil {
-			return batch.RunResult{}, permanentRunErr{fmt.Errorf("reconcile dify run %s: %w", runID, err)}
+			return batch.RunResult{Status: batch.Untracked, RunID: runID, Detail: fmt.Sprintf("reconcile dify run %s: %v", runID, err)}, nil
 		}
 		return difyResultToBatch(r), nil
 	}
 	if p.chat && convID != "" { // pure agent/chat: no run id — reconcile via message history
 		r, err = p.reconcileChat(ctx, convID)
 		if err != nil {
-			return batch.RunResult{}, permanentRunErr{fmt.Errorf("reconcile dify chat %s: %w", convID, err)}
+			return batch.RunResult{Status: batch.Untracked, Detail: fmt.Sprintf("reconcile dify chat %s: %v", convID, err)}, nil
 		}
 		return difyResultToBatch(r), nil
 	}
-	// A task id means a run demonstrably STARTED but left us no id to reconcile it with
-	// (e.g. the stream was torn down before the run/conversation id was emitted). Retrying
-	// would re-run it, so fail PERMANENTLY — no duplicate burn.
+	// A task id means a run demonstrably STARTED but left us no id to reconcile it with (e.g. the
+	// stream was torn down before the run/conversation id was emitted). Its outcome is UNKNOWN and
+	// re-running would duplicate it, so mark Untracked — never re-run.
 	if taskID != "" {
-		return batch.RunResult{}, permanentRunErr{fmt.Errorf("dify run started (task %s) but the stream ended before an id to reconcile; not retried to avoid a duplicate run: %w", taskID, err)}
+		return batch.RunResult{Status: batch.Untracked, Detail: fmt.Sprintf("dify run started (task %s) but the stream ended before an id to reconcile; not re-run to avoid a duplicate charged run: %v", taskID, err)}, nil
 	}
-	// No ids at all — but if the STREAM OPENED (Dify returned 2xx and accepted the request),
-	// a run was almost certainly created and is running blind (e.g. it stalled before emitting
-	// any event under DB pressure). Re-running duplicates it, so fail PERMANENTLY. This is the
-	// runaway amplifier: without it, an overloaded Dify makes every run look "unstarted", the
+	// No ids at all — but if the STREAM OPENED (Dify returned 2xx and accepted the request), a run
+	// was almost certainly created and is running blind (e.g. it stalled before emitting any event
+	// under DB pressure). Re-running duplicates it, so mark Untracked — never re-run. This is also
+	// the runaway amplifier: without it, an overloaded Dify makes every run look "unstarted", the
 	// engine re-fires them, and that piles on more load + burns tokens on duplicate runs.
 	if errors.Is(err, dify.ErrStreamEnded) {
-		return batch.RunResult{}, permanentRunErr{fmt.Errorf("dify accepted the run but the stream ended before any id; not retried to avoid a duplicate run: %w", err)}
+		return batch.RunResult{Status: batch.Untracked, Detail: fmt.Sprintf("dify accepted the run but the stream ended before any id; not re-run to avoid a duplicate charged run: %v", err)}, nil
 	}
 	// A genuine pre-stream failure (connection refused / non-2xx) → nothing started → safe to retry.
 	return batch.RunResult{}, classifyDifyErr(err)
@@ -281,8 +294,9 @@ func (e permanentRunErr) Unwrap() error { return e.error }
 // buildDifyProvider constructs the provider for a Dify target from its config JSON.
 // user is the end-user identity Dify records for each run (resolved from the
 // dify_end_user template); an empty user falls back to "report-portal" at run time.
-// onRef (may be nil) persists the run/conversation/task ids as they stream in.
-func buildDifyProvider(configJSON, user string, poll bool, pollInterval, runTimeout time.Duration, onRef func(runID, convID, taskID string)) (batch.Provider, error) {
+// onRef (may be nil) persists the run/conversation/task ids as they stream in; onStarted (may be
+// nil) persists "the run reached Dify" the instant the stream opens, before any id.
+func buildDifyProvider(configJSON, user string, poll bool, pollInterval, runTimeout time.Duration, onRef func(runID, convID, taskID string), onStarted func()) (batch.Provider, error) {
 	var cfg difyTargetConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return nil, fmt.Errorf("dify target config: %w", err)
@@ -300,6 +314,7 @@ func buildDifyProvider(configJSON, user string, poll bool, pollInterval, runTime
 		poll:             poll,
 		reconcileTimeout: runTimeout, // the reconcile poll window matches the run cap
 		onRef:            onRef,
+		onStarted:        onStarted,
 	}
 	if poll && pollInterval > 0 {
 		p.reconcilePoll = pollInterval

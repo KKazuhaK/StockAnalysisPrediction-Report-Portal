@@ -11,15 +11,17 @@ import (
 // Preset low-peak scheduling windows (docs/adr/0014-idle-lane-and-preset-windows.md): an admin
 // configures recurring windows (daily/weekly/monthly/yearly) in the run_presets table; a user
 // picks one and the run is scheduled into the current-or-next occurrence, rolling to the next
-// occurrence (or continuing / cancelling) if the window closes before it starts. This one file
-// holds the whole small feature — the pure resolver, the run_presets persistence, and the HTTP
-// surface — following the single-file convention of the other compact features (tickets, group…).
-// The overrun sweep and the create-handler wiring live with the scheduler (batch_run.go) and the
-// job-create handler (batch_api.go) respectively, next to the code they extend.
+// occurrence (or continuing / cancelling) if the window closes before it starts. A preset's
+// eligible time is the UNION of one-or-more sub-windows (intervals), so a split low-peak like
+// "09:00–12:00 and 14:00–18:00" is a single preset. This one file holds the whole small feature —
+// the pure resolver, the run_presets persistence, and the HTTP surface — following the single-file
+// convention of the other compact features (tickets, group…). The overrun sweep and the
+// create-handler wiring live with the scheduler (batch_run.go) and the job-create handler
+// (batch_api.go), next to the code they extend.
 
 // ---------- pure window resolver ----------
 
-// presetAnchor is one edge (start or stop) of a preset window. Which fields apply depends on
+// presetAnchor is one edge (start or stop) of a preset sub-window. Which fields apply depends on
 // the preset's freq: daily uses only Time; weekly adds Weekday (0=Sun..6=Sat, Go's convention);
 // monthly adds Day (1..31, clamped to the month's length); yearly adds Month (1..12) + Day.
 // Time is "HH:mm", interpreted in the panel timezone.
@@ -28,6 +30,12 @@ type presetAnchor struct {
 	Month   int    `json:"month,omitempty"`
 	Day     int    `json:"day,omitempty"`
 	Time    string `json:"time"`
+}
+
+// presetInterval is one sub-window [Start, Stop] of a preset; a preset is the union of these.
+type presetInterval struct {
+	Start presetAnchor `json:"start"`
+	Stop  presetAnchor `json:"stop"`
 }
 
 // parseHHMM parses a "HH:mm" 24-hour clock string. ok=false on anything malformed.
@@ -58,13 +66,13 @@ func atClamped(year int, month time.Month, day, hh, mm int, loc *time.Location) 
 	return time.Date(year, month, day, hh, mm, 0, 0, loc)
 }
 
-// nextWindow returns the current-or-next occurrence [start, end] of a preset window relative to
+// nextInterval returns the current-or-next occurrence [start, end] of ONE sub-window relative to
 // now, interpreting the anchors in loc (the panel timezone). If now is inside an occurrence, that
 // occurrence is returned (start <= now < end). It handles a window whose stop precedes its start
 // within the period (wraps to the next day/week/month/year) and clamps invalid month days.
 // ok=false for a malformed spec. Non-overlapping occurrences mean the first end after now is the
 // current-or-next one; the loop starts one period back to catch a still-open wrapped window.
-func nextWindow(freq string, start, stop presetAnchor, now time.Time, loc *time.Location) (time.Time, time.Time, bool) {
+func nextInterval(freq string, start, stop presetAnchor, now time.Time, loc *time.Location) (time.Time, time.Time, bool) {
 	sh, sm, ok1 := parseHHMM(start.Time)
 	eh, em, ok2 := parseHHMM(stop.Time)
 	if !ok1 || !ok2 {
@@ -148,18 +156,55 @@ func nextWindow(freq string, start, stop presetAnchor, now time.Time, loc *time.
 	return time.Time{}, time.Time{}, false
 }
 
-// runPresetSnapshot is what batch_jobs.run_preset stores: the recurrence rule + the overrun
-// policy + the current occurrence's end (until). It rides on the job (a snapshot taken at
-// submit) rather than a reference to the mutable run_presets row, so a later edit/delete of the
-// preset never rewrites an in-flight run's window (mirrors the report.name snapshot rationale).
-// until is the local wall-clock "2006-01-02 15:04:05" of the occurrence end — the same basis
-// runAtDue parses run_at in, so the scheduler compares it with the existing helpers.
+// nextWindow returns the current-or-next occurrence [start, end] across the UNION of a preset's
+// sub-windows: the occurrence whose end is the earliest still after now — the next moment the run
+// becomes eligible. Malformed sub-windows are skipped; ok=false only if none resolves.
+func nextWindow(freq string, intervals []presetInterval, now time.Time, loc *time.Location) (time.Time, time.Time, bool) {
+	var bestS, bestE time.Time
+	found := false
+	for _, iv := range intervals {
+		s, e, ok := nextInterval(freq, iv.Start, iv.Stop, now, loc)
+		if !ok {
+			continue
+		}
+		if !found || e.Before(bestE) {
+			bestS, bestE, found = s, e, true
+		}
+	}
+	return bestS, bestE, found
+}
+
+// samePeriod reports whether instants a and b fall in the same recurrence period, so the overrun
+// sweep can tell "another sub-window later today" (auto-advance) from "period exhausted" (apply
+// on_overrun). Weekly uses the ISO week; a weekly preset whose sub-windows straddle the Mon/Sun
+// ISO boundary would treat them as separate periods, which is an acceptable edge.
+func samePeriod(freq string, a, b time.Time, loc *time.Location) bool {
+	x, y := a.In(loc), b.In(loc)
+	switch freq {
+	case "weekly":
+		ay, aw := x.ISOWeek()
+		by, bw := y.ISOWeek()
+		return ay == by && aw == bw
+	case "monthly":
+		return x.Year() == y.Year() && x.Month() == y.Month()
+	case "yearly":
+		return x.Year() == y.Year()
+	default: // daily
+		return x.Year() == y.Year() && x.YearDay() == y.YearDay()
+	}
+}
+
+// runPresetSnapshot is what batch_jobs.run_preset stores: the recurrence rule (freq + the union of
+// intervals) + the overrun policy + the current occurrence's end (until). It rides on the job (a
+// snapshot taken at submit) rather than a reference to the mutable run_presets row, so a later
+// edit/delete of the preset never rewrites an in-flight run's window (mirrors the report.name
+// snapshot rationale). until is the local wall-clock "2006-01-02 15:04:05" of the occurrence end —
+// the same basis runAtDue parses run_at in, so the scheduler compares it with the existing helpers.
 type runPresetSnapshot struct {
-	Freq      string       `json:"freq"`
-	Start     presetAnchor `json:"start"`
-	Stop      presetAnchor `json:"stop"`
-	OnOverrun string       `json:"on_overrun"`
-	Until     string       `json:"until"`
+	Freq      string           `json:"freq"`
+	Intervals []presetInterval `json:"intervals"`
+	OnOverrun string           `json:"on_overrun"`
+	Until     string           `json:"until"`
 }
 
 // fmtLocal renders an absolute instant in the local wall-clock basis run_at/until are stored in.
@@ -168,45 +213,44 @@ type runPresetSnapshot struct {
 // the server's timezone.
 func fmtLocal(t time.Time) string { return t.In(time.Local).Format("2006-01-02 15:04:05") }
 
-// resolvePresetWindow computes a job's run_at (the window start) and its run_preset snapshot for
-// a preset window relative to now, interpreting anchors in loc (the panel timezone). The same
-// call rolls a window forward: past the old occurrence's end, nextWindow returns the next
-// occurrence. ok=false for a malformed window (the caller then skips preset scheduling).
-func resolvePresetWindow(freq string, start, stop presetAnchor, onOverrun string, now time.Time, loc *time.Location) (runAt, snapshot string, ok bool) {
-	s, e, ok := nextWindow(freq, start, stop, now, loc)
+// resolvePresetWindow computes a job's run_at (the window start) and its run_preset snapshot for a
+// preset (the union of intervals) relative to now, interpreting anchors in loc (the panel
+// timezone). The same call rolls a window forward: past the old occurrence's end, nextWindow
+// returns the next eligible sub-window. ok=false for a preset with no resolvable window.
+func resolvePresetWindow(freq string, intervals []presetInterval, onOverrun string, now time.Time, loc *time.Location) (runAt, snapshot string, ok bool) {
+	s, e, ok := nextWindow(freq, intervals, now, loc)
 	if !ok {
 		return "", "", false
 	}
-	b, _ := json.Marshal(runPresetSnapshot{Freq: freq, Start: start, Stop: stop, OnOverrun: onOverrun, Until: fmtLocal(e)})
+	b, _ := json.Marshal(runPresetSnapshot{Freq: freq, Intervals: intervals, OnOverrun: onOverrun, Until: fmtLocal(e)})
 	return fmtLocal(s), string(b), true
 }
 
 // ---------- run_presets persistence ----------
 //
-// The run_presets table mirrors the links / type_config admin-list CRUD; a job never references
-// a preset row (it snapshots the rule into batch_jobs.run_preset), so there is no foreign key.
+// The run_presets table mirrors the links / type_config admin-list CRUD; a job never references a
+// preset row (it snapshots the rule into batch_jobs.run_preset), so there is no foreign key.
 
-// RunPreset is one configured preset window. start_spec / stop_spec are JSON presetAnchor
-// objects ({weekday?,month?,day?,time:"HH:mm"}); which fields apply depends on Freq
-// (daily|weekly|monthly|yearly). OnOverrun is continue|next|cancel.
+// RunPreset is one configured preset. Intervals is a JSON array of {start, stop} presetInterval
+// (the union of sub-windows); which anchor fields apply depends on Freq (daily|weekly|monthly|
+// yearly). OnOverrun is continue|next|cancel.
 type RunPreset struct {
 	ID        int64
 	Label     string
 	Freq      string
-	StartSpec string
-	StopSpec  string
+	Intervals string // JSON [{start,stop}]
 	OnOverrun string
 	Enabled   bool
 	Ord       int
 }
 
-const runPresetCols = `id, COALESCE(label,''), COALESCE(freq,''), COALESCE(start_spec,''),
-	COALESCE(stop_spec,''), COALESCE(on_overrun,'next'), COALESCE(enabled,1), COALESCE(ord,0)`
+const runPresetCols = `id, COALESCE(label,''), COALESCE(freq,''), COALESCE(intervals,'[]'),
+	COALESCE(on_overrun,'next'), COALESCE(enabled,1), COALESCE(ord,0)`
 
 func scanRunPreset(sc interface{ Scan(...any) error }) (RunPreset, bool) {
 	var p RunPreset
 	var enabled int
-	if err := sc.Scan(&p.ID, &p.Label, &p.Freq, &p.StartSpec, &p.StopSpec, &p.OnOverrun, &enabled, &p.Ord); err != nil {
+	if err := sc.Scan(&p.ID, &p.Label, &p.Freq, &p.Intervals, &p.OnOverrun, &enabled, &p.Ord); err != nil {
 		return RunPreset{}, false
 	}
 	p.Enabled = enabled != 0
@@ -238,14 +282,14 @@ func (s *Store) GetRunPreset(id int64) (RunPreset, bool) {
 // CreateRunPreset inserts a preset, returning its new id. New presets sort after existing ones
 // (ord defaults to 0; ties break by id, so a fresh row lands last).
 func (s *Store) CreateRunPreset(p RunPreset) (int64, error) {
-	return s.insertID(`INSERT INTO run_presets(label,freq,start_spec,stop_spec,on_overrun,enabled,ord)
-		VALUES(?,?,?,?,?,?,?)`, p.Label, p.Freq, p.StartSpec, p.StopSpec, p.OnOverrun, boolInt(p.Enabled), p.Ord)
+	return s.insertID(`INSERT INTO run_presets(label,freq,intervals,on_overrun,enabled,ord)
+		VALUES(?,?,?,?,?,?)`, p.Label, p.Freq, p.Intervals, p.OnOverrun, boolInt(p.Enabled), p.Ord)
 }
 
 // UpdateRunPreset saves an edited preset (ord is managed by ReorderRunPresets, not here).
 func (s *Store) UpdateRunPreset(p RunPreset) error {
-	_, err := s.exec(`UPDATE run_presets SET label=?, freq=?, start_spec=?, stop_spec=?, on_overrun=?, enabled=? WHERE id=?`,
-		p.Label, p.Freq, p.StartSpec, p.StopSpec, p.OnOverrun, boolInt(p.Enabled), p.ID)
+	_, err := s.exec(`UPDATE run_presets SET label=?, freq=?, intervals=?, on_overrun=?, enabled=? WHERE id=?`,
+		p.Label, p.Freq, p.Intervals, p.OnOverrun, boolInt(p.Enabled), p.ID)
 	return err
 }
 
@@ -271,15 +315,14 @@ func (s *Store) ReorderRunPresets(ids []int64) error {
 // The list is readable by any run_batch user (the run form's preset dropdown needs it); create /
 // update / delete / reorder are admin-only (routes in server.go).
 
-// runPresetJSON renders a stored preset for the wire, parsing the JSON anchors into objects so
-// the client gets structured start/stop instead of embedded JSON strings.
+// runPresetJSON renders a stored preset for the wire, parsing the JSON intervals into objects so
+// the client gets a structured array instead of an embedded JSON string.
 func runPresetJSON(p RunPreset) map[string]any {
-	var start, stop presetAnchor
-	json.Unmarshal([]byte(p.StartSpec), &start)
-	json.Unmarshal([]byte(p.StopSpec), &stop)
+	intervals := []presetInterval{}
+	json.Unmarshal([]byte(p.Intervals), &intervals)
 	return map[string]any{
 		"id": p.ID, "label": p.Label, "freq": p.Freq,
-		"start": start, "stop": stop, "on_overrun": p.OnOverrun,
+		"intervals": intervals, "on_overrun": p.OnOverrun,
 		"enabled": p.Enabled, "ord": p.Ord,
 	}
 }
@@ -299,18 +342,18 @@ func (s *Server) apiRunPresets(w http.ResponseWriter, r *http.Request, user stri
 	})
 }
 
-// presetInput is the create/update body; start/stop are structured anchors.
+// presetInput is the create/update body; intervals is the union of sub-windows.
 type presetInput struct {
-	Label     string       `json:"label"`
-	Freq      string       `json:"freq"`
-	Start     presetAnchor `json:"start"`
-	Stop      presetAnchor `json:"stop"`
-	OnOverrun string       `json:"on_overrun"`
-	Enabled   bool         `json:"enabled"`
+	Label     string           `json:"label"`
+	Freq      string           `json:"freq"`
+	Intervals []presetInterval `json:"intervals"`
+	OnOverrun string           `json:"on_overrun"`
+	Enabled   bool             `json:"enabled"`
 }
 
-// normalizePreset validates freq + anchors (by resolving a window) and clamps on_overrun to a
-// known policy (defaulting to 'next'), returning the RunPreset to store. ok=false → 400.
+// normalizePreset validates freq + every interval (each must resolve) and clamps on_overrun to a
+// known policy (defaulting to 'next'), returning the RunPreset to store. A preset needs at least
+// one interval. ok=false → 400.
 func normalizePreset(in presetInput) (RunPreset, bool) {
 	onOverrun := in.OnOverrun
 	switch onOverrun {
@@ -318,14 +361,16 @@ func normalizePreset(in presetInput) (RunPreset, bool) {
 	default:
 		onOverrun = "next"
 	}
-	// A window that can't resolve (bad freq / time / anchor) is rejected up front.
-	if _, _, ok := nextWindow(in.Freq, in.Start, in.Stop, time.Now(), time.UTC); !ok {
+	if len(in.Intervals) == 0 {
 		return RunPreset{}, false
 	}
-	sb, _ := json.Marshal(in.Start)
-	tb, _ := json.Marshal(in.Stop)
-	return RunPreset{Label: in.Label, Freq: in.Freq, StartSpec: string(sb), StopSpec: string(tb),
-		OnOverrun: onOverrun, Enabled: in.Enabled}, true
+	for _, iv := range in.Intervals {
+		if _, _, ok := nextInterval(in.Freq, iv.Start, iv.Stop, time.Now(), time.UTC); !ok {
+			return RunPreset{}, false
+		}
+	}
+	b, _ := json.Marshal(in.Intervals)
+	return RunPreset{Label: in.Label, Freq: in.Freq, Intervals: string(b), OnOverrun: onOverrun, Enabled: in.Enabled}, true
 }
 
 func (s *Server) apiRunPresetCreate(w http.ResponseWriter, r *http.Request, user string) {

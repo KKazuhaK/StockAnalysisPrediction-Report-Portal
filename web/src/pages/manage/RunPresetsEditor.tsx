@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { App, Button, Empty, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Tag, TimePicker, Typography } from 'antd'
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined, MinusCircleOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import type { RunFreq, RunOverrun, RunPreset, RunPresetAnchor, RunPresetsResp } from '../../api/types'
+import type { RunFreq, RunOverrun, RunPreset, RunPresetAnchor, RunPresetInterval, RunPresetsResp } from '../../api/types'
 import { presetSummary } from '../../lib/runSchedule'
 import { DragHandle, SortableItem, SortableWrapper } from './dnd'
 
@@ -15,12 +15,33 @@ import { DragHandle, SortableItem, SortableWrapper } from './dnd'
 const FREQS: RunFreq[] = ['daily', 'weekly', 'monthly', 'yearly']
 const OVERRUNS: RunOverrun[] = ['next', 'continue', 'cancel']
 
+// defaultAnchor seeds a new anchor with only the fields the frequency uses.
+const defaultAnchor = (freq: RunFreq, time: string): RunPresetAnchor => {
+  const a: RunPresetAnchor = { time }
+  if (freq === 'weekly') a.weekday = 1
+  if (freq === 'monthly' || freq === 'yearly') a.day = 1
+  if (freq === 'yearly') a.month = 1
+  return a
+}
+const defaultInterval = (freq: RunFreq): RunPresetInterval => ({
+  start: defaultAnchor(freq, '09:00'),
+  stop: defaultAnchor(freq, '12:00'),
+})
+// withFreqFields backfills the fields a frequency needs when the frequency changes, keeping the
+// user's chosen times instead of resetting the whole window.
+const withFreqFields = (a: RunPresetAnchor, freq: RunFreq): RunPresetAnchor => {
+  const r = { ...a }
+  if (freq === 'weekly' && r.weekday == null) r.weekday = 1
+  if ((freq === 'monthly' || freq === 'yearly') && r.day == null) r.day = 1
+  if (freq === 'yearly' && r.month == null) r.month = 1
+  return r
+}
+
 const blankPreset = (): RunPreset => ({
   id: 0,
   label: '',
   freq: 'daily',
-  start: { time: '00:30' },
-  stop: { time: '08:30' },
+  intervals: [defaultInterval('daily')],
   on_overrun: 'next',
   enabled: true,
   ord: 0,
@@ -30,8 +51,7 @@ const blankPreset = (): RunPreset => ({
 const presetBody = (p: RunPreset) => ({
   label: p.label.trim(),
   freq: p.freq,
-  start: p.start,
-  stop: p.stop,
+  intervals: p.intervals,
   on_overrun: p.on_overrun,
   enabled: p.enabled,
 })
@@ -155,6 +175,11 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function PresetForm({ draft, onChange }: { draft: RunPreset; onChange: (p: RunPreset) => void }) {
   const { t } = useTranslation()
   const set = (patch: Partial<RunPreset>) => onChange({ ...draft, ...patch })
+  const changeFreq = (freq: RunFreq) =>
+    set({ freq, intervals: draft.intervals.map((ivl) => ({ start: withFreqFields(ivl.start, freq), stop: withFreqFields(ivl.stop, freq) })) })
+  const setIv = (i: number, next: RunPresetInterval) => set({ intervals: draft.intervals.map((x, j) => (j === i ? next : x)) })
+  const addIv = () => set({ intervals: [...draft.intervals, defaultInterval(draft.freq)] })
+  const rmIv = (i: number) => set({ intervals: draft.intervals.filter((_, j) => j !== i) })
   return (
     <Space direction="vertical" size={12} style={{ width: '100%' }}>
       <Field label={t('preset.label')}>
@@ -163,16 +188,27 @@ function PresetForm({ draft, onChange }: { draft: RunPreset; onChange: (p: RunPr
       <Field label={t('preset.freq')}>
         <Select
           value={draft.freq}
-          onChange={(f) => set({ freq: f as RunFreq })}
+          onChange={(f) => changeFreq(f as RunFreq)}
           style={{ width: 160 }}
           options={FREQS.map((f) => ({ value: f, label: t('run.freq.' + f) }))}
         />
       </Field>
-      <Field label={t('preset.start')}>
-        <AnchorFields freq={draft.freq} anchor={draft.start} onChange={(a) => set({ start: a })} />
-      </Field>
-      <Field label={t('preset.stop')}>
-        <AnchorFields freq={draft.freq} anchor={draft.stop} onChange={(a) => set({ stop: a })} />
+      <Field label={t('preset.windows')}>
+        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+          {draft.intervals.map((ivl, i) => (
+            <Space key={i} wrap align="center">
+              <AnchorFields freq={draft.freq} anchor={ivl.start} onChange={(a) => setIv(i, { ...ivl, start: a })} />
+              <span>–</span>
+              <AnchorFields freq={draft.freq} anchor={ivl.stop} onChange={(a) => setIv(i, { ...ivl, stop: a })} />
+              {draft.intervals.length > 1 && (
+                <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => rmIv(i)} />
+              )}
+            </Space>
+          ))}
+          <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={addIv}>
+            {t('preset.addInterval')}
+          </Button>
+        </Space>
       </Field>
       <Field label={t('preset.overrunLabel')}>
         <Select

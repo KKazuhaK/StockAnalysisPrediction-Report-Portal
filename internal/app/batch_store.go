@@ -56,6 +56,8 @@ func itemStatus(o batch.Outcome) string {
 		return "succeeded"
 	case batch.Partial:
 		return "partial"
+	case batch.Untracked:
+		return "untracked"
 	default:
 		return "failed"
 	}
@@ -111,6 +113,17 @@ func (s *Store) SaveItemDifyRef(itemID int64, runID, convID, taskID string) erro
 	return err
 }
 
+// MarkItemDifyStarted stamps dify_started_at the instant the Dify stream opens (2xx), BEFORE any id
+// is emitted — the persisted "this run reached Dify and started" signal. Written once (guarded on an
+// empty value) so a later call never overwrites the first-contact time. On a crash before any id is
+// captured this is the only evidence the run started, letting resume tell a started run (→ untracked,
+// never re-run) from one that never reached Dify (→ safe to re-run).
+func (s *Store) MarkItemDifyStarted(itemID int64) error {
+	_, err := s.exec(`UPDATE batch_items SET dify_started_at=?
+		WHERE id=? AND COALESCE(dify_started_at,'')=''`, nowStr(), itemID)
+	return err
+}
+
 func (s *Store) Cancelled(jobID int64) (bool, error) {
 	var status string
 	if err := s.queryRow("SELECT status FROM batch_jobs WHERE id=?", jobID).Scan(&status); err != nil {
@@ -137,22 +150,28 @@ func (s *Store) FinishJob(jobID int64, cancelled bool) error {
 
 // ---------- crash recovery ----------
 
-// ResetInFlightItems requeues crash-orphaned 'running' items that carry NO reconcilable Dify handle
-// (run/conversation id) so a resumed job re-triggers them from scratch — safe because they never
-// reached Dify (or crashed in the tiny window before its first event) and report ingest is idempotent
-// on uid. Items that DO carry an id are left 'running' for resumeBatchJobs to RECONCILE, not re-run,
-// so a run that already started (and cost tokens) is settled by its true outcome, never duplicated.
+// ResetInFlightItems requeues crash-orphaned 'running' items that show NO evidence of ever reaching
+// Dify — no run/conversation/task id AND no dify_started_at stamp — so a resumed job re-triggers
+// them from scratch. Re-running is data-idempotent (report ingest upserts on uid) though NOT
+// cost-idempotent (a re-run still burns tokens), so this bucket is deliberately the narrowest: only
+// rows that never opened a stream. Everything that shows it started is handled without a re-run —
+// a run/conversation id → RECONCILE (ResumableInFlightItems); a task_id or a dify_started_at stamp
+// with no reconcilable id → mark untracked (StartedUnreconcilableItems). So a started/charged run
+// is never duplicated.
 func (s *Store) ResetInFlightItems() error {
 	_, err := s.exec(`UPDATE batch_items SET status='queued'
-		WHERE status='running' AND COALESCE(run_id,'')='' AND COALESCE(conversation_id,'')=''`)
+		WHERE status='running' AND COALESCE(run_id,'')='' AND COALESCE(conversation_id,'')=''
+		AND COALESCE(task_id,'')='' AND COALESCE(dify_started_at,'')=''`)
 	return err
 }
 
-// ResumeRef is a crash-orphaned in-flight run that CAN be reconciled: it carries a Dify handle
-// (run id and/or conversation id) that was persisted before the crash.
+// ResumeRef is a crash-orphaned in-flight run recovered on resume: it carries whatever Dify ids
+// were persisted before the crash (run/conversation id for a reconcilable run; task id for a run
+// that started but left nothing to reconcile with).
 type ResumeRef struct {
 	ItemID, JobID int64
 	RunID, ConvID string
+	TaskID        string
 }
 
 // ResumableInFlightItems returns the 'running' items that carry a reconcilable Dify handle — the
@@ -169,6 +188,30 @@ func (s *Store) ResumableInFlightItems() []ResumeRef {
 	for rows.Next() {
 		var r ResumeRef
 		if rows.Scan(&r.ItemID, &r.JobID, &r.RunID, &r.ConvID) == nil {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// StartedUnreconcilableItems returns 'running' items that show the run STARTED on Dify — it captured
+// a task_id, or the stream opened (dify_started_at stamped) — but left NO reconcilable id (no run or
+// conversation id). Dify has no get-by-task_id and the stream never yielded an id, so there is
+// nothing to poll: resumeBatchJobs marks these UNTRACKED and never re-runs them (mirroring the
+// in-process guard in dify_provider.go), so a started/charged run is not duplicated.
+func (s *Store) StartedUnreconcilableItems() []ResumeRef {
+	rows, err := s.query(`SELECT id, job_id, COALESCE(task_id,'')
+		FROM batch_items WHERE status='running'
+		AND COALESCE(run_id,'')='' AND COALESCE(conversation_id,'')=''
+		AND (COALESCE(task_id,'')<>'' OR COALESCE(dify_started_at,'')<>'')`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []ResumeRef
+	for rows.Next() {
+		var r ResumeRef
+		if rows.Scan(&r.ItemID, &r.JobID, &r.TaskID) == nil {
 			out = append(out, r)
 		}
 	}

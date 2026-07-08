@@ -25,6 +25,7 @@ type ChatReply struct {
 	Answer         string
 	ConversationID string // the conversation this turn belongs to (assigned on the first turn)
 	MessageID      string
+	TaskID         string // Dify task id, for a server-side stop of an in-flight turn
 }
 
 // ChatIntro fetches a chat/agent app's opening statement and suggested opening questions
@@ -45,13 +46,15 @@ func (c *Client) ChatIntro(ctx context.Context) (opening string, suggested []str
 	return doc.OpeningStatement, doc.SuggestedQuestions, nil
 }
 
-// ChatStream sends a message in STREAMING mode so the conversation_id is captured the
-// moment Dify assigns it (the first event) and handed to onMeta — letting the caller
-// persist the conversation↔Dify linkage BEFORE a possibly-long turn finishes, so it
-// survives a page reload mid-generation. It still returns one aggregated ChatReply (the
-// portal accumulates the answer chunks and answers the browser once), so callers stay
-// request/response. onMeta may be nil; it fires at most once.
-func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string]any, user, conversationID string, onMeta func(convID, msgID string)) (ChatReply, error) {
+// ChatStream sends a message in STREAMING mode so the conversation_id and task_id are
+// captured the moment Dify emits them (early events) and handed to onMeta — letting the
+// caller persist the conversation↔Dify linkage AND record a stop handle BEFORE a
+// possibly-long turn finishes, so both survive a page reload mid-generation. It still
+// returns one aggregated ChatReply (the portal accumulates the answer chunks and answers
+// the browser once), so callers stay request/response. onMeta may be nil; it fires once
+// per newly-seen id (conversation id and task id can arrive on different events, so up to
+// twice), each time carrying every id captured so far.
+func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string]any, user, conversationID string, onMeta func(convID, msgID, taskID string)) (ChatReply, error) {
 	if user == "" {
 		user = "report-portal"
 	}
@@ -81,7 +84,7 @@ func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string
 
 	var out ChatReply
 	var answer strings.Builder
-	metaSent := false
+	metaSent, taskSent := false, false
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
 	for sc.Scan() {
@@ -100,10 +103,17 @@ func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string
 		if ev.ConversationID != "" {
 			out.ConversationID = ev.ConversationID
 			out.MessageID = ev.MessageID
-			if !metaSent && onMeta != nil {
-				metaSent = true
-				onMeta(ev.ConversationID, ev.MessageID) // persist the linkage now, early
-			}
+		}
+		if ev.TaskID != "" {
+			out.TaskID = ev.TaskID
+		}
+		// Fire onMeta the first time each id appears (conversation id and task id can arrive on
+		// different events), carrying every id captured so far — so the caller can persist the
+		// linkage AND record the stop handle mid-turn. Fires at most twice.
+		if onMeta != nil && ((ev.ConversationID != "" && !metaSent) || (ev.TaskID != "" && !taskSent)) {
+			metaSent = metaSent || ev.ConversationID != ""
+			taskSent = taskSent || ev.TaskID != ""
+			onMeta(out.ConversationID, out.MessageID, out.TaskID)
 		}
 		switch ev.Event {
 		case "message", "agent_message":
@@ -116,7 +126,8 @@ func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return ChatReply{}, err
+		out.Answer = answer.String() // a cancelled/dropped turn still returns its partial answer + ids
+		return out, err
 	}
 	out.Answer = answer.String() // stream ended without an explicit end event
 	return out, nil

@@ -1,10 +1,13 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
 // Chat concurrency gate + admin observability (docs/adr/0012-interactive-chat.md).
@@ -28,6 +31,14 @@ type chatTurn struct {
 	ConvID     int64     // portal conversation row id
 	ConvTitle  string    // conversation title (may be empty on the first turn)
 	Started    time.Time // when the turn began
+	// Stop handle, all guarded by chatMu. Cancel aborts the server↔Dify stream (ending the
+	// blocked turn); Client + EndUser + TaskID let a stop end the run server-side via Dify
+	// StopChat so it stops billing. TaskID is latched as it streams in (chatSetTaskID) and may
+	// be "" until Dify emits its first event.
+	Cancel  context.CancelFunc
+	Client  *dify.Client
+	EndUser string
+	TaskID  string
 }
 
 // chatMaxConcurrent is the ceiling on simultaneous in-flight chat turns; 0 = unlimited.
@@ -68,6 +79,71 @@ func (s *Server) chatRelease(id int64) {
 	delete(s.chatLive, id)
 }
 
+// chatSetTaskID records the Dify task id onto an in-flight turn as it streams in, so a stop can
+// end the run server-side. A no-op if the turn already finished (released).
+func (s *Server) chatSetTaskID(id int64, taskID string) {
+	s.chatMu.Lock()
+	defer s.chatMu.Unlock()
+	if t := s.chatLive[id]; t != nil {
+		t.TaskID = taskID
+	}
+}
+
+// chatStopHandle is a snapshot of what a stop needs, taken under chatMu so the stop work
+// (cancel + StopChat) runs OFF the lock — the turn's fields are never read unlocked.
+type chatStopHandle struct {
+	cancel  context.CancelFunc
+	client  *dify.Client
+	taskID  string
+	endUser string
+}
+
+func handleOf(t *chatTurn) chatStopHandle {
+	return chatStopHandle{cancel: t.Cancel, client: t.Client, taskID: t.TaskID, endUser: t.EndUser}
+}
+
+// chatStopByID snapshots the stop handle for one live turn by its id (admin path).
+func (s *Server) chatStopByID(id int64) (chatStopHandle, bool) {
+	s.chatMu.Lock()
+	defer s.chatMu.Unlock()
+	if t := s.chatLive[id]; t != nil {
+		return handleOf(t), true
+	}
+	return chatStopHandle{}, false
+}
+
+// chatStopByConv snapshots the stop handle(s) for a conversation (owner path). Returns every
+// in-flight turn on the conversation (normally one) so a stray second turn can't be orphaned.
+func (s *Server) chatStopByConv(convID int64) []chatStopHandle {
+	s.chatMu.Lock()
+	defer s.chatMu.Unlock()
+	var out []chatStopHandle
+	for _, t := range s.chatLive {
+		if t.ConvID == convID {
+			out = append(out, handleOf(t))
+		}
+	}
+	return out
+}
+
+// chatStop performs the two-part stop OFF the lock: cancel() aborts the portal's read of the
+// Dify stream (the blocked turn returns with its partial answer), then a best-effort StopChat on
+// a fresh short context tells Dify to stop the run so it stops billing. Both are idempotent; the
+// server-side stop is skipped (harmlessly) when no task id was captured yet.
+func (s *Server) chatStop(h chatStopHandle) {
+	if h.cancel != nil {
+		h.cancel()
+	}
+	if h.taskID == "" || h.client == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), difyStopTimeout)
+		defer cancel()
+		_ = h.client.StopChat(ctx, h.taskID, h.endUser)
+	}()
+}
+
 // chatLiveTurns snapshots the in-flight turns, oldest first.
 func (s *Server) chatLiveTurns() []*chatTurn {
 	s.chatMu.Lock()
@@ -92,6 +168,32 @@ func (s *Server) apiAdminChatLive(w http.ResponseWriter, r *http.Request, user s
 		})
 	}
 	writeJSON(w, map[string]any{"turns": out, "max_concurrent": s.chatMaxConcurrent()})
+}
+
+// apiChatStop lets a conversation's owner stop their own in-flight turn: cancel the stream (the
+// pending send returns with whatever answer streamed so far) + best-effort StopChat so Dify stops
+// billing. Idempotent — a conversation with nothing in flight is still a success.
+func (s *Server) apiChatStop(w http.ResponseWriter, r *http.Request, user string) {
+	conv, ok := s.ownConversation(w, pathID(r, "id"), user)
+	if !ok {
+		return
+	}
+	for _, h := range s.chatStopByConv(conv.ID) {
+		s.chatStop(h)
+	}
+	writeJSON(w, okJSON)
+}
+
+// apiAdminChatStop stops any in-flight turn by its live-view turn id (admin override). The stop
+// still runs as the turn's OWN end-user (StopChat is user-scoped), not the admin.
+func (s *Server) apiAdminChatStop(w http.ResponseWriter, r *http.Request, user string) {
+	h, ok := s.chatStopByID(pathID(r, "id"))
+	if !ok {
+		jsonError(w, http.StatusNotFound, "turn not found")
+		return
+	}
+	s.chatStop(h)
+	writeJSON(w, okJSON)
 }
 
 // apiAdminChatConfigSave sets the chat concurrency ceiling (0 = unlimited).

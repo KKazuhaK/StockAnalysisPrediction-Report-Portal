@@ -68,10 +68,10 @@ func TestBuildDifyProviderAndInputs(t *testing.T) {
 		BaseURL: "https://dify.example/v1", APIKey: "app-key",
 		Inputs: []dify.Input{{Variable: "symbol", Label: "上市公司代码", Type: "text-input", Required: true}},
 	})
-	if _, err := buildDifyProvider(string(cfg), "report-portal", false, 0, 0, nil); err != nil {
+	if _, err := buildDifyProvider(string(cfg), "report-portal", false, 0, 0, nil, nil); err != nil {
 		t.Fatalf("buildDifyProvider: %v", err)
 	}
-	if _, err := buildDifyProvider(`{"base_url":"","api_key":""}`, "", false, 0, 0, nil); err == nil {
+	if _, err := buildDifyProvider(`{"base_url":"","api_key":""}`, "", false, 0, 0, nil, nil); err == nil {
 		t.Fatal("expected error for missing base_url/api_key")
 	}
 
@@ -223,10 +223,11 @@ func TestDifyProviderReconcileRetriesTransient(t *testing.T) {
 	}
 }
 
-// When reconcile can't reach a terminal state before its deadline, the row fails
-// with a PERMANENT error — never a transient one, which would make the engine re-run
-// the already-started workflow (the money bug the review caught).
-func TestDifyProviderReconcileFailureIsPermanent(t *testing.T) {
+// When reconcile can't reach a terminal state before its deadline, the outcome is UNKNOWN, not a
+// failure: the row comes back Untracked with NO error. A nil error is what stops the engine from
+// re-running the already-started workflow (the money bug the review caught) — an error, transient
+// or not, is the wrong signal here.
+func TestDifyProviderReconcileFailureIsUntracked(t *testing.T) {
 	var runs int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -243,12 +244,12 @@ func TestDifyProviderReconcileFailureIsPermanent(t *testing.T) {
 	defer srv.Close()
 
 	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u", reconcilePoll: time.Millisecond, reconcileTimeout: 200 * time.Millisecond}
-	_, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
-	if err == nil {
-		t.Fatal("expected an error when reconcile can't finish")
+	res, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
+	if err != nil {
+		t.Fatalf("reconcile failure must NOT be an error (an error would let the engine re-run the started run): %v", err)
 	}
-	if batch.IsTransient(err) {
-		t.Error("a started run's reconcile failure must be PERMANENT (else the engine re-runs it)")
+	if res.Status != batch.Untracked {
+		t.Errorf("status = %v, want Untracked (reconcile couldn't confirm the started run's outcome)", res.Status)
 	}
 	if n := atomic.LoadInt32(&runs); n != 1 {
 		t.Errorf("workflow started %d times, want 1 (no re-run)", n)
@@ -311,7 +312,7 @@ func TestDifyChatProviderRunsChat(t *testing.T) {
 	defer srv.Close()
 
 	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: srv.URL, APIKey: "k", Mode: "chat"})
-	prov, err := buildDifyProvider(string(cfg), "u", false, 0, 0, nil)
+	prov, err := buildDifyProvider(string(cfg), "u", false, 0, 0, nil, nil)
 	if err != nil {
 		t.Fatalf("buildDifyProvider: %v", err)
 	}

@@ -69,7 +69,7 @@ func TestChatStreamCapturesConvIDEarly(t *testing.T) {
 
 	var metaCalls int
 	var earlyConv string
-	reply, err := c.ChatStream(context.Background(), "hi", nil, "u", "", func(cid, _ string) {
+	reply, err := c.ChatStream(context.Background(), "hi", nil, "u", "", func(cid, _, _ string) {
 		metaCalls++
 		earlyConv = cid
 	})
@@ -81,6 +81,30 @@ func TestChatStreamCapturesConvIDEarly(t *testing.T) {
 	}
 	if reply.Answer != "Hello" || reply.ConversationID != "conv-9" {
 		t.Fatalf("reply = {answer:%q conv:%q}, want Hello / conv-9", reply.Answer, reply.ConversationID)
+	}
+}
+
+// The Dify task id is captured (it can arrive on a different event than the conversation id)
+// and surfaced on the reply + via onMeta — the handle a stop uses to end the run server-side.
+func TestChatStreamCapturesTaskID(t *testing.T) {
+	srv := sseStub(t, []string{
+		`{"event":"agent_message","task_id":"task-7","conversation_id":"conv-9","message_id":"m1","answer":"Hi"}`,
+		`{"event":"message_end","conversation_id":"conv-9","message_id":"m1"}`,
+	})
+	defer srv.Close()
+	c := New(srv.URL, "app-key", srv.Client())
+
+	var gotTask string
+	reply, err := c.ChatStream(context.Background(), "hi", nil, "u", "", func(_, _, taskID string) {
+		if taskID != "" {
+			gotTask = taskID
+		}
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if reply.TaskID != "task-7" || gotTask != "task-7" {
+		t.Fatalf("task id: reply=%q onMeta=%q, want task-7 (captured for stop)", reply.TaskID, gotTask)
 	}
 }
 

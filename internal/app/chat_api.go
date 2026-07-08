@@ -221,31 +221,48 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Detach from the browser connection so the turn finishes and lands at Dify even if the user
+	// navigates away mid-generation (net/http cancels r.Context() on disconnect but keeps the
+	// handler goroutine running; a fresh context isn't aborted with the browser). cancel() is ALSO
+	// the stop handle stored on the live turn so the owner or an admin can abort the run.
+	endUser := s.difyEndUser(conv.CreatedBy)
+	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
+	defer cancel()
 	// Chat is interactive — it must not queue behind the batch run system (that queue exists to
 	// DEFER slow report runs; a chat turn can't wait). An independent ceiling instead sheds load
 	// when too many turns are already in flight, so a burst can't overwhelm Dify (0 = unlimited).
+	// The turn carries its stop handle (cancel + client + end-user + a task id latched as it
+	// streams in) so apiChatStop / apiAdminChatStop can end it.
 	turnID, ok := s.chatAcquire(&chatTurn{
 		User: user, TargetID: tgt.ID, TargetName: tgt.Name,
 		ConvID: conv.ID, ConvTitle: conv.Title, Started: time.Now(),
+		Cancel: cancel, Client: client, EndUser: endUser,
 	})
 	if !ok {
 		jsonError(w, http.StatusTooManyRequests, "assistant is busy: too many chats in progress, please retry shortly")
 		return
 	}
 	defer s.chatRelease(turnID)
-	// Detach from the browser connection so the turn finishes and lands at Dify even if the
-	// user navigates away mid-generation (net/http cancels r.Context() on disconnect but
-	// keeps the handler goroutine running; a fresh context isn't aborted with the browser).
-	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
-	defer cancel()
-	// Stream so the conversation_id is captured the INSTANT Dify assigns it and persisted
-	// right away (title too). A long turn (e.g. a Deep Research chatflow) can then be
-	// reopened after a reload / from another tab and pull its history from Dify — instead of
-	// stranding an untitled, unlinked conversation until the whole turn returned.
-	reply, err := client.ChatStream(ctx, query, nil, s.difyEndUser(conv.CreatedBy), conv.ConvID, func(convID, _ string) {
-		s.st.AfterTurn(conv.ID, convID, chatTitle(query))
+	// Stream so the conversation_id is captured the INSTANT Dify assigns it and persisted right
+	// away (title too), and the task id is recorded onto the live turn as its stop handle. A long
+	// turn (e.g. a Deep Research chatflow) can then be reopened after a reload / from another tab.
+	reply, err := client.ChatStream(ctx, query, nil, endUser, conv.ConvID, func(convID, _, taskID string) {
+		if convID != "" {
+			s.st.AfterTurn(conv.ID, convID, chatTitle(query))
+		}
+		if taskID != "" {
+			s.chatSetTaskID(turnID, taskID)
+		}
 	})
 	if err != nil {
+		// A user/admin stop cancels ctx → ChatStream returns context.Canceled with the partial
+		// answer. Report that as a normal (stopped) reply, not a 502 — only a genuine Dify failure
+		// (or the chatTimeout → DeadlineExceeded) is an error.
+		if ctx.Err() == context.Canceled {
+			s.st.AfterTurn(conv.ID, reply.ConversationID, chatTitle(query))
+			writeJSON(w, map[string]any{"answer": reply.Answer, "conversation_id": reply.ConversationID, "stopped": true})
+			return
+		}
 		jsonError(w, http.StatusBadGateway, "dify: "+err.Error())
 		return
 	}

@@ -380,10 +380,9 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 			jsonError(w, http.StatusBadRequest, "unknown or disabled preset")
 			return
 		}
-		var start, stop presetAnchor
-		json.Unmarshal([]byte(p.StartSpec), &start)
-		json.Unmarshal([]byte(p.StopSpec), &stop)
-		ra, snap, ok := resolvePresetWindow(p.Freq, start, stop, p.OnOverrun, time.Now(), s.panelLocation())
+		var intervals []presetInterval
+		json.Unmarshal([]byte(p.Intervals), &intervals)
+		ra, snap, ok := resolvePresetWindow(p.Freq, intervals, p.OnOverrun, time.Now(), s.panelLocation())
 		if !ok {
 			jsonError(w, http.StatusBadRequest, "preset window is misconfigured")
 			return
@@ -531,7 +530,7 @@ func (s *Server) apiBatchItemReconcile(w http.ResponseWriter, r *http.Request, u
 		jsonError(w, http.StatusNotFound, "job not found")
 		return
 	}
-	prov, err := s.providerFor(job, nil)
+	prov, err := s.providerFor(job, nil, nil)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

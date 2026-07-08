@@ -25,9 +25,16 @@ var ErrStreamEnded = errors.New("dify stream ended before completion")
 // server-side via its task id. The SSE stream carries the same {status,outputs,error}
 // shape as the blocking response, wrapped in per-event envelopes.
 
+// EventStreamOpen is a synthetic lifecycle event forwarded to onEvent the instant the SSE
+// stream opens (HTTP 2xx), BEFORE any real Dify frame — the earliest possible "this run reached
+// Dify and started" signal, so a caller can persist that fact before the first id arrives (and
+// thus distinguish, after a crash, a started run from one that never reached Dify). It carries no
+// ids/title/status; only its Event field is set.
+const EventStreamOpen = "stream_open"
+
 // StreamEvent is one progress event forwarded to the caller during a streaming run.
 type StreamEvent struct {
-	Event  string // workflow_started | node_started | node_finished | workflow_finished | ...
+	Event  string // stream_open (synthetic, on 2xx) | workflow_started | node_started | node_finished | workflow_finished | ...
 	TaskID string
 	RunID  string
 	ConvID string // conversation id (chat/agent apps only) — the reconcile handle when there is no run id
@@ -87,6 +94,9 @@ func (c *Client) RunWorkflowStream(ctx context.Context, inputs map[string]any, u
 	if resp.StatusCode/100 != 2 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return RunResult{}, "", &APIError{Status: resp.StatusCode, Message: apiErrMsg(raw)}
+	}
+	if onEvent != nil {
+		onEvent(StreamEvent{Event: EventStreamOpen}) // 2xx: the run reached Dify (persist before any id)
 	}
 
 	var res RunResult
@@ -189,6 +199,9 @@ func (c *Client) RunChatStream(ctx context.Context, inputs map[string]any, user 
 	if resp.StatusCode/100 != 2 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return RunResult{}, "", &APIError{Status: resp.StatusCode, Message: apiErrMsg(raw)}
+	}
+	if onEvent != nil {
+		onEvent(StreamEvent{Event: EventStreamOpen}) // 2xx: the run reached Dify (persist before any id)
 	}
 
 	var res RunResult

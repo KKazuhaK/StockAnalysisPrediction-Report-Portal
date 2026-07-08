@@ -170,6 +170,8 @@
   "batch.status.cancelling": "取消中",
   "batch.status.cancelled": "已取消",
   "batch.status.finished": "已完成",
+  "batch.status.untracked": "无法确认",
+  "batch.status.untrackedHint": "已向 Dify 发起运行，但没拿到可跟踪的句柄，无法确认最终结果；为避免重复计费未自动重跑。若保留了运行句柄，可稍后手动核对。",
   "batch.msg.started": "已启动批量任务 #{{id}}（{{n}} 行）",
   "batch.msg.clamped": "并发已被管理员上限限制为 {{n}}",
   "batch.msg.startFailed": "启动失败",
@@ -625,5 +627,7 @@
   "batch.admin.runDefaultIdleHint": "仅在“立即运行”下生效。",
   "batch.admin.presetsTitle": "预设低峰时段",
   "batch.admin.presetsHint": "用户可在运行时选择这些时段，任务将排到该时段执行。",
-  "common.ok": "确定"
+  "common.ok": "确定",
+  "preset.windows": "时段",
+  "preset.addInterval": "加一段"
 }

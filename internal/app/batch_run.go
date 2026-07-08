@@ -458,25 +458,28 @@ func (s *Server) scheduleTick() {
 // and runs ASAP, "next" rolls to the next occurrence (keep waiting), "cancel" marks 'expired'.
 // The 30s scheduleLoop bounds how long after a window closes this fires. Caller holds schedMu.
 func (s *Server) sweepPresetWindowsLocked(now time.Time) {
+	loc := s.panelLocation()
 	for _, j := range s.st.QueuedPresetJobs() {
 		var snap runPresetSnapshot
 		if json.Unmarshal([]byte(j.RunPreset), &snap) != nil {
 			continue // unparseable snapshot: never strand a job on our own bug
 		}
 		if snap.Until == "" || !runAtDue(snap.Until, now) {
-			continue // window still open — normal admission handles it
+			continue // current sub-window still open — normal admission handles it
 		}
-		switch snap.OnOverrun {
-		case "continue":
-			s.st.ClearJobWindow(j.ID) // window was a preferred start; now run ASAP
-		case "cancel":
+		// Window closed with the run not started. Find the next eligible sub-window across the
+		// union. If another falls in the SAME period (e.g. later today), auto-advance to it
+		// regardless of policy — the run just tries the day's next window. Only when the period is
+		// exhausted does on_overrun bite: "next" rolls to the next period, "continue" runs ASAP,
+		// "cancel" expires. A single-interval preset always exhausts on close (ADR 0014).
+		ns, ne, ok := nextWindow(snap.Freq, snap.Intervals, now, loc)
+		if ok && (samePeriod(snap.Freq, now, ns, loc) || snap.OnOverrun == "next") {
+			b, _ := json.Marshal(runPresetSnapshot{Freq: snap.Freq, Intervals: snap.Intervals, OnOverrun: snap.OnOverrun, Until: fmtLocal(ne)})
+			s.st.SetJobWindow(j.ID, fmtLocal(ns), string(b))
+		} else if snap.OnOverrun == "cancel" {
 			s.st.ExpireJob(j.ID)
-		default: // "next" (and any unrecognized value) rolls to the next occurrence
-			if runAt, next, ok := resolvePresetWindow(snap.Freq, snap.Start, snap.Stop, snap.OnOverrun, now, s.panelLocation()); ok {
-				s.st.SetJobWindow(j.ID, runAt, next)
-			} else {
-				s.st.ClearJobWindow(j.ID) // a rule we can no longer roll → fall back to run ASAP
-			}
+		} else { // "continue" (or an unresolvable rule) → run ASAP
+			s.st.ClearJobWindow(j.ID)
 		}
 	}
 }
@@ -551,19 +554,22 @@ func (s *Server) itemCandidates() ([]queue.Item, map[int64]candMeta) {
 
 // providerFor builds the Provider for a job through the test seam when one is set (buildProv),
 // else the real buildProvider. All run + reconcile paths go through here so a test can inject a
-// fake provider once. onRef (may be nil) persists the streaming run/conversation/task ids.
-func (s *Server) providerFor(job BatchJob, onRef func(runID, convID, taskID string)) (batch.Provider, error) {
+// fake provider once. onRef (may be nil) persists the streaming run/conversation/task ids;
+// onStarted (may be nil) persists "the run reached Dify" on stream-open. The test seam takes only
+// onRef — a fake provider doesn't open a real stream, so onStarted is irrelevant to it.
+func (s *Server) providerFor(job BatchJob, onRef func(runID, convID, taskID string), onStarted func()) (batch.Provider, error) {
 	if s.buildProv != nil {
 		return s.buildProv(job, onRef)
 	}
-	return s.buildProvider(job, onRef)
+	return s.buildProvider(job, onRef, onStarted)
 }
 
 // buildProvider constructs the Provider for a job from its target's plugin manifest and config.
 // onRef (may be nil) is handed to the Dify provider to persist the run/conversation/task ids as
-// they stream in — the restart-durable hook. Returns an error if the plugin/target is missing or
-// the manifest no longer compiles (e.g. a plugin was deleted after the job started).
-func (s *Server) buildProvider(job BatchJob, onRef func(runID, convID, taskID string)) (batch.Provider, error) {
+// they stream in; onStarted (may be nil) marks the run started the instant the stream opens — the
+// restart-durable hooks. Returns an error if the plugin/target is missing or the manifest no
+// longer compiles (e.g. a plugin was deleted after the job started).
+func (s *Server) buildProvider(job BatchJob, onRef func(runID, convID, taskID string), onStarted func()) (batch.Provider, error) {
 	tgt, ok := s.st.GetTarget(job.TargetID)
 	if !ok {
 		return nil, fmt.Errorf("target %d not found", job.TargetID)
@@ -571,7 +577,7 @@ func (s *Server) buildProvider(job BatchJob, onRef func(runID, convID, taskID st
 	// Dify-native target (the default): talk to Dify directly via the typed client
 	// (docs/adr/0006-dify-native.md). The generic manifest below is the advanced path.
 	if tgt.PluginSlug == difyPluginSlug {
-		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy), s.difyPollSeconds() > 0, time.Duration(s.difyPollSeconds())*time.Second, s.difyRunTimeoutDur(), onRef)
+		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy), s.difyPollSeconds() > 0, time.Duration(s.difyPollSeconds())*time.Second, s.difyRunTimeoutDur(), onRef, onStarted)
 	}
 	plug, ok := s.st.GetPlugin(tgt.PluginSlug)
 	if !ok {
@@ -650,7 +656,14 @@ func (s *Server) startItem(job BatchJob, item batch.Item) {
 				log.Printf("batch job %d item %d: persist dify ref: %v", job.ID, item.ID, err)
 			}
 		}
-		prov, err := s.providerFor(job, onRef)
+		// Mark the run started the instant the stream opens (before any id): a crash in that window
+		// then resumes as untracked (never re-run) instead of being re-fired as if it never started.
+		onStarted := func() {
+			if err := s.st.MarkItemDifyStarted(item.ID); err != nil {
+				log.Printf("batch job %d item %d: mark dify started: %v", job.ID, item.ID, err)
+			}
+		}
+		prov, err := s.providerFor(job, onRef, onStarted)
 		if err != nil {
 			log.Printf("batch job %d item %d: cannot start: %v", job.ID, item.ID, err)
 			s.st.FinishItem(item.ID, batch.Failed, 1, "", err.Error())
@@ -720,14 +733,19 @@ func (s *Server) finalizeLocked(jobID int64) *BatchJob {
 	return &j
 }
 
-// resumeBatchJobs is called at startup to recover runs left in-flight by a crash. A run that had
-// already started on Dify (its run/conversation id was persisted mid-stream) is RECONCILED to its
-// true outcome instead of re-run — the restart-durable half of reconcile-not-retry, so a crash
-// never duplicates a charged run. Runs with no persisted id (never reached Dify, or crashed in the
-// window before its first event) are requeued and re-triggered. Then re-admit from the persisted
-// item state and finalize any job with nothing left to run.
+// resumeBatchJobs is called at startup to recover runs left in-flight by a crash. It splits the
+// orphaned 'running' rows three ways by what each captured before the crash, so a started (charged)
+// run is never duplicated:
+//   - run/conversation id       → RECONCILE to the true outcome, never re-run (reconcileResumedItem);
+//   - started but no such id     → a task id, or the stream opened (dify_started_at) with no id → the
+//                                  run started but left nothing to poll → mark UNTRACKED, never re-run
+//                                  (mirrors the in-process guard in dify_provider.go);
+//   - no evidence it started     → no id and no stream-open stamp → never reached Dify → requeue and
+//                                  re-trigger.
+//
+// Then re-admit from the persisted item state and finalize any job with nothing left to run.
 func (s *Server) resumeBatchJobs() {
-	// Snapshot the reconcilable runs BEFORE requeuing; ResetInFlightItems only requeues the
+	// Snapshot the reconcilable runs BEFORE requeuing; ResetInFlightItems only requeues the fully
 	// id-less ones, so these stay 'running' (holding their slot) until reconcile settles them.
 	resumable := s.st.ResumableInFlightItems()
 	for _, ref := range resumable {
@@ -735,6 +753,20 @@ func (s *Server) resumeBatchJobs() {
 	}
 	if len(resumable) > 0 {
 		log.Printf("batch resume: reconciling %d in-flight run(s) by id (no re-run)", len(resumable))
+	}
+	// Started-but-unreconcilable: the run reached Dify (a task id, or the stream opened) but left no
+	// run/conversation id to poll. Its outcome is UNKNOWN, not a failure — mark it untracked rather
+	// than re-run, since a duplicate charged run is the exact thing reconcile-not-retry prevents
+	// (same outcome the in-process path produces).
+	if stuck := s.st.StartedUnreconcilableItems(); len(stuck) > 0 {
+		for _, ref := range stuck {
+			detail := "resume: run reached dify but left no reconcilable id; not re-run to avoid a duplicate charged run"
+			if ref.TaskID != "" {
+				detail = fmt.Sprintf("resume: run started on dify (task %s) but left no reconcilable id; not re-run to avoid a duplicate charged run", ref.TaskID)
+			}
+			s.st.FinishItem(ref.ItemID, batch.Untracked, 1, "", detail)
+		}
+		log.Printf("batch resume: marked %d started-but-unreconcilable run(s) untracked (no re-run)", len(stuck))
 	}
 	if err := s.st.ResetInFlightItems(); err != nil {
 		log.Printf("batch resume: reset in-flight items: %v", err)
@@ -763,7 +795,7 @@ func (s *Server) reconcileResumedItem(ref ResumeRef) {
 			}
 			s.afterItem(ref.JobID)
 		}()
-		prov, err := s.providerFor(job, nil)
+		prov, err := s.providerFor(job, nil, nil)
 		if err != nil {
 			log.Printf("batch resume: job %d item %d: cannot build provider: %v", ref.JobID, ref.ItemID, err)
 			s.st.FinishItem(ref.ItemID, batch.Failed, 1, ref.RunID, "resume: "+err.Error())
