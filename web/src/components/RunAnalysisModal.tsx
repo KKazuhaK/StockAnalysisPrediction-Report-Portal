@@ -106,7 +106,7 @@ export default function RunAnalysisModal({
       const res = await api.post<{ job_id: number; downgraded?: boolean; run_at?: string }>('/api/admin/batch/jobs', {
         target_id: targetId,
         concurrency: 1,
-        max_retries: 2,
+        max_retries: 0, // a single interactive analysis never auto-retries — the user re-runs by hand; keeps runs 1:1 with clicks
         priority: urgent ? 'urgent' : '', // "" → backend resolves group/system default
         run_at: mode === 'scheduled' && runAt ? runAt.format('YYYY-MM-DD HH:mm:ss') : '',
         notify,
