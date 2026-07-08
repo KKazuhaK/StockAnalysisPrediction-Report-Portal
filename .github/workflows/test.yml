@@ -33,6 +33,9 @@ jobs:
           go-version-file: go.mod
       - run: go build ./... # compile every package (fails fast on a build break)
       - run: go vet ./...
+      # staticcheck: static analysis beyond go vet (real bugs, dead code, simplifications).
+      # Pinned; the tree already passes it clean. See docs/adr/0016-app-package-architecture.md.
+      - run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
       - run: go test ./... -v
 
   web-build:
