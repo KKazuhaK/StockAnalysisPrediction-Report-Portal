@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 )
@@ -35,13 +36,19 @@ func (s *Store) setSchemaVersion(n int) error {
 // straight to the current generation; a genuine older database is folded up. Add a new step here
 // (and its migrate_vN_to_vM.go file) per boundary; delete the retired step's file at each major.
 func (s *Store) migrate() error {
-	if s.schemaVersion() >= 2 {
-		return nil
+	cur := s.schemaVersion()
+	if cur >= 2 {
+		return nil // already current — stay quiet on a normal startup
 	}
+	log.Printf("schema migration: database at generation %d, upgrading to 2 (%s)", cur, s.driver)
 	if err := s.migrateV1toV2(); err != nil {
 		return fmt.Errorf("migrate schema v1->v2: %w", err)
 	}
-	return s.setSchemaVersion(2)
+	if err := s.setSchemaVersion(2); err != nil {
+		return err
+	}
+	log.Printf("schema migration: complete, now at generation 2")
+	return nil
 }
 
 // tableExists reports whether a table is present (guards the fold-copy steps in migration).

@@ -1,6 +1,9 @@
 package app
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
 // migrateV1toV2 is the one-shot v0.1 -> v0.2 schema upgrade (schema generation 1 -> 2, ADR 0013):
 // it folds the six 1:1 side tables into parent columns, drops the dead user_group_members table
@@ -16,6 +19,7 @@ import "fmt"
 // store.go, and point migrate() (migrate.go) at the next step. Nothing else in the main program
 // depends on it.
 func (s *Store) migrateV1toV2() error {
+	log.Printf("migrateV1toV2: consolidating schema — fold 6 side tables, drop dead, rename reports.id")
 	// Kept columns a database behind the last v0.1 release may still lack, plus the new folded
 	// columns. Guarded, so each is a no-op where the column already exists.
 	addCols := []string{
@@ -75,12 +79,15 @@ func (s *Store) migrateV1toV2() error {
 		if !s.tableExists(f.src) {
 			continue
 		}
-		if _, err := s.exec(f.update); err != nil {
+		res, err := s.exec(f.update)
+		if err != nil {
 			return fmt.Errorf("backfill from %s: %w", f.src, err)
 		}
+		n, _ := res.RowsAffected()
 		if _, err := s.exec("DROP TABLE IF EXISTS " + f.src); err != nil {
 			return fmt.Errorf("drop %s: %w", f.src, err)
 		}
+		log.Printf("migrateV1toV2: folded %s into its parent column (%d rows), dropped side table", f.src, n)
 	}
 
 	// Dead many-to-many membership table. The single primary group (users.group_id) is
@@ -95,6 +102,7 @@ func (s *Store) migrateV1toV2() error {
 		if _, err := s.exec(`DROP TABLE IF EXISTS user_group_members`); err != nil {
 			return fmt.Errorf("drop user_group_members: %w", err)
 		}
+		log.Printf("migrateV1toV2: dropped dead table user_group_members")
 	}
 
 	// Dead links.collapsed column (superseded by link_groups; no reader).
@@ -102,6 +110,7 @@ func (s *Store) migrateV1toV2() error {
 		if _, err := s.exec(`ALTER TABLE links DROP COLUMN collapsed`); err != nil {
 			return fmt.Errorf("drop links.collapsed: %w", err)
 		}
+		log.Printf("migrateV1toV2: dropped dead column links.collapsed")
 	}
 
 	// Rename the reports surrogate key rowid -> id (every table's PK is now `id`). Guarded so a
@@ -112,6 +121,7 @@ func (s *Store) migrateV1toV2() error {
 		if _, err := s.exec(`ALTER TABLE reports RENAME COLUMN rowid TO id`); err != nil {
 			return fmt.Errorf("rename reports.rowid -> id: %w", err)
 		}
+		log.Printf("migrateV1toV2: renamed reports.rowid -> id")
 	}
 
 	// The run_at partial index lives here (not in createBaseSchema) because on an upgrading
