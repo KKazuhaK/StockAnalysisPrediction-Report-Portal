@@ -245,9 +245,11 @@ export default function HomePage() {
                 )
               if (g.mode === 'expand' && openGroups[g.id])
                 return (
-                  <Space key={g.id} size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
-                    {buttons}
-                  </Space>
+                  <div key={g.id} className="rp-reveal" style={{ textAlign: 'center' }}>
+                    <Space size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
+                      {buttons}
+                    </Space>
+                  </div>
                 )
               return null
             })}
