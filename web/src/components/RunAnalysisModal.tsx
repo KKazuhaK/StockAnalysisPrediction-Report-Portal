@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, App, Checkbox, DatePicker, Form, Input, Modal, Radio, Select, Space, Tag, Typography } from 'antd'
+import { Alert, App, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Radio, Select, Space, Tag, Typography } from 'antd'
 import { PlayCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { Dayjs } from 'dayjs'
@@ -35,6 +35,7 @@ export default function RunAnalysisModal({
   const [runAt, setRunAt] = useState<Dayjs | null>(null)
   const [urgent, setUrgent] = useState(false)
   const [notify, setNotify] = useState(false)
+  const [retries, setRetries] = useState(0) // failure retries; 0 = never auto-retry (a single run maps 1:1 to the click)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -77,6 +78,7 @@ export default function RunAnalysisModal({
     setTargetId(undefined)
     setUrgent(false)
     setNotify(false)
+    setRetries(0)
     setMode('now')
     setRunAt(null)
     form.resetFields()
@@ -106,7 +108,7 @@ export default function RunAnalysisModal({
       const res = await api.post<{ job_id: number; downgraded?: boolean; run_at?: string }>('/api/admin/batch/jobs', {
         target_id: targetId,
         concurrency: 1,
-        max_retries: 0, // a single interactive analysis never auto-retries — the user re-runs by hand; keeps runs 1:1 with clicks
+        max_retries: retries, // default 0 (no auto-retry); user can opt into failure retries, same as batch
         priority: urgent ? 'urgent' : '', // "" → backend resolves group/system default
         run_at: mode === 'scheduled' && runAt ? runAt.format('YYYY-MM-DD HH:mm:ss') : '',
         notify,
@@ -199,6 +201,11 @@ export default function RunAnalysisModal({
               placeholder={t('run.pickTime')}
             />
           )}
+        </div>
+
+        <div>
+          <span style={{ marginRight: 8 }}>{t('batch.maxRetries')}：</span>
+          <InputNumber min={0} max={5} value={retries} onChange={(v) => setRetries(v ?? 0)} />
         </div>
 
         {urgentEnabled && (
