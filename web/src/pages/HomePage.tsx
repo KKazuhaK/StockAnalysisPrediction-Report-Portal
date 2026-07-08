@@ -190,6 +190,10 @@ export default function HomePage() {
     )
   }
 
+  // Folding-group trigger buttons (popover / expand / modal groups — 'row' groups render their
+  // own line below), computed once so the triggers row only renders when there is at least one.
+  const groupTriggers = linkGroups.filter((g) => g.mode !== 'row').map(renderTrigger).filter(Boolean)
+
   return (
     <Space direction="vertical" size={24} style={{ width: '100%' }}>
       {/* Hero: main search */}
@@ -211,11 +215,19 @@ export default function HomePage() {
       {(topLinks.length > 0 || linkGroups.length > 0) && (
         <div style={{ textAlign: 'center' }}>
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            {/* Main inline row: top-level links + the folding groups' triggers. */}
-            <Space size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
-              {topLinks.map(renderLink)}
-              {linkGroups.filter((g) => g.mode !== 'row').map(renderTrigger)}
-            </Space>
+            {/* Row 1: the ungrouped top-level entry buttons. */}
+            {topLinks.length > 0 && (
+              <Space size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
+                {topLinks.map(renderLink)}
+              </Space>
+            )}
+            {/* Row 2: the folding-group triggers on their own line, so groups can grow and wrap
+                independently without crowding the entry buttons above. */}
+            {groupTriggers.length > 0 && (
+              <Space size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
+                {groupTriggers}
+              </Space>
+            )}
             {/* Own-row groups, and inline-expand groups when open — each on its own line. */}
             {linkGroups.map((g) => {
               const buttons = groupButtons(g.id)
