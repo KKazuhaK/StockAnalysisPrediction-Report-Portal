@@ -174,6 +174,18 @@ func (s *Server) difyPollSeconds() int {
 	return n
 }
 
+// difyRunTimeoutDur is the admin-set cap on one Dify run: it bounds the portal's HTTP
+// client AND the reconcile poll window, so a run that legitimately takes long isn't cut
+// short / falsely marked failed. Stored in minutes; default = difyRunTimeout (180m),
+// clamped to >= 1.
+func (s *Server) difyRunTimeoutDur() time.Duration {
+	n, err := strconv.Atoi(s.st.GetSetting("dify_run_timeout_minutes", strconv.Itoa(int(difyRunTimeout/time.Minute))))
+	if err != nil || n < 1 {
+		return difyRunTimeout
+	}
+	return time.Duration(n) * time.Minute
+}
+
 // urgentEnabled reports whether the 加急 escalation is offered at all (admin toggle;
 // default off, so batch/runs have no urgent lane unless an admin turns it on).
 func (s *Server) urgentEnabled() bool {
@@ -513,7 +525,7 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	// Dify-native target (the default): talk to Dify directly via the typed client
 	// (docs/adr/0006-dify-native.md). The generic manifest below is the advanced path.
 	if tgt.PluginSlug == difyPluginSlug {
-		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy), s.difyPollSeconds() > 0, time.Duration(s.difyPollSeconds())*time.Second)
+		return buildDifyProvider(tgt.Config, s.difyEndUser(job.CreatedBy), s.difyPollSeconds() > 0, time.Duration(s.difyPollSeconds())*time.Second, s.difyRunTimeoutDur())
 	}
 	plug, ok := s.st.GetPlugin(tgt.PluginSlug)
 	if !ok {
@@ -525,7 +537,7 @@ func (s *Server) buildProvider(job BatchJob) (batch.Provider, error) {
 	}
 	cfg := map[string]string{}
 	json.Unmarshal([]byte(tgt.Config), &cfg)
-	return m.NewProvider(cfg, &http.Client{Timeout: difyRunTimeout}), nil
+	return m.NewProvider(cfg, &http.Client{Timeout: s.difyRunTimeoutDur()}), nil
 }
 
 // jobRun is the shared cancellable scope for all in-flight runs of one job: cancelling

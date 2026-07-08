@@ -243,7 +243,7 @@ func (e permanentRunErr) Unwrap() error { return e.error }
 // buildDifyProvider constructs the provider for a Dify target from its config JSON.
 // user is the end-user identity Dify records for each run (resolved from the
 // dify_end_user template); an empty user falls back to "report-portal" at run time.
-func buildDifyProvider(configJSON, user string, poll bool, pollInterval time.Duration) (batch.Provider, error) {
+func buildDifyProvider(configJSON, user string, poll bool, pollInterval, runTimeout time.Duration) (batch.Provider, error) {
 	var cfg difyTargetConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return nil, fmt.Errorf("dify target config: %w", err)
@@ -251,11 +251,15 @@ func buildDifyProvider(configJSON, user string, poll bool, pollInterval time.Dur
 	if cfg.BaseURL == "" || cfg.APIKey == "" {
 		return nil, fmt.Errorf("dify target: base_url and api_key are required")
 	}
+	if runTimeout <= 0 {
+		runTimeout = difyRunTimeout // package default (admin can override via dify_run_timeout_minutes)
+	}
 	p := difyProvider{
-		c:    dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: difyRunTimeout}),
-		user: user,
-		chat: difyModeChat(cfg.Mode),
-		poll: poll,
+		c:                dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: runTimeout}),
+		user:             user,
+		chat:             difyModeChat(cfg.Mode),
+		poll:             poll,
+		reconcileTimeout: runTimeout, // the reconcile poll window matches the run cap
 	}
 	if poll && pollInterval > 0 {
 		p.reconcilePoll = pollInterval

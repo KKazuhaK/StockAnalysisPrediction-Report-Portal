@@ -86,13 +86,14 @@ func (s *Server) apiBatchPluginDelete(w http.ResponseWriter, r *http.Request, us
 func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user string) {
 	pw := s.prioWeights()
 	writeJSON(w, map[string]any{
-		"max_jobs":           s.batchBudget(),                                   // queue budget: jobs running at once (ADR 0004)
-		"reserved_slots":     s.batchReserved(),                                 // slots held for 加急 (ADR 0004)
-		"ticket_period_days": s.ticketPeriodDays(),                              // how often 加急 tickets refill (ADR 0005)
-		"default_priority":   s.runDefaultPriority(),                            // base priority (0..100) for no-group runs (ADR 0008)
-		"urgent_enabled":     s.urgentEnabled(),                                 // is the 加急 lane offered at all (admin toggle)
-		"dify_end_user":      s.st.GetSetting("dify_end_user", "report-portal"), // Dify end-user template ([username] var)
-		"dify_poll_seconds":  s.difyPollSeconds(),                               // 0 = streaming; >0 = poll the run status every N s (proxy-friendly)
+		"max_jobs":                 s.batchBudget(),                                   // queue budget: jobs running at once (ADR 0004)
+		"reserved_slots":           s.batchReserved(),                                 // slots held for 加急 (ADR 0004)
+		"ticket_period_days":       s.ticketPeriodDays(),                              // how often 加急 tickets refill (ADR 0005)
+		"default_priority":         s.runDefaultPriority(),                            // base priority (0..100) for no-group runs (ADR 0008)
+		"urgent_enabled":           s.urgentEnabled(),                                 // is the 加急 lane offered at all (admin toggle)
+		"dify_end_user":            s.st.GetSetting("dify_end_user", "report-portal"), // Dify end-user template ([username] var)
+		"dify_poll_seconds":        s.difyPollSeconds(),                               // 0 = streaming; >0 = poll the run status every N s (proxy-friendly)
+		"dify_run_timeout_minutes": int(s.difyRunTimeoutDur() / time.Minute),          // cap on one run: portal HTTP client + reconcile poll window
 		// Multifactor priority weights + factor tuning (ADR 0008).
 		"prio_w_base":              pw.Base,
 		"prio_w_age":               pw.Age,
@@ -104,13 +105,14 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 
 func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		MaxJobs          *int    `json:"max_jobs"`
-		ReservedSlots    *int    `json:"reserved_slots"`
-		TicketPeriodDays *int    `json:"ticket_period_days"`
-		DefaultPriority  *string `json:"default_priority"`
-		UrgentEnabled    *bool   `json:"urgent_enabled"`    // admin toggle for the 加急 lane
-		DifyEndUser      *string `json:"dify_end_user"`     // Dify end-user template ([username] var)
-		DifyPollSeconds  *int    `json:"dify_poll_seconds"` // 0 = streaming; >0 = poll the run status every N s
+		MaxJobs               *int    `json:"max_jobs"`
+		ReservedSlots         *int    `json:"reserved_slots"`
+		TicketPeriodDays      *int    `json:"ticket_period_days"`
+		DefaultPriority       *string `json:"default_priority"`
+		UrgentEnabled         *bool   `json:"urgent_enabled"`           // admin toggle for the 加急 lane
+		DifyEndUser           *string `json:"dify_end_user"`            // Dify end-user template ([username] var)
+		DifyPollSeconds       *int    `json:"dify_poll_seconds"`        // 0 = streaming; >0 = poll the run status every N s
+		DifyRunTimeoutMinutes *int    `json:"dify_run_timeout_minutes"` // cap on one run (HTTP client + reconcile window)
 		// Multifactor priority tuning; pointers so an omitted field is left unchanged
 		// (a weight of 0 is meaningful — it disables that factor). See ADR 0008.
 		PrioWBase             *float64 `json:"prio_w_base"`
@@ -148,6 +150,9 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	}
 	if in.DifyPollSeconds != nil && *in.DifyPollSeconds >= 0 {
 		s.st.SetSetting("dify_poll_seconds", strconv.Itoa(*in.DifyPollSeconds))
+	}
+	if in.DifyRunTimeoutMinutes != nil && *in.DifyRunTimeoutMinutes >= 1 {
+		s.st.SetSetting("dify_run_timeout_minutes", strconv.Itoa(*in.DifyRunTimeoutMinutes))
 	}
 	if in.DifyEndUser != nil {
 		s.st.SetSetting("dify_end_user", *in.DifyEndUser) // difyEndUser trims + defaults on read

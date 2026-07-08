@@ -15,6 +15,7 @@ export default function RunQueueSettingsPage() {
   const [maxJobs, setMaxJobs] = useState(1)
   const [difyEndUser, setDifyEndUser] = useState('')
   const [difyPollSeconds, setDifyPollSeconds] = useState(0)
+  const [difyRunTimeout, setDifyRunTimeout] = useState(180)
   const [defaultPriority, setDefaultPriority] = useState(50)
   const [wBase, setWBase] = useState(1000)
   const [wAge, setWAge] = useState(1000)
@@ -29,6 +30,7 @@ export default function RunQueueSettingsPage() {
         setMaxJobs(r.max_jobs)
         setDifyEndUser(r.dify_end_user ?? '')
         setDifyPollSeconds(r.dify_poll_seconds ?? 0)
+        setDifyRunTimeout(r.dify_run_timeout_minutes ?? 180)
         setDefaultPriority(r.default_priority ?? 50)
         setWBase(r.prio_w_base)
         setWAge(r.prio_w_age)
@@ -45,6 +47,7 @@ export default function RunQueueSettingsPage() {
       max_jobs: maxJobs,
       dify_end_user: difyEndUser,
       dify_poll_seconds: difyPollSeconds,
+      dify_run_timeout_minutes: difyRunTimeout,
       default_priority: String(defaultPriority),
       prio_w_base: wBase,
       prio_w_age: wAge,
@@ -95,6 +98,11 @@ export default function RunQueueSettingsPage() {
           t('batch.admin.difyPoll'),
           t('batch.admin.difyPollHint'),
           <InputNumber min={0} max={600} value={difyPollSeconds} onChange={(v) => setDifyPollSeconds(v ?? 0)} addonAfter={t('batch.admin.seconds')} />,
+        )}
+        {row(
+          t('batch.admin.difyRunTimeout'),
+          t('batch.admin.difyRunTimeoutHint'),
+          <InputNumber min={1} max={720} value={difyRunTimeout} onChange={(v) => setDifyRunTimeout(v || 180)} addonAfter={t('batch.admin.minutes')} />,
         )}
 
         <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>

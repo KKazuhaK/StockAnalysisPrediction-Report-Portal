@@ -566,5 +566,8 @@
   "chatAdmin.colConversation": "对话",
   "chatAdmin.colStarted": "开始于",
   "chatAdmin.none": "当前没有进行中的对话",
-  "chatAdmin.liveCount": "进行中 {{n}}"
+  "chatAdmin.liveCount": "进行中 {{n}}",
+  "batch.admin.minutes": "分钟",
+  "batch.admin.difyRunTimeout": "运行超时：",
+  "batch.admin.difyRunTimeoutHint": "单次运行等待/轮询结果的上限;超过就放弃。必须大于你最长的工作流 —— 提前放弃会被误判为失败。默认 180。"
 }

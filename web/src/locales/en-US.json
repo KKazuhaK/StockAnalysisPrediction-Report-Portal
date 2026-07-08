@@ -566,5 +566,8 @@
   "chatAdmin.colConversation": "Conversation",
   "chatAdmin.colStarted": "Started",
   "chatAdmin.none": "No chats in progress",
-  "chatAdmin.liveCount": "{{n}} in progress"
+  "chatAdmin.liveCount": "{{n}} in progress",
+  "batch.admin.minutes": "minutes",
+  "batch.admin.difyRunTimeout": "Run timeout:",
+  "batch.admin.difyRunTimeoutHint": "Max time to wait/poll for one run before giving up. Must exceed your longest workflow — a run cut short is wrongly marked failed. Default 180."
 }
