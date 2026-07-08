@@ -31,6 +31,9 @@ func TestParsePriority(t *testing.T) {
 func TestResolveBasePriority(t *testing.T) {
 	st := newTestStore(t)
 	srv := &Server{st: st}
+	// The primary group is a column on the user row now (ADR 0013), so the user must exist
+	// before a group can be assigned to it — real callers always upsert first.
+	st.UpsertUser(User{Username: "u"})
 
 	// No primary group, no setting → built-in default 50.
 	if p := srv.resolveBasePriority("u"); p != 50 {

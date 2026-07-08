@@ -34,7 +34,7 @@ type BatchJob struct {
 	Concurrency, MaxRetries                     int
 	Total, Succeeded, Partial, Failed           int
 	CreatedBy, CreatedAt, StartedAt, FinishedAt string
-	RunAt                                       string // one-shot scheduled start (定时运行, ADR 0007); "" = run ASAP
+	RunAt                                       string // one-shot scheduled start (ADR 0007); "" = run ASAP
 }
 
 type BatchItem struct {
@@ -172,13 +172,10 @@ func (s *Store) CreateBatchJob(targetID int64, concurrency, maxRetries int, crea
 		priority = "normal"
 	}
 	now := nowStr()
-	jobID, err := s.insertID(`INSERT INTO batch_jobs(target_id,status,concurrency,max_retries,total,created_by,created_at,started_at)
-		VALUES(?,?,?,?,?,?,?,?)`, targetID, "queued", concurrency, maxRetries, len(rows), createdBy, now, "")
+	jobID, err := s.insertID(`INSERT INTO batch_jobs(target_id,status,concurrency,max_retries,total,created_by,created_at,started_at,priority)
+		VALUES(?,?,?,?,?,?,?,?,?)`, targetID, "queued", concurrency, maxRetries, len(rows), createdBy, now, "", priority)
 	if err != nil {
 		return 0, err
-	}
-	if _, err := s.exec(`INSERT INTO job_queue(job_id,priority) VALUES(?,?)`, jobID, priority); err != nil {
-		return jobID, err
 	}
 	for i, row := range rows {
 		b, _ := json.Marshal(row)
@@ -193,10 +190,8 @@ func (s *Store) CreateBatchJob(targetID int64, concurrency, maxRetries int, crea
 // submitter, and enqueue time (created_at), for the scheduler and the queue view. The
 // submitter feeds the fair-share factor (docs/adr/0008-multifactor-priority.md).
 func (s *Store) QueuedJobs() []BatchJob {
-	rows, err := s.query(`SELECT b.id, COALESCE(q.priority,'normal'), COALESCE(b.created_by,''), b.created_at, COALESCE(sc.run_at,'')
+	rows, err := s.query(`SELECT b.id, b.priority, COALESCE(b.created_by,''), b.created_at, b.run_at
 		FROM batch_jobs b
-		LEFT JOIN job_queue q ON q.job_id=b.id
-		LEFT JOIN job_schedule sc ON sc.job_id=b.id
 		WHERE b.status='queued' ORDER BY b.id`)
 	if err != nil {
 		return nil
@@ -290,11 +285,9 @@ func (s *Store) MarkItemRunning(itemID int64) bool {
 // everything itemCandidates and the provider need. Cancelling/cancelled/finished jobs
 // are excluded. See docs/adr/0011-run-level-scheduling.md.
 func (s *Store) SchedulableJobs() []BatchJob {
-	rows, err := s.query(`SELECT b.id, b.target_id, b.status, COALESCE(q.priority,'normal'),
-		b.concurrency, b.max_retries, COALESCE(b.created_by,''), b.created_at, COALESCE(sc.run_at,'')
+	rows, err := s.query(`SELECT b.id, b.target_id, b.status, b.priority,
+		b.concurrency, b.max_retries, COALESCE(b.created_by,''), b.created_at, b.run_at
 		FROM batch_jobs b
-		LEFT JOIN job_queue q ON q.job_id=b.id
-		LEFT JOIN job_schedule sc ON sc.job_id=b.id
 		WHERE b.status IN ('queued','running') ORDER BY b.id`)
 	if err != nil {
 		return nil
@@ -313,38 +306,36 @@ func (s *Store) SchedulableJobs() []BatchJob {
 	return out
 }
 
-// SetJobPriority changes a job's queue priority (the 插队 / re-prioritise action).
+// SetJobPriority changes a job's queue priority (the re-prioritise / jump-the-queue action).
+// A no-op if the job no longer exists.
 func (s *Store) SetJobPriority(jobID int64, priority string) error {
-	_, err := s.exec(`INSERT INTO job_queue(job_id,priority) VALUES(?,?)
-		ON CONFLICT(job_id) DO UPDATE SET priority=excluded.priority`, jobID, priority)
+	_, err := s.exec(`UPDATE batch_jobs SET priority=? WHERE id=?`, priority, jobID)
 	return err
 }
 
-// ScheduleJob sets a one-shot future start time (定时运行, ADR 0007). run_at uses the
-// same "2006-01-02 15:04:05" local basis as created_at; queuedItems() hides the job
-// until run_at passes. An empty run_at clears the schedule (立即运行 / run now).
+// ScheduleJob sets a one-shot future start time (scheduled run, ADR 0007). run_at uses the
+// same "2006-01-02 15:04:05" local basis as created_at; queuedItems() hides the job until
+// run_at passes. An empty run_at clears the schedule (run now).
 func (s *Store) ScheduleJob(jobID int64, runAt string) error {
 	if runAt == "" {
 		return s.ClearSchedule(jobID)
 	}
-	_, err := s.exec(`INSERT INTO job_schedule(job_id,run_at) VALUES(?,?)
-		ON CONFLICT(job_id) DO UPDATE SET run_at=excluded.run_at`, jobID, runAt)
+	_, err := s.exec(`UPDATE batch_jobs SET run_at=? WHERE id=?`, runAt, jobID)
 	return err
 }
 
-// ClearSchedule drops a job's scheduled start, making it eligible on the next tick.
+// ClearSchedule drops a job's scheduled start (run_at back to the '' run-ASAP sentinel),
+// making it eligible on the next tick.
 func (s *Store) ClearSchedule(jobID int64) error {
-	_, err := s.exec("DELETE FROM job_schedule WHERE job_id=?", jobID)
+	_, err := s.exec("UPDATE batch_jobs SET run_at='' WHERE id=?", jobID)
 	return err
 }
 
-// DeleteBatchJob removes a job and all its rows (items + queue + schedule). Intended
-// for terminal jobs (finished/cancelled); callers gate on status so a running job is
-// cancelled first.
+// DeleteBatchJob removes a job and its item rows. Intended for terminal jobs
+// (finished/cancelled); callers gate on status so a running job is cancelled first. The
+// job's priority/run_at are columns on batch_jobs now, so they vanish with the row.
 func (s *Store) DeleteBatchJob(jobID int64) error {
 	s.exec("DELETE FROM batch_items WHERE job_id=?", jobID)
-	s.exec("DELETE FROM job_queue WHERE job_id=?", jobID)
-	s.exec("DELETE FROM job_schedule WHERE job_id=?", jobID)
 	_, err := s.exec("DELETE FROM batch_jobs WHERE id=?", jobID)
 	return err
 }
@@ -407,16 +398,13 @@ func (s *Store) RequeueItems(jobID int64, statuses ...string) (int, error) {
 	return int(n), nil
 }
 
-// batchJobCols is the shared SELECT list for a job row joined with its queue
-// priority (COALESCE so a job without a job_queue row reads as 'normal').
-const batchJobCols = `b.id,b.target_id,b.status,COALESCE(q.priority,'normal'),b.concurrency,b.max_retries,
-	b.total,b.succeeded,b.partial,b.failed,b.created_by,b.created_at,b.started_at,b.finished_at,COALESCE(sc.run_at,'')`
+// batchJobCols is the shared SELECT list for a job row. priority and run_at are columns
+// on batch_jobs now (folded from job_queue / job_schedule, ADR 0013).
+const batchJobCols = `b.id,b.target_id,b.status,b.priority,b.concurrency,b.max_retries,
+	b.total,b.succeeded,b.partial,b.failed,b.created_by,b.created_at,b.started_at,b.finished_at,b.run_at`
 
-// batchJobFrom is the shared FROM clause: a job joined with its queue priority and
-// its (optional) one-shot schedule.
-const batchJobFrom = `FROM batch_jobs b
-	LEFT JOIN job_queue q ON q.job_id=b.id
-	LEFT JOIN job_schedule sc ON sc.job_id=b.id`
+// batchJobFrom is the shared FROM clause.
+const batchJobFrom = `FROM batch_jobs b`
 
 func scanBatchJob(scan func(...any) error) (BatchJob, error) {
 	var j BatchJob
@@ -563,11 +551,11 @@ func (s *Store) CreateTarget(pluginSlug, name, config string) (int64, error) {
 }
 
 func (s *Store) ListTargets() []BatchTarget {
-	// Admin drag-order first (target_order.ord), then any not-yet-ordered target newest-first
+	// Admin drag-order first (batch_targets.ord), then any not-yet-ordered target newest-first
 	// — the pre-ordering default. 2147483647 = "unordered, sort last".
 	rows, err := s.query(`SELECT b.id, b.plugin_slug, b.name, b.config, b.created_at
-		FROM batch_targets b LEFT JOIN target_order o ON o.target_id=b.id
-		ORDER BY COALESCE(o.ord, 2147483647) ASC, b.id DESC`)
+		FROM batch_targets b
+		ORDER BY COALESCE(b.ord, 2147483647) ASC, b.id DESC`)
 	if err != nil {
 		return nil
 	}
@@ -583,11 +571,11 @@ func (s *Store) ListTargets() []BatchTarget {
 	return out
 }
 
-// SetTargetOrder records a target's admin-set display position (drag-to-sort). Upsert so
-// re-ordering just overwrites; the side table keeps batch_targets untouched.
+// SetTargetOrder records a target's admin-set display position (drag-to-sort). A plain
+// UPDATE on the target row (ord is a batch_targets column now, ADR 0013); re-ordering just
+// overwrites it.
 func (s *Store) SetTargetOrder(id int64, ord int) error {
-	_, err := s.exec(`INSERT INTO target_order(target_id,ord) VALUES(?,?)
-		ON CONFLICT(target_id) DO UPDATE SET ord=excluded.ord`, id, ord)
+	_, err := s.exec(`UPDATE batch_targets SET ord=? WHERE id=?`, ord, id)
 	return err
 }
 

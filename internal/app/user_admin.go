@@ -5,10 +5,10 @@ import (
 	"fmt"
 )
 
-// User-admin persistence: extended profile attributes (display name / email /
-// active / last login) and organizational groups. Groups are labels only —
-// permissions still come from the role. The `users` table is never altered; these
-// live in additive tables (user_profiles, user_groups, user_group_members).
+// User-admin persistence: extended profile attributes (display name / email / active /
+// last login) and the single primary group are columns on the `users` table (folded from
+// the former user_profiles + user_primary_group side tables, ADR 0013); organizational-group
+// settings live in user_groups. Groups are labels only — permissions still come from the role.
 
 // UserGroup is an organizational group whose settings decide its members' run
 // behavior (group model B, docs/adr/0010-group-model.md). Every user has at most one
@@ -41,34 +41,24 @@ type UserGroup struct {
 
 // ---------- profile ----------
 
-// SetUserProfile upserts a user's display name and email (leaving active/last_login).
+// SetUserProfile sets a user's display name and email (leaving active/last_login/group_id).
+// The user row always pre-exists (created by UpsertUser before any profile edit).
 func (s *Store) SetUserProfile(username, displayName, email string) error {
-	_, err := s.exec(`INSERT INTO user_profiles(username,display_name,email) VALUES(?,?,?)
-		ON CONFLICT(username) DO UPDATE SET display_name=excluded.display_name, email=excluded.email`,
-		username, displayName, email)
+	_, err := s.exec(`UPDATE users SET display_name=?, email=? WHERE username=?`,
+		displayName, email, username)
 	return err
 }
 
 // SetUserActive enables or disables a user (disabled accounts cannot log in).
 func (s *Store) SetUserActive(username string, active bool) error {
-	_, err := s.exec(`INSERT INTO user_profiles(username,active) VALUES(?,?)
-		ON CONFLICT(username) DO UPDATE SET active=excluded.active`, username, boolInt(active))
+	_, err := s.exec(`UPDATE users SET active=? WHERE username=?`, boolInt(active), username)
 	return err
 }
 
 // TouchLastLogin stamps the user's last successful login time.
 func (s *Store) TouchLastLogin(username string) error {
-	_, err := s.exec(`INSERT INTO user_profiles(username,last_login) VALUES(?,?)
-		ON CONFLICT(username) DO UPDATE SET last_login=excluded.last_login`, username, nowStr())
+	_, err := s.exec(`UPDATE users SET last_login=? WHERE username=?`, nowStr(), username)
 	return err
-}
-
-// deleteUserExtras removes a user's profile row and all group memberships (called
-// from DeleteUser so a removed account leaves nothing behind).
-func (s *Store) deleteUserExtras(username string) {
-	s.exec("DELETE FROM user_profiles WHERE username=?", username)
-	s.exec("DELETE FROM user_group_members WHERE username=?", username)
-	s.exec("DELETE FROM user_primary_group WHERE username=?", username)
 }
 
 // ---------- groups ----------
@@ -114,39 +104,36 @@ func (s *Store) UpdateUserGroup(id int64, name, description string, weight int, 
 	return s.UpdateGroup(id, name, description, &w, &uf)
 }
 
-// DeleteUserGroup removes a group, its priority row, and any primary-group pointers to
-// it (its former primary members fall back to the Default group). Any group flagged
-// is_default is never deletable — the resolution depends on it. We check the row's own
-// flag (not just DefaultGroupID) so even a stray duplicate default can't be removed.
+// DeleteUserGroup removes a group and reassigns its former primary members to the Default
+// group (users.group_id back to NULL). Its priority rides on the group row, so it goes with
+// it. Any group flagged is_default is never deletable — the resolution depends on it. We check
+// the row's own flag (not just DefaultGroupID) so even a stray duplicate default can't be removed.
 func (s *Store) DeleteUserGroup(id int64) error {
 	var isDefault sql.NullInt64
 	s.queryRow("SELECT is_default FROM user_groups WHERE id=?", id).Scan(&isDefault)
 	if isDefault.Int64 != 0 {
 		return fmt.Errorf("the Default group cannot be deleted")
 	}
-	s.exec("DELETE FROM user_group_members WHERE group_id=?", id)
-	s.exec("DELETE FROM user_primary_group WHERE group_id=?", id)
-	s.exec("DELETE FROM group_priority WHERE group_id=?", id)
+	s.exec("UPDATE users SET group_id=NULL WHERE group_id=?", id)
 	_, err := s.exec("DELETE FROM user_groups WHERE id=?", id)
 	return err
 }
 
-// SetGroupPriority sets a group's base priority override (ADR 0007). An empty priority
-// clears it (a non-default group then inherits the system default).
+// SetGroupPriority sets a group's base priority override (ADR 0007). An empty priority stores
+// NULL, so a non-default group then inherits the system default. The group row always exists.
 func (s *Store) SetGroupPriority(groupID int64, priority string) error {
-	if priority == "" {
-		_, err := s.exec("DELETE FROM group_priority WHERE group_id=?", groupID)
-		return err
+	var val any // nil -> NULL (inherit), matching the old delete-the-side-row semantics
+	if priority != "" {
+		val = priority
 	}
-	_, err := s.exec(`INSERT INTO group_priority(group_id,priority) VALUES(?,?)
-		ON CONFLICT(group_id) DO UPDATE SET priority=excluded.priority`, groupID, priority)
+	_, err := s.exec("UPDATE user_groups SET priority=? WHERE id=?", val, groupID)
 	return err
 }
 
 // GroupPriority returns a group's base-priority override, or "" if it inherits.
 func (s *Store) GroupPriority(groupID int64) string {
 	var p sql.NullString
-	s.queryRow("SELECT priority FROM group_priority WHERE group_id=?", groupID).Scan(&p)
+	s.queryRow("SELECT priority FROM user_groups WHERE id=?", groupID).Scan(&p)
 	return p.String
 }
 
@@ -185,12 +172,11 @@ func (s *Store) EnsureDefaultGroup() int64 {
 func (s *Store) ListUserGroups() []UserGroup {
 	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''),
 			COALESCE(g.is_default,0), g.weight, g.urgent_unlimited, g.allow_urgent, g.max_queued, g.run_window,
-			COALESCE(gp.priority,''), COUNT(pg.username)
+			COALESCE(g.priority,''), COUNT(u.username)
 		FROM user_groups g
-		LEFT JOIN user_primary_group pg ON pg.group_id=g.id
-		LEFT JOIN group_priority gp ON gp.group_id=g.id
+		LEFT JOIN users u ON u.group_id=g.id
 		GROUP BY g.id, g.name, g.description, g.created_at, g.is_default, g.weight, g.urgent_unlimited,
-			g.allow_urgent, g.max_queued, g.run_window, gp.priority
+			g.allow_urgent, g.max_queued, g.run_window, g.priority
 		ORDER BY g.is_default DESC, g.name`)
 	if err != nil {
 		return nil
@@ -232,18 +218,18 @@ func (s *Store) SetPrimaryGroup(username string, groupID int64) error {
 		}
 	}
 	if groupID == 0 {
-		_, err := s.exec("DELETE FROM user_primary_group WHERE username=?", username)
+		_, err := s.exec("UPDATE users SET group_id=NULL WHERE username=?", username)
 		return err
 	}
-	_, err := s.exec(`INSERT INTO user_primary_group(username,group_id) VALUES(?,?)
-		ON CONFLICT(username) DO UPDATE SET group_id=excluded.group_id`, username, groupID)
+	_, err := s.exec("UPDATE users SET group_id=? WHERE username=?", groupID, username)
 	return err
 }
 
-// PrimaryGroupOf returns a user's primary group id, or 0 if they inherit the Default.
+// PrimaryGroupOf returns a user's primary group id, or 0 if they inherit the Default (a NULL
+// group_id, or a missing user, reads back as 0).
 func (s *Store) PrimaryGroupOf(username string) int64 {
 	var id sql.NullInt64
-	s.queryRow("SELECT group_id FROM user_primary_group WHERE username=?", username).Scan(&id)
+	s.queryRow("SELECT group_id FROM users WHERE username=?", username).Scan(&id)
 	return id.Int64
 }
 
@@ -251,7 +237,7 @@ func (s *Store) PrimaryGroupOf(username string) int64 {
 // user list can be enriched with one query instead of N.
 func (s *Store) AllPrimaryGroups() map[string]int64 {
 	m := map[string]int64{}
-	rows, err := s.query("SELECT username, group_id FROM user_primary_group")
+	rows, err := s.query("SELECT username, group_id FROM users WHERE group_id IS NOT NULL")
 	if err != nil {
 		return m
 	}

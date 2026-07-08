@@ -37,7 +37,7 @@ func deriveUID(symbol, date, rtype string) string {
 	return symbol + "|" + date + "|" + rtype
 }
 
-// parseNewRID parses a new-report rid ("n123") to its rowid. ok=false for anything else
+// parseNewRID parses a new-report rid ("n123") to its numeric id. ok=false for anything else
 // (a composite uid, an old-report "o…" id, or garbage).
 func parseNewRID(id string) (int64, bool) {
 	if len(id) < 2 || id[0] != 'n' {

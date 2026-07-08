@@ -1,7 +1,8 @@
 package app
 
-// User is an account. Core fields (username/password/role) live in the `users`
-// table; the extended attributes come from user_profiles (additive-only schema).
+// User is an account. All fields are columns on the `users` table (the profile attributes
+// were folded in from user_profiles, ADR 0013). The single primary group is carried
+// out-of-band via PrimaryGroupOf/users.group_id, not on this struct.
 type User struct {
 	Username     string
 	PasswordHash string
@@ -10,7 +11,7 @@ type User struct {
 	Email        string  //
 	Active       bool    // false = disabled; disabled accounts cannot log in
 	LastLogin    string  // timestamp of the last successful login ("" = never)
-	Groups       []int64 // organizational group ids this user belongs to
+	Groups       []int64 // vestigial (group model B uses a single primary group_id); unused
 }
 
 // Name returns the display name, falling back to the username.

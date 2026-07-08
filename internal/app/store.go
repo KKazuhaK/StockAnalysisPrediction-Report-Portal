@@ -24,7 +24,7 @@ func boolInt(b bool) int {
 
 // Rep is the unified representation for both new and old reports (used for lists/grouping/reading).
 type Rep struct {
-	RID, Src      string // RID: "n<rowid>" new / "o<id>" old
+	RID, Src      string // RID: "n<id>" new / "o<id>" old
 	UID           string // stable external id of a new report (used for upsert)
 	Title, Symbol string
 	Name          string // company name snapshotted at ingest (backdoor-listing / rename safe)
@@ -82,7 +82,7 @@ func OpenStore(driver, source string) (*Store, error) {
 		db.SetMaxOpenConns(10)
 	}
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("连接数据库(%s)失败: %w", driver, err)
+		return nil, fmt.Errorf("connect database (%s): %w", driver, err)
 	}
 	s := &Store{db: db, driver: driver}
 	return s, s.init()
@@ -168,18 +168,39 @@ func (s *Store) groupConcatDistinct(col string) string {
 	return fmt.Sprintf("GROUP_CONCAT(DISTINCT %s)", col)
 }
 
+// init opens/upgrades the database: it lays down the current-generation base schema, runs any
+// pending migration to bring an older database up to it, then guarantees the fallback group.
 func (s *Store) init() error {
+	if err := s.createBaseSchema(); err != nil {
+		return err
+	}
+	if err := s.migrate(); err != nil {
+		return err
+	}
+	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
+	return nil
+}
+
+// createBaseSchema creates the current schema generation from scratch (CREATE TABLE IF NOT
+// EXISTS, so existing tables are left untouched — migrate() upgrades those). Per the squash
+// contract (CLAUDE.md hard rules), this base schema equals the fully-migrated final state of
+// the previous release line: the six former 1:1 side tables are folded into parent columns, the
+// dead user_group_members table and links.collapsed column are gone, and the reports surrogate
+// key is `id`. See docs/adr/0013-v2-schema-consolidation.md.
+func (s *Store) createBaseSchema() error {
 	pk := s.pkAuto()
 	stmts := []string{
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS reports(
-			rowid %s,
+			id %s,
 			uid TEXT UNIQUE, title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
 			kind TEXT, run_id TEXT,
 			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(rdate)`,
 		`CREATE INDEX IF NOT EXISTS idx_reports_sym  ON reports(symbol)`,
+		// Entry buttons. group_id: the link group it belongs to (0 = ungrouped/top-level, shown inline).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
-			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
+			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1,
+			ord INTEGER DEFAULT 0, group_id INTEGER DEFAULT 0)`, pk),
 		// Named, foldable groups of entry buttons on the home page (mode: row/expand/popover/modal).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS link_groups(
 			id %s, name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
@@ -191,9 +212,14 @@ func (s *Store) init() error {
 		// Admin-configurable antd Tag preset color per top-level kind (大类), replacing a
 		// previously-hardcoded frontend map. Kinds with no row here fall back to "default" client-side.
 		`CREATE TABLE IF NOT EXISTS kind_config(kind TEXT PRIMARY KEY, color TEXT)`,
-		// Login accounts (config.yaml only seeds on first startup, managed via the web UI afterwards). role can be extended with more roles.
+		// Login accounts (config.yaml only seeds the first admin on first startup; managed via the
+		// web UI afterwards). role can be extended with more roles. Extended profile attributes
+		// (display_name/email/active/last_login) and the single primary group_id (NULL = the Default
+		// group) are columns here, folded from the former user_profiles + user_primary_group side
+		// tables (docs/adr/0013-v2-schema-consolidation.md). active defaults to 1 (enabled).
 		`CREATE TABLE IF NOT EXISTS users(
-			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user')`,
+			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user',
+			display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT, group_id BIGINT)`,
 		// API tokens (multiple, with note/scope/validity period/last used). scope: all|ingest|query.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS api_tokens(
 			id %s, token TEXT UNIQUE, name TEXT, scope TEXT DEFAULT 'all',
@@ -213,16 +239,18 @@ func (s *Store) init() error {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS plugins(
 			id %s, slug TEXT UNIQUE, name TEXT, version TEXT, spec TEXT,
 			enabled INTEGER DEFAULT 1, source TEXT DEFAULT 'imported', imported_at TEXT)`, pk),
+		// batch_targets. ord: admin drag-to-sort display position (folded from the former
+		// target_order side table; NULL = unordered, sorts after ordered ones, newest-first).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_targets(
-			id %s, plugin_slug TEXT, name TEXT, config TEXT, created_at TEXT)`, pk),
-		// Admin-defined display order for targets (drag-to-sort). An additive side table so
-		// batch_targets is never altered; a target with no row here sorts after ordered ones
-		// (newest-first), matching the pre-ordering default.
-		`CREATE TABLE IF NOT EXISTS target_order(target_id BIGINT PRIMARY KEY, ord INTEGER)`,
+			id %s, plugin_slug TEXT, name TEXT, config TEXT, created_at TEXT, ord INTEGER)`, pk),
+		// batch_jobs. priority (run-queue level, folded from the former job_queue side table;
+		// default 'normal') and run_at (one-shot scheduled start, folded from job_schedule;
+		// default '' = run ASAP) — see docs/adr/0013-v2-schema-consolidation.md.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_jobs(
 			id %s, target_id BIGINT, status TEXT, concurrency INTEGER DEFAULT 1, max_retries INTEGER DEFAULT 0,
 			total INTEGER DEFAULT 0, succeeded INTEGER DEFAULT 0, partial INTEGER DEFAULT 0, failed INTEGER DEFAULT 0,
-			created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT)`, pk),
+			created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,
+			priority TEXT DEFAULT 'normal', run_at TEXT DEFAULT '')`, pk),
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_items(
 			id %s, job_id BIGINT, row_index INTEGER, inputs TEXT, status TEXT DEFAULT 'queued',
 			attempts INTEGER DEFAULT 0, run_id TEXT, error TEXT, started_at TEXT, finished_at TEXT)`, pk),
@@ -231,15 +259,10 @@ func (s *Store) init() error {
 		// without this the WHERE row_index=0 lookup is a full scan of batch_items — the
 		// fastest-growing table — and gets slow on a large job history.
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_row0 ON batch_items(row_index, job_id)`,
-		// Priority run queue (see docs/adr/0004-run-queue.md). A job's priority level
-		// lives in its own table (not a batch_jobs column) so the queue is an additive
-		// layer — no change to the existing table. enqueue time = batch_jobs.created_at.
-		`CREATE TABLE IF NOT EXISTS job_queue(job_id BIGINT PRIMARY KEY, priority TEXT DEFAULT 'normal')`,
-		// One-shot scheduling (定时运行, see docs/adr/0007-run-analysis-and-scheduling.md). A
-		// scheduled run is an ordinary status='queued' job PLUS a run_at here; queuedItems()
-		// hides it until run_at passes. Additive side table, same basis as created_at.
-		`CREATE TABLE IF NOT EXISTS job_schedule(job_id BIGINT PRIMARY KEY, run_at TEXT)`,
-		`CREATE INDEX IF NOT EXISTS idx_job_schedule_run_at ON job_schedule(run_at)`,
+		// Run-queue priority (ADR 0004) and one-shot schedule run_at (ADR 0007) are now the
+		// batch_jobs.priority / run_at columns above (folded from the former job_queue /
+		// job_schedule side tables). The partial index over run_at is created by migrateV1toV2,
+		// after the column is guaranteed to exist on an upgraded database.
 		// Outbound event webhooks (extension point; see docs/adr/0002-extension-architecture.md).
 		// events is a comma-separated subscription list; last_* columns give the admin delivery visibility.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS webhooks(
@@ -255,35 +278,19 @@ func (s *Store) init() error {
 			scopes TEXT, created_at TEXT)`,
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS app_files(
 			app_id TEXT, path TEXT, ctype TEXT, content %s, PRIMARY KEY(app_id, path))`, s.blobType()),
-		// Extended account attributes live in their own tables so the core `users`
-		// table is never altered (additive-only schema). A missing profile row means
-		// defaults: enabled, no display name/email. Groups are organizational labels
-		// (many-to-many); permissions still come from the role.
-		`CREATE TABLE IF NOT EXISTS user_profiles(
-			username TEXT PRIMARY KEY, display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT)`,
-		// weight / urgent_unlimited are NULL-able on purpose: on a non-default group a
-		// NULL means "inherit from the Default group" (group model B), a concrete value
-		// means "override". The Default group (is_default=1) always holds concrete
-		// baselines. See docs/adr/0010-group-model.md.
-		// allow_urgent / max_queued / run_window are per-group governance (group model B):
-		// NULL on a non-default group means "inherit the Default group"; the Default group's
-		// NULL means the permissive baseline (urgent allowed, no queue cap, any hour).
+		// user_groups (organizational groups; docs/adr/0010-group-model.md). A user's single
+		// primary group is users.group_id (NULL = the Default group) — there is no many-to-many
+		// membership table. priority: the group's default run priority (folded from the former
+		// group_priority side table; NULL = inherit the system default). weight / urgent_unlimited
+		// are NULL-able on purpose: on a non-default group NULL means "inherit from the Default
+		// group", a concrete value means "override"; the Default group (is_default=1) holds
+		// concrete baselines. allow_urgent / max_queued / run_window are per-group governance:
+		// NULL on a non-default group means "inherit the Default group"; the Default group's NULL
+		// means the permissive baseline (urgent allowed, no queue cap, any hour).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS user_groups(
 			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER,
 			urgent_unlimited INTEGER, is_default INTEGER DEFAULT 0,
-			allow_urgent INTEGER, max_queued INTEGER, run_window TEXT)`, pk),
-		`CREATE TABLE IF NOT EXISTS user_group_members(
-			group_id BIGINT, username TEXT, PRIMARY KEY(group_id, username))`,
-		`CREATE INDEX IF NOT EXISTS idx_ugm_user ON user_group_members(username)`,
-		// Group model B: every user has at most one primary group; users without a row
-		// fall back to the Default group. This supersedes the many-to-many membership in
-		// user_group_members (left intact but no longer consulted for resolution).
-		`CREATE TABLE IF NOT EXISTS user_primary_group(
-			username TEXT PRIMARY KEY, group_id BIGINT)`,
-		// A group's default run priority (定时/优先级 resolution, ADR 0007). Additive
-		// side table (not a user_groups column) so weight (加急次票) and priority stay
-		// separate concerns. A member's effective default = highest across their groups.
-		`CREATE TABLE IF NOT EXISTS group_priority(group_id BIGINT PRIMARY KEY, priority TEXT)`,
+			allow_urgent INTEGER, max_queued INTEGER, run_window TEXT, priority TEXT)`, pk),
 		// Priority "次票": a per-user quota of 加急 runs, allocated by group weight and
 		// refilled each period. State is lazy (no cron): a period rollover is detected
 		// from period_start on access. See docs/adr/0005-priority-tickets.md.
@@ -294,46 +301,206 @@ func (s *Store) init() error {
 		// context/memory; this table just lets the portal list a user's conversations per
 		// target and reopen them. No message content is stored here. conv_id is empty until
 		// Dify assigns one on the first reply.
+		// starred: pinned to the top of the conversation list.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS chat_conversations(
 			id %s, target_id BIGINT, conv_id TEXT DEFAULT '', created_by TEXT,
-			title TEXT DEFAULT '', created_at TEXT, updated_at TEXT)`, pk),
+			title TEXT DEFAULT '', created_at TEXT, updated_at TEXT, starred INTEGER DEFAULT 0)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_chat_conv_user ON chat_conversations(created_by, target_id, updated_at)`,
 	}
 	for _, st := range stmts {
 		if _, err := s.exec(st); err != nil {
-			return fmt.Errorf("建表失败: %w\nSQL: %s", err, st)
+			return fmt.Errorf("create base schema: %w\nSQL: %s", err, st)
 		}
 	}
-	if _, err := s.exec(`ALTER TABLE user_groups ADD COLUMN urgent_unlimited INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
-		return fmt.Errorf("upgrade user_groups (urgent_unlimited): %w", err)
+	return nil
+}
+
+// ---- schema version + migration (docs/adr/0013-v2-schema-consolidation.md) ----
+
+// schemaVersion reads the internal schema-generation marker from meta. Absent (or unparseable)
+// means generation 1 — the pre-v0.2 shape that predates this marker. The generation is
+// decoupled from the release tag: generation 2 ships in release v0.2.0.
+func (s *Store) schemaVersion() int {
+	var v sql.NullString
+	s.queryRow("SELECT v FROM meta WHERE k='schema_version'").Scan(&v)
+	if n, err := strconv.Atoi(v.String); err == nil && n > 0 {
+		return n
 	}
-	if _, err := s.exec(`ALTER TABLE user_groups ADD COLUMN is_default INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
-		return fmt.Errorf("upgrade user_groups (is_default): %w", err)
+	return 1
+}
+
+func (s *Store) setSchemaVersion(n int) error {
+	_, err := s.exec(`INSERT INTO meta(k,v) VALUES('schema_version',?)
+		ON CONFLICT(k) DO UPDATE SET v=excluded.v`, strconv.Itoa(n))
+	return err
+}
+
+// migrate upgrades an existing database to the current schema generation. A fresh database (born
+// at the base schema) runs migrateV1toV2 as a guarded no-op and is stamped straight to generation
+// 2; a genuine v0.1-line database is folded up to generation 2.
+func (s *Store) migrate() error {
+	if s.schemaVersion() >= 2 {
+		return nil
 	}
-	// Per-group governance columns (group model B): additive, nullable.
-	for _, ddl := range []string{
+	if err := s.migrateV1toV2(); err != nil {
+		return fmt.Errorf("migrate schema v1->v2: %w", err)
+	}
+	return s.setSchemaVersion(2)
+}
+
+// tableExists reports whether a table is present (guards the fold-copy steps in migration).
+// The Postgres path assumes the default `public` schema — consistent with the rest of the
+// store, which issues only unqualified DDL/DML and never sets a custom search_path.
+func (s *Store) tableExists(name string) bool {
+	var n int
+	if s.driver == "postgres" {
+		s.queryRow(`SELECT COUNT(*) FROM information_schema.tables
+			WHERE table_schema='public' AND table_name=?`, name).Scan(&n)
+	} else {
+		s.queryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
+	}
+	return n > 0
+}
+
+// columnExists reports whether table.col is present. Only ever called with hardcoded internal
+// identifiers, so the SQLite PRAGMA path inlines the table name safely (no user input).
+func (s *Store) columnExists(table, col string) bool {
+	if s.driver == "postgres" {
+		var n int
+		s.queryRow(`SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema='public' AND table_name=? AND column_name=?`, table, col).Scan(&n)
+		return n > 0
+	}
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk) == nil && name == col {
+			return true
+		}
+	}
+	return false
+}
+
+// migrateV1toV2 upgrades a v0.1-line database to schema generation 2 (docs/adr/0013): it folds
+// the six 1:1 side tables into parent columns, drops the dead user_group_members table and
+// links.collapsed column, and renames reports.rowid -> id. Every step is individually guarded
+// (guarded ADD COLUMN, table/column-existence checks, DROP ... IF EXISTS, portable
+// correlated-subquery backfills valid on both SQLite and Postgres), so it is idempotent and a
+// no-op on a database already at the target shape — including a fresh base-schema database. The
+// catch-up ADD COLUMNs let ANY v0.1.x database upgrade straight to v0.2 without first stepping
+// through the last v0.1 release. This whole function is deleted and folded into createBaseSchema
+// at the next major boundary (v0.3.0) per the squash contract.
+func (s *Store) migrateV1toV2() error {
+	// Kept columns a database behind the last v0.1 release may still lack, plus the new folded
+	// columns. Guarded, so each is a no-op where the column already exists.
+	addCols := []string{
+		// catch-up: columns already in the base schema of the last v0.1 line
+		`ALTER TABLE links ADD COLUMN group_id INTEGER DEFAULT 0`,
+		`ALTER TABLE chat_conversations ADD COLUMN starred INTEGER DEFAULT 0`,
+		`ALTER TABLE user_groups ADD COLUMN urgent_unlimited INTEGER DEFAULT 0`,
+		`ALTER TABLE user_groups ADD COLUMN is_default INTEGER DEFAULT 0`,
 		`ALTER TABLE user_groups ADD COLUMN allow_urgent INTEGER`,
 		`ALTER TABLE user_groups ADD COLUMN max_queued INTEGER`,
 		`ALTER TABLE user_groups ADD COLUMN run_window TEXT`,
-	} {
+		// folded columns: their source side tables are copied then dropped below
+		`ALTER TABLE users ADD COLUMN display_name TEXT`,
+		`ALTER TABLE users ADD COLUMN email TEXT`,
+		`ALTER TABLE users ADD COLUMN active INTEGER DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN last_login TEXT`,
+		`ALTER TABLE users ADD COLUMN group_id BIGINT`,
+		`ALTER TABLE user_groups ADD COLUMN priority TEXT`,
+		`ALTER TABLE batch_targets ADD COLUMN ord INTEGER`,
+		`ALTER TABLE batch_jobs ADD COLUMN priority TEXT DEFAULT 'normal'`,
+		`ALTER TABLE batch_jobs ADD COLUMN run_at TEXT DEFAULT ''`,
+	}
+	for _, ddl := range addCols {
 		if _, err := s.exec(ddl); err != nil && !duplicateColumnErr(err) {
-			return fmt.Errorf("upgrade user_groups governance: %w", err)
+			return fmt.Errorf("add column [%s]: %w", ddl, err)
 		}
 	}
-	// Entry buttons can fold into a home-page "More" dropdown: additive, defaulted. (Legacy —
-	// superseded by link groups; kept so existing DBs still open.)
-	if _, err := s.exec(`ALTER TABLE links ADD COLUMN collapsed INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
-		return fmt.Errorf("upgrade links (collapsed): %w", err)
+
+	// Backfill each folded column from its side table, then drop the side table. Scoped
+	// WHERE ... IN (SELECT ...) so a parent row without a side-table entry keeps the column
+	// default (a user with no profile stays active=1 / empty name; an ungrouped user stays
+	// group_id=NULL = the Default group; a job with no queue/schedule row stays 'normal' / '').
+	folds := []struct{ src, update string }{
+		{"user_profiles", `UPDATE users SET
+			display_name=(SELECT p.display_name FROM user_profiles p WHERE p.username=users.username),
+			email=(SELECT p.email FROM user_profiles p WHERE p.username=users.username),
+			active=COALESCE((SELECT p.active FROM user_profiles p WHERE p.username=users.username),1),
+			last_login=(SELECT p.last_login FROM user_profiles p WHERE p.username=users.username)
+			WHERE username IN (SELECT username FROM user_profiles)`},
+		{"user_primary_group", `UPDATE users SET
+			group_id=(SELECT g.group_id FROM user_primary_group g WHERE g.username=users.username)
+			WHERE username IN (SELECT username FROM user_primary_group)`},
+		{"group_priority", `UPDATE user_groups SET
+			priority=(SELECT gp.priority FROM group_priority gp WHERE gp.group_id=user_groups.id)
+			WHERE id IN (SELECT group_id FROM group_priority)`},
+		{"target_order", `UPDATE batch_targets SET
+			ord=(SELECT o.ord FROM target_order o WHERE o.target_id=batch_targets.id)
+			WHERE id IN (SELECT target_id FROM target_order)`},
+		{"job_queue", `UPDATE batch_jobs SET
+			priority=COALESCE((SELECT q.priority FROM job_queue q WHERE q.job_id=batch_jobs.id),'normal')
+			WHERE id IN (SELECT job_id FROM job_queue)`},
+		{"job_schedule", `UPDATE batch_jobs SET
+			run_at=COALESCE((SELECT sc.run_at FROM job_schedule sc WHERE sc.job_id=batch_jobs.id),'')
+			WHERE id IN (SELECT job_id FROM job_schedule)`},
 	}
-	// Entry buttons can belong to a named group (0 = ungrouped/top-level): additive, defaulted.
-	if _, err := s.exec(`ALTER TABLE links ADD COLUMN group_id INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
-		return fmt.Errorf("upgrade links (group_id): %w", err)
+	for _, f := range folds {
+		if !s.tableExists(f.src) {
+			continue
+		}
+		if _, err := s.exec(f.update); err != nil {
+			return fmt.Errorf("backfill from %s: %w", f.src, err)
+		}
+		if _, err := s.exec("DROP TABLE IF EXISTS " + f.src); err != nil {
+			return fmt.Errorf("drop %s: %w", f.src, err)
+		}
 	}
-	// Chat conversations can be starred (pinned to the top of the list): additive, defaulted.
-	if _, err := s.exec(`ALTER TABLE chat_conversations ADD COLUMN starred INTEGER DEFAULT 0`); err != nil && !duplicateColumnErr(err) {
-		return fmt.Errorf("upgrade chat_conversations (starred): %w", err)
+
+	// Dead many-to-many membership table. The single primary group (users.group_id) is
+	// authoritative (ADR 0010); before dropping, defensively reconcile one membership into any
+	// still-ungrouped user (prod holds 0 rows here).
+	if s.tableExists("user_group_members") {
+		if _, err := s.exec(`UPDATE users SET
+			group_id=(SELECT m.group_id FROM user_group_members m WHERE m.username=users.username LIMIT 1)
+			WHERE group_id IS NULL AND username IN (SELECT username FROM user_group_members)`); err != nil {
+			return fmt.Errorf("reconcile user_group_members: %w", err)
+		}
+		if _, err := s.exec(`DROP TABLE IF EXISTS user_group_members`); err != nil {
+			return fmt.Errorf("drop user_group_members: %w", err)
+		}
 	}
-	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
+
+	// Dead links.collapsed column (superseded by link_groups; no reader).
+	if s.columnExists("links", "collapsed") {
+		if _, err := s.exec(`ALTER TABLE links DROP COLUMN collapsed`); err != nil {
+			return fmt.Errorf("drop links.collapsed: %w", err)
+		}
+	}
+
+	// Rename the reports surrogate key rowid -> id (every table's PK is now `id`). Guarded so a
+	// database already at the target shape skips it. On SQLite a missed `rowid` reference silently
+	// falls back to the implicit rowid alias and keeps working; on Postgres it fails hard — so the
+	// TEST_POSTGRES_DSN path is the real guard against a missed rename elsewhere in the code.
+	if s.columnExists("reports", "rowid") && !s.columnExists("reports", "id") {
+		if _, err := s.exec(`ALTER TABLE reports RENAME COLUMN rowid TO id`); err != nil {
+			return fmt.Errorf("rename reports.rowid -> id: %w", err)
+		}
+	}
+
+	// The run_at partial index lives here (not in createBaseSchema) because on an upgrading
+	// database batch_jobs.run_at does not exist until the fold above adds it. At the next squash
+	// (v0.3.0) this moves into createBaseSchema alongside the other batch_jobs indexes.
+	if _, err := s.exec(`CREATE INDEX IF NOT EXISTS idx_batch_jobs_run_at ON batch_jobs(run_at) WHERE run_at <> ''`); err != nil {
+		return fmt.Errorf("create idx_batch_jobs_run_at: %w", err)
+	}
 	return nil
 }
 
@@ -344,10 +511,11 @@ func duplicateColumnErr(err error) bool {
 
 // ---------- Accounts ----------
 
-// userCols is the shared SELECT list joining a user with its profile (COALESCE so a
-// user without a profile row reads as enabled with empty display name/email).
+// userCols is the shared SELECT list for a user row. The COALESCEs keep the prior semantics
+// now that the profile attributes are nullable columns on users (folded from user_profiles,
+// ADR 0013): a NULL display_name/email/last_login reads as '' and a NULL active reads as 1.
 const userCols = `u.username,u.password_hash,u.role,
-	COALESCE(p.display_name,''),COALESCE(p.email,''),COALESCE(p.active,1),COALESCE(p.last_login,'')`
+	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,'')`
 
 func scanUser(scan func(...any) error) (User, error) {
 	var u User
@@ -362,7 +530,7 @@ func scanUser(scan func(...any) error) (User, error) {
 }
 
 func (s *Store) Users() []User {
-	rows, err := s.query("SELECT " + userCols + " FROM users u LEFT JOIN user_profiles p ON p.username=u.username ORDER BY u.role, u.username")
+	rows, err := s.query("SELECT " + userCols + " FROM users u ORDER BY u.role, u.username")
 	if err != nil {
 		return nil
 	}
@@ -379,7 +547,7 @@ func (s *Store) Users() []User {
 }
 
 func (s *Store) GetUser(name string) *User {
-	u, err := scanUser(s.queryRow("SELECT "+userCols+" FROM users u LEFT JOIN user_profiles p ON p.username=u.username WHERE u.username=?", name).Scan)
+	u, err := scanUser(s.queryRow("SELECT "+userCols+" FROM users u WHERE u.username=?", name).Scan)
 	if err != nil {
 		return nil
 	}
@@ -393,7 +561,7 @@ func (s *Store) UserByEmail(email string) *User {
 	if email == "" {
 		return nil
 	}
-	u, err := scanUser(s.queryRow("SELECT "+userCols+" FROM users u JOIN user_profiles p ON p.username=u.username WHERE p.email<>'' AND LOWER(p.email)=LOWER(?)", email).Scan)
+	u, err := scanUser(s.queryRow("SELECT "+userCols+" FROM users u WHERE u.email IS NOT NULL AND u.email<>'' AND LOWER(u.email)=LOWER(?)", email).Scan)
 	if err != nil {
 		return nil
 	}
@@ -418,7 +586,8 @@ func (s *Store) SetUserRole(name, role string) error {
 }
 
 func (s *Store) DeleteUser(name string) error {
-	s.deleteUserExtras(name) // profile row + group memberships
+	// Profile attributes and the primary group are columns on users now (ADR 0013), so they
+	// vanish with the row — no side-table cleanup needed.
 	_, err := s.exec("DELETE FROM users WHERE username=?", name)
 	return err
 }
@@ -626,7 +795,7 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 		where = append(where, "r.rdate <= ?")
 		args = append(args, f.DateTo)
 	}
-	q := "SELECT r.rowid,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
+	q := "SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -643,7 +812,7 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 	return out, rows.Err()
 }
 
-// scanNewRow scans one new-report row (without body). Fixed column order: rowid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at.
+// scanNewRow scans one new-report row (without body). Fixed column order: id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at.
 func scanNewRow(rows *sql.Rows) Rep {
 	var id int64
 	var title, sym, name, rt, rd, kind, runID, src, sent sql.NullString
@@ -830,7 +999,7 @@ func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
 	from := "FROM reports r LEFT JOIN stocks s ON s.code = r.symbol WHERE " + whereClause
 	var total int
 	s.queryRow("SELECT COUNT(*) "+from, args...).Scan(&total)
-	sqlStr := fmt.Sprintf(`SELECT r.rowid,r.uid,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,r.body_md
+	sqlStr := fmt.Sprintf(`SELECT r.id,r.uid,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,r.body_md
 		%s ORDER BY r.rdate DESC, r.sent_at DESC LIMIT %d OFFSET %d`, from, limit, offset)
 	rows, err := s.query(sqlStr, args...)
 	if err != nil {
@@ -857,7 +1026,7 @@ func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
 func (s *Store) GetByUID(uid string) *Rep {
 	var id int64
 	var title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
-	err := s.queryRow(`SELECT rowid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html
+	err := s.queryRow(`SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html
 		FROM reports WHERE uid=?`, uid).Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
 	if err != nil {
 		return nil
@@ -907,7 +1076,7 @@ func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
 	}
 	// Join the parent report to expose its numeric id (rid). reports.uid is
 	// UNIQUE-indexed, so this is one index seek per row (the result is LIMIT-capped).
-	rows, err := s.query(fmt.Sprintf(`SELECT t.id,t.report_uid,r.rowid,t.symbol,t.itype,t.content,t.status,t.review_point,t.created_at
+	rows, err := s.query(fmt.Sprintf(`SELECT t.id,t.report_uid,r.id,t.symbol,t.itype,t.content,t.status,t.review_point,t.created_at
 		FROM tracking_items t LEFT JOIN reports r ON r.uid=t.report_uid
 		WHERE %s ORDER BY t.created_at DESC, t.id DESC LIMIT %d`, strings.Join(where, " AND "), limit), args...)
 	if err != nil {
@@ -1060,7 +1229,7 @@ func (s *Store) ListRuns(symbol, date string) []RunInfo {
 
 // NewBySymbol fetches all new reports for a symbol (without body, date descending), for the per-stock timeline detail view.
 func (s *Store) NewBySymbol(symbol string) ([]Rep, error) {
-	rows, err := s.query(`SELECT rowid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at
+	rows, err := s.query(`SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at
 		FROM reports WHERE symbol=? ORDER BY rdate DESC, sent_at ASC`, symbol)
 	if err != nil {
 		return nil, err
@@ -1076,7 +1245,7 @@ func (s *Store) NewBySymbol(symbol string) ([]Rep, error) {
 func (s *Store) GetNew(rowid int64) (*Rep, error) {
 	var uid, title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
 	err := s.queryRow(
-		"SELECT uid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE rowid=?", rowid).
+		"SELECT uid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE id=?", rowid).
 		Scan(&uid, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1166,7 +1335,7 @@ func (s *Store) RecomputeKinds() (int, error) {
 	// Load the subtype→大类 map once up front; querying it inside the open rows
 	// loop would deadlock the single-connection SQLite pool.
 	cfg := s.TypeConfigs()
-	rows, err := s.query("SELECT rowid, rtype, kind FROM reports")
+	rows, err := s.query("SELECT id, rtype, kind FROM reports")
 	if err != nil {
 		return 0, err
 	}
@@ -1196,7 +1365,7 @@ func (s *Store) RecomputeKinds() (int, error) {
 	}
 	rows.Close()
 	for _, u := range ups {
-		if _, err := s.exec("UPDATE reports SET kind=? WHERE rowid=?", u.kind, u.rowid); err != nil {
+		if _, err := s.exec("UPDATE reports SET kind=? WHERE id=?", u.kind, u.rowid); err != nil {
 			return 0, err
 		}
 	}
