@@ -3,23 +3,53 @@
   "info": {
     "title": "研报门户 · Dify 机器接口 (v1)",
     "version": "1.0.0",
-    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，去重身份由服务端按 `symbol|date|subtype` 判定（客户端不传）；接口返回并寻址的 `uid` 是数字报告 id（形如 `n123`，ASCII、URL 安全）。"
+    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，去重身份由服务端按 `symbol|date|subtype` 判定（无 symbol 的专题报告按 `title|date|subtype` 判定，客户端不传 uid）；接口返回并寻址的 `uid` 是数字报告 id（形如 `n123`，ASCII、URL 安全）。多语言：请求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化后的 OpenAPI JSON。",
+    "x-i18n": {
+      "en-US": {
+        "title": "Research Report Portal · Dify Machine API (v1)",
+        "description": "Machine API for Dify workflows to ingest, query, and review research reports. Authentication: `Authorization: Bearer <token>`; tokens are managed in System Settings and use the `ingest`, `query`, or `all` scope. A browser cookie session also satisfies query access. Successful responses are JSON; errors use `{ok:false,error:{code,message}}`. Dates use `YYYY-MM-DD`. Ingest is an idempotent upsert. Deduplication is derived server-side from `symbol|date|subtype`; thematic reports without `symbol` use `title|date|subtype`. Clients do not send uid. Returned and path-addressed `uid` values are numeric report ids such as `n123` (ASCII and URL-safe). Localization: request `/api/openapi.json?lang=en-US` or `?lang=zh-TW` for a localized OpenAPI JSON document."
+      },
+      "zh-TW": {
+        "title": "研報門戶 · Dify 機器介面 (v1)",
+        "description": "供 Dify 工作流入庫/查詢/複核研報的機器介面。鑑權：請求頭 `Authorization: Bearer <token>`（令牌在系統設定頁管理，作用域 ingest|query|all）；瀏覽器登入的 cookie 會話也滿足 query。成功響應為 JSON；錯誤統一為 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入庫為冪等 upsert，去重身份由服務端按 `symbol|date|subtype` 判定（無 symbol 的專題報告按 `title|date|subtype` 判定，客戶端不傳 uid）；介面返回並尋址的 `uid` 是數字報告 id（形如 `n123`，ASCII、URL 安全）。多語言：請求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化後的 OpenAPI JSON。"
+      }
+    }
   },
-  "servers": [{ "url": "/", "description": "当前门户源" }],
+  "servers": [{ "url": "/", "description": "当前门户源", "x-i18n": { "en-US": { "description": "Current portal origin" }, "zh-TW": { "description": "目前門戶來源" } } }],
   "security": [{ "bearerAuth": [] }],
   "tags": [
-    { "name": "reports", "description": "报告入库/查询/撤回" },
-    { "name": "discovery", "description": "标的、报告组、清单" },
-    { "name": "tracking", "description": "假设/跟踪项复核" },
-    { "name": "meta", "description": "公开：健康与版本" }
+    { "name": "reports", "description": "报告入库/查询/撤回", "x-i18n": { "en-US": { "description": "Report ingest, query, and retract" }, "zh-TW": { "description": "報告入庫/查詢/撤回" } } },
+    { "name": "discovery", "description": "标的、报告组、清单", "x-i18n": { "en-US": { "description": "Symbols, report groups, and manifests" }, "zh-TW": { "description": "標的、報告組、清單" } } },
+    { "name": "tracking", "description": "假设/跟踪项复核", "x-i18n": { "en-US": { "description": "Assumption and tracking-item review" }, "zh-TW": { "description": "假設/跟蹤項複核" } } },
+    { "name": "meta", "description": "公开：健康与版本", "x-i18n": { "en-US": { "description": "Public health and version metadata" }, "zh-TW": { "description": "公開：健康與版本" } } }
   ],
   "components": {
     "securitySchemes": {
-      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "API 令牌。作用域：ingest（入库/撤回/改跟踪项）、query（读）、all（全部）。" }
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API 令牌。作用域：ingest（入库/撤回/改跟踪项）、query（读）、all（全部）。",
+        "x-i18n": {
+          "en-US": { "description": "API token. Scopes: ingest (ingest/retract/update tracking items), query (read), and all (both)." },
+          "zh-TW": { "description": "API 令牌。作用域：ingest（入庫/撤回/改跟蹤項）、query（讀）、all（全部）。" }
+        }
+      }
     },
     "schemas": {
       "Error": {
         "type": "object",
+        "x-i18n": {
+          "en-US": {
+            "properties": {
+              "error": { "properties": { "code": { "description": "Machine-readable error code: unauthorized/bad_json/missing_param/invalid_param/not_found/db_error" } } }
+            }
+          },
+          "zh-TW": {
+            "properties": {
+              "error": { "properties": { "code": { "description": "機器可判定的錯誤碼：unauthorized/bad_json/missing_param/invalid_param/not_found/db_error" } } }
+            }
+          }
+        },
         "properties": {
           "ok": { "type": "boolean", "const": false },
           "error": {
@@ -33,15 +63,53 @@
       },
       "IngestRequest": {
         "type": "object",
-        "required": ["date", "subtype"],
+        "required": ["date"],
         "anyOf": [
-          { "required": ["symbol"] },
-          { "required": ["title"] }
+          { "required": ["symbol", "subtype"] },
+          { "required": ["symbol", "rtype"] },
+          { "required": ["title", "subtype"] },
+          { "required": ["title", "rtype"] }
         ],
+        "x-i18n": {
+          "en-US": {
+            "properties": {
+              "symbol": { "description": "Stock symbol, for example 300750. Thematic reports without a single stock may omit it, but then `title` is required and anchors the identity key." },
+              "date": { "description": "Report date, strictly validated as YYYY-MM-DD." },
+              "subtype": { "description": "Report subtype, for example summary or financial analysis. Either `subtype` or `rtype` is required and participates in the identity key." },
+              "rtype": { "description": "Alias for `subtype`, used when `subtype` is absent." },
+              "kind": { "description": "Report category, for example investment decision, deep research, restructuring decision, event monitoring, or other. If empty, the server infers it from the type registry and runKind. It does not participate in the identity key." },
+              "name": { "description": "Company-name snapshot at ingest time. If empty, the current name is resolved and frozen for history." },
+              "title": { "description": "Report title. Required when `symbol` is empty; it replaces `symbol` in the identity key so different same-day themes do not overwrite each other." },
+              "source": { "description": "Source or author. Query endpoints can filter by this field." },
+              "run_id": { "description": "Batch/generation run label. It does not participate in the identity key." },
+              "time": { "description": "Report instant, UTC RFC3339 such as 2026-07-03T06:14:22Z. If omitted or invalid, the server stamps the current UTC time; only valid RFC3339 input is honored, such as `utc` from GET /api/v1/now. It is used for same-day ordering and display, not identity." },
+              "body_md": { "description": "Markdown body. Markdown is authoritative: if present, any supplied `body_html` is discarded and HTML is rendered on read." },
+              "body_html": { "description": "Pre-rendered HTML body for legacy imports. Used only when `body_md` is absent." },
+              "tracking": { "description": "Assumption/tracking items. When non-empty, replaces all tracking items for this report." }
+            }
+          },
+          "zh-TW": {
+            "properties": {
+              "symbol": { "description": "股票代碼，如 300750。專題/主題類報告（無單一對應個股）可留空，但此時 title 必填，作為身份鍵的替代錨點。" },
+              "date": { "description": "報告日期，YYYY-MM-DD（嚴格校驗）。" },
+              "subtype": { "description": "小類，如 彙總/財務分析。`subtype` 或 `rtype` 必填其一，並參與身份鍵。" },
+              "rtype": { "description": "`subtype` 的別名（subtype 缺失時用）。" },
+              "kind": { "description": "大類，如 投資決策/深度研究/重組決策/事件監測/其他。為空則按註冊表→runKind 推斷。不參與身份鍵。" },
+              "name": { "description": "入庫當時公司名快照。為空則取當時現名。歷史不可變。" },
+              "title": { "description": "報告標題。symbol 為空時（專題/主題類報告）必填，替代 symbol 參與身份鍵，避免同日不同主題互相覆蓋。" },
+              "source": { "description": "來源/作者，可按此過濾查詢。" },
+              "run_id": { "description": "批次/生成輪次標籤，不參與身份鍵。" },
+              "time": { "description": "報告時刻，UTC RFC3339（如 2026-07-03T06:14:22Z）。省略或非法時服務端蓋目前 UTC 時刻；僅當傳入為合法 RFC3339 才採用（如 GET /api/v1/now 的 utc）。不參與身份鍵，僅用於同日排序與顯示。" },
+              "body_md": { "description": "Markdown 正文。Markdown 為準：若存在，傳入的 `body_html` 會被丟棄，讀取時再渲染 HTML。" },
+              "body_html": { "description": "預渲染 HTML 正文，用於舊資料匯入；僅在 `body_md` 缺失時使用。" },
+              "tracking": { "description": "假設/跟蹤項；非空時整體覆蓋該報告的項。" }
+            }
+          }
+        },
         "properties": {
           "symbol": { "type": "string", "description": "股票代码，如 300750。专题/主题类报告（无单一对应个股）可留空，但此时 title 必填，作为身份键的替代锚点。", "examples": ["300750"] },
           "date": { "type": "string", "description": "报告日期，YYYY-MM-DD（严格校验）。", "examples": ["2026-07-02"] },
-          "subtype": { "type": "string", "description": "小类，如 汇总/财务分析。参与身份键。", "examples": ["汇总"] },
+          "subtype": { "type": "string", "description": "小类，如 汇总/财务分析。`subtype` 或 `rtype` 必填其一，参与身份键。", "examples": ["汇总"] },
           "rtype": { "type": "string", "description": "subtype 的别名（subtype 缺失时用）。" },
           "kind": { "type": "string", "description": "大类，如 投资决策/深度研究/重组决策/事件监测/其他。为空则按注册表→runKind 推断。不参与身份键。" },
           "name": { "type": "string", "description": "入库当时公司名快照。为空则取当时现名。历史不可变。" },
@@ -49,13 +117,17 @@
           "source": { "type": "string", "description": "来源/作者，可按此过滤查询。" },
           "run_id": { "type": "string", "description": "批次/生成轮次标签，不参与身份键。" },
           "time": { "type": "string", "description": "报告时刻，UTC RFC3339（如 2026-07-03T06:14:22Z）。省略或非法时服务端盖当前 UTC 时刻；仅当传入为合法 RFC3339 才采用（如 GET /api/v1/now 的 utc）。不参与身份键，仅用于同日排序与显示。" },
-          "body_md": { "type": "string", "description": "Markdown 正文。body_html 为空时据此渲染。" },
-          "body_html": { "type": "string", "description": "预渲染 HTML 正文。" },
+          "body_md": { "type": "string", "description": "Markdown 正文。Markdown 为准：若存在，传入的 body_html 会被丢弃，读取时再渲染 HTML。" },
+          "body_html": { "type": "string", "description": "预渲染 HTML 正文，用于旧数据导入；仅在 body_md 缺失时使用。" },
           "tracking": { "type": "array", "items": { "$ref": "#/components/schemas/TrackingInput" }, "description": "假设/跟踪项；非空时整体覆盖该报告的项。" }
         }
       },
       "TrackingInput": {
         "type": "object",
+        "x-i18n": {
+          "en-US": { "properties": { "itype": { "description": "assumption | tracking" }, "status": { "description": "Defaults to pending when empty" } } },
+          "zh-TW": { "properties": { "status": { "description": "為空預設 pending" } } }
+        },
         "properties": {
           "itype": { "type": "string", "description": "assumption | tracking" },
           "content": { "type": "string" },
@@ -65,6 +137,26 @@
       },
       "Report": {
         "type": "object",
+        "x-i18n": {
+          "en-US": {
+            "properties": {
+              "name": { "description": "as-of name snapshot, falling back to the current name" },
+              "date": { "description": "Business/trading date, YYYY-MM-DD, in the panel timezone." },
+              "time": { "description": "Ingest/generation instant, UTC RFC3339 such as 2026-07-03T06:14:22Z. Older data may contain only a date. The frontend displays it in the viewer's browser timezone." },
+              "body_md": { "description": "Returned only when `with_body` is set or on detail reads" },
+              "body_html": { "description": "Returned only on detail reads" }
+            }
+          },
+          "zh-TW": {
+            "properties": {
+              "name": { "description": "as-of 快照名（回退現名）" },
+              "date": { "description": "業務交易日 YYYY-MM-DD（面板時區）。" },
+              "time": { "description": "入庫/生成時刻，UTC RFC3339（如 2026-07-03T06:14:22Z）；舊資料可能僅日期。前端按瀏覽器本地時區顯示。" },
+              "body_md": { "description": "僅 with_body / 詳情返回" },
+              "body_html": { "description": "僅詳情返回" }
+            }
+          }
+        },
         "properties": {
           "uid": { "type": "string" },
           "run_id": { "type": "string" },
@@ -101,7 +193,29 @@
         "operationId": "ingestReport",
         "summary": "入库（幂等 upsert）一篇报告，可附带 tracking 假设项",
         "x-scope": "ingest",
-        "description": "去重身份由服务端按 symbol|date|subtype 判定（不接受客户端 uid，不含 kind）。再次入库同一身份会整行覆盖。响应 created 区分新建/覆盖，uid 是该报告的数字 id（形如 n123）。正文上限 16MB。",
+        "description": "去重身份由服务端按 symbol|date|subtype 判定；无 symbol 的专题报告按 title|date|subtype 判定（不接受客户端 uid，不含 kind）。再次入库同一身份会整行覆盖。响应 created 区分新建/覆盖，uid 是该报告的数字 id（形如 n123）。正文上限 16MB。若 body_md 存在，服务端以 Markdown 为准并丢弃 body_html，详情读取时再渲染 HTML。",
+        "x-i18n": {
+          "en-US": {
+            "summary": "Ingest one report with idempotent upsert, optionally with tracking items",
+            "description": "Deduplication is derived server-side from symbol|date|subtype; thematic reports without symbol use title|date|subtype. Client-supplied uid is not accepted and kind is not part of identity. Re-ingesting the same identity overwrites the row. The `created` response field distinguishes create vs overwrite, and `uid` is the report's numeric id such as n123. Body size limit is 16 MB. If `body_md` is present, Markdown is authoritative and `body_html` is discarded; HTML is rendered again on detail reads.",
+            "responses": {
+              "200": { "description": "Ingest succeeded" },
+              "400": { "description": "bad_json / missing_param(symbol or title, subtype or rtype) / invalid_param(date)" },
+              "401": { "description": "Missing or invalid ingest token" },
+              "500": { "description": "Database error (db_error)" }
+            }
+          },
+          "zh-TW": {
+            "summary": "入庫（冪等 upsert）一篇報告，可附帶 tracking 假設項",
+            "description": "去重身份由服務端按 symbol|date|subtype 判定；無 symbol 的專題報告按 title|date|subtype 判定（不接受客戶端 uid，不含 kind）。再次入庫同一身份會整行覆蓋。響應 created 區分新建/覆蓋，uid 是該報告的數字 id（形如 n123）。正文上限 16MB。若 body_md 存在，服務端以 Markdown 為準並丟棄 body_html，詳情讀取時再渲染 HTML。",
+            "responses": {
+              "200": { "description": "入庫成功" },
+              "400": { "description": "bad_json / missing_param(symbol 或 title、subtype 或 rtype) / invalid_param(date)" },
+              "401": { "description": "缺少或無效的 ingest 令牌" },
+              "500": { "description": "資料庫錯誤（db_error）" }
+            }
+          }
+        },
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IngestRequest" } } }
@@ -109,7 +223,7 @@
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X POST $BASE/api/v1/reports \\\n  -H \"Authorization: Bearer <ingest-token>\" -H \"Content-Type: application/json\" \\\n  -d '{\"symbol\":\"300750\",\"date\":\"2026-07-02\",\"subtype\":\"汇总\",\"kind\":\"投资决策\",\"title\":\"宁德时代投资决策汇总\",\"source\":\"dify\",\"run_id\":\"r1\",\"body_md\":\"## 结论\\n增持\",\"tracking\":[{\"itype\":\"assumption\",\"content\":\"H2 出货 +20%\",\"review_point\":\"三季报\"}]}'" }],
         "responses": {
           "200": { "description": "入库成功", "content": { "application/json": { "example": { "ok": true, "uid": "n123", "created": true } } } },
-          "400": { "description": "bad_json / missing_param(symbol、subtype) / invalid_param(date)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "400": { "description": "bad_json / missing_param(symbol 或 title、subtype 或 rtype) / invalid_param(date)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "500": { "description": "数据库错误（db_error）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
@@ -119,25 +233,46 @@
         "operationId": "queryReports",
         "summary": "搜索历史报告（分页，返回 total）",
         "x-scope": "query",
-        "description": "symbol、q、run_id 至少给一个。q 匹配 标题/代码/现名/正文。恒按日期倒序。",
+        "description": "至少给一个过滤器：symbol、q、run_id、subtype/rtype、kind、source、date、since 或 until。q 匹配 标题/代码/现名/正文。按报告日期倒序、同日按 time 倒序。",
+        "x-i18n": {
+          "en-US": {
+            "summary": "Search historical reports with pagination and total count",
+            "description": "At least one filter is required: symbol, q, run_id, subtype/rtype, kind, source, date, since, or until. `q` matches title, symbol, current name, or body. Results are ordered by report date descending, then same-day `time` descending.",
+            "responses": {
+              "200": { "description": "Matched list" },
+              "400": { "description": "No filter was provided (missing_param)" },
+              "401": { "description": "No valid query credentials" }
+            }
+          },
+          "zh-TW": {
+            "summary": "搜尋歷史報告（分頁，返回 total）",
+            "description": "至少給一個過濾器：symbol、q、run_id、subtype/rtype、kind、source、date、since 或 until。q 匹配 標題/代碼/現名/正文。按報告日期倒序、同日按 time 倒序。",
+            "responses": {
+              "200": { "description": "命中列表" },
+              "400": { "description": "未提供任何過濾器（missing_param）" },
+              "401": { "description": "無有效查詢憑據" }
+            }
+          }
+        },
         "parameters": [
-          { "name": "symbol", "in": "query", "schema": { "type": "string" }, "description": "精确代码匹配。" },
-          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "关键字（标题/代码/现名/正文 LIKE）。" },
-          { "name": "kind", "in": "query", "schema": { "type": "string" }, "description": "精确大类过滤。" },
-          { "name": "subtype", "in": "query", "schema": { "type": "string" }, "description": "精确小类过滤（rtype 别名）。" },
-          { "name": "source", "in": "query", "schema": { "type": "string" }, "description": "精确来源过滤（须与 symbol/q/run_id 同用）。" },
-          { "name": "run_id", "in": "query", "schema": { "type": "string" }, "description": "批次过滤，可单独使用。" },
-          { "name": "since", "in": "query", "schema": { "type": "string" }, "description": "起始日期（>=）。" },
-          { "name": "until", "in": "query", "schema": { "type": "string" }, "description": "截止日期（<=）。" },
-          { "name": "date", "in": "query", "schema": { "type": "string" }, "description": "精确某天；today = 服务器当天。覆盖 since/until。" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "每页条数，<=0 或 >200 取默认 20。" },
-          { "name": "offset", "in": "query", "schema": { "type": "integer" }, "description": "翻页偏移，默认 0。" },
-          { "name": "with_body", "in": "query", "schema": { "type": "string" }, "description": "=1/true 时含 body_md。" }
+          { "name": "symbol", "in": "query", "schema": { "type": "string" }, "description": "精确代码匹配。", "x-i18n": { "en-US": { "description": "Exact symbol match." }, "zh-TW": { "description": "精確代碼匹配。" } } },
+          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "关键字（标题/代码/现名/正文 LIKE）。", "x-i18n": { "en-US": { "description": "Keyword search over title, symbol, current name, or body (LIKE)." }, "zh-TW": { "description": "關鍵字（標題/代碼/現名/正文 LIKE）。" } } },
+          { "name": "kind", "in": "query", "schema": { "type": "string" }, "description": "精确大类过滤，可单独使用。", "x-i18n": { "en-US": { "description": "Exact category filter. Can be used alone." }, "zh-TW": { "description": "精確大類過濾，可單獨使用。" } } },
+          { "name": "subtype", "in": "query", "schema": { "type": "string" }, "description": "精确小类过滤（rtype 别名），可单独使用。", "x-i18n": { "en-US": { "description": "Exact subtype filter (`rtype` alias). Can be used alone." }, "zh-TW": { "description": "精確小類過濾（rtype 別名），可單獨使用。" } } },
+          { "name": "rtype", "in": "query", "schema": { "type": "string" }, "description": "subtype 的查询别名，可单独使用。", "x-i18n": { "en-US": { "description": "Query alias for `subtype`. Can be used alone." }, "zh-TW": { "description": "subtype 的查詢別名，可單獨使用。" } } },
+          { "name": "source", "in": "query", "schema": { "type": "string" }, "description": "精确来源过滤，可单独使用。", "x-i18n": { "en-US": { "description": "Exact source filter. Can be used alone." }, "zh-TW": { "description": "精確來源過濾，可單獨使用。" } } },
+          { "name": "run_id", "in": "query", "schema": { "type": "string" }, "description": "批次过滤，可单独使用。", "x-i18n": { "en-US": { "description": "Run/batch filter. Can be used alone." }, "zh-TW": { "description": "批次過濾，可單獨使用。" } } },
+          { "name": "since", "in": "query", "schema": { "type": "string" }, "description": "起始日期（>=），可单独使用。", "x-i18n": { "en-US": { "description": "Start date (>=). Can be used alone." }, "zh-TW": { "description": "起始日期（>=），可單獨使用。" } } },
+          { "name": "until", "in": "query", "schema": { "type": "string" }, "description": "截止日期（<=），可单独使用。", "x-i18n": { "en-US": { "description": "End date (<=). Can be used alone." }, "zh-TW": { "description": "截止日期（<=），可單獨使用。" } } },
+          { "name": "date", "in": "query", "schema": { "type": "string" }, "description": "精确某天；today = 面板时区下的服务器当天。覆盖 since/until，可单独使用。", "x-i18n": { "en-US": { "description": "Exact day; `today` means the server's current date in the panel timezone. Overrides since/until and can be used alone." }, "zh-TW": { "description": "精確某天；today = 面板時區下的服務端當天。覆蓋 since/until，可單獨使用。" } } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "每页条数，<=0 或 >200 取默认 20。", "x-i18n": { "en-US": { "description": "Page size. <=0 or >200 uses the default 20." }, "zh-TW": { "description": "每頁條數，<=0 或 >200 取預設 20。" } } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer" }, "description": "翻页偏移，默认 0。", "x-i18n": { "en-US": { "description": "Pagination offset, default 0." }, "zh-TW": { "description": "翻頁偏移，預設 0。" } } },
+          { "name": "with_body", "in": "query", "schema": { "type": "string" }, "description": "=1/true 时含 body_md。", "x-i18n": { "en-US": { "description": "Set to 1/true to include body_md." }, "zh-TW": { "description": "=1/true 時含 body_md。" } } }
         ],
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/reports \\\n  -H \"Authorization: Bearer <query-token>\" \\\n  --data-urlencode \"symbol=300750\" --data-urlencode \"date=today\" --data-urlencode \"with_body=1\"" }],
         "responses": {
-          "200": { "description": "命中列表", "content": { "application/json": { "example": { "ok": true, "count": 1, "total": 1, "offset": 0, "limit": 20, "items": [{ "uid": "n123", "run_id": "r1", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持" }] } } } },
-          "400": { "description": "symbol、q、run_id 都未给（missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "200": { "description": "命中列表", "content": { "application/json": { "example": { "ok": true, "count": 1, "total": 1, "offset": 0, "limit": 20, "items": [{ "uid": "n123", "run_id": "r1", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "time": "2026-07-02T08:15:03Z", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持" }] } } } },
+          "400": { "description": "未提供任何过滤器（missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
@@ -148,7 +283,25 @@
         "operationId": "reportManifest",
         "summary": "预探某标的的报告清单（总数/按日期/大类/小类）",
         "x-scope": "query",
-        "parameters": [{ "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" }, "description": "股票代码。" }],
+        "x-i18n": {
+          "en-US": {
+            "summary": "Probe one symbol's report manifest by total, date, category, and subtype",
+            "responses": {
+              "200": { "description": "Manifest" },
+              "400": { "description": "Missing symbol (missing_param)" },
+              "401": { "description": "No valid query credentials" }
+            }
+          },
+          "zh-TW": {
+            "summary": "預探某標的的報告清單（總數/按日期/大類/小類）",
+            "responses": {
+              "200": { "description": "清單" },
+              "400": { "description": "symbol 缺失（missing_param）" },
+              "401": { "description": "無有效查詢憑據" }
+            }
+          }
+        },
+        "parameters": [{ "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" }, "description": "股票代码。", "x-i18n": { "en-US": { "description": "Stock symbol." }, "zh-TW": { "description": "股票代碼。" } } }],
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/reports/manifest -H \"Authorization: Bearer <query-token>\" --data-urlencode \"symbol=300750\"" }],
         "responses": {
           "200": { "description": "清单", "content": { "application/json": { "example": { "ok": true, "symbol": "300750", "name": "宁德时代", "total": 6, "dates": [{ "date": "2026-07-02", "count": 4, "kinds": ["投资决策"] }], "kinds": ["投资决策", "深度研究"], "subtypes": ["汇总", "财务分析"] } } } },
@@ -163,10 +316,28 @@
         "operationId": "getReport",
         "summary": "取单篇完整正文（含 body_md + body_html）",
         "x-scope": "query",
-        "parameters": [{ "name": "uid", "in": "path", "required": true, "schema": { "type": "string" }, "description": "报告 id（入库/查询返回的 uid 字段，形如 n123；仍兼容旧的 symbol|date|subtype）。" }],
+        "x-i18n": {
+          "en-US": {
+            "summary": "Fetch one report with full body_md and body_html",
+            "responses": {
+              "200": { "description": "Report" },
+              "401": { "description": "No valid query credentials" },
+              "404": { "description": "No report matched the id (not_found)" }
+            }
+          },
+          "zh-TW": {
+            "summary": "取單篇完整正文（含 body_md + body_html）",
+            "responses": {
+              "200": { "description": "報告" },
+              "401": { "description": "無有效查詢憑據" },
+              "404": { "description": "id 未命中（not_found）" }
+            }
+          }
+        },
+        "parameters": [{ "name": "uid", "in": "path", "required": true, "schema": { "type": "string" }, "description": "报告 id（入库/查询返回的 uid 字段，形如 n123；仍兼容旧的 symbol|date|subtype）。", "x-i18n": { "en-US": { "description": "Report id returned as the `uid` field by ingest/query, such as n123. The legacy symbol|date|subtype composite id is still accepted." }, "zh-TW": { "description": "報告 id（入庫/查詢返回的 uid 欄位，形如 n123；仍相容舊的 symbol|date|subtype）。" } } }],
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -H \"Authorization: Bearer <query-token>\" \\\n  \"$BASE/api/v1/reports/n123\"" }],
         "responses": {
-          "200": { "description": "报告", "content": { "application/json": { "example": { "ok": true, "uid": "n123", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持", "body_html": "<h2>结论</h2><p>增持</p>" } } } },
+          "200": { "description": "报告", "content": { "application/json": { "example": { "ok": true, "uid": "n123", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "time": "2026-07-02T08:15:03Z", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持", "body_html": "<h2>结论</h2><p>增持</p>" } } } },
           "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "404": { "description": "id 未命中（not_found）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
@@ -176,11 +347,30 @@
         "operationId": "deleteReport",
         "summary": "撤回一篇报告（级联删除其 tracking，幂等）",
         "x-scope": "ingest",
-        "parameters": [{ "name": "uid", "in": "path", "required": true, "schema": { "type": "string" }, "description": "报告 id（形如 n123；仍兼容旧的 symbol|date|subtype）。" }],
-        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X DELETE -H \"Authorization: Bearer <ingest-token>\" \\\n  \"$BASE/api/v1/reports/300750%7C2026-07-02%7C%E6%B1%87%E6%80%BB\"" }],
+        "x-i18n": {
+          "en-US": {
+            "summary": "Retract one report and cascade-delete its tracking items; idempotent",
+            "responses": {
+              "200": { "description": "Deleted; `deleted` is the number of deleted report rows. 0 still returns 200 because the operation is idempotent." },
+              "401": { "description": "Missing or invalid ingest token" },
+              "500": { "description": "Database error (db_error)" }
+            }
+          },
+          "zh-TW": {
+            "summary": "撤回一篇報告（級聯刪除其 tracking，冪等）",
+            "responses": {
+              "200": { "description": "已刪；deleted=刪除行數（0 也返回 200，冪等）" },
+              "401": { "description": "缺少或無效的 ingest 令牌" },
+              "500": { "description": "資料庫錯誤（db_error）" }
+            }
+          }
+        },
+        "parameters": [{ "name": "uid", "in": "path", "required": true, "schema": { "type": "string" }, "description": "报告 id（形如 n123；仍兼容旧的 symbol|date|subtype）。", "x-i18n": { "en-US": { "description": "Report id such as n123. The legacy symbol|date|subtype composite id is still accepted." }, "zh-TW": { "description": "報告 id（形如 n123；仍相容舊的 symbol|date|subtype）。" } } }],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X DELETE -H \"Authorization: Bearer <ingest-token>\" \\\n  \"$BASE/api/v1/reports/n123\"" }],
         "responses": {
           "200": { "description": "已删；deleted=删除行数（0 也返回 200，幂等）", "content": { "application/json": { "example": { "ok": true, "deleted": 1 } } } },
-          "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "数据库错误（db_error）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
@@ -190,9 +380,27 @@
         "operationId": "listRuns",
         "summary": "报告组视图（每个 标的+日期+大类 一行）",
         "x-scope": "query",
+        "x-i18n": {
+          "en-US": {
+            "summary": "Report-group view, one row per symbol + date + category",
+            "responses": {
+              "200": { "description": "Report groups" },
+              "400": { "description": "Missing symbol (missing_param)" },
+              "401": { "description": "No valid query credentials" }
+            }
+          },
+          "zh-TW": {
+            "summary": "報告組視圖（每個 標的+日期+大類 一行）",
+            "responses": {
+              "200": { "description": "報告組" },
+              "400": { "description": "symbol 缺失（missing_param）" },
+              "401": { "description": "無有效查詢憑據" }
+            }
+          }
+        },
         "parameters": [
-          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
-          { "name": "date", "in": "query", "schema": { "type": "string" }, "description": "可选精确某天。" }
+          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" }, "description": "股票代码。", "x-i18n": { "en-US": { "description": "Stock symbol." }, "zh-TW": { "description": "股票代碼。" } } },
+          { "name": "date", "in": "query", "schema": { "type": "string" }, "description": "可选精确某天。", "x-i18n": { "en-US": { "description": "Optional exact day." }, "zh-TW": { "description": "可選精確某天。" } } }
         ],
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/runs -H \"Authorization: Bearer <query-token>\" --data-urlencode \"symbol=300750\"" }],
         "responses": {
@@ -208,9 +416,25 @@
         "operationId": "listSymbols",
         "summary": "列出有报告的股票（按报告数排序，可补全）",
         "x-scope": "query",
+        "x-i18n": {
+          "en-US": {
+            "summary": "List stocks with reports, sorted by report count, for autocomplete",
+            "responses": {
+              "200": { "description": "Stock list" },
+              "401": { "description": "No valid query credentials" }
+            }
+          },
+          "zh-TW": {
+            "summary": "列出有報告的股票（按報告數排序，可補全）",
+            "responses": {
+              "200": { "description": "股票列表" },
+              "401": { "description": "無有效查詢憑據" }
+            }
+          }
+        },
         "parameters": [
-          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "按代码或现名匹配；空则返回最多的一批。" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "<=0 或 >500 取默认 200。" }
+          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "按代码或现名匹配；空则返回最多的一批。", "x-i18n": { "en-US": { "description": "Match by symbol or current name. Empty returns the most frequent symbols." }, "zh-TW": { "description": "按代碼或現名匹配；空則返回最多的一批。" } } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "<=0 或 >500 取默认 200。", "x-i18n": { "en-US": { "description": "<=0 or >500 uses the default 200." }, "zh-TW": { "description": "<=0 或 >500 取預設 200。" } } }
         ],
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/symbols -H \"Authorization: Bearer <query-token>\" --data-urlencode \"q=宁德\"" }],
         "responses": {
@@ -225,10 +449,28 @@
         "operationId": "listTracking",
         "summary": "列出某标的的假设/跟踪项（返回 id 供 PATCH）",
         "x-scope": "query",
+        "x-i18n": {
+          "en-US": {
+            "summary": "List one symbol's assumption/tracking items, returning ids for PATCH",
+            "responses": {
+              "200": { "description": "Tracking items" },
+              "400": { "description": "Missing symbol (missing_param)" },
+              "401": { "description": "No valid query credentials" }
+            }
+          },
+          "zh-TW": {
+            "summary": "列出某標的的假設/跟蹤項（返回 id 供 PATCH）",
+            "responses": {
+              "200": { "description": "跟蹤項" },
+              "400": { "description": "symbol 缺失（missing_param）" },
+              "401": { "description": "無有效查詢憑據" }
+            }
+          }
+        },
         "parameters": [
-          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" } },
-          { "name": "status", "in": "query", "schema": { "type": "string" }, "description": "精确状态过滤。" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "<=0 或 >500 取默认 100。" }
+          { "name": "symbol", "in": "query", "required": true, "schema": { "type": "string" }, "description": "股票代码。", "x-i18n": { "en-US": { "description": "Stock symbol." }, "zh-TW": { "description": "股票代碼。" } } },
+          { "name": "status", "in": "query", "schema": { "type": "string" }, "description": "精确状态过滤。", "x-i18n": { "en-US": { "description": "Exact status filter." }, "zh-TW": { "description": "精確狀態過濾。" } } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "<=0 或 >500 取默认 100。", "x-i18n": { "en-US": { "description": "<=0 or >500 uses the default 100." }, "zh-TW": { "description": "<=0 或 >500 取預設 100。" } } }
         ],
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/tracking -H \"Authorization: Bearer <query-token>\" --data-urlencode \"symbol=300750\" --data-urlencode \"status=pending\"" }],
         "responses": {
@@ -244,16 +486,42 @@
         "operationId": "updateTracking",
         "summary": "按 id 更新单个假设/跟踪项的状态或复核点",
         "x-scope": "ingest",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "tracking 项 id（来自 GET /api/v1/tracking）。" }],
+        "x-i18n": {
+          "en-US": {
+            "summary": "Update one assumption/tracking item's status or review point by id",
+            "responses": {
+              "200": { "description": "Updated" },
+              "400": { "description": "id is not an integer, or both status and review_point are empty (invalid_param/missing_param)" },
+              "401": { "description": "Missing or invalid ingest token" },
+              "404": { "description": "No item matched the id (not_found)" },
+              "500": { "description": "Database error (db_error)" }
+            }
+          },
+          "zh-TW": {
+            "summary": "按 id 更新單個假設/跟蹤項的狀態或複核點",
+            "responses": {
+              "200": { "description": "已更新" },
+              "400": { "description": "id 非整數 / status 與 review_point 都為空（invalid_param/missing_param）" },
+              "401": { "description": "缺少或無效的 ingest 令牌" },
+              "404": { "description": "id 未命中（not_found）" },
+              "500": { "description": "資料庫錯誤（db_error）" }
+            }
+          }
+        },
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "tracking 项 id（来自 GET /api/v1/tracking）。", "x-i18n": { "en-US": { "description": "Tracking item id from GET /api/v1/tracking." }, "zh-TW": { "description": "tracking 項 id（來自 GET /api/v1/tracking）。" } } }],
         "requestBody": {
-          "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" }, "review_point": { "type": "string" } } } } }
+          "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "status": { "type": "string", "description": "新状态；与 review_point 至少提供一个。", "x-i18n": { "en-US": { "description": "New status. Provide at least one of status or review_point." }, "zh-TW": { "description": "新狀態；與 review_point 至少提供一個。" } } },
+            "review_point": { "type": "string", "description": "复核点/备注；与 status 至少提供一个。", "x-i18n": { "en-US": { "description": "Review point or note. Provide at least one of status or review_point." }, "zh-TW": { "description": "複核點/備註；與 status 至少提供一個。" } } }
+          } } } }
         },
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X PATCH $BASE/api/v1/tracking/42 \\\n  -H \"Authorization: Bearer <ingest-token>\" -H \"Content-Type: application/json\" \\\n  -d '{\"status\":\"confirmed\",\"review_point\":\"三季报已验证\"}'" }],
         "responses": {
           "200": { "description": "已更新", "content": { "application/json": { "example": { "ok": true, "id": 42, "status": "confirmed" } } } },
           "400": { "description": "id 非整数 / status 与 review_point 都为空（invalid_param/missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-          "404": { "description": "id 未命中（not_found）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "404": { "description": "id 未命中（not_found）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "数据库错误（db_error）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
@@ -264,6 +532,24 @@
         "summary": "门户权威时钟：UTC 时刻 + 面板时区的日历日期",
         "x-scope": "query",
         "description": "返回 UTC 时刻（utc，RFC3339 带 Z）与面板时区下的 date/datetime/tz。生产端（如 Dify）据此锚定“今天”，避免自身沙箱时钟（常为 UTC）把中国市场研报错标一天。面板时区在系统设置页配置，默认跟随系统时区。",
+        "x-i18n": {
+          "en-US": {
+            "summary": "Portal authoritative clock: UTC instant plus panel-timezone calendar date",
+            "description": "Returns a UTC instant (`utc`, RFC3339 with Z) and `date`/`datetime`/`tz` in the panel timezone. Producers such as Dify should use it to anchor \"today\" to the portal and avoid UTC sandbox clocks mislabeling China-market reports by one day. The panel timezone is configured in System Settings and defaults to the system timezone.",
+            "responses": {
+              "200": { "description": "Clock" },
+              "401": { "description": "No valid query credentials" }
+            }
+          },
+          "zh-TW": {
+            "summary": "門戶權威時鐘：UTC 時刻 + 面板時區的日曆日期",
+            "description": "返回 UTC 時刻（utc，RFC3339 帶 Z）與面板時區下的 date/datetime/tz。生產端（如 Dify）據此錨定「今天」，避免自身沙箱時鐘（常為 UTC）把中國市場研報錯標一天。面板時區在系統設定頁配置，預設跟隨系統時區。",
+            "responses": {
+              "200": { "description": "時鐘" },
+              "401": { "description": "無有效查詢憑據" }
+            }
+          }
+        },
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -H \"Authorization: Bearer <query-token>\" $BASE/api/v1/now" }],
         "responses": {
           "200": { "description": "时钟", "content": { "application/json": { "example": { "ok": true, "utc": "2026-07-02T16:20:00Z", "date": "2026-07-03", "datetime": "2026-07-03 00:20:00", "tz": "Asia/Shanghai" } } } },
@@ -278,8 +564,18 @@
         "summary": "健康探针（公开，返回版本与报告计数）",
         "x-scope": "public",
         "security": [],
+        "x-i18n": {
+          "en-US": {
+            "summary": "Health probe, public; returns version and report count",
+            "responses": { "200": { "description": "ok" } }
+          },
+          "zh-TW": {
+            "summary": "健康探針（公開，返回版本與報告計數）",
+            "responses": { "200": { "description": "ok" } }
+          }
+        },
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s $BASE/healthz" }],
-        "responses": { "200": { "description": "ok", "content": { "application/json": { "example": { "ok": true, "version": "1.0.0", "commit": "a1b2c3d", "new": 1284, "old": 50213 } } } } }
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "example": { "ok": true, "version": "1.0.0", "commit": "a1b2c3d", "new": 1284 } } } } }
       }
     },
     "/api/version": {
@@ -289,6 +585,16 @@
         "summary": "构建/版本信息（公开）",
         "x-scope": "public",
         "security": [],
+        "x-i18n": {
+          "en-US": {
+            "summary": "Build/version information, public",
+            "responses": { "200": { "description": "Version" } }
+          },
+          "zh-TW": {
+            "summary": "建置/版本資訊（公開）",
+            "responses": { "200": { "description": "版本" } }
+          }
+        },
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s $BASE/api/version" }],
         "responses": { "200": { "description": "版本", "content": { "application/json": { "example": { "version": "1.0.0", "commit": "a1b2c3d", "buildDate": "2026-06-28T09:12:00Z" } } } } }
       }

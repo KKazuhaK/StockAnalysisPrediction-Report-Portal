@@ -529,6 +529,7 @@
   "scope.all": "All",
   "scope.ingest": "Ingest",
   "scope.query": "Query",
+  "scope.public": "Public",
   "nav.email": "Email",
   "login.forgot": "Forgot password?",
   "login.forgotTitle": "Reset your password",

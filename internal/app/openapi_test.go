@@ -2,6 +2,8 @@ package app
 
 import (
 	"encoding/json"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -30,11 +32,10 @@ func TestOpenAPISpecValid(t *testing.T) {
 	}
 }
 
-// The documented IngestRequest schema must match v1Ingest's actual runtime validation: date and
-// subtype are always required, but symbol is not — a thematic (no single home stock) report is
-// identified by title instead. A caller reading the docs (or a schema-driven tool import) should
-// never be told symbol is mandatory when the server will happily accept title-only.
-func TestOpenAPIIngestRequestAllowsTitleOnlySymbol(t *testing.T) {
+// The documented IngestRequest schema must match v1Ingest's actual runtime validation: date is
+// always required, while the identity requires either symbol or title and the report type accepts
+// either subtype or its rtype alias.
+func TestOpenAPIIngestRequestMatchesRuntimeValidation(t *testing.T) {
 	var spec map[string]any
 	if err := json.Unmarshal(openapiJSON, &spec); err != nil {
 		t.Fatalf("openapi.json is not valid JSON: %v", err)
@@ -42,34 +43,65 @@ func TestOpenAPIIngestRequestAllowsTitleOnlySymbol(t *testing.T) {
 	schema := spec["components"].(map[string]any)["schemas"].(map[string]any)["IngestRequest"].(map[string]any)
 	required, _ := schema["required"].([]any)
 	for _, r := range required {
-		if r == "symbol" {
-			t.Fatalf("IngestRequest.required unconditionally lists symbol — no longer matches v1Ingest (symbol is optional when title is given): %v", required)
+		switch r {
+		case "symbol", "title", "subtype", "rtype":
+			t.Fatalf("IngestRequest.required unconditionally lists %q — no longer matches v1Ingest aliases/alternatives: %v", r, required)
 		}
 	}
-	for _, want := range []string{"date", "subtype"} {
-		found := false
-		for _, r := range required {
-			if r == want {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("IngestRequest.required missing %q: %v", want, required)
+	foundDate := false
+	for _, r := range required {
+		if r == "date" {
+			foundDate = true
 		}
 	}
-	// "symbol or title" must be expressed somewhere (anyOf is the OpenAPI 3.1 idiom for this).
+	if !foundDate {
+		t.Errorf("IngestRequest.required missing date: %v", required)
+	}
+	// The accepted combinations must be expressed somewhere (anyOf is the OpenAPI 3.1 idiom here).
 	anyOf, ok := schema["anyOf"].([]any)
 	if !ok || len(anyOf) == 0 {
-		t.Fatalf("IngestRequest has no anyOf constraint documenting the symbol-or-title requirement")
+		t.Fatalf("IngestRequest has no anyOf constraint documenting identity/type alternatives")
 	}
 	seen := map[string]bool{}
 	for _, clause := range anyOf {
 		c := clause.(map[string]any)
+		var parts []string
 		for _, r := range c["required"].([]any) {
-			seen[r.(string)] = true
+			parts = append(parts, r.(string))
+		}
+		seen[strings.Join(parts, "+")] = true
+	}
+	for _, want := range []string{"symbol+subtype", "symbol+rtype", "title+subtype", "title+rtype"} {
+		if !seen[want] {
+			t.Errorf("IngestRequest.anyOf missing %s branch: %v", want, anyOf)
 		}
 	}
-	if !seen["symbol"] || !seen["title"] {
-		t.Errorf("IngestRequest.anyOf should require symbol in one branch and title in another, got %v", anyOf)
+}
+
+func TestOpenAPILocalizedEndpoint(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/openapi.json?lang=en-US", nil)
+	rec := httptest.NewRecorder()
+	(&Server{}).apiOpenAPI(rec, req)
+	if got := rec.Header().Get("Content-Language"); got != "en-US" {
+		t.Fatalf("Content-Language = %q, want en-US", got)
+	}
+	if strings.Contains(rec.Body.String(), `"x-i18n"`) {
+		t.Fatalf("localized response should strip x-i18n extensions")
+	}
+	var spec map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("localized openapi response is not valid JSON: %v", err)
+	}
+	info := spec["info"].(map[string]any)
+	if got := info["title"]; got != "Research Report Portal · Dify Machine API (v1)" {
+		t.Fatalf("localized info.title = %v", got)
+	}
+	post := spec["paths"].(map[string]any)["/api/v1/reports"].(map[string]any)["post"].(map[string]any)
+	if got := post["summary"].(string); !strings.HasPrefix(got, "Ingest one report") {
+		t.Fatalf("localized POST /api/v1/reports summary = %q", got)
+	}
+	params := post["requestBody"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"].(map[string]any)
+	if params["$ref"] == nil {
+		t.Fatalf("localized request schema lost its $ref: %v", params)
 	}
 }

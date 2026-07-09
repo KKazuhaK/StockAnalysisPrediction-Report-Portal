@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Space, Spin, Table, Tag, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import Markdown from '../../components/Markdown'
+import { usePrefs } from '../../prefs'
 import { specToEndpoints, type ApiEndpoint, type ApiParam, type ApiError } from './openapiDoc'
 
 const METHOD_COLORS: Record<string, string> = {
@@ -35,7 +36,7 @@ function EndpointCard({ e }: { e: ApiEndpoint }) {
           <Typography.Text code copyable={{ text: e.path }} style={{ fontSize: 14 }}>
             {e.path}
           </Typography.Text>
-          <Tag>{e.scope}</Tag>
+          <Tag>{t(`scope.${e.scope}`, { defaultValue: e.scope })}</Tag>
         </Space>
         <Typography.Text type="secondary">{e.summary}</Typography.Text>
 
@@ -102,15 +103,27 @@ function EndpointCard({ e }: { e: ApiEndpoint }) {
 // Live reference for the /api/v1 machine API, rendered from the served openapi.json.
 export default function ApiDocPage() {
   const { t } = useTranslation()
+  const { lang } = usePrefs()
   const [doc, setDoc] = useState<{ conventions: string; endpoints: ApiEndpoint[] } | null>(null)
   const [failed, setFailed] = useState(false)
+  const apiDocURL = `/api/openapi.json?lang=${encodeURIComponent(lang)}`
 
   useEffect(() => {
-    fetch('/api/openapi.json', { credentials: 'same-origin' })
+    let ignore = false
+    setDoc(null)
+    setFailed(false)
+    fetch(apiDocURL, { credentials: 'same-origin' })
       .then((r) => r.json())
-      .then((spec) => setDoc(specToEndpoints(spec, window.location.origin)))
-      .catch(() => setFailed(true))
-  }, [])
+      .then((spec) => {
+        if (!ignore) setDoc(specToEndpoints(spec, window.location.origin))
+      })
+      .catch(() => {
+        if (!ignore) setFailed(true)
+      })
+    return () => {
+      ignore = true
+    }
+  }, [apiDocURL])
 
   if (failed) return <Typography.Text type="danger">{t('apidoc.loadFailed')}</Typography.Text>
   if (!doc) return <Spin />
@@ -119,7 +132,7 @@ export default function ApiDocPage() {
     <Space direction="vertical" size={12} style={{ width: '100%' }}>
       <Space wrap>
         <Tag color="geekblue">OpenAPI 3.1</Tag>
-        <Button size="small" href="/api/openapi.json" target="_blank" rel="noreferrer">
+        <Button size="small" href={apiDocURL} target="_blank" rel="noreferrer">
           {t('apidoc.download')}
         </Button>
       </Space>

@@ -529,6 +529,7 @@
   "scope.all": "全部",
   "scope.ingest": "入库",
   "scope.query": "查询",
+  "scope.public": "公开",
   "nav.email": "邮件",
   "login.forgot": "忘记密码？",
   "login.forgotTitle": "重置密码",

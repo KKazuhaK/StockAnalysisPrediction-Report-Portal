@@ -529,6 +529,7 @@
   "scope.all": "全部",
   "scope.ingest": "入庫",
   "scope.query": "查詢",
+  "scope.public": "公開",
   "nav.email": "郵件",
   "login.forgot": "忘記密碼？",
   "login.forgotTitle": "重設密碼",
