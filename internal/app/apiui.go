@@ -237,11 +237,14 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 			kinds = append(kinds, k)
 		}
 	}
+	homeGroups := s.st.LinkGroups()
 	writeJSON(w, map[string]any{
 		"groups":   groupsJSON(groups[lo:hi]),
 		"newTotal": newTotal, "oldTotal": oldTotal, "totalRuns": totalRuns,
 		"page": page, "pages": pages, "size": size,
-		"types": types, "kinds": kinds, "links": linksJSON(s.st.Links()), "linkGroups": linkGroupsJSON(s.st.LinkGroups()),
+		"types": types, "kinds": kinds,
+		// Home shows only entries/groups toggled visible; the admin manager sees them all.
+		"links": linksJSON(homeVisibleLinks(s.st.Links(), homeGroups)), "linkGroups": linkGroupsJSON(visibleGroups(homeGroups)),
 		"kindColors": s.st.KindColors(),
 	})
 }
@@ -397,7 +400,7 @@ func repJSON(rep *Rep, nameOf func(string) string) map[string]any {
 func linksJSON(ls []Link) []map[string]any {
 	out := make([]map[string]any, 0, len(ls))
 	for _, l := range ls {
-		out = append(out, map[string]any{"id": l.ID, "label": l.Label, "url": l.URL, "icon": l.Icon, "newTab": l.NewTab, "groupId": l.GroupID, "ord": l.Ord})
+		out = append(out, map[string]any{"id": l.ID, "label": l.Label, "url": l.URL, "icon": l.Icon, "newTab": l.NewTab, "groupId": l.GroupID, "ord": l.Ord, "visible": l.Visible})
 	}
 	return out
 }
@@ -405,7 +408,37 @@ func linksJSON(ls []Link) []map[string]any {
 func linkGroupsJSON(gs []LinkGroup) []map[string]any {
 	out := make([]map[string]any, 0, len(gs))
 	for _, g := range gs {
-		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "mode": g.Mode, "showLabel": g.ShowLabel, "icon": g.Icon, "ord": g.Ord})
+		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "mode": g.Mode, "showLabel": g.ShowLabel, "icon": g.Icon, "ord": g.Ord, "visible": g.Visible})
+	}
+	return out
+}
+
+// homeVisibleLinks filters entry buttons to what the home page shows: a visible link whose group
+// is also visible (or which is ungrouped). Hidden links, and links inside a hidden group, drop out
+// — but they all stay in the admin view (which passes the unfiltered lists).
+func homeVisibleLinks(ls []Link, gs []LinkGroup) []Link {
+	hiddenGroup := map[int64]bool{}
+	for _, g := range gs {
+		if !g.Visible {
+			hiddenGroup[g.ID] = true
+		}
+	}
+	out := make([]Link, 0, len(ls))
+	for _, l := range ls {
+		if l.Visible && !hiddenGroup[l.GroupID] {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// visibleGroups keeps only the groups shown on the home page (hidden ones stay in admin).
+func visibleGroups(gs []LinkGroup) []LinkGroup {
+	out := make([]LinkGroup, 0, len(gs))
+	for _, g := range gs {
+		if g.Visible {
+			out = append(out, g)
+		}
 	}
 	return out
 }
@@ -433,9 +466,10 @@ func (s *Server) apiLinkEdit(w http.ResponseWriter, r *http.Request, user string
 	var in struct {
 		Label, URL, Icon string
 		NewTab           *bool
+		Visible          *bool // pointer so an omitted field defaults to visible
 	}
 	readJSON(r, &in)
-	s.st.UpdateLinkFields(pathID(r, "id"), strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab)
+	s.st.UpdateLinkFields(pathID(r, "id"), strings.TrimSpace(in.Label), strings.TrimSpace(in.URL), strings.TrimSpace(in.Icon), in.NewTab == nil || *in.NewTab, in.Visible == nil || *in.Visible)
 	writeJSON(w, okJSON)
 }
 
@@ -501,9 +535,10 @@ func (s *Server) apiLinkGroupEdit(w http.ResponseWriter, r *http.Request, user s
 	var in struct {
 		Name, Mode, Icon string
 		ShowLabel        *bool
+		Visible          *bool // pointer so an omitted field defaults to visible
 	}
 	readJSON(r, &in)
-	s.st.UpdateLinkGroup(pathID(r, "id"), strings.TrimSpace(in.Name), normalizeLinkGroupMode(in.Mode), in.ShowLabel == nil || *in.ShowLabel, strings.TrimSpace(in.Icon))
+	s.st.UpdateLinkGroup(pathID(r, "id"), strings.TrimSpace(in.Name), normalizeLinkGroupMode(in.Mode), in.ShowLabel == nil || *in.ShowLabel, strings.TrimSpace(in.Icon), in.Visible == nil || *in.Visible)
 	writeJSON(w, okJSON)
 }
 

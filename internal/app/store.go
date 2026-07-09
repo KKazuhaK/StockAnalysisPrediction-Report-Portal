@@ -43,6 +43,7 @@ type Link struct {
 	NewTab     bool   // open in a new browser tab (default true)
 	GroupID    int64  // the link group it belongs to, or 0 = ungrouped (top-level, shown inline)
 	Ord        int
+	Visible    bool // shown on the home page (default true); hidden entries stay editable in admin
 }
 
 // LinkGroup is a named, foldable group of home-page entry buttons (replacing the old single
@@ -56,6 +57,7 @@ type LinkGroup struct {
 	ShowLabel bool
 	Icon      string
 	Ord       int
+	Visible   bool // shown on the home page (default true); hidden groups stay editable in admin
 }
 
 type Store struct {
@@ -209,10 +211,10 @@ func (s *Store) baseSchemaStmts() []string {
 		// Entry buttons. group_id: the link group it belongs to (0 = ungrouped/top-level, shown inline).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
 			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1,
-			ord INTEGER DEFAULT 0, group_id INTEGER DEFAULT 0)`, pk),
+			ord INTEGER DEFAULT 0, group_id INTEGER DEFAULT 0, visible INTEGER DEFAULT 1)`, pk),
 		// Named, foldable groups of entry buttons on the home page (mode: row/expand/popover/modal).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS link_groups(
-			id %s, name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, icon TEXT DEFAULT '', ord INTEGER DEFAULT 0)`, pk),
+			id %s, name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, icon TEXT DEFAULT '', ord INTEGER DEFAULT 0, visible INTEGER DEFAULT 1)`, pk),
 		`CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)`,
 		// Report type registry: subtype (name, unique) → explicit category (kind) + display name/order/default page.
 		// Auto-registered on ingest, editable in the admin backend; replaces runKind guessing (runKind only serves as the fallback default for new types).
@@ -1247,7 +1249,7 @@ func (s *Store) FreezeReportNames() (int64, error) {
 // ---------- Entry buttons ----------
 
 func (s *Store) Links() []Link {
-	rows, err := s.query("SELECT id,label,url,icon,new_tab,ord,COALESCE(group_id,0) FROM links ORDER BY ord,id")
+	rows, err := s.query("SELECT id,label,url,icon,new_tab,ord,COALESCE(group_id,0),COALESCE(visible,1) FROM links ORDER BY ord,id")
 	if err != nil {
 		return nil
 	}
@@ -1256,10 +1258,11 @@ func (s *Store) Links() []Link {
 	for rows.Next() {
 		var l Link
 		var icon sql.NullString
-		var newTab sql.NullInt64
-		rows.Scan(&l.ID, &l.Label, &l.URL, &icon, &newTab, &l.Ord, &l.GroupID)
+		var newTab, visible sql.NullInt64
+		rows.Scan(&l.ID, &l.Label, &l.URL, &icon, &newTab, &l.Ord, &l.GroupID, &visible)
 		l.Icon = icon.String
 		l.NewTab = !newTab.Valid || newTab.Int64 != 0 // default: open in new tab
+		l.Visible = !visible.Valid || visible.Int64 != 0 // default: shown
 		out = append(out, l)
 	}
 	return out
@@ -1270,10 +1273,10 @@ func (s *Store) AddLink(label, url, icon string, newTab bool, groupID int64, ord
 	return err
 }
 
-// UpdateLinkFields changes the label/URL/icon/newTab, preserving position + group (both are
-// handled by the layout drag, not the edit form).
-func (s *Store) UpdateLinkFields(id int64, label, url, icon string, newTab bool) error {
-	_, err := s.exec("UPDATE links SET label=?,url=?,icon=?,new_tab=? WHERE id=?", label, url, icon, boolInt(newTab), id)
+// UpdateLinkFields changes the label/URL/icon/newTab/visible, preserving position + group (both
+// are handled by the layout drag, not the edit form).
+func (s *Store) UpdateLinkFields(id int64, label, url, icon string, newTab, visible bool) error {
+	_, err := s.exec("UPDATE links SET label=?,url=?,icon=?,new_tab=?,visible=? WHERE id=?", label, url, icon, boolInt(newTab), boolInt(visible), id)
 	return err
 }
 
@@ -1290,7 +1293,7 @@ func (s *Store) DeleteLink(id int64) error {
 // ---------- Entry-button groups ----------
 
 func (s *Store) LinkGroups() []LinkGroup {
-	rows, err := s.query("SELECT id,COALESCE(name,''),COALESCE(mode,'row'),COALESCE(show_label,1),COALESCE(icon,''),ord FROM link_groups ORDER BY ord,id")
+	rows, err := s.query("SELECT id,COALESCE(name,''),COALESCE(mode,'row'),COALESCE(show_label,1),COALESCE(icon,''),ord,COALESCE(visible,1) FROM link_groups ORDER BY ord,id")
 	if err != nil {
 		return nil
 	}
@@ -1298,9 +1301,10 @@ func (s *Store) LinkGroups() []LinkGroup {
 	var out []LinkGroup
 	for rows.Next() {
 		var g LinkGroup
-		var showLabel sql.NullInt64
-		rows.Scan(&g.ID, &g.Name, &g.Mode, &showLabel, &g.Icon, &g.Ord)
+		var showLabel, visible sql.NullInt64
+		rows.Scan(&g.ID, &g.Name, &g.Mode, &showLabel, &g.Icon, &g.Ord, &visible)
 		g.ShowLabel = !showLabel.Valid || showLabel.Int64 != 0
+		g.Visible = !visible.Valid || visible.Int64 != 0
 		out = append(out, g)
 	}
 	return out
@@ -1310,8 +1314,8 @@ func (s *Store) AddLinkGroup(name, mode string, showLabel bool, icon string, ord
 	return s.insertID("INSERT INTO link_groups(name,mode,show_label,icon,ord) VALUES(?,?,?,?,?)", name, mode, boolInt(showLabel), icon, ord)
 }
 
-func (s *Store) UpdateLinkGroup(id int64, name, mode string, showLabel bool, icon string) error {
-	_, err := s.exec("UPDATE link_groups SET name=?,mode=?,show_label=?,icon=? WHERE id=?", name, mode, boolInt(showLabel), icon, id)
+func (s *Store) UpdateLinkGroup(id int64, name, mode string, showLabel bool, icon string, visible bool) error {
+	_, err := s.exec("UPDATE link_groups SET name=?,mode=?,show_label=?,icon=?,visible=? WHERE id=?", name, mode, boolInt(showLabel), icon, boolInt(visible), id)
 	return err
 }
 

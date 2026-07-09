@@ -635,5 +635,8 @@
   "chat.stopped": "已停止",
   "chatAdmin.stop": "停止",
   "chatAdmin.stopConfirm": "停止這個聊天回合?",
-  "chatAdmin.stopped": "已停止該回合"
+  "chatAdmin.stopped": "已停止該回合",
+  "links.showOnHome": "在首頁顯示",
+  "links.shown": "已在首頁顯示",
+  "links.hidden": "已從首頁隱藏"
 }

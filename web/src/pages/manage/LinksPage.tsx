@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { App, Button, Checkbox, Empty, Form, Input, Modal, Popconfirm, Radio, Select, Space, Tag, Typography, theme } from 'antd'
+import { App, Button, Checkbox, Empty, Form, Input, Modal, Popconfirm, Radio, Select, Space, Switch, Tag, Tooltip, Typography, theme } from 'antd'
 import { DeleteOutlined, EditOutlined, FolderAddOutlined, FolderOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
@@ -150,7 +150,8 @@ export default function LinksPage() {
   }
   const submitGroup = async () => {
     const v = await groupForm.validateFields()
-    const payload = { name: (v.name || '').trim(), mode: v.mode, showLabel: !!v.showLabel, icon: v.icon || '' }
+    // Preserve the visibility toggle across an edit (the modal doesn't expose it).
+    const payload = { name: (v.name || '').trim(), mode: v.mode, showLabel: !!v.showLabel, icon: v.icon || '', visible: groupEditing ? groupEditing.visible !== false : true }
     if (groupEditing) await api.put(`/api/admin/link-groups/${groupEditing.id}`, payload)
     else await api.post('/api/admin/link-groups', payload)
     setGroupOpen(false)
@@ -159,6 +160,13 @@ export default function LinksPage() {
   }
   const deleteGroup = async (id: number) => {
     await api.del(`/api/admin/link-groups/${id}`)
+    load()
+  }
+  // Home-page show/hide toggle. Reuses the edit endpoint with the group's current fields so it
+  // reads as an inline binary toggle (auto-saves + toasts, per the console save conventions).
+  const toggleGroupVisible = async (g: LinkGroup, visible: boolean) => {
+    await api.put(`/api/admin/link-groups/${g.id}`, { name: g.name, mode: g.mode, showLabel: g.showLabel, icon: g.icon || '', visible })
+    message.success(visible ? t('links.shown') : t('links.hidden'))
     load()
   }
 
@@ -184,10 +192,12 @@ export default function LinksPage() {
   }
   const submit = async () => {
     const v = await form.validateFields()
+    // Preserve the visibility toggle across an edit (the modal doesn't expose it).
+    const visible = editing ? editing.visible !== false : true
     const payload =
       v.kind === 'shortcut'
-        ? { label: v.label, url: shortcutUrl(v.shortcut, v.shortcutTarget), icon: v.icon, newTab: false }
-        : { label: v.label, url: v.url, icon: v.icon, newTab: v.newTab }
+        ? { label: v.label, url: shortcutUrl(v.shortcut, v.shortcutTarget), icon: v.icon, newTab: false, visible }
+        : { label: v.label, url: v.url, icon: v.icon, newTab: v.newTab, visible }
     if (editing) await api.put(`/api/admin/links/${editing.id}`, payload)
     else await api.post('/api/admin/links', payload)
     setOpen(false)
@@ -202,6 +212,13 @@ export default function LinksPage() {
   }
   const remove = async (id: number) => {
     await api.del(`/api/admin/links/${id}`)
+    load()
+  }
+  // Home-page show/hide toggle (see toggleGroupVisible) — reuses the edit endpoint with the entry's
+  // current fields so a flip is a self-contained auto-save.
+  const toggleLinkVisible = async (l: LinkItem, visible: boolean) => {
+    await api.put(`/api/admin/links/${l.id}`, { label: l.label, url: l.url, icon: l.icon, newTab: l.newTab !== false, visible })
+    message.success(visible ? t('links.shown') : t('links.hidden'))
     load()
   }
 
@@ -237,6 +254,7 @@ export default function LinksPage() {
           borderRadius: 8,
           background: token.colorFillSecondary,
           border: `1px solid ${token.colorBorderSecondary}`,
+          opacity: g.visible === false ? 0.55 : 1, // dim a hidden group so its state reads at a glance
         }}
       >
         <DragHandle />
@@ -251,6 +269,9 @@ export default function LinksPage() {
           </Typography.Text>
         )}
         <div style={{ flex: 1 }} />
+        <Tooltip title={t('links.showOnHome')}>
+          <Switch size="small" checked={g.visible !== false} onChange={(v) => toggleGroupVisible(g, v)} />
+        </Tooltip>
         <Button size="small" icon={<EditOutlined />} onClick={() => openGroupEdit(g)} />
         <Popconfirm title={t('links.deleteGroupConfirm')} onConfirm={() => deleteGroup(g.id)}>
           <Button size="small" danger icon={<DeleteOutlined />} />
@@ -273,6 +294,7 @@ export default function LinksPage() {
           borderRadius: 8,
           border: `1px solid ${token.colorBorderSecondary}`,
           background: token.colorBgContainer,
+          opacity: l.visible === false ? 0.55 : 1, // dim a hidden entry so its state reads at a glance
         }}
       >
         <DragHandle />
@@ -286,6 +308,9 @@ export default function LinksPage() {
             {t('links.newTab')}
           </Typography.Text>
         )}
+        <Tooltip title={t('links.showOnHome')}>
+          <Switch size="small" checked={l.visible !== false} onChange={(v) => toggleLinkVisible(l, v)} />
+        </Tooltip>
         <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(l)} />
         <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => remove(l.id)}>
           <Button size="small" danger icon={<DeleteOutlined />} />

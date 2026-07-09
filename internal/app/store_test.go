@@ -31,20 +31,20 @@ func TestLinkIconRoundTrip(t *testing.T) {
 	if len(ls) != 1 {
 		t.Fatalf("Links len = %d, want 1", len(ls))
 	}
-	if ls[0].Icon != "github" || !ls[0].NewTab || ls[0].GroupID != 0 {
-		t.Errorf("got Icon=%q NewTab=%v GroupID=%v, want github/true/0", ls[0].Icon, ls[0].NewTab, ls[0].GroupID)
+	if ls[0].Icon != "github" || !ls[0].NewTab || ls[0].GroupID != 0 || !ls[0].Visible {
+		t.Errorf("got Icon=%q NewTab=%v GroupID=%v Visible=%v, want github/true/0/true", ls[0].Icon, ls[0].NewTab, ls[0].GroupID, ls[0].Visible)
 	}
 
-	// Editing label/URL/icon/newTab preserves the row and updates the fields.
-	if err := st.UpdateLinkFields(ls[0].ID, "GH", "https://gh.io", "book", false); err != nil {
+	// Editing label/URL/icon/newTab/visible preserves the row and updates the fields (visible off).
+	if err := st.UpdateLinkFields(ls[0].ID, "GH", "https://gh.io", "book", false, false); err != nil {
 		t.Fatalf("UpdateLinkFields: %v", err)
 	}
 	ls = st.Links()
 	if len(ls) != 1 {
 		t.Fatalf("Links len = %d, want 1", len(ls))
 	}
-	if ls[0].Icon != "book" || ls[0].Label != "GH" || ls[0].URL != "https://gh.io" || ls[0].NewTab {
-		t.Errorf("after edit = %+v, want {Label:GH URL:https://gh.io Icon:book NewTab:false}", ls[0])
+	if ls[0].Icon != "book" || ls[0].Label != "GH" || ls[0].URL != "https://gh.io" || ls[0].NewTab || ls[0].Visible {
+		t.Errorf("after edit = %+v, want {Label:GH URL:https://gh.io Icon:book NewTab:false Visible:false}", ls[0])
 	}
 }
 
@@ -57,14 +57,14 @@ func TestLinkGroups(t *testing.T) {
 		t.Fatalf("AddLinkGroup: %v", err)
 	}
 	gs := st.LinkGroups()
-	if len(gs) != 1 || gs[0].Mode != "popover" || !gs[0].ShowLabel || gs[0].Icon != "bulb" {
-		t.Fatalf("groups = %+v, want one popover/show-label/bulb group", gs)
+	if len(gs) != 1 || gs[0].Mode != "popover" || !gs[0].ShowLabel || gs[0].Icon != "bulb" || !gs[0].Visible {
+		t.Fatalf("groups = %+v, want one popover/show-label/bulb/visible group", gs)
 	}
-	if err := st.UpdateLinkGroup(gid, "决策", "modal", false, "rocket"); err != nil {
+	if err := st.UpdateLinkGroup(gid, "决策", "modal", false, "rocket", false); err != nil {
 		t.Fatalf("UpdateLinkGroup: %v", err)
 	}
-	if gs = st.LinkGroups(); gs[0].Name != "决策" || gs[0].Mode != "modal" || gs[0].ShowLabel || gs[0].Icon != "rocket" {
-		t.Fatalf("after update = %+v, want 决策/modal/no-label/rocket", gs[0])
+	if gs = st.LinkGroups(); gs[0].Name != "决策" || gs[0].Mode != "modal" || gs[0].ShowLabel || gs[0].Icon != "rocket" || gs[0].Visible {
+		t.Fatalf("after update = %+v, want 决策/modal/no-label/rocket/hidden", gs[0])
 	}
 
 	// Two links; assign one into the group, keep one top-level.

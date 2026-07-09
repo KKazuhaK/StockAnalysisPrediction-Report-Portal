@@ -635,5 +635,8 @@
   "chat.stopped": "stopped",
   "chatAdmin.stop": "Stop",
   "chatAdmin.stopConfirm": "Stop this chat turn?",
-  "chatAdmin.stopped": "Turn stopped"
+  "chatAdmin.stopped": "Turn stopped",
+  "links.showOnHome": "Show on home",
+  "links.shown": "Shown on home",
+  "links.hidden": "Hidden from home"
 }

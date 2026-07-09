@@ -268,6 +268,7 @@ export interface LinkItem {
   newTab?: boolean // open in a new tab (default true)
   groupId?: number // the group it belongs to, or 0/undefined = ungrouped (top-level, inline)
   ord: number
+  visible?: boolean // shown on the home page (default true); hidden entries stay in the admin list
 }
 
 // How a link group renders on the home page.
@@ -280,6 +281,7 @@ export interface LinkGroup {
   showLabel: boolean // show the group name (mainly for row mode)
   icon?: string // icon name shown on the group's trigger button (empty = default folder glyph)
   ord: number
+  visible?: boolean // shown on the home page (default true); hidden groups stay in the admin list
 }
 
 export interface TypeRow {
