@@ -179,6 +179,10 @@ jobs:
           EOF
       - uses: softprops/action-gh-release@v3
         with:
+          # The default GITHUB_TOKEN (github-actions[bot]) is blocked from creating releases on
+          # this repo (403 "Resource not accessible by integration") despite contents:write, so
+          # the release is created with a PAT stored as the RELEASE_PAT secret instead.
+          token: ${{ secrets.RELEASE_PAT }}
           tag_name: ${{ needs.setup.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: ${{ needs.setup.outputs.tag }}
@@ -189,7 +193,7 @@ jobs:
           append_body: true
           files: dist/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
   docker:
     name: Publish container image
