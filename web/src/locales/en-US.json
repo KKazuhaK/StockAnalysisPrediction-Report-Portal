@@ -650,5 +650,13 @@
   "chatAdmin.view": "View",
   "chatAdmin.convEmpty": "No conversations",
   "chatAdmin.notStarted": "(not started yet)",
-  "chatAdmin.searchConv": "Search user or title"
+  "chatAdmin.searchConv": "Search user or title",
+  "chat.thinking": "Reasoning",
+  "chatAdmin.stream": "Stream replies",
+  "chatAdmin.streamHint": "Off: the reply returns all at once (fallback if streaming misbehaves behind a proxy).",
+  "chatAdmin.reconcile": "Reconcile window",
+  "chatAdmin.reconcileHint": "How long to recover a dropped turn from Dify’s history before showing it failed.",
+  "chatAdmin.seconds": "sec",
+  "chat.myChats": "My chats",
+  "chat.readonlyOther": "Read-only — viewing {{user}}’s chats"
 }

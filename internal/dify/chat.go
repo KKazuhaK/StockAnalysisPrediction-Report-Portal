@@ -54,7 +54,10 @@ func (c *Client) ChatIntro(ctx context.Context) (opening string, suggested []str
 // the browser once), so callers stay request/response. onMeta may be nil; it fires once
 // per newly-seen id (conversation id and task id can arrive on different events, so up to
 // twice), each time carrying every id captured so far.
-func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string]any, user, conversationID string, onMeta func(convID, msgID, taskID string)) (ChatReply, error) {
+// onChunk (optional) is called with each answer delta as it arrives, so a caller can forward the
+// reply to the browser token-by-token (SSE). It's independent of the accumulation: the aggregated
+// ChatReply is still returned either way, so a nil onChunk keeps the blocking behaviour.
+func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string]any, user, conversationID string, onMeta func(convID, msgID, taskID string), onChunk func(delta string)) (ChatReply, error) {
 	if user == "" {
 		user = "report-portal"
 	}
@@ -118,6 +121,9 @@ func (c *Client) ChatStream(ctx context.Context, query string, inputs map[string
 		switch ev.Event {
 		case "message", "agent_message":
 			answer.WriteString(ev.Answer)
+			if onChunk != nil && ev.Answer != "" {
+				onChunk(ev.Answer)
+			}
 		case "message_end", "workflow_finished":
 			out.Answer = answer.String()
 			return out, nil

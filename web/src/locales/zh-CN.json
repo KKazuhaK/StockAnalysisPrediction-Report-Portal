@@ -650,5 +650,13 @@
   "chatAdmin.view": "查看",
   "chatAdmin.convEmpty": "暂无会话",
   "chatAdmin.notStarted": "（尚未开始）",
-  "chatAdmin.searchConv": "搜索用户 / 标题"
+  "chatAdmin.searchConv": "搜索用户 / 标题",
+  "chat.thinking": "思考过程",
+  "chatAdmin.stream": "实时流式输出",
+  "chatAdmin.streamHint": "关闭后回复一次性返回（遇到代理问题时的兜底）。",
+  "chatAdmin.reconcile": "断线对账时长",
+  "chatAdmin.reconcileHint": "请求/流中断后，从 Dify 历史核对结果的最长时间，超时才判失败。",
+  "chatAdmin.seconds": "秒",
+  "chat.myChats": "我的会话",
+  "chat.readonlyOther": "只读查看 {{user}} 的会话"
 }

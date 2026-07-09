@@ -52,6 +52,23 @@ func (s *Server) chatMaxConcurrent() int {
 	return n
 }
 
+// chatStreamEnabled reports whether chat replies stream to the browser token-by-token (default on).
+// Off falls back to the blocking send (one JSON response) — the admin escape hatch if streaming
+// misbehaves behind a proxy.
+func (s *Server) chatStreamEnabled() bool {
+	return s.st.GetSetting("chat_stream", "1") != "0"
+}
+
+// chatReconcileSeconds is how long the browser keeps reconciling a conversation from Dify's history
+// after a dropped request/stream before it concludes the turn failed (default 20s). Admin-set.
+func (s *Server) chatReconcileSeconds() int {
+	n, err := strconv.Atoi(s.st.GetSetting("chat_reconcile_seconds", "20"))
+	if err != nil || n < 0 {
+		return 20
+	}
+	return n
+}
+
 // chatAcquire registers an in-flight turn if the ceiling allows, returning its id. ok=false
 // means the ceiling is full and the caller should shed the turn (HTTP 429) rather than queue
 // it — an interactive turn never waits behind others. The registry is lazily created so tests
@@ -167,7 +184,16 @@ func (s *Server) apiAdminChatLive(w http.ResponseWriter, r *http.Request, user s
 			"conv_id": t.ConvID, "title": t.ConvTitle, "started_at": t.Started.UTC().Format(time.RFC3339),
 		})
 	}
-	writeJSON(w, map[string]any{"turns": out, "max_concurrent": s.chatMaxConcurrent()})
+	writeJSON(w, map[string]any{
+		"turns": out, "max_concurrent": s.chatMaxConcurrent(),
+		"stream": s.chatStreamEnabled(), "reconcile_seconds": s.chatReconcileSeconds(),
+	})
+}
+
+// apiChatConfig exposes the chat runtime settings the browser needs (any chat user): whether replies
+// stream, and the reconcile window used to recover a dropped turn.
+func (s *Server) apiChatConfig(w http.ResponseWriter, r *http.Request, user string) {
+	writeJSON(w, map[string]any{"stream": s.chatStreamEnabled(), "reconcile_seconds": s.chatReconcileSeconds()})
 }
 
 // apiChatStop lets a conversation's owner stop their own in-flight turn: cancel the stream (the
@@ -199,7 +225,9 @@ func (s *Server) apiAdminChatStop(w http.ResponseWriter, r *http.Request, user s
 // apiAdminChatConfigSave sets the chat concurrency ceiling (0 = unlimited).
 func (s *Server) apiAdminChatConfigSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		MaxConcurrent *int `json:"max_concurrent"`
+		MaxConcurrent    *int  `json:"max_concurrent"`
+		Stream           *bool `json:"stream"`
+		ReconcileSeconds *int  `json:"reconcile_seconds"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -207,6 +235,16 @@ func (s *Server) apiAdminChatConfigSave(w http.ResponseWriter, r *http.Request, 
 	}
 	if in.MaxConcurrent != nil && *in.MaxConcurrent >= 0 {
 		s.st.SetSetting("chat_max_concurrent", strconv.Itoa(*in.MaxConcurrent))
+	}
+	if in.Stream != nil {
+		v := "0"
+		if *in.Stream {
+			v = "1"
+		}
+		s.st.SetSetting("chat_stream", v)
+	}
+	if in.ReconcileSeconds != nil && *in.ReconcileSeconds >= 0 {
+		s.st.SetSetting("chat_reconcile_seconds", strconv.Itoa(*in.ReconcileSeconds))
 	}
 	writeJSON(w, okJSON)
 }

@@ -256,6 +256,7 @@ func RunServer(cfgPath string) {
 	// ---- Interactive chat / assistant (docs/adr/0012-interactive-chat.md) ----
 	// Cookie session, gated by PermRunBatch (a chat turn runs a Dify app). Conversations
 	// are personal — each handler is scoped to the caller's own rows.
+	mux.HandleFunc("GET /api/chat/config", s.requirePermJSON(PermRunBatch, s.apiChatConfig))
 	mux.HandleFunc("GET /api/chat/targets", s.requirePermJSON(PermRunBatch, s.apiChatTargets))
 	mux.HandleFunc("GET /api/chat/targets/{id}/intro", s.requirePermJSON(PermRunBatch, s.apiChatTargetIntro))
 	mux.HandleFunc("GET /api/chat/conversations", s.requirePermJSON(PermRunBatch, s.apiChatConversations))
@@ -265,6 +266,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/star", s.requirePermJSON(PermRunBatch, s.apiChatConversationStar))
 	mux.HandleFunc("GET /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatHistory))
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatSend))
+	mux.HandleFunc("POST /api/chat/conversations/{id}/messages/stream", s.requirePermJSON(PermRunBatch, s.apiChatSendStream))
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stop", s.requirePermJSON(PermRunBatch, s.apiChatStop)) // owner stops their in-flight turn
 	// Assistant admin: the concurrency ceiling, the live "who is chatting now" view, and read-only
 	// oversight of any user's conversations + messages (ADR 0012).

@@ -253,7 +253,7 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 		if taskID != "" {
 			s.chatSetTaskID(turnID, taskID)
 		}
-	})
+	}, nil)
 	if err != nil {
 		// A user/admin stop cancels ctx → ChatStream returns context.Canceled with the partial
 		// answer. Report that as a normal (stopped) reply, not a 502 — only a genuine Dify failure
@@ -268,6 +268,92 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 	}
 	s.st.AfterTurn(conv.ID, reply.ConversationID, chatTitle(query)) // bump updated_at; conv_id/title sticky
 	writeJSON(w, map[string]any{"answer": reply.Answer, "conversation_id": reply.ConversationID})
+}
+
+// apiChatSendStream is the streaming counterpart of apiChatSend: it forwards the reply to the browser
+// token-by-token over SSE so the answer appears live instead of all at once. Everything else matches
+// apiChatSend — the concurrency gate, the detached context (the turn still finishes at Dify even if
+// the browser drops), early conv_id/task_id persistence, and stop support. A dropped stream is
+// recovered by the browser reconciling the conversation from history (see ChatPage). Errors BEFORE
+// the SSE header use normal HTTP status codes; after it, they're delivered as an SSE `error` event.
+func (s *Server) apiChatSendStream(w http.ResponseWriter, r *http.Request, user string) {
+	conv, ok := s.ownConversation(w, pathID(r, "id"), user)
+	if !ok {
+		return
+	}
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	var in struct {
+		Query string `json:"query"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	query := strings.TrimSpace(in.Query)
+	if query == "" {
+		jsonError(w, http.StatusBadRequest, "message is empty")
+		return
+	}
+	tgt, ok := s.st.GetTarget(conv.TargetID)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	client, err := difyChatClient(tgt.Config)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	endUser := s.difyEndUser(conv.CreatedBy)
+	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
+	defer cancel()
+	turnID, ok := s.chatAcquire(&chatTurn{
+		User: user, TargetID: tgt.ID, TargetName: tgt.Name,
+		ConvID: conv.ID, ConvTitle: conv.Title, Started: time.Now(),
+		Cancel: cancel, Client: client, EndUser: endUser,
+	})
+	if !ok {
+		jsonError(w, http.StatusTooManyRequests, "assistant is busy: too many chats in progress, please retry shortly")
+		return
+	}
+	defer s.chatRelease(turnID)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no") // nginx: don't buffer, or the whole point (live tokens) is lost
+	w.WriteHeader(http.StatusOK)
+	writeEvent := func(event string, data map[string]any) {
+		b, _ := json.Marshal(data)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+		fl.Flush()
+	}
+
+	reply, err := client.ChatStream(ctx, query, nil, endUser, conv.ConvID, func(convID, _, taskID string) {
+		if convID != "" {
+			s.st.AfterTurn(conv.ID, convID, chatTitle(query))
+		}
+		if taskID != "" {
+			s.chatSetTaskID(turnID, taskID)
+		}
+	}, func(delta string) {
+		writeEvent("delta", map[string]any{"text": delta})
+	})
+	if err != nil {
+		// A stop cancels ctx → the partial that already streamed is a normal (stopped) result.
+		if ctx.Err() == context.Canceled {
+			s.st.AfterTurn(conv.ID, reply.ConversationID, chatTitle(query))
+			writeEvent("done", map[string]any{"conversation_id": reply.ConversationID, "stopped": true})
+			return
+		}
+		writeEvent("error", map[string]any{"error": "dify: " + err.Error()})
+		return
+	}
+	s.st.AfterTurn(conv.ID, reply.ConversationID, chatTitle(query))
+	writeEvent("done", map[string]any{"conversation_id": reply.ConversationID})
 }
 
 // apiChatHistory returns a conversation's prior turns from Dify, for display on reopen. A

@@ -68,11 +68,11 @@ func TestChatStreamCapturesConvIDEarly(t *testing.T) {
 	c := New(srv.URL, "app-key", srv.Client())
 
 	var metaCalls int
-	var earlyConv string
+	var earlyConv, streamed string
 	reply, err := c.ChatStream(context.Background(), "hi", nil, "u", "", func(cid, _, _ string) {
 		metaCalls++
 		earlyConv = cid
-	})
+	}, func(delta string) { streamed += delta })
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
@@ -81,6 +81,11 @@ func TestChatStreamCapturesConvIDEarly(t *testing.T) {
 	}
 	if reply.Answer != "Hello" || reply.ConversationID != "conv-9" {
 		t.Fatalf("reply = {answer:%q conv:%q}, want Hello / conv-9", reply.Answer, reply.ConversationID)
+	}
+	// onChunk forwards each answer delta (for token-by-token streaming to the browser); together
+	// they equal the aggregated answer.
+	if streamed != "Hello" {
+		t.Fatalf("onChunk deltas joined = %q, want the streamed answer Hello", streamed)
 	}
 }
 
@@ -99,7 +104,7 @@ func TestChatStreamCapturesTaskID(t *testing.T) {
 		if taskID != "" {
 			gotTask = taskID
 		}
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("ChatStream: %v", err)
 	}
@@ -126,7 +131,7 @@ func TestChatStreamErrorEvent(t *testing.T) {
 	srv := sseStub(t, []string{`{"event":"error","message":"model quota exceeded"}`})
 	defer srv.Close()
 	c := New(srv.URL, "app-key", srv.Client())
-	if _, err := c.ChatStream(context.Background(), "hi", nil, "u", "", nil); err == nil || err.Error() != "model quota exceeded" {
+	if _, err := c.ChatStream(context.Background(), "hi", nil, "u", "", nil, nil); err == nil || err.Error() != "model quota exceeded" {
 		t.Fatalf("err = %v, want it to carry Dify's message", err)
 	}
 }

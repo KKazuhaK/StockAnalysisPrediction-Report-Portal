@@ -12,6 +12,73 @@ import type { ChatConversation, ChatTarget, ChatTurn } from '../api/types'
 
 type Msg = { role: 'user' | 'assistant'; content: string }
 
+// Split an assistant message into <think>…</think> reasoning blocks and the answer around them, in
+// order. An unclosed <think> (mid-stream, no </think> yet) is treated as reasoning to the end so the
+// block collapses live while it streams.
+function splitThink(s: string): { think: boolean; content: string }[] {
+  const out: { think: boolean; content: string }[] = []
+  let i = 0
+  while (i < s.length) {
+    const open = s.indexOf('<think>', i)
+    if (open < 0) {
+      out.push({ think: false, content: s.slice(i) })
+      break
+    }
+    if (open > i) out.push({ think: false, content: s.slice(i, open) })
+    const close = s.indexOf('</think>', open + 7)
+    if (close < 0) {
+      out.push({ think: true, content: s.slice(open + 7) })
+      break
+    }
+    out.push({ think: true, content: s.slice(open + 7, close) })
+    i = close + 8
+  }
+  return out
+}
+
+// A <think>…</think> reasoning block (chain-of-thought some models emit), collapsed by default so it
+// doesn't dominate the reply; click to expand.
+function ThinkBlock({ content }: { content: string }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const trimmed = content.trim()
+  if (!trimmed) return null
+  return (
+    <div style={{ margin: '2px 0 8px' }}>
+      <span
+        onClick={() => setOpen((o) => !o)}
+        style={{ cursor: 'pointer', fontSize: 12, color: 'var(--ant-color-text-tertiary)', userSelect: 'none' }}
+      >
+        {open ? '▾' : '▸'} {t('chat.thinking')}
+      </span>
+      {open && (
+        <div
+          style={{
+            marginTop: 4,
+            paddingInlineStart: 10,
+            borderInlineStart: '2px solid var(--ant-color-border-secondary)',
+            color: 'var(--ant-color-text-tertiary)',
+            fontSize: 13,
+          }}
+        >
+          <Markdown md={trimmed} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Render an assistant reply: reasoning blocks fold away, the answer renders as Markdown.
+function ChatContent({ content }: { content: string }) {
+  return (
+    <>
+      {splitThink(content).map((seg, i) =>
+        seg.think ? <ThinkBlock key={i} content={seg.content} /> : seg.content.trim() ? <Markdown key={i} md={seg.content} /> : null,
+      )}
+    </>
+  )
+}
+
 // Starred conversations pin to the top; within each group the server's recency order is kept
 // (Array.prototype.sort is stable), so this mirrors the backend ORDER BY.
 const sortConvs = (cs: ChatConversation[]) => [...cs].sort((a, b) => Number(b.starred) - Number(a.starred))
@@ -31,13 +98,18 @@ export default function ChatPage() {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
   const { token } = theme.useToken()
-  const { name } = useAuth()
+  const { name, admin, user } = useAuth()
   const [sp] = useSearchParams()
   const compact = !Grid.useBreakpoint().md // phone / small tablet: fold the sidebar into a drawer
   const padX = compact ? 16 : 32 // the thread/composer fill the panel width with this side gutter
   const [navOpen, setNavOpen] = useState(false)
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [targetId, setTargetId] = useState<number>()
+  // Admin oversight from inside Chat: whose conversations to view ('' = your own). Viewing another
+  // user's threads is read-only (you can't send as them) and reads via the admin endpoints.
+  const [viewUser, setViewUser] = useState('')
+  const [chatUsers, setChatUsers] = useState<string[]>([])
+  const viewingOther = !!viewUser && viewUser !== user
   const [convs, setConvs] = useState<ChatConversation[]>([])
   const [convId, setConvId] = useState<number>()
   const [hoverConv, setHoverConv] = useState<number | null>(null)
@@ -50,6 +122,9 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [loadingHist, setLoadingHist] = useState(false)
   const [intro, setIntro] = useState<{ opening: string } | null>(null)
+  // Admin-set chat runtime: whether replies stream token-by-token, and how long to reconcile a
+  // dropped turn from Dify's history before giving up (see /api/chat/config).
+  const [chatCfg, setChatCfg] = useState<{ stream: boolean; reconcileSeconds: number }>({ stream: true, reconcileSeconds: 20 })
   const scrollRef = useRef<HTMLDivElement>(null)
   // Whether the thread is scrolled to (near) the bottom. Auto-scroll only follows when it is,
   // so a poll refresh or a new message never yanks the user back down while they read above.
@@ -84,10 +159,36 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    api
+      .get<{ stream: boolean; reconcile_seconds: number }>('/api/chat/config')
+      .then((r) => setChatCfg({ stream: r.stream !== false, reconcileSeconds: r.reconcile_seconds ?? 20 }))
+      .catch(() => {})
+  }, [])
+
+  // Admins can view other users' chats read-only from here: load the roster of users who have
+  // conversations (for the picker), and reload the list when the picked user changes.
+  useEffect(() => {
+    if (!admin) return
+    api
+      .get<{ conversations: { created_by: string }[] }>('/api/admin/chat/conversations')
+      .then((r) => setChatUsers([...new Set((r.conversations || []).map((c) => c.created_by).filter(Boolean))]))
+      .catch(() => {})
+  }, [admin])
+  useEffect(() => {
+    setConvId(undefined)
+    setMsgs([])
+    loadConvs(targetId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewUser])
+
   const loadConvs = (tid?: number) => {
     if (!tid) return
+    const url = viewingOther
+      ? `/api/admin/chat/conversations?user=${encodeURIComponent(viewUser)}&target_id=${tid}`
+      : `/api/chat/conversations?target_id=${tid}`
     api
-      .get<{ conversations: ChatConversation[] }>(`/api/chat/conversations?target_id=${tid}`)
+      .get<{ conversations: ChatConversation[] }>(url)
       .then((r) => setConvs(r.conversations || []))
       .catch(() => {})
   }
@@ -110,7 +211,8 @@ export default function ChatPage() {
 
   // Dify's history for a conversation, flattened into a message thread.
   const fetchHistory = async (id: number): Promise<Msg[]> => {
-    const r = await api.get<{ turns: ChatTurn[] }>(`/api/chat/conversations/${id}/messages`)
+    const url = viewingOther ? `/api/admin/chat/conversations/${id}/messages` : `/api/chat/conversations/${id}/messages`
+    const r = await api.get<{ turns: ChatTurn[] }>(url)
     const m: Msg[] = []
     for (const tn of r.turns || []) {
       if (tn.query) m.push({ role: 'user', content: tn.query })
@@ -182,9 +284,11 @@ export default function ChatPage() {
   // Poll reconcile for a short window: when the request dropped the turn may still be finishing, so
   // give Dify a chance to persist the answer before we conclude anything.
   const reconcilePoll = async (id: number): Promise<boolean> => {
-    for (let i = 0; i < 5; i++) {
+    const interval = 4000
+    const attempts = Math.max(1, Math.ceil((chatCfg.reconcileSeconds * 1000) / interval))
+    for (let i = 0; i < attempts; i++) {
       if (await reconcile(id)) return true
-      await new Promise((r) => setTimeout(r, 4000))
+      await new Promise((r) => setTimeout(r, interval))
     }
     return false
   }
@@ -225,6 +329,69 @@ export default function ChatPage() {
     setInput('')
   }
 
+  // Replace the last message when it's the assistant's (the growing stream bubble / a placeholder),
+  // else append a new one — lets a streamed reply grow in place and lets an error overwrite it
+  // instead of stacking a second bubble.
+  const putAssistant = (m: Msg[], content: string): Msg[] => {
+    if (m.length && m[m.length - 1].role === 'assistant') {
+      const copy = m.slice()
+      copy[copy.length - 1] = { role: 'assistant', content }
+      return copy
+    }
+    return [...m, { role: 'assistant', content }]
+  }
+
+  // Stream the reply over SSE, growing the assistant bubble as tokens arrive. Throws ApiError(429)
+  // when the assistant is at its ceiling, and a plain Error on a Dify error or a dropped stream (no
+  // completion event) — the caller reconciles the latter from Dify's history.
+  const streamSend = async (id: number, q: string): Promise<void> => {
+    const resp = await fetch(`/api/chat/conversations/${id}/messages/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q }),
+      credentials: 'same-origin',
+    })
+    if (resp.status === 429) throw new ApiError(429, 'busy')
+    if (!resp.ok || !resp.body) throw new ApiError(resp.status, `HTTP ${resp.status}`)
+    const reader = resp.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    let acc = ''
+    let finished = false
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buf.indexOf('\n\n')) >= 0) {
+        const raw = buf.slice(0, sep)
+        buf = buf.slice(sep + 2)
+        let event = 'message'
+        let data: { text?: string; error?: string; stopped?: boolean } = {}
+        for (const line of raw.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim()
+          else if (line.startsWith('data:')) {
+            try {
+              data = JSON.parse(line.slice(5).trim())
+            } catch {
+              /* skip a malformed frame */
+            }
+          }
+        }
+        if (event === 'delta') {
+          acc += data.text || ''
+          setMsgs((m) => putAssistant(m, acc))
+        } else if (event === 'done') {
+          finished = true
+          if (data.stopped && !acc) setMsgs((m) => putAssistant(m, '_' + t('chat.stopped') + '_'))
+        } else if (event === 'error') {
+          throw new Error(data.error || t('chat.sendFailed'))
+        }
+      }
+    }
+    if (!finished) throw new Error('stream ended') // dropped without a completion event → reconcile
+  }
+
   const send = async (text?: string) => {
     const q = (text ?? input).trim()
     if (!q || sending) return
@@ -238,10 +405,14 @@ export default function ChatPage() {
     setConvs((cs) => cs.map((c) => (c.id === id && !c.title ? { ...c, title: q.length > 24 ? q.slice(0, 24) + '…' : q } : c)))
     setSending(true)
     try {
-      const r = await api.post<{ answer: string; stopped?: boolean }>(`/api/chat/conversations/${id}/messages`, { query: q })
-      // A stopped turn returns its partial answer + stopped:true; show the partial, or a muted
-      // note if the turn was stopped before anything streamed.
-      setMsgs((m) => [...m, { role: 'assistant', content: r.answer || (r.stopped ? '_' + t('chat.stopped') + '_' : '') }])
+      if (chatCfg.stream) {
+        await streamSend(id, q)
+      } else {
+        const r = await api.post<{ answer: string; stopped?: boolean }>(`/api/chat/conversations/${id}/messages`, { query: q })
+        // A stopped turn returns its partial answer + stopped:true; show the partial, or a muted
+        // note if the turn was stopped before anything streamed.
+        setMsgs((m) => [...m, { role: 'assistant', content: r.answer || (r.stopped ? '_' + t('chat.stopped') + '_' : '') }])
+      }
       loadConvs(targetId) // refresh titles + ordering
     } catch (e) {
       // The assistant is at its concurrency ceiling — nothing was sent. Undo the optimistic
@@ -256,7 +427,8 @@ export default function ChatPage() {
         // declaring failure — show the ⚠️ note only if the turn genuinely never landed.
         reconcilePoll(id).then((recovered) => {
           if (!recovered) {
-            setMsgs((m) => [...m, { role: 'assistant', content: '⚠️ ' + ((e as Error).message || t('chat.sendFailed')) }])
+            // putAssistant so a streamed partial bubble is overwritten (not stacked) with the note.
+            setMsgs((m) => putAssistant(m, '⚠️ ' + ((e as Error).message || t('chat.sendFailed'))))
           }
         })
       }
@@ -377,7 +549,7 @@ export default function ChatPage() {
       <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 26 }}>
         {assistantAvatar(30)}
         <div style={{ flex: 1, minWidth: 0, paddingTop: 3 }}>
-          <Markdown md={m.content} />
+          <ChatContent content={m.content} />
         </div>
       </div>
     )
@@ -475,15 +647,31 @@ export default function ChatPage() {
   // folded into a drawer on mobile.
   const sidebar = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: '100%' }}>
+      {admin && (
+        // Admin oversight: switch whose conversations the sidebar shows (searchable — there can be
+        // many users). Picking someone other than yourself makes the thread read-only.
+        <Select
+          showSearch
+          optionFilterProp="label"
+          style={{ width: '100%' }}
+          value={viewUser || user || ''}
+          onChange={(v) => setViewUser(v === user ? '' : v)}
+          options={[{ value: user || '', label: t('chat.myChats') }, ...chatUsers.filter((u) => u !== user).map((u) => ({ value: u, label: u }))]}
+        />
+      )}
       <Select
+        showSearch
+        optionFilterProp="label"
         style={{ width: '100%' }}
         value={targetId}
         onChange={setTargetId}
         options={targets.map((tg) => ({ value: tg.id, label: tg.name }))}
       />
-      <Button type="primary" ghost icon={<PlusOutlined />} onClick={startNew} block style={{ fontWeight: 500 }}>
-        {t('chat.newConversation')}
-      </Button>
+      {!viewingOther && (
+        <Button type="primary" ghost icon={<PlusOutlined />} onClick={startNew} block style={{ fontWeight: 500 }}>
+          {t('chat.newConversation')}
+        </Button>
+      )}
       <div style={{ overflowY: 'auto', flex: 1, borderTop: `1px solid ${token.colorBorderSecondary}`, paddingTop: 8 }}>
         {convs.length === 0 ? (
           <Typography.Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
@@ -522,21 +710,25 @@ export default function ChatPage() {
                 >
                   {c.title || t('chat.untitled')}
                 </Typography.Text>
-                <Dropdown
-                  menu={{ items: convMenu(c) }}
-                  trigger={['click']}
-                  placement="bottomRight"
-                  onOpenChange={(open) => setMenuConv(open ? c.id : null)}
-                >
-                  <Button
-                    size="small"
-                    type="text"
-                    icon={<MoreOutlined />}
-                    onClick={(e) => e.stopPropagation()}
-                    title={t('common.more')}
-                    style={{ opacity: showMenu ? 1 : 0, transition: 'opacity .12s', flexShrink: 0 }}
-                  />
-                </Dropdown>
+                {/* Rename/star/delete are owner-only endpoints — hide the menu when an admin is
+                    viewing someone else's conversations read-only. */}
+                {!viewingOther && (
+                  <Dropdown
+                    menu={{ items: convMenu(c) }}
+                    trigger={['click']}
+                    placement="bottomRight"
+                    onOpenChange={(open) => setMenuConv(open ? c.id : null)}
+                  >
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<MoreOutlined />}
+                      onClick={(e) => e.stopPropagation()}
+                      title={t('common.more')}
+                      style={{ opacity: showMenu ? 1 : 0, transition: 'opacity .12s', flexShrink: 0 }}
+                    />
+                  </Dropdown>
+                )}
               </div>
             )
           })
@@ -627,7 +819,7 @@ export default function ChatPage() {
                   {intro?.opening || t('chat.emptyThread')}
                 </Typography.Text>
               </div>
-              <div style={{ width: '100%' }}>{composer(true)}</div>
+              {!viewingOther && <div style={{ width: '100%' }}>{composer(true)}</div>}
             </div>
           ) : (
             <div style={{ padding: `${compact ? 20 : 24}px ${padX}px 8px` }}>
@@ -647,12 +839,20 @@ export default function ChatPage() {
         </div>
 
         {/* The docked composer only appears once a conversation is under way — a new chat keeps
-            its composer centered in the hero above. */}
-        {!showHero && (
-          <div style={{ padding: `${compact ? 10 : 12}px ${padX}px ${compact ? 12 : 16}px`, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
-            {composer(false)}
-          </div>
-        )}
+            its composer centered in the hero above. When an admin is viewing another user's thread
+            it's read-only (you can't post as them), so a note replaces the composer. */}
+        {!showHero &&
+          (viewingOther ? (
+            <div style={{ padding: `${compact ? 10 : 12}px ${padX}px ${compact ? 12 : 16}px`, borderTop: `1px solid ${token.colorBorderSecondary}`, textAlign: 'center' }}>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                {t('chat.readonlyOther', { user: viewUser })}
+              </Typography.Text>
+            </div>
+          ) : (
+            <div style={{ padding: `${compact ? 10 : 12}px ${padX}px ${compact ? 12 : 16}px`, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+              {composer(false)}
+            </div>
+          ))}
       </div>
 
       {/* Rename dialog (opened from a conversation's context menu). */}

@@ -21,7 +21,7 @@ type ChatLiveTurn = {
   title: string
   started_at: string
 }
-type ChatLive = { turns: ChatLiveTurn[]; max_concurrent: number }
+type ChatLive = { turns: ChatLiveTurn[]; max_concurrent: number; stream: boolean; reconcile_seconds: number }
 
 // One row in the admin conversation-oversight list; messages are fetched on demand (Dify holds them).
 type AdminConv = { id: number; created_by: string; target: string; title: string; updated_at: string; started: boolean }
@@ -37,6 +37,8 @@ export default function ChatAdminPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [limit, setLimit] = useState(0)
+  const [stream, setStream] = useState(true)
+  const [reconcileSeconds, setReconcileSeconds] = useState(20)
   const [turns, setTurns] = useState<ChatLiveTurn[]>([])
   const [auto, setAuto] = useState(true)
   const seeded = useRef(false)
@@ -55,6 +57,8 @@ export default function ChatAdminPage() {
         // Seed the ceiling input once, so a running poll never clobbers an in-progress edit.
         if (!seeded.current) {
           setLimit(r.max_concurrent ?? 0)
+          setStream(r.stream !== false)
+          setReconcileSeconds(r.reconcile_seconds ?? 20)
           seeded.current = true
         }
       })
@@ -72,7 +76,7 @@ export default function ChatAdminPage() {
   }, [auto])
 
   const save = async () => {
-    await api.post('/api/admin/chat/config', { max_concurrent: limit })
+    await api.post('/api/admin/chat/config', { max_concurrent: limit, stream, reconcile_seconds: reconcileSeconds })
     message.success(t('common.saved'))
   }
 
@@ -140,13 +144,25 @@ export default function ChatAdminPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card title={t('chatAdmin.limitCard')}>
-        <Space wrap>
-          <span style={{ display: 'inline-block', minWidth: 96 }}>{t('chatAdmin.limit')}</span>
-          <InputNumber min={0} max={100} value={limit} onChange={(v) => setLimit(v ?? 0)} />
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Space wrap>
+            <span style={{ display: 'inline-block', minWidth: 110 }}>{t('chatAdmin.limit')}</span>
+            <InputNumber min={0} max={100} value={limit} onChange={(v) => setLimit(v ?? 0)} />
+            <Typography.Text type="secondary">{t('chatAdmin.limitHint')}</Typography.Text>
+          </Space>
+          <Space wrap>
+            <span style={{ display: 'inline-block', minWidth: 110 }}>{t('chatAdmin.stream')}</span>
+            <Switch checked={stream} onChange={setStream} />
+            <Typography.Text type="secondary">{t('chatAdmin.streamHint')}</Typography.Text>
+          </Space>
+          <Space wrap>
+            <span style={{ display: 'inline-block', minWidth: 110 }}>{t('chatAdmin.reconcile')}</span>
+            <InputNumber min={0} max={600} value={reconcileSeconds} onChange={(v) => setReconcileSeconds(v ?? 20)} addonAfter={t('chatAdmin.seconds')} />
+            <Typography.Text type="secondary">{t('chatAdmin.reconcileHint')}</Typography.Text>
+          </Space>
           <Button type="primary" onClick={save}>
             {t('common.save')}
           </Button>
-          <Typography.Text type="secondary">{t('chatAdmin.limitHint')}</Typography.Text>
         </Space>
       </Card>
 
