@@ -25,9 +25,9 @@ import (
 // Research run was observed at ~61 minutes — so this must comfortably exceed that. A
 // too-short cap cuts the stream and (worse) lets the reconcile poll expire while Dify is
 // still running, marking a run failed that then succeeds a minute later (a false negative
-// we hit at the old 60m cap). 3h gives generous headroom; in poll mode each GET is fast,
+// we hit at the old 60m cap). 4h gives generous headroom; in poll mode each GET is fast,
 // so a large cap only bounds a genuinely stuck run, not a healthy long one.
-const difyRunTimeout = 180 * time.Minute
+const difyRunTimeout = 240 * time.Minute
 
 // batchMaxConcurrency is the admin-set ceiling a per-job concurrency is clamped to.
 func (s *Server) batchMaxConcurrency() int {
@@ -180,7 +180,7 @@ func (s *Server) difyPollSeconds() int {
 
 // difyRunTimeoutDur is the admin-set cap on one Dify run: it bounds the portal's HTTP
 // client AND the reconcile poll window, so a run that legitimately takes long isn't cut
-// short / falsely marked failed. Stored in minutes; default = difyRunTimeout (180m),
+// short / falsely marked failed. Stored in minutes; default = difyRunTimeout (240m),
 // clamped to >= 1.
 func (s *Server) difyRunTimeoutDur() time.Duration {
 	n, err := strconv.Atoi(s.st.GetSetting("dify_run_timeout_minutes", strconv.Itoa(int(difyRunTimeout/time.Minute))))
