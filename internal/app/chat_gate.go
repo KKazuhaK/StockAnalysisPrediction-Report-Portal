@@ -59,12 +59,14 @@ func (s *Server) chatStreamEnabled() bool {
 	return s.st.GetSetting("chat_stream", "1") != "0"
 }
 
-// chatReconcileSeconds is how long the browser keeps reconciling a conversation from Dify's history
-// after a dropped request/stream before it concludes the turn failed (default 20s). Admin-set.
+// chatReconcileSeconds is how long the browser actively polls Dify for a dropped turn's outcome
+// (default 300s = chatTimeout, the longest a turn can run — the poll exits early the moment Dify
+// reports success/failure, so a fast reply costs one poll). Admin-set. A turn that outlasts this
+// window is NOT declared failed: it's left running and the ambient reconcile picks it up later.
 func (s *Server) chatReconcileSeconds() int {
-	n, err := strconv.Atoi(s.st.GetSetting("chat_reconcile_seconds", "20"))
+	n, err := strconv.Atoi(s.st.GetSetting("chat_reconcile_seconds", "300"))
 	if err != nil || n < 0 {
-		return 20
+		return 300
 	}
 	return n
 }

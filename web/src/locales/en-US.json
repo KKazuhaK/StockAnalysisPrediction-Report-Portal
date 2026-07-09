@@ -655,8 +655,9 @@
   "chatAdmin.stream": "Stream replies",
   "chatAdmin.streamHint": "Off: the reply returns all at once (fallback if streaming misbehaves behind a proxy).",
   "chatAdmin.reconcile": "Reconcile window",
-  "chatAdmin.reconcileHint": "How long to recover a dropped turn from Dify’s history before showing it failed.",
+  "chatAdmin.reconcileHint": "How long to actively poll Dify for a dropped turn’s result. A turn still running past this is NOT marked failed — it’s picked up when you reopen the chat (default 300s = the max turn length).",
   "chatAdmin.seconds": "sec",
   "chat.myChats": "My chats",
-  "chat.readonlyOther": "Read-only — viewing {{user}}’s chats"
+  "chat.readonlyOther": "Read-only — viewing {{user}}’s chats",
+  "chat.stillRunning": "Still generating — this can take a while; it updates when it finishes."
 }

@@ -356,6 +356,38 @@ func (s *Server) apiChatSendStream(w http.ResponseWriter, r *http.Request, user 
 	writeEvent("done", map[string]any{"conversation_id": reply.ConversationID})
 }
 
+// apiChatOutcome reports a turn's terminal state from Dify's conversation history — the browser uses
+// it to recover a dropped stream/request. Crucially it distinguishes "running" (still generating;
+// some replies take minutes) from "failed" (a real Dify error), so a slow turn is never mislabeled
+// failed just because a poll window elapsed. status is running | succeeded | failed.
+func (s *Server) apiChatOutcome(w http.ResponseWriter, r *http.Request, user string) {
+	conv, ok := s.ownConversation(w, pathID(r, "id"), user)
+	if !ok {
+		return
+	}
+	if conv.ConvID == "" {
+		writeJSON(w, map[string]any{"status": "running"}) // not bound to a Dify conversation yet
+		return
+	}
+	tgt, ok := s.st.GetTarget(conv.TargetID)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	client, err := difyChatClient(tgt.Config)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	res, err := client.GetChatOutcome(r.Context(), conv.ConvID, s.difyEndUser(conv.CreatedBy))
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, "dify: "+err.Error()) // transient — the browser keeps polling
+		return
+	}
+	answer, _ := res.Outputs["answer"].(string)
+	writeJSON(w, map[string]any{"status": res.Status, "answer": answer, "error": res.Error})
+}
+
 // apiChatHistory returns a conversation's prior turns from Dify, for display on reopen. A
 // conversation that hasn't sent anything yet (no conv_id) has no history.
 func (s *Server) apiChatHistory(w http.ResponseWriter, r *http.Request, user string) {

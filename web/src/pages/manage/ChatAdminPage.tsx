@@ -38,7 +38,7 @@ export default function ChatAdminPage() {
   const { message } = App.useApp()
   const [limit, setLimit] = useState(0)
   const [stream, setStream] = useState(true)
-  const [reconcileSeconds, setReconcileSeconds] = useState(20)
+  const [reconcileSeconds, setReconcileSeconds] = useState(300)
   const [turns, setTurns] = useState<ChatLiveTurn[]>([])
   const [auto, setAuto] = useState(true)
   const seeded = useRef(false)
@@ -58,7 +58,7 @@ export default function ChatAdminPage() {
         if (!seeded.current) {
           setLimit(r.max_concurrent ?? 0)
           setStream(r.stream !== false)
-          setReconcileSeconds(r.reconcile_seconds ?? 20)
+          setReconcileSeconds(r.reconcile_seconds ?? 300)
           seeded.current = true
         }
       })

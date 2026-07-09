@@ -124,7 +124,7 @@ export default function ChatPage() {
   const [intro, setIntro] = useState<{ opening: string } | null>(null)
   // Admin-set chat runtime: whether replies stream token-by-token, and how long to reconcile a
   // dropped turn from Dify's history before giving up (see /api/chat/config).
-  const [chatCfg, setChatCfg] = useState<{ stream: boolean; reconcileSeconds: number }>({ stream: true, reconcileSeconds: 20 })
+  const [chatCfg, setChatCfg] = useState<{ stream: boolean; reconcileSeconds: number }>({ stream: true, reconcileSeconds: 300 })
   const scrollRef = useRef<HTMLDivElement>(null)
   // Whether the thread is scrolled to (near) the bottom. Auto-scroll only follows when it is,
   // so a poll refresh or a new message never yanks the user back down while they read above.
@@ -162,7 +162,7 @@ export default function ChatPage() {
   useEffect(() => {
     api
       .get<{ stream: boolean; reconcile_seconds: number }>('/api/chat/config')
-      .then((r) => setChatCfg({ stream: r.stream !== false, reconcileSeconds: r.reconcile_seconds ?? 20 }))
+      .then((r) => setChatCfg({ stream: r.stream !== false, reconcileSeconds: r.reconcile_seconds ?? 300 }))
       .catch(() => {})
   }, [])
 
@@ -281,16 +281,32 @@ export default function ChatPage() {
     }
     return false
   }
-  // Poll reconcile for a short window: when the request dropped the turn may still be finishing, so
-  // give Dify a chance to persist the answer before we conclude anything.
-  const reconcilePoll = async (id: number): Promise<boolean> => {
+  // Poll Dify's OUTCOME after a dropped request/stream and act on the real terminal state, so a slow
+  // turn (some replies take minutes) is never mislabeled "failed" just because the window elapsed:
+  //   'done'    — the answer landed; adopted into the thread.
+  //   'failed'  — Dify reported a real error; the ⚠️ note is shown here.
+  //   'running' — still generating when the window elapsed; the caller leaves a neutral note and the
+  //               ambient reconcile (reopen / return-to-tab) surfaces it once it finishes.
+  const reconcilePoll = async (id: number): Promise<'done' | 'failed' | 'running'> => {
     const interval = 4000
     const attempts = Math.max(1, Math.ceil((chatCfg.reconcileSeconds * 1000) / interval))
     for (let i = 0; i < attempts; i++) {
-      if (await reconcile(id)) return true
-      await new Promise((r) => setTimeout(r, interval))
+      try {
+        const r = await api.get<{ status: string; error?: string }>(`/api/chat/conversations/${id}/outcome`)
+        if (r.status === 'succeeded') {
+          await reconcile(id)
+          return 'done'
+        }
+        if (r.status === 'failed') {
+          setMsgs((m) => putAssistant(m, '⚠️ ' + (r.error || t('chat.sendFailed'))))
+          return 'failed'
+        }
+      } catch {
+        /* transient — keep polling, don't conclude anything */
+      }
+      await new Promise((res) => setTimeout(res, interval))
     }
-    return false
+    return 'running'
   }
 
   // Return-from-background recovery: a turn interrupted while the phone was locked / the tab hidden
@@ -423,13 +439,12 @@ export default function ChatPage() {
         message.warning(t('chat.busy'))
       } else {
         // A client-side interruption (phone lock, dropped network) rejects the request even though
-        // the turn is running/finished in Dify. Reconcile from history in the background before
-        // declaring failure — show the ⚠️ note only if the turn genuinely never landed.
-        reconcilePoll(id).then((recovered) => {
-          if (!recovered) {
-            // putAssistant so a streamed partial bubble is overwritten (not stacked) with the note.
-            setMsgs((m) => putAssistant(m, '⚠️ ' + ((e as Error).message || t('chat.sendFailed'))))
-          }
+        // the turn keeps running in Dify. Poll Dify's outcome: it adopts the answer on success and
+        // shows a confirmed error on failure. A turn still running when the window elapses gets a
+        // NEUTRAL note — never a false "failed" (replies range from seconds to minutes); the ambient
+        // reconcile (reopen / return-to-tab) surfaces it once it finishes.
+        reconcilePoll(id).then((r) => {
+          if (r === 'running') setMsgs((m) => putAssistant(m, '_' + t('chat.stillRunning') + '_'))
         })
       }
     } finally {

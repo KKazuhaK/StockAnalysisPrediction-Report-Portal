@@ -655,8 +655,9 @@
   "chatAdmin.stream": "实时流式输出",
   "chatAdmin.streamHint": "关闭后回复一次性返回（遇到代理问题时的兜底）。",
   "chatAdmin.reconcile": "断线对账时长",
-  "chatAdmin.reconcileHint": "请求/流中断后，从 Dify 历史核对结果的最长时间，超时才判失败。",
+  "chatAdmin.reconcileHint": "断线后主动向 Dify 轮询结果的时长。超过后仍在运行的任务不判失败——重开会话会自动补上（默认 300 秒＝单轮最长时长）。",
   "chatAdmin.seconds": "秒",
   "chat.myChats": "我的会话",
-  "chat.readonlyOther": "只读查看 {{user}} 的会话"
+  "chat.readonlyOther": "只读查看 {{user}} 的会话",
+  "chat.stillRunning": "仍在生成中，可能需要一会儿，完成后会自动更新。"
 }
