@@ -638,5 +638,10 @@
   "chatAdmin.stopped": "已停止該回合",
   "links.showOnHome": "在首頁顯示",
   "links.shown": "已在首頁顯示",
-  "links.hidden": "已從首頁隱藏"
+  "links.hidden": "已從首頁隱藏",
+  "common.advanced": "進階",
+  "settings.footerSection": "頁腳",
+  "settings.timeSection": "時區",
+  "settings.tokenValue": "權杖",
+  "settings.tokenLastUsed": "最近使用"
 }

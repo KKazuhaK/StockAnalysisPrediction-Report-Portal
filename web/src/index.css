@@ -298,24 +298,16 @@ body {
 
 /* Loading ring: one spinner shared by the boot splash (index.html) and every in-app
    antd <Spin> (via ConfigProvider spin.indicator), replacing antd's default 4-dot
-   spinner. Sizes track antd's Spin size classes; the ring colour matches the splash. */
+   spinner. One uniform size regardless of antd's Spin size prop, so the spinner never
+   changes size between pages; matches the boot-splash ring exactly. */
 .rp-spin-ring {
   display: inline-block;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: 3px solid rgba(22, 119, 255, 0.18);
   border-top-color: #1677ff;
   animation: rp-spin 0.8s linear infinite;
-}
-.ant-spin-lg .rp-spin-ring {
-  width: 30px;
-  height: 30px;
-}
-.ant-spin-sm .rp-spin-ring {
-  width: 14px;
-  height: 14px;
-  border-width: 2px;
 }
 @keyframes rp-spin {
   to {

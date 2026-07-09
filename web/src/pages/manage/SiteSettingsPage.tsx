@@ -174,7 +174,7 @@ export default function SiteSettingsPage() {
           }}
         </Form.Item>
         <Divider orientation="left" orientationMargin={0}>
-          {t('settings.footerText')}
+          {t('settings.footerSection')}
         </Divider>
         <Form.Item name="footerShowInfo" label={t('settings.footerShowInfo')} valuePropName="checked">
           <Switch />
@@ -196,7 +196,7 @@ export default function SiteSettingsPage() {
           <Switch />
         </Form.Item>
         <Divider orientation="left" orientationMargin={0}>
-          {t('settings.homeSection')}
+          {t('settings.timeSection')}
         </Divider>
         <Form.Item name="timezone" label={t('settings.timezone')} style={{ marginBottom: 8 }}>
           <Select

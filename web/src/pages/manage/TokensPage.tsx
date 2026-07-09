@@ -84,7 +84,7 @@ export default function TokensPage() {
         columns={[
           { title: t('settings.tokenName'), dataIndex: 'name', render: (n: string) => n || '—' },
           {
-            title: 'Token',
+            title: t('settings.tokenValue'),
             dataIndex: 'token',
             render: (tok: string) => (
               <Typography.Text copyable={{ text: tok }} style={{ fontFamily: 'monospace' }}>
@@ -98,7 +98,7 @@ export default function TokensPage() {
             render: (s: string) => <Tag color={SCOPE_COLORS[s] || 'default'}>{t(`scope.${s}`, s)}</Tag>,
           },
           { title: t('settings.tokenExpires'), dataIndex: 'expires', render: (e: string) => e || '∞' },
-          { title: 'last used', dataIndex: 'lastUsed', render: (e: string) => e || '—' },
+          { title: t('settings.tokenLastUsed'), dataIndex: 'lastUsed', render: (e: string) => e || '—' },
           {
             title: '',
             width: 60,

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
+import { App, Button, Card, Collapse, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { BatchConfig, RunMode } from '../../api/types'
 import RunPresetsEditor from './RunPresetsEditor'
 import StickyActionBar from '../../components/StickyActionBar'
+import { GAP_FIELD } from './tokens'
 
 // Standalone run-queue settings (docs/adr/0007 + 0008): the queue concurrency budget,
 // the default base priority, the Dify end-user template, and the Slurm-style multifactor
@@ -115,59 +116,68 @@ export default function RunQueueSettingsPage() {
           <Switch checked={runDefaultIdle} onChange={setRunDefaultIdle} />,
         )}
 
-        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
-          {t('batch.admin.difyTitle')}
-        </Divider>
-        {row(
-          t('batch.admin.difyEndUser'),
-          t('batch.admin.difyEndUserHint'),
-          <Input
-            style={{ width: 280 }}
-            value={difyEndUser}
-            placeholder="report-portal"
-            onChange={(e) => setDifyEndUser(e.target.value)}
-          />,
-        )}
-        {row(
-          t('batch.admin.difyPoll'),
-          t('batch.admin.difyPollHint'),
-          <InputNumber min={0} max={600} value={difyPollSeconds} onChange={(v) => setDifyPollSeconds(v ?? 0)} addonAfter={t('batch.admin.seconds')} />,
-        )}
-        {row(
-          t('batch.admin.difyRunTimeout'),
-          t('batch.admin.difyRunTimeoutHint'),
-          <InputNumber min={1} max={720} value={difyRunTimeout} onChange={(v) => setDifyRunTimeout(v || 180)} addonAfter={t('batch.admin.minutes')} />,
-        )}
-
-        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
-          {t('batch.admin.prioWeightsTitle')}
-        </Divider>
-        <Typography.Text type="secondary">{t('batch.admin.prioWeightsHint')}</Typography.Text>
-        {row(
-          t('batch.admin.wBase'),
-          t('batch.admin.wBaseHint'),
-          <InputNumber min={0} step={100} value={wBase} onChange={(v) => setWBase(v ?? 0)} />,
-        )}
-        {row(
-          t('batch.admin.wAge'),
-          t('batch.admin.wAgeHint'),
-          <InputNumber min={0} step={100} value={wAge} onChange={(v) => setWAge(v ?? 0)} />,
-        )}
-        {row(
-          t('batch.admin.wFair'),
-          t('batch.admin.wFairHint'),
-          <InputNumber min={0} step={100} value={wFair} onChange={(v) => setWFair(v ?? 0)} />,
-        )}
-        {row(
-          t('batch.admin.ageHours'),
-          t('batch.admin.ageHoursHint'),
-          <InputNumber min={1} max={8760} value={ageHours} onChange={(v) => setAgeHours(v || 24)} addonAfter={t('batch.admin.hours')} />,
-        )}
-        {row(
-          t('batch.admin.fairHalflife'),
-          t('batch.admin.fairHalflifeHint'),
-          <InputNumber min={1} max={8760} value={fairHalflife} onChange={(v) => setFairHalflife(v || 168)} addonAfter={t('batch.admin.hours')} />,
-        )}
+        {/* Rarely-touched knobs (Dify tuning + Slurm priority weights) fold into a collapsed
+            Advanced panel so the common settings above aren't buried; they still post with Save. */}
+        <Collapse
+          ghost
+          items={[
+            {
+              key: 'advanced',
+              label: t('common.advanced'),
+              children: (
+                <Space direction="vertical" size={GAP_FIELD} style={{ width: '100%' }}>
+                  <Divider orientation="left" orientationMargin={0} plain style={{ marginTop: 0 }}>
+                    {t('batch.admin.difyTitle')}
+                  </Divider>
+                  {row(
+                    t('batch.admin.difyEndUser'),
+                    t('batch.admin.difyEndUserHint'),
+                    <Input style={{ width: 280 }} value={difyEndUser} placeholder="report-portal" onChange={(e) => setDifyEndUser(e.target.value)} />,
+                  )}
+                  {row(
+                    t('batch.admin.difyPoll'),
+                    t('batch.admin.difyPollHint'),
+                    <InputNumber min={0} max={600} value={difyPollSeconds} onChange={(v) => setDifyPollSeconds(v ?? 0)} addonAfter={t('batch.admin.seconds')} />,
+                  )}
+                  {row(
+                    t('batch.admin.difyRunTimeout'),
+                    t('batch.admin.difyRunTimeoutHint'),
+                    <InputNumber min={1} max={720} value={difyRunTimeout} onChange={(v) => setDifyRunTimeout(v || 180)} addonAfter={t('batch.admin.minutes')} />,
+                  )}
+                  <Divider orientation="left" orientationMargin={0} plain>
+                    {t('batch.admin.prioWeightsTitle')}
+                  </Divider>
+                  <Typography.Text type="secondary">{t('batch.admin.prioWeightsHint')}</Typography.Text>
+                  {row(
+                    t('batch.admin.wBase'),
+                    t('batch.admin.wBaseHint'),
+                    <InputNumber min={0} step={100} value={wBase} onChange={(v) => setWBase(v ?? 0)} />,
+                  )}
+                  {row(
+                    t('batch.admin.wAge'),
+                    t('batch.admin.wAgeHint'),
+                    <InputNumber min={0} step={100} value={wAge} onChange={(v) => setWAge(v ?? 0)} />,
+                  )}
+                  {row(
+                    t('batch.admin.wFair'),
+                    t('batch.admin.wFairHint'),
+                    <InputNumber min={0} step={100} value={wFair} onChange={(v) => setWFair(v ?? 0)} />,
+                  )}
+                  {row(
+                    t('batch.admin.ageHours'),
+                    t('batch.admin.ageHoursHint'),
+                    <InputNumber min={1} max={8760} value={ageHours} onChange={(v) => setAgeHours(v || 24)} addonAfter={t('batch.admin.hours')} />,
+                  )}
+                  {row(
+                    t('batch.admin.fairHalflife'),
+                    t('batch.admin.fairHalflifeHint'),
+                    <InputNumber min={1} max={8760} value={fairHalflife} onChange={(v) => setFairHalflife(v || 168)} addonAfter={t('batch.admin.hours')} />,
+                  )}
+                </Space>
+              ),
+            },
+          ]}
+        />
 
         <StickyActionBar>
           <Button type="primary" onClick={save}>

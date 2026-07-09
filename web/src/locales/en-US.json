@@ -638,5 +638,10 @@
   "chatAdmin.stopped": "Turn stopped",
   "links.showOnHome": "Show on home",
   "links.shown": "Shown on home",
-  "links.hidden": "Hidden from home"
+  "links.hidden": "Hidden from home",
+  "common.advanced": "Advanced",
+  "settings.footerSection": "Footer",
+  "settings.timeSection": "Time zone",
+  "settings.tokenValue": "Token",
+  "settings.tokenLastUsed": "Last used"
 }
