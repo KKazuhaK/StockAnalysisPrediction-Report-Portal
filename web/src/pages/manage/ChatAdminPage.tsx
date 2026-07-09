@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import { App, Button, Card, Empty, InputNumber, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
-import { ReloadOutlined, StopOutlined } from '@ant-design/icons'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { App, Button, Card, Drawer, Empty, Grid, Input, InputNumber, Popconfirm, Space, Spin, Switch, Table, Tag, Tooltip, Typography } from 'antd'
+import { EyeOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import { formatReportTime } from '../../lib/datetime'
+import Markdown from '../../components/Markdown'
+import type { ChatTurn } from '../../api/types'
 
 // Assistant admin (docs/adr/0012-interactive-chat.md). Two independent controls:
 //  1. A concurrency ceiling on in-flight chat turns — chat is interactive, so it does NOT
@@ -21,6 +23,9 @@ type ChatLiveTurn = {
 }
 type ChatLive = { turns: ChatLiveTurn[]; max_concurrent: number }
 
+// One row in the admin conversation-oversight list; messages are fetched on demand (Dify holds them).
+type AdminConv = { id: number; created_by: string; target: string; title: string; updated_at: string; started: boolean }
+
 // elapsed renders a short "12s" / "3m 4s" since an ISO instant.
 function elapsed(startedAt: string): string {
   const secs = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
@@ -35,6 +40,12 @@ export default function ChatAdminPage() {
   const [turns, setTurns] = useState<ChatLiveTurn[]>([])
   const [auto, setAuto] = useState(true)
   const seeded = useRef(false)
+  const fullWidth = !Grid.useBreakpoint().md
+  const [convs, setConvs] = useState<AdminConv[]>([])
+  const [convSearch, setConvSearch] = useState('')
+  const [viewConv, setViewConv] = useState<AdminConv | null>(null)
+  const [viewTurns, setViewTurns] = useState<ChatTurn[]>([])
+  const [viewLoading, setViewLoading] = useState(false)
 
   const load = () =>
     api
@@ -48,8 +59,11 @@ export default function ChatAdminPage() {
         }
       })
       .catch(() => {})
+  const loadConvs = () =>
+    api.get<{ conversations: AdminConv[] }>('/api/admin/chat/conversations').then((r) => setConvs(r.conversations || [])).catch(() => {})
   useEffect(() => {
     load()
+    loadConvs()
   }, [])
   useEffect(() => {
     if (!auto) return
@@ -61,6 +75,24 @@ export default function ChatAdminPage() {
     await api.post('/api/admin/chat/config', { max_concurrent: limit })
     message.success(t('common.saved'))
   }
+
+  // Open one user's conversation read-only: pull its messages from Dify (keyed by the owner, so the
+  // admin sees exactly what that user saw). A conversation with no first turn yet has nothing to show.
+  const openConv = (c: AdminConv) => {
+    setViewConv(c)
+    setViewTurns([])
+    if (!c.started) return
+    setViewLoading(true)
+    api
+      .get<{ turns: ChatTurn[] }>(`/api/admin/chat/conversations/${c.id}/messages`)
+      .then((r) => setViewTurns(r.turns || []))
+      .catch((e) => message.error((e as Error).message || 'failed'))
+      .finally(() => setViewLoading(false))
+  }
+  const filteredConvs = useMemo(() => {
+    const q = convSearch.trim().toLowerCase()
+    return q ? convs.filter((c) => `${c.created_by} ${c.title} ${c.target}`.toLowerCase().includes(q)) : convs
+  }, [convs, convSearch])
 
   // Stop any in-flight turn from the live view: cancels the Dify stream + best-effort stops the
   // run server-side (runs as the turn's own end-user, not the admin).
@@ -144,6 +176,105 @@ export default function ChatAdminPage() {
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chatAdmin.none')} /> }}
         />
       </Card>
+
+      <Card
+        title={t('chatAdmin.convsCard')}
+        extra={
+          <Space>
+            <Input.Search allowClear placeholder={t('chatAdmin.searchConv')} value={convSearch} onChange={(e) => setConvSearch(e.target.value)} style={{ width: 200 }} />
+            <Button size="small" icon={<ReloadOutlined />} onClick={loadConvs}>
+              {t('nav.refresh')}
+            </Button>
+          </Space>
+        }
+      >
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          {t('chatAdmin.convsHint')}
+        </Typography.Text>
+        <Table
+          size="small"
+          rowKey="id"
+          dataSource={filteredConvs}
+          pagination={{ pageSize: 15, size: 'small' }}
+          scroll={{ x: 560 }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chatAdmin.convEmpty')} /> }}
+          columns={[
+            { title: t('chatAdmin.colUser'), dataIndex: 'created_by', width: 140 },
+            { title: t('chatAdmin.colTarget'), dataIndex: 'target', width: 150 },
+            {
+              title: t('chatAdmin.colConversation'),
+              dataIndex: 'title',
+              render: (title: string, c: AdminConv) =>
+                title || <Typography.Text type="secondary">{c.started ? t('chat.untitled') : t('chatAdmin.notStarted')}</Typography.Text>,
+            },
+            {
+              title: t('chatAdmin.colUpdated'),
+              dataIndex: 'updated_at',
+              width: 168,
+              render: (v: string) => <span style={{ fontSize: 12 }}>{formatReportTime(v, true)}</span>,
+            },
+            {
+              title: '',
+              key: 'view',
+              width: 48,
+              render: (_: unknown, c: AdminConv) => (
+                <Button size="small" type="text" icon={<EyeOutlined />} onClick={() => openConv(c)} title={t('chatAdmin.view')} />
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <Drawer
+        open={viewConv != null}
+        onClose={() => setViewConv(null)}
+        width={fullWidth ? '100%' : 640}
+        destroyOnClose
+        title={
+          viewConv ? (
+            <Space size={8} wrap>
+              <Tag>{viewConv.created_by}</Tag>
+              <Typography.Text>{viewConv.title || t('chat.untitled')}</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {viewConv.target}
+              </Typography.Text>
+            </Space>
+          ) : (
+            ''
+          )
+        }
+      >
+        {viewLoading ? (
+          <div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}>
+            <Spin />
+          </div>
+        ) : viewConv && !viewConv.started ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chatAdmin.notStarted')} />
+        ) : viewTurns.length === 0 ? (
+          <Empty description={t('chatAdmin.convEmpty')} />
+        ) : (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            {viewTurns.map((turn, i) => (
+              <div key={i}>
+                {turn.query && (
+                  <div
+                    style={{
+                      marginBottom: 8,
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      whiteSpace: 'pre-wrap',
+                      background: 'var(--ant-color-fill-secondary)',
+                    }}
+                  >
+                    {turn.query}
+                  </div>
+                )}
+                {turn.answer && <Markdown md={turn.answer} />}
+              </div>
+            ))}
+          </Space>
+        )}
+      </Drawer>
     </Space>
   )
 }

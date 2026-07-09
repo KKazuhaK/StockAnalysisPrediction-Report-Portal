@@ -68,6 +68,36 @@ func TestChatConversationCRUD(t *testing.T) {
 	}
 }
 
+// ListAllConversations is the admin oversight view: unlike ListConversations it returns every
+// user's threads (not just the caller's), carries created_by, and honors the owner + target filters.
+func TestListAllConversations(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	other := seedTarget(t, st)
+	st.CreateConversation(tgt, "alice")
+	st.CreateConversation(tgt, "bob")
+	st.CreateConversation(other, "bob")
+
+	all := st.ListAllConversations("", 0)
+	if len(all) != 3 {
+		t.Fatalf("ListAllConversations() = %d, want 3 across users", len(all))
+	}
+	for _, c := range all {
+		if c.CreatedBy == "" {
+			t.Fatalf("conversation %d missing created_by in admin list", c.ID)
+		}
+	}
+	if n := len(st.ListAllConversations("bob", 0)); n != 2 {
+		t.Fatalf("ListAllConversations(bob) = %d, want 2", n)
+	}
+	if n := len(st.ListAllConversations("alice", 0)); n != 1 {
+		t.Fatalf("ListAllConversations(alice) = %d, want 1", n)
+	}
+	if n := len(st.ListAllConversations("", tgt)); n != 2 {
+		t.Fatalf("ListAllConversations(target=%d) = %d, want 2", tgt, n)
+	}
+}
+
 // Starring a conversation is per-row (reflected by Get + List) and sorts starred
 // conversations ahead of the rest, independent of recency.
 func TestChatConversationStar(t *testing.T) {

@@ -643,5 +643,12 @@
   "settings.footerSection": "頁腳",
   "settings.timeSection": "時區",
   "settings.tokenValue": "權杖",
-  "settings.tokenLastUsed": "最近使用"
+  "settings.tokenLastUsed": "最近使用",
+  "chatAdmin.convsCard": "會話記錄",
+  "chatAdmin.convsHint": "唯讀檢視所有使用者與助手的會話。",
+  "chatAdmin.colUpdated": "更新",
+  "chatAdmin.view": "檢視",
+  "chatAdmin.convEmpty": "暫無會話",
+  "chatAdmin.notStarted": "（尚未開始）",
+  "chatAdmin.searchConv": "搜尋使用者 / 標題"
 }

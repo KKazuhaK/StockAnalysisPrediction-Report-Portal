@@ -298,3 +298,65 @@ func (s *Server) apiChatHistory(w http.ResponseWriter, r *http.Request, user str
 	}
 	writeJSON(w, map[string]any{"turns": turns})
 }
+
+// apiAdminChatConversations lists every user's conversations for the admin oversight view (in the
+// normal UI chats are owner-private). Optional ?user= / ?target_id= filters. Carries created_by +
+// the target name so the admin can tell whose thread with which assistant it is (docs/adr/0012).
+func (s *Server) apiAdminChatConversations(w http.ResponseWriter, r *http.Request, user string) {
+	filterUser := strings.TrimSpace(r.URL.Query().Get("user"))
+	var targetID int64
+	if v := strings.TrimSpace(r.URL.Query().Get("target_id")); v != "" {
+		fmt.Sscan(v, &targetID)
+	}
+	names := map[int64]string{}
+	targetName := func(id int64) string {
+		if n, ok := names[id]; ok {
+			return n
+		}
+		n := ""
+		if tgt, ok := s.st.GetTarget(id); ok {
+			n = tgt.Name
+		}
+		names[id] = n
+		return n
+	}
+	out := make([]map[string]any, 0)
+	for _, c := range s.st.ListAllConversations(filterUser, targetID) {
+		j := convJSON(c)
+		j["created_by"] = c.CreatedBy
+		j["target"] = targetName(c.TargetID)
+		out = append(out, j)
+	}
+	writeJSON(w, map[string]any{"conversations": out})
+}
+
+// apiAdminChatHistory returns a conversation's messages for the admin oversight view, bypassing the
+// owner check (apiChatHistory's ownConversation). Read-only: the messages come from Dify keyed by
+// the conversation's OWN creator, so an admin sees exactly what that user sees.
+func (s *Server) apiAdminChatHistory(w http.ResponseWriter, r *http.Request, user string) {
+	conv, ok := s.st.GetConversation(pathID(r, "id"))
+	if !ok {
+		jsonError(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	if conv.ConvID == "" {
+		writeJSON(w, map[string]any{"turns": []any{}})
+		return
+	}
+	tgt, ok := s.st.GetTarget(conv.TargetID)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	client, err := difyChatClient(tgt.Config)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	turns, err := client.Messages(r.Context(), conv.ConvID, s.difyEndUser(conv.CreatedBy), 100)
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, "dify: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"turns": turns, "user": conv.CreatedBy, "title": conv.Title})
+}

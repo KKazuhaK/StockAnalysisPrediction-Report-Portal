@@ -643,5 +643,12 @@
   "settings.footerSection": "Footer",
   "settings.timeSection": "Time zone",
   "settings.tokenValue": "Token",
-  "settings.tokenLastUsed": "Last used"
+  "settings.tokenLastUsed": "Last used",
+  "chatAdmin.convsCard": "Conversations",
+  "chatAdmin.convsHint": "Read-only oversight of every user’s assistant chats.",
+  "chatAdmin.colUpdated": "Updated",
+  "chatAdmin.view": "View",
+  "chatAdmin.convEmpty": "No conversations",
+  "chatAdmin.notStarted": "(not started yet)",
+  "chatAdmin.searchConv": "Search user or title"
 }

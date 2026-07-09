@@ -57,6 +57,39 @@ func (s *Store) ListConversations(user string, targetID int64) []ChatConversatio
 	return out
 }
 
+// ListAllConversations returns every user's conversations for the admin oversight view (chats are
+// owner-private in the normal UI), most-recently-updated first, optionally filtered by owner and/or
+// target. Unlike ListConversations it carries created_by so the admin sees whose thread it is.
+func (s *Store) ListAllConversations(filterUser string, targetID int64) []ChatConversation {
+	q := `SELECT id, target_id, COALESCE(conv_id,''), COALESCE(created_by,''), COALESCE(title,''), COALESCE(starred,0), created_at, updated_at
+		FROM chat_conversations WHERE 1=1`
+	var args []any
+	if filterUser != "" {
+		q += ` AND created_by=?`
+		args = append(args, filterUser)
+	}
+	if targetID != 0 {
+		q += ` AND target_id=?`
+		args = append(args, targetID)
+	}
+	q += ` ORDER BY updated_at DESC, id DESC`
+	rows, err := s.query(q, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []ChatConversation
+	for rows.Next() {
+		var c ChatConversation
+		var starred int
+		if rows.Scan(&c.ID, &c.TargetID, &c.ConvID, &c.CreatedBy, &c.Title, &starred, &c.CreatedAt, &c.UpdatedAt) == nil {
+			c.Starred = starred != 0
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // GetConversation loads one conversation by id (ok=false if absent).
 func (s *Store) GetConversation(id int64) (ChatConversation, bool) {
 	var c ChatConversation

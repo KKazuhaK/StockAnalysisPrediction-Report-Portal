@@ -266,7 +266,10 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatHistory))
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", s.requirePermJSON(PermRunBatch, s.apiChatSend))
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stop", s.requirePermJSON(PermRunBatch, s.apiChatStop)) // owner stops their in-flight turn
-	// Assistant admin: the concurrency ceiling + the live "who is chatting now" view (ADR 0012).
+	// Assistant admin: the concurrency ceiling, the live "who is chatting now" view, and read-only
+	// oversight of any user's conversations + messages (ADR 0012).
+	mux.HandleFunc("GET /api/admin/chat/conversations", s.requireAdminJSON(s.apiAdminChatConversations))
+	mux.HandleFunc("GET /api/admin/chat/conversations/{id}/messages", s.requireAdminJSON(s.apiAdminChatHistory))
 	mux.HandleFunc("GET /api/admin/chat/live", s.requireAdminJSON(s.apiAdminChatLive))
 	mux.HandleFunc("POST /api/admin/chat/stop/{id}", s.requireAdminJSON(s.apiAdminChatStop)) // admin stops any in-flight turn
 	mux.HandleFunc("POST /api/admin/chat/config", s.requireAdminJSON(s.apiAdminChatConfigSave))
