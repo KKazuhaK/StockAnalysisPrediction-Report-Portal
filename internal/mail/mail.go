@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"mime"
 	"net"
+	netmail "net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -34,6 +35,27 @@ func (c Config) Enabled() bool {
 // headers (or a body) when written into a header line.
 func stripCRLF(s string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
+
+// sanitizeRecipients validates and canonicalizes recipient addresses so untrusted
+// input cannot be used as malformed SMTP envelope/header values.
+func sanitizeRecipients(to []string) ([]string, error) {
+	out := make([]string, 0, len(to))
+	for _, raw := range to {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			return nil, errors.New("mail: empty recipient")
+		}
+		addr, err := netmail.ParseAddress(v)
+		if err != nil || addr == nil || strings.TrimSpace(addr.Address) == "" {
+			return nil, fmt.Errorf("mail: invalid recipient %q", raw)
+		}
+		if strings.ContainsAny(addr.Address, "\r\n") {
+			return nil, fmt.Errorf("mail: invalid recipient %q", raw)
+		}
+		out = append(out, addr.Address)
+	}
+	return out, nil
 }
 
 // BuildMessage assembles an RFC 5322 HTML message. The subject is RFC 2047 encoded
@@ -65,12 +87,15 @@ func (c Config) Send(to []string, subject, htmlBody string) error {
 	if len(to) == 0 {
 		return errors.New("mail: no recipients")
 	}
-	msg := BuildMessage(c.From, to, subject, htmlBody, time.Now())
+	safeTo, err := sanitizeRecipients(to)
+	if err != nil {
+		return err
+	}
+	msg := BuildMessage(c.From, safeTo, subject, htmlBody, time.Now())
 	addr := net.JoinHostPort(c.Host, fmt.Sprint(c.Port))
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
 
 	var conn net.Conn
-	var err error
 	if c.Security == "tls" {
 		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: c.Host})
 	} else {
@@ -100,7 +125,7 @@ func (c Config) Send(to []string, subject, htmlBody string) error {
 	if err := cl.Mail(c.From); err != nil {
 		return fmt.Errorf("mail: from: %w", err)
 	}
-	for _, rcpt := range to {
+	for _, rcpt := range safeTo {
 		if err := cl.Rcpt(rcpt); err != nil {
 			return fmt.Errorf("mail: rcpt %s: %w", rcpt, err)
 		}
