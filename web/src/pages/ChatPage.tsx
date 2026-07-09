@@ -164,6 +164,43 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convId])
 
+  // Reconcile: adopt Dify's real conversation state when it is at least as complete as the local
+  // view. This is the recovery primitive for a client-side interruption (phone lock, network drop)
+  // that rejected the send request even though the turn ran/completed server-side in Dify.
+  const reconcile = async (id: number): Promise<boolean> => {
+    try {
+      const m = await fetchHistory(id)
+      if (m.length >= msgsLenRef.current) {
+        setMsgs(m)
+        return true
+      }
+    } catch {
+      /* transient — the caller retries or gives up */
+    }
+    return false
+  }
+  // Poll reconcile for a short window: when the request dropped the turn may still be finishing, so
+  // give Dify a chance to persist the answer before we conclude anything.
+  const reconcilePoll = async (id: number): Promise<boolean> => {
+    for (let i = 0; i < 5; i++) {
+      if (await reconcile(id)) return true
+      await new Promise((r) => setTimeout(r, 4000))
+    }
+    return false
+  }
+
+  // Return-from-background recovery: a turn interrupted while the phone was locked / the tab hidden
+  // rejects client-side and renders "failed", but actually completed in Dify. The moment the tab
+  // becomes visible again, reconcile so the real answer replaces the false failure — no manual reload.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && convId != null && !sendingRef.current) reconcile(convId)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convId])
+
   // Create a conversation if none is open; returns its id (or undefined on failure).
   const ensureConv = async (): Promise<number | undefined> => {
     if (convId) return convId
@@ -214,7 +251,14 @@ export default function ChatPage() {
         if (text == null) setInput(q)
         message.warning(t('chat.busy'))
       } else {
-        setMsgs((m) => [...m, { role: 'assistant', content: '⚠️ ' + ((e as Error).message || t('chat.sendFailed')) }])
+        // A client-side interruption (phone lock, dropped network) rejects the request even though
+        // the turn is running/finished in Dify. Reconcile from history in the background before
+        // declaring failure — show the ⚠️ note only if the turn genuinely never landed.
+        reconcilePoll(id).then((recovered) => {
+          if (!recovered) {
+            setMsgs((m) => [...m, { role: 'assistant', content: '⚠️ ' + ((e as Error).message || t('chat.sendFailed')) }])
+          }
+        })
       }
     } finally {
       setSending(false)
