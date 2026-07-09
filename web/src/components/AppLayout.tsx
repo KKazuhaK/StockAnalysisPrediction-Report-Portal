@@ -161,7 +161,9 @@ export default function AppLayout() {
           )}
         </div>
 
-        <Space size={compact ? 6 : 10} wrap style={{ flexShrink: 0, marginLeft: 'auto' }}>
+        {/* Vertical gap (14) clears the queue badge's overhang so a 2-digit count (10+)
+            doesn't collide with the button on the wrapped row above it. */}
+        <Space size={compact ? [8, 14] : 10} wrap style={{ flexShrink: 0, marginLeft: 'auto' }}>
           {canRun && (
             // The primary action keeps its label even on mobile (unlike the other
             // nav buttons, which collapse to icons when compact).
@@ -180,7 +182,7 @@ export default function AppLayout() {
           {canRun && (
             // Queue glance with a live badge (everything not yet done: running + waiting
             // + scheduled). Icon-only on mobile.
-            <Badge count={(queue?.running ?? 0) + (queue?.waiting ?? 0) + (queue?.scheduled ?? 0)} size="small" offset={[-2, 2]}>
+            <Badge count={(queue?.running ?? 0) + (queue?.waiting ?? 0) + (queue?.scheduled ?? 0)} size="small" overflowCount={99} offset={[-4, 3]}>
               <Button icon={<UnorderedListOutlined />} onClick={() => setQueueOpen(true)} title={t('nav.queue')}>
                 {!compact && t('nav.queue')}
               </Button>

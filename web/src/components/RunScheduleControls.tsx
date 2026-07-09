@@ -46,11 +46,12 @@ export default function RunScheduleControls({
   if (value.mode === 'scheduled') {
     picker = (
       <DatePicker
-        showTime
+        showTime={{ format: 'HH:mm' }}
         value={value.runAt}
         onChange={(d) => set({ runAt: d })}
         disabled={disabled}
-        format="YYYY-MM-DD HH:mm:ss"
+        format="YYYY-MM-DD HH:mm"
+        popupClassName="rp-picker-popup"
         placeholder={t('run.pickTime')}
         style={{ width: mobile ? '100%' : undefined }}
       />

@@ -295,3 +295,50 @@ body {
     animation: none;
   }
 }
+
+/* Loading ring: one spinner shared by the boot splash (index.html) and every in-app
+   antd <Spin> (via ConfigProvider spin.indicator), replacing antd's default 4-dot
+   spinner. Sizes track antd's Spin size classes; the ring colour matches the splash. */
+.rp-spin-ring {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid rgba(22, 119, 255, 0.18);
+  border-top-color: #1677ff;
+  animation: rp-spin 0.8s linear infinite;
+}
+.ant-spin-lg .rp-spin-ring {
+  width: 30px;
+  height: 30px;
+}
+.ant-spin-sm .rp-spin-ring {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+@keyframes rp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rp-spin-ring {
+    animation-duration: 1.6s;
+  }
+}
+
+/* Phone date/time picker: the showTime panel (calendar + time columns) is wider than a
+   phone, so antd pushes it off the left edge and the calendar gets clipped. Cap the popup
+   to the viewport and let the panels scroll horizontally inside it instead. */
+@media (max-width: 575px) {
+  .rp-picker-popup {
+    max-width: calc(100vw - 16px);
+  }
+  .rp-picker-popup .ant-picker-panel-container {
+    overflow-x: auto;
+  }
+  .rp-picker-popup .ant-picker-panels {
+    flex-wrap: nowrap;
+  }
+}
