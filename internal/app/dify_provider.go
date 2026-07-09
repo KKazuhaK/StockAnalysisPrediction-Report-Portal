@@ -116,10 +116,10 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 			// failure. Untracked (no error → no re-run) keeps run_id so it can be reconciled later.
 			return batch.RunResult{Status: batch.Untracked, RunID: runID, Detail: fmt.Sprintf("poll dify run %s: %v", runID, err)}, nil
 		}
-		return difyResultToBatch(r), nil
+		return p.reconcileResult(ctx, r, convID), nil
 	}
 	if err == nil {
-		return difyResultToBatch(r), nil
+		return p.reconcileResult(ctx, r, convID), nil
 	}
 	// Job cancelled: aborting the stream only stops OUR wait — Dify keeps executing the
 	// workflow until told to stop. Best-effort stop it, then let the engine mark the row.
@@ -139,7 +139,7 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 		if err != nil {
 			return batch.RunResult{Status: batch.Untracked, RunID: runID, Detail: fmt.Sprintf("reconcile dify run %s: %v", runID, err)}, nil
 		}
-		return difyResultToBatch(r), nil
+		return p.reconcileResult(ctx, r, convID), nil
 	}
 	if p.chat && convID != "" { // pure agent/chat: no run id — reconcile via message history
 		r, err = p.reconcileChat(ctx, convID)
@@ -171,20 +171,24 @@ func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.
 // restart/resume and manual-reconcile entry point (batch.Reconciler); an empty pair means there
 // is no handle to reconcile from.
 func (p difyProvider) Reconcile(ctx context.Context, runID, convID string) (batch.RunResult, error) {
-	var r dify.RunResult
-	var err error
 	switch {
 	case runID != "":
-		r, err = p.reconcile(ctx, runID)
+		r, err := p.reconcile(ctx, runID)
+		if err != nil {
+			return batch.RunResult{}, err
+		}
+		// Pass convID so a chatflow whose workflow run reconciles failed-with-no-error still
+		// recovers its real reason from the message level — this is the admin's manual retry.
+		return p.reconcileResult(ctx, r, convID), nil
 	case convID != "":
-		r, err = p.reconcileChat(ctx, convID)
+		r, err := p.reconcileChat(ctx, convID)
+		if err != nil {
+			return batch.RunResult{}, err
+		}
+		return difyResultToBatch(r), nil
 	default:
 		return batch.RunResult{}, fmt.Errorf("no run or conversation id to reconcile")
 	}
-	if err != nil {
-		return batch.RunResult{}, err
-	}
-	return difyResultToBatch(r), nil
 }
 
 // reconcile polls a started WORKFLOW/chatflow run to its terminal state by its run id.
@@ -255,13 +259,51 @@ func difyTerminal(status string) bool {
 }
 
 // difyResultToBatch maps a Dify run outcome to the engine's per-row result. A Dify
-// workflow status is succeeded / failed / stopped; only succeeded is a success.
+// workflow status is succeeded / failed / stopped; only succeeded is a success. A failure
+// always carries a non-empty Detail so a failed run is never shown in the queue with no
+// reason: Dify's own error when it gave one, else a synthesized note — Dify commonly reports
+// a failed / timed-out run (e.g. a long Deep Research run) with an empty error field.
 func difyResultToBatch(r dify.RunResult) batch.RunResult {
 	out := batch.Failed
 	if r.Status == "succeeded" {
 		out = batch.Ok
 	}
-	return batch.RunResult{RunID: r.WorkflowRunID, Status: out, Detail: r.Error, Raw: r.Raw}
+	detail := r.Error
+	if out == batch.Failed && detail == "" {
+		detail = difyFailFallback(r)
+	}
+	return batch.RunResult{RunID: r.WorkflowRunID, Status: out, Detail: detail, Raw: r.Raw}
+}
+
+// difyFailFallback synthesizes a human-readable reason for a run Dify reported failed with an
+// empty error field, so the run queue never shows a bare "failed" with no detail. It names the
+// raw status and the run id (to look it up in the Dify console) and flags the common long-run
+// time-limit case.
+func difyFailFallback(r dify.RunResult) string {
+	status := r.Status
+	if status == "" {
+		status = "failed"
+	}
+	msg := fmt.Sprintf("dify reported the run as %q with no error message (a long run may have hit a time limit)", status)
+	if r.WorkflowRunID != "" {
+		msg += fmt.Sprintf("; check run %s in the dify console", r.WorkflowRunID)
+	}
+	return msg
+}
+
+// reconcileResult maps a reconciled/streamed Dify outcome to the engine result and, for a
+// chatflow failure with no workflow-level error, supplements the detail from the conversation's
+// last message — a chatflow's real failure reason usually lives at the message level, not on the
+// workflow run (whose error field is often empty). Pure supplement: it never changes the outcome
+// or run id, so it cannot cause a re-run; a non-chat app or an empty convID makes it a no-op.
+func (p difyProvider) reconcileResult(ctx context.Context, r dify.RunResult, convID string) batch.RunResult {
+	out := difyResultToBatch(r)
+	if out.Status == batch.Failed && r.Error == "" && p.chat && convID != "" {
+		if cr, err := p.c.GetChatOutcome(ctx, convID, p.user); err == nil && cr.Error != "" {
+			out.Detail = cr.Error
+		}
+	}
+	return out
 }
 
 // isPermanentDifyErr reports whether an error is a non-retryable Dify 4xx (a 429

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -328,5 +329,84 @@ func TestDifyChatProviderRunsChat(t *testing.T) {
 	}
 	if res.Status != batch.Ok {
 		t.Errorf("status = %v, want Ok", res.Status)
+	}
+}
+
+// A run Dify reports as failed with an EMPTY error field must still carry a non-empty,
+// human-readable detail (so the run queue never shows a reasonless "失败"), naming the run
+// id to look up in the console. A real error is passed through verbatim; success has none.
+func TestDifyResultFailFallback(t *testing.T) {
+	got := difyResultToBatch(dify.RunResult{WorkflowRunID: "run-9", Status: "failed"})
+	if got.Status != batch.Failed {
+		t.Fatalf("status = %v, want Failed", got.Status)
+	}
+	if got.Detail == "" || !strings.Contains(got.Detail, "run-9") {
+		t.Fatalf("empty-error failure detail = %q, want a non-empty reason naming the run id", got.Detail)
+	}
+	if got := difyResultToBatch(dify.RunResult{Status: "failed", Error: "model timeout"}); got.Detail != "model timeout" {
+		t.Fatalf("detail = %q, want the real error passed through unchanged", got.Detail)
+	}
+	if got := difyResultToBatch(dify.RunResult{Status: "succeeded"}); got.Status != batch.Ok || got.Detail != "" {
+		t.Fatalf("success = %+v, want Ok with an empty detail", got)
+	}
+}
+
+// End to end: a workflow that finishes 'failed' with an empty error field comes back with a
+// synthesized, non-empty detail — the fix for a failed run showing no reason in the queue.
+func TestDifyProviderFailedEmptyErrorHasDetail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"event":"workflow_started","task_id":"t","workflow_run_id":"run-e","data":{}}`+"\n\n")
+		io.WriteString(w, `data: {"event":"workflow_finished","task_id":"t","workflow_run_id":"run-e","data":{"status":"failed","error":""}}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	p := difyProvider{c: dify.New(srv.URL, "k", srv.Client()), user: "u"}
+	res, err := p.Run(context.Background(), map[string]string{"symbol": "1"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != batch.Failed {
+		t.Fatalf("status = %v, want Failed", res.Status)
+	}
+	if res.Detail == "" || !strings.Contains(res.Detail, "run-e") {
+		t.Fatalf("detail = %q, want a non-empty reason naming the run id", res.Detail)
+	}
+}
+
+// A chatflow's real failure reason usually lives on the conversation's last message, not on
+// the workflow run (whose error field is often empty). When the workflow-run reconcile comes
+// back failed-with-no-error, the provider supplements the detail from the message-level error.
+func TestDifyChatProviderEnrichesFailFromMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/chat-messages":
+			// chatflow: emits a workflow_run_id + conversation_id, then the stream drops.
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"event":"workflow_started","task_id":"t","workflow_run_id":"run-c","conversation_id":"conv-1","data":{}}`+"\n\n")
+		case "/workflows/run/run-c":
+			io.WriteString(w, `{"id":"run-c","status":"failed","error":""}`) // workflow run: failed, no detail
+		case "/messages":
+			io.WriteString(w, `{"data":[{"id":"m1","status":"error","error":"LLM call failed: quota exceeded","created_at":1}]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: srv.URL, APIKey: "k", Mode: "chat"})
+	prov, err := buildDifyProvider(string(cfg), "u", false, 0, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("buildDifyProvider: %v", err)
+	}
+	res, err := prov.Run(context.Background(), map[string]string{"query": "分析"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != batch.Failed {
+		t.Fatalf("status = %v, want Failed", res.Status)
+	}
+	if res.Detail != "LLM call failed: quota exceeded" {
+		t.Fatalf("detail = %q, want the message-level error surfaced", res.Detail)
 	}
 }
