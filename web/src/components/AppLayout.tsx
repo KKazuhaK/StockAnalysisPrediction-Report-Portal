@@ -349,8 +349,10 @@ export default function AppLayout() {
       {canRun && <QueueDrawer open={queueOpen} onClose={() => setQueueOpen(false)} />}
 
       {/* Back-to-top appears once scrolled down. Data refreshes automatically (queue
-          polls; the home list refetches on focus + interval), so no manual refresh. */}
-      {showTop && (
+          polls; the home list refetches on focus + interval), so no manual refresh.
+          Not on chat: that page scrolls its own thread and auto-sticks to the newest
+          message, and the float button would overlap the composer's send button. */}
+      {showTop && !onChat && (
         <FloatButton
           icon={<VerticalAlignTopOutlined />}
           tooltip={t('nav.backTop')}
