@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { TypeGroup, TypeRow, TypesResp } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
+import StickyActionBar from '../../components/StickyActionBar'
 
 // antd's Tag preset colors (https://ant.design/components/tag) — "default" maps
 // to no color prop (the neutral grey Tag).
@@ -294,7 +295,9 @@ export default function TypesPage() {
   ]
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    // A plain flex column (not antd Space) so the sticky save bar's parent is a tall block it can
+    // pin against — Space wraps each child in an item box only as tall as the bar itself.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
       <Space wrap>
         <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
           {t('common.add')}
@@ -351,11 +354,11 @@ export default function TypesPage() {
         )
       })}
 
-      <div>
+      <StickyActionBar>
         <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
           {t('types.save')}
         </Button>
-      </div>
+      </StickyActionBar>
 
       <Modal
         open={open}
@@ -385,6 +388,6 @@ export default function TypesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </Space>
+    </div>
   )
 }

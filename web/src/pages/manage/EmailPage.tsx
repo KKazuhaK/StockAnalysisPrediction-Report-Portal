@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { App, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
+import StickyActionBar from '../../components/StickyActionBar'
 
 interface EmailConfig {
   enabled: boolean
@@ -116,9 +117,6 @@ export default function EmailPage() {
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {t('email.publicUrlHint')}
         </Typography.Text>
-        <Button type="primary" loading={saving} onClick={save}>
-          {t('common.save')}
-        </Button>
 
         <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
           {t('email.test')}
@@ -130,6 +128,11 @@ export default function EmailPage() {
           </Button>
         </Space>
       </Space>
+      <StickyActionBar>
+        <Button type="primary" loading={saving} onClick={save}>
+          {t('common.save')}
+        </Button>
+      </StickyActionBar>
     </Card>
   )
 }

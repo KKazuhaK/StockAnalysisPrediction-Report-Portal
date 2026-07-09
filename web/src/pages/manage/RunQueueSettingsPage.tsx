@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { BatchConfig, RunMode } from '../../api/types'
 import RunPresetsEditor from './RunPresetsEditor'
+import StickyActionBar from '../../components/StickyActionBar'
 
 // Standalone run-queue settings (docs/adr/0007 + 0008): the queue concurrency budget,
 // the default base priority, the Dify end-user template, and the Slurm-style multifactor
@@ -76,7 +77,10 @@ export default function RunQueueSettingsPage() {
 
   return (
     <Card title={t('batch.admin.settings')}>
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      {/* Config in its own flex block (not antd Space, whose per-item wrapper is too short) so the
+          sticky Save pins against the settings above and comes to rest before the preset editor,
+          which manages its own per-window saves. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>
         {row(
           t('batch.admin.maxJobs'),
           t('batch.admin.maxJobsHint'),
@@ -165,16 +169,20 @@ export default function RunQueueSettingsPage() {
           <InputNumber min={1} max={8760} value={fairHalflife} onChange={(v) => setFairHalflife(v || 168)} addonAfter={t('batch.admin.hours')} />,
         )}
 
-        <Button type="primary" onClick={save}>
-          {t('common.save')}
-        </Button>
+        <StickyActionBar>
+          <Button type="primary" onClick={save}>
+            {t('common.save')}
+          </Button>
+        </StickyActionBar>
+      </div>
 
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', marginTop: 12 }}>
         <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
           {t('batch.admin.presetsTitle')}
         </Divider>
         <Typography.Text type="secondary">{t('batch.admin.presetsHint')}</Typography.Text>
         <RunPresetsEditor />
-      </Space>
+      </div>
     </Card>
   )
 }

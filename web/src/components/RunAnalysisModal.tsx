@@ -48,7 +48,11 @@ export default function RunAnalysisModal({
       .get<RunPresetsResp>('/api/admin/batch/presets')
       .then((r) => {
         setPresets(r.presets || [])
-        setSchedule((s) => ({ ...s, mode: r.default_mode || 'now', idle: !!r.default_idle }))
+        // Fall back to immediate if the admin default is "preset" but no preset windows are enabled
+        // (the preset mode button is hidden then, so it couldn't be selected anyway).
+        const hasPresets = (r.presets || []).some((p) => p.enabled)
+        const mode = r.default_mode === 'preset' && !hasPresets ? 'now' : r.default_mode || 'now'
+        setSchedule((s) => ({ ...s, mode, idle: !!r.default_idle }))
       })
       .catch(() => {})
   }, [open])

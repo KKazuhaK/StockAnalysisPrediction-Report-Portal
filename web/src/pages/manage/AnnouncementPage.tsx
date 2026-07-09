@@ -6,6 +6,7 @@ import { api } from '../../api/client'
 import type { SettingsResp } from '../../api/types'
 import { useSite } from '../../site'
 import { announcementAlertType } from '../../components/SiteAnnouncement'
+import StickyActionBar from '../../components/StickyActionBar'
 
 const ANNOUNCEMENT_LEVELS = ['notice', 'success', 'warning', 'error'] as const
 
@@ -120,9 +121,11 @@ export default function AnnouncementPage() {
             )
           }}
         </Form.Item>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
-          {t('common.save')}
-        </Button>
+        <StickyActionBar>
+          <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
+            {t('common.save')}
+          </Button>
+        </StickyActionBar>
       </Form>
     </Space>
   )

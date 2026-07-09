@@ -6,6 +6,7 @@ import { api } from '../../api/client'
 import type { SettingsResp } from '../../api/types'
 import { useSite } from '../../site'
 import { BrandIcon } from '../../components/icons'
+import StickyActionBar from '../../components/StickyActionBar'
 
 // tzOptions lists the panel-timezone choices: a "follow system" default plus the
 // browser's full IANA zone list (Intl.supportedValuesOf, guarded for older engines).
@@ -208,9 +209,11 @@ export default function SiteSettingsPage() {
         <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
           {t('settings.timezoneHint')}
         </Typography.Paragraph>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
-          {t('common.save')}
-        </Button>
+        <StickyActionBar>
+          <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
+            {t('common.save')}
+          </Button>
+        </StickyActionBar>
       </Form>
     </Space>
   )
