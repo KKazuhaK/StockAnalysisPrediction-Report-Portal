@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { AutoComplete, Input, Space, Tag, Typography } from 'antd'
+import { AutoComplete, Grid, Input, Space, Tag, Typography } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +14,7 @@ import type { SymbolInfo } from '../api/types'
 export default function Omnibox({ size = 'large', initial = '' }: { size?: 'large' | 'middle'; initial?: string }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const mobile = !Grid.useBreakpoint().md
   const [value, setValue] = useState(initial)
   const [options, setOptions] = useState<{ value: string; label: React.ReactNode; sym: string }[]>([])
   const timer = useRef<number>()
@@ -76,7 +77,9 @@ export default function Omnibox({ size = 'large', initial = '' }: { size?: 'larg
       // Don't auto-select the first option on Enter — Enter should run a full search.
       defaultActiveFirstOption={false}
       style={{ width: '100%' }}
-      popupMatchSelectWidth={480}
+      // A fixed 480px popup overflows a phone and pushes the names off-screen; match the
+      // input width on mobile so suggestions stay fully visible.
+      popupMatchSelectWidth={mobile ? true : 480}
     >
       <Input
         size={size}

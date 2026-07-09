@@ -223,6 +223,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { admin, user } = useAuth()
+  const mobile = !Grid.useBreakpoint().md
   const [jobs, setJobs] = useState<BatchJob[]>([])
   const [summary, setSummary] = useState<BatchQueueSummary | null>(null)
   const [targets, setTargets] = useState<BatchTarget[]>([])
@@ -322,8 +323,8 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         </div>
       ),
     },
-    { title: t('batch.col.createdBy'), dataIndex: 'created_by', width: 110 },
-    { title: t('queue.colSubmitted'), dataIndex: 'created_at', width: 160, render: (s: string) => <span style={{ fontSize: 12 }}>{s}</span> },
+    { title: t('batch.col.createdBy'), dataIndex: 'created_by', width: 110, responsive: ['md'] },
+    { title: t('queue.colSubmitted'), dataIndex: 'created_at', width: 160, responsive: ['lg'], render: (s: string) => <span style={{ fontSize: 12 }}>{s}</span> },
     {
       title: t('batch.col.status'),
       width: 108,
@@ -341,6 +342,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
       // and non-queued jobs, and non-admins, show a static tag (ADR 0008).
       title: t('batch.priorityLabel'),
       width: 116,
+      responsive: ['md'],
       render: (_: unknown, j) =>
         admin && j.status === 'queued' && !j.scheduled && !isUrgent(j.priority) ? (
           <InputNumber
@@ -429,64 +431,68 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   ]
 
   const stat = (label: string, value: number) => (
-    <Card size="small" style={{ flex: 1, minWidth: 120 }}>
-      <div style={{ fontSize: 24, fontWeight: 500 }}>{value}</div>
-      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+    <Card size="small" styles={{ body: { padding: mobile ? '8px 12px' : undefined } }}>
+      <div style={{ fontSize: mobile ? 20 : 24, fontWeight: 500, lineHeight: 1.2 }}>{value}</div>
+      <Typography.Text type="secondary" style={{ fontSize: mobile ? 12 : 13 }}>
         {label}
       </Typography.Text>
     </Card>
   )
 
+  // Budget / my-priority / clear-finished / auto-refresh. In the card header (extra) on
+  // desktop; on a phone that corner is too cramped, so they move to a full-width body row.
+  const queueControls = (
+    <Space wrap>
+      {summary?.budget != null && (
+        <span style={{ fontSize: 12 }}>
+          <Typography.Text type="secondary">{t('queue.budget')}</Typography.Text>{' '}
+          <Tag>
+            {summary.running_rows ?? summary.running ?? 0} / {summary.budget}
+          </Tag>
+        </span>
+      )}
+      {summary?.my_priority != null && (
+        <span style={{ fontSize: 12 }}>
+          <Typography.Text type="secondary">{t('queue.myPriority')}</Typography.Text> {priorityTag(t, String(summary.my_priority))}
+        </span>
+      )}
+      {selectedJobs.length > 0 && (
+        <Popconfirm title={t('queue.cancelJobsConfirm', { n: selectedJobs.length })} onConfirm={() => cancelJobs(selectedJobs)}>
+          <Button size="small" danger icon={<StopOutlined />}>
+            {t('queue.cancelSelected', { n: selectedJobs.length })}
+          </Button>
+        </Popconfirm>
+      )}
+      {admin && (
+        <Popconfirm title={t('queue.clearFinishedConfirm')} onConfirm={clearFinished}>
+          <Button size="small" icon={<DeleteOutlined />}>
+            {t('queue.clearFinished')}
+          </Button>
+        </Popconfirm>
+      )}
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {t('queue.autoRefresh')}
+      </Typography.Text>
+      <Switch size="small" checked={auto} onChange={setAuto} />
+    </Space>
+  )
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {showStats && (
-        <Space wrap style={{ width: '100%' }}>
+        // A responsive grid (not Space wrap): auto-fit + 1fr keeps every tile the same size
+        // and stretched to fill its row, so the stats never leave a lone half-empty card.
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 10, width: '100%' }}>
           {stat(t('queue.running'), summary?.running ?? 0)}
           {stat(t('queue.waiting'), summary?.waiting ?? 0)}
           {stat(t('queue.scheduled'), summary?.scheduled ?? 0)}
           {stat(t('queue.doneToday'), doneToday)}
           {stat(t('queue.budget'), summary?.budget ?? 0)}
-        </Space>
+        </div>
       )}
 
-      <Card
-        title={t('queue.title')}
-        extra={
-          <Space wrap>
-            {summary?.budget != null && (
-              <span style={{ fontSize: 12 }}>
-                <Typography.Text type="secondary">{t('queue.budget')}</Typography.Text>{' '}
-                <Tag>
-                  {summary.running_rows ?? summary.running ?? 0} / {summary.budget}
-                </Tag>
-              </span>
-            )}
-            {summary?.my_priority != null && (
-              <span style={{ fontSize: 12 }}>
-                <Typography.Text type="secondary">{t('queue.myPriority')}</Typography.Text> {priorityTag(t, String(summary.my_priority))}
-              </span>
-            )}
-            {selectedJobs.length > 0 && (
-              <Popconfirm title={t('queue.cancelJobsConfirm', { n: selectedJobs.length })} onConfirm={() => cancelJobs(selectedJobs)}>
-                <Button size="small" danger icon={<StopOutlined />}>
-                  {t('queue.cancelSelected', { n: selectedJobs.length })}
-                </Button>
-              </Popconfirm>
-            )}
-            {admin && (
-              <Popconfirm title={t('queue.clearFinishedConfirm')} onConfirm={clearFinished}>
-                <Button size="small" icon={<DeleteOutlined />}>
-                  {t('queue.clearFinished')}
-                </Button>
-              </Popconfirm>
-            )}
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {t('queue.autoRefresh')}
-            </Typography.Text>
-            <Switch size="small" checked={auto} onChange={setAuto} />
-          </Space>
-        }
-      >
+      <Card title={t('queue.title')} extra={mobile ? undefined : queueControls}>
+        {mobile && <div style={{ marginBottom: 12 }}>{queueControls}</div>}
         <Space wrap style={{ marginBottom: 12 }}>
           <Input.Search allowClear placeholder={t('queue.search')} value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 200 }} />
           <Select
@@ -522,10 +528,10 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
             dataSource={rows}
             columns={cols}
             pagination={{ pageSize: 15 }}
-            // The fixed columns sum to ~900px; give the flexible workflow column real room
-            // (and let the table scroll horizontally on phones) instead of crushing it to a
-            // one-character-per-line sliver.
-            scroll={{ x: 1160 }}
+            // Desktop shows every column (~1160px, scrolls); on mobile the secondary columns
+            // (submitter / time / priority) are hidden, so the essentials — workflow, status,
+            // progress, actions — fit a much narrower scroll instead of a 1160px sliver.
+            scroll={{ x: mobile ? 640 : 1160 }}
           />
         )}
       </Card>
@@ -543,7 +549,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
       >
         <Space direction="vertical" style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('queue.rescheduleHint')}</Typography.Text>
-          <DatePicker showTime value={reschedAt} onChange={setReschedAt} format="YYYY-MM-DD HH:mm:ss" style={{ width: '100%' }} placeholder={t('run.pickTime')} />
+          <DatePicker showTime={{ format: 'HH:mm' }} value={reschedAt} onChange={setReschedAt} format="YYYY-MM-DD HH:mm" popupClassName="rp-picker-popup" style={{ width: '100%' }} placeholder={t('run.pickTime')} />
         </Space>
       </Modal>
     </Space>

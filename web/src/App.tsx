@@ -143,6 +143,9 @@ function Themed() {
   return (
     <ConfigProvider
       locale={antd}
+      // One loading spinner everywhere: the same ring as the boot splash (index.html),
+      // instead of antd's default 4-dot spinner. Sizing tracks Spin's size via CSS.
+      spin={{ indicator: <span className="rp-spin-ring" /> }}
       theme={{
         algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: { colorPrimary: '#1677ff', borderRadius: 8 },
