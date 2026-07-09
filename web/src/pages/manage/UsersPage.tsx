@@ -272,6 +272,8 @@ export default function UsersPage() {
             options={roles.map((r) => ({ value: r.code, label: r.name }))}
           />
           <Select
+            showSearch
+            optionFilterProp="label"
             allowClear
             placeholder={t('users.group')}
             style={{ width: 160 }}

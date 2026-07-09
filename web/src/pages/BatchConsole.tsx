@@ -130,6 +130,8 @@ export default function BatchConsole() {
             <Space wrap>
               <span>{t('batch.target')}：</span>
               <Select
+                showSearch
+                optionFilterProp="label"
                 style={{ minWidth: 280 }}
                 placeholder={t('batch.selectTarget')}
                 value={targetId}

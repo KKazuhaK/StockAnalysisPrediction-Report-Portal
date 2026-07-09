@@ -173,6 +173,8 @@ export default function RunAnalysisModal({
         <div>
           <Typography.Text type="secondary">{t('run.workflow')}</Typography.Text>
           <Select
+            showSearch
+            optionFilterProp="label"
             style={{ width: '100%', marginTop: 4 }}
             placeholder={t('run.selectWorkflow')}
             value={targetId}

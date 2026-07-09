@@ -509,8 +509,8 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
               { value: 'cancelled', label: t('batch.status.cancelled') },
             ]}
           />
-          <Select allowClear placeholder={t('batch.col.createdBy')} style={{ width: 140 }} value={fUser || undefined} onChange={(v) => setFUser(v || '')} options={submitters.map((u) => ({ value: u, label: u }))} />
-          <Select allowClear placeholder={t('run.workflow')} style={{ width: 200 }} value={fTarget} onChange={setFTarget} options={targets.map((tg) => ({ value: tg.id, label: tg.name }))} />
+          <Select showSearch optionFilterProp="label" allowClear placeholder={t('batch.col.createdBy')} style={{ width: 140 }} value={fUser || undefined} onChange={(v) => setFUser(v || '')} options={submitters.map((u) => ({ value: u, label: u }))} />
+          <Select showSearch optionFilterProp="label" allowClear placeholder={t('run.workflow')} style={{ width: 200 }} value={fTarget} onChange={setFTarget} options={targets.map((tg) => ({ value: tg.id, label: tg.name }))} />
         </Space>
         {rows.length === 0 ? (
           <Empty description={t('queue.empty')} />
