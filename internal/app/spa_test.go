@@ -137,7 +137,8 @@ func TestSpaInjectsBranding(t *testing.T) {
 		"index.html": {Data: []byte(`<head><title>` + defaultSiteTitle + `</title>` +
 			`<link rel="icon" type="image/svg+xml" href="/favicon.svg" />` +
 			`<link rel="apple-touch-icon" href="/pwa-icon" /></head>` +
-			`<body><div id="boot-splash"><!--RP_BOOT_LOGO_START--><svg>default</svg><!--RP_BOOT_LOGO_END--></div></body>`)},
+			`<body><div id="boot-splash"><!--RP_BOOT_LOGO_START--><svg>default</svg><!--RP_BOOT_LOGO_END-->` +
+				`<div id="boot-name"><!--RP_BOOT_NAME_START-->` + defaultSiteTitle + `<!--RP_BOOT_NAME_END--></div></div></body>`)},
 	}
 	brand := func() (string, string) { return "MyPortal", "/site-assets/logo.png" }
 	h := spaHandlerFS(fsys, brand, "test")
@@ -160,6 +161,10 @@ func TestSpaInjectsBranding(t *testing.T) {
 	}
 	if !strings.Contains(body, `<img src="/site-assets/logo.png" alt="" />`) {
 		t.Errorf("boot-splash logo not injected: %q", body)
+	}
+	// The boot splash shows the site name, not the default brand.
+	if !strings.Contains(body, `<div id="boot-name">MyPortal</div>`) {
+		t.Errorf("boot-splash name not injected: %q", body)
 	}
 	// apple-touch-icon points at the logo (one cacheable URL), not /pwa-icon.
 	if strings.Contains(body, `href="/pwa-icon"`) {

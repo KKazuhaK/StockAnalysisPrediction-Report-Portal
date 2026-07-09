@@ -47,6 +47,17 @@
           transform: rotate(360deg);
         }
       }
+      #boot-splash #boot-name {
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: #000000d9;
+      }
+      @media (prefers-color-scheme: dark) {
+        #boot-splash #boot-name {
+          color: #ffffffd9;
+        }
+      }
     </style>
   </head>
   <body>
@@ -66,6 +77,7 @@
           <circle cx="25" cy="9" r="2.1" fill="#fff" />
         </svg>
         <!--RP_BOOT_LOGO_END-->
+        <div id="boot-name"><!--RP_BOOT_NAME_START-->研报门户<!--RP_BOOT_NAME_END--></div>
         <div class="ring"></div>
       </div>
     </div>

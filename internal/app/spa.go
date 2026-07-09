@@ -169,6 +169,7 @@ func brandIndex(index []byte, brand spaBranding) []byte {
 		out = bytes.Replace(out,
 			[]byte("<title>"+defaultSiteTitle+"</title>"),
 			[]byte("<title>"+html.EscapeString(title)+"</title>"), 1)
+		out = replaceBootName(out, title)
 	}
 	if favicon != "" {
 		esc := html.EscapeString(favicon)
@@ -201,4 +202,23 @@ func replaceBootLogo(html_ []byte, logo string) []byte {
 	j = i + j + len(end)
 	img := []byte(`<img src="` + html.EscapeString(logo) + `" alt="" />`)
 	return append(append(append([]byte{}, html_[:i]...), img...), html_[j:]...)
+}
+
+// replaceBootName swaps the marker-delimited default splash name for the site title, so the boot
+// splash (before the SPA mounts) shows the real site name instead of the default brand. A no-op
+// when the markers are absent; never mutates the caller's slice.
+func replaceBootName(html_ []byte, title string) []byte {
+	start := []byte("<!--RP_BOOT_NAME_START-->")
+	end := []byte("<!--RP_BOOT_NAME_END-->")
+	i := bytes.Index(html_, start)
+	if i < 0 {
+		return html_
+	}
+	j := bytes.Index(html_[i:], end)
+	if j < 0 {
+		return html_
+	}
+	j = i + j + len(end)
+	name := []byte(html.EscapeString(title))
+	return append(append(append([]byte{}, html_[:i]...), name...), html_[j:]...)
 }
