@@ -37,7 +37,7 @@ import type { Dayjs } from 'dayjs'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchQueueSummary, BatchTarget } from '../api/types'
-import { BASE_MAX, fmtInputs, isTerminal, isUrgent, priorityNum, priorityTag, statusTag } from '../lib/batchUi'
+import { BASE_MAX, fmtInputs, InputsPreview, isTerminal, isUrgent, priorityNum, priorityTag, statusTag } from '../lib/batchUi'
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
@@ -112,15 +112,15 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
   }
   const cols: ColumnsType<BatchItem> = [
     { title: t('batch.col.row'), dataIndex: 'row_index', width: 48 },
-    { title: t('batch.col.inputs'), render: (_: unknown, it) => <span style={{ fontSize: 12 }}>{fmtInputs(it.inputs)}</span> },
+    { title: t('batch.col.inputs'), render: (_: unknown, it) => <InputsPreview inputs={it.inputs} rows={3} secondary={false} /> },
     { title: t('batch.col.status'), dataIndex: 'status', width: 92, render: (s: string) => statusTag(t, s) },
     {
       title: t('batch.col.error'),
       render: (_: unknown, it) =>
         it.error ? (
-          <Typography.Text type="danger" style={{ fontSize: 12 }}>
+          <Typography.Paragraph type="danger" ellipsis={{ rows: 3, tooltip: it.error }} style={{ fontSize: 12, marginBottom: 0 }}>
             {it.error}
-          </Typography.Text>
+          </Typography.Paragraph>
         ) : it.status === 'succeeded' && symbolOf(it) ? (
           <Link to={`/stock/${encodeURIComponent(symbolOf(it))}`}>{t('queue.viewReport')}</Link>
         ) : (
@@ -315,11 +315,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
       render: (_: unknown, j) => (
         <div>
           <div style={{ fontSize: 13 }}>{targetName(j.target_id)}</div>
-          {fmtInputs(j.inputs) && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {fmtInputs(j.inputs)}
-            </Typography.Text>
-          )}
+          <InputsPreview inputs={j.inputs} />
         </div>
       ),
     },

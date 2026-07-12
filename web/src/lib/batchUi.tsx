@@ -1,4 +1,5 @@
-import { Tag, Tooltip } from 'antd'
+import { Tag, Tooltip, Typography } from 'antd'
+import type { CSSProperties } from 'react'
 import type { TFunction } from 'i18next'
 
 // Shared presentation for run/queue views. Priority is a Slurm-style number now, not a
@@ -68,6 +69,34 @@ export function fmtInputs(s?: string) {
   } catch {
     return s
   }
+}
+
+// InputsPreview renders a run's inputs (see fmtInputs) as a compact, clamped label. A
+// chat/agent run carries a full `query=<prompt>` in its inputs, which — rendered verbatim —
+// would stretch a queue row to an unbounded height; clamp it to `rows` lines with the full
+// text on hover. Returns null when there are no inputs so callers can drop the line entirely.
+export function InputsPreview({
+  inputs,
+  rows = 2,
+  secondary = true,
+  style,
+}: {
+  inputs?: string
+  rows?: number
+  secondary?: boolean
+  style?: CSSProperties
+}) {
+  const text = fmtInputs(inputs)
+  if (!text) return null
+  return (
+    <Typography.Paragraph
+      type={secondary ? 'secondary' : undefined}
+      ellipsis={{ rows, tooltip: text }}
+      style={{ fontSize: 12, marginBottom: 0, ...style }}
+    >
+      {text}
+    </Typography.Paragraph>
+  )
 }
 
 export function isTerminal(status: string) {

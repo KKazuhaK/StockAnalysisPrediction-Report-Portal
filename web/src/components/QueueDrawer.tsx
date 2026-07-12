@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { BatchJob, BatchQueueSummary, BatchTarget } from '../api/types'
-import { fmtInputs, isTerminal, priorityTag, statusTag } from '../lib/batchUi'
+import { InputsPreview, isTerminal, priorityTag, statusTag } from '../lib/batchUi'
 
 // The header 队列 drawer (docs/adr/0007): a live glance at running / waiting /
 // scheduled runs. Polls while open; deeper management lives on the /queue page.
@@ -87,11 +87,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
                           <ThunderboltOutlined style={{ color: '#cf1322', marginLeft: 6 }} title={t('batch.priority.urgent')} />
                         )}
                       </div>
-                      {fmtInputs(j.inputs) && (
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {fmtInputs(j.inputs)}
-                        </Typography.Text>
-                      )}
+                      <InputsPreview inputs={j.inputs} />
                     </div>
                     <Space size={4}>
                       {statusTag(t, j.status)}
