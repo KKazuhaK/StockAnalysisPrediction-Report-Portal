@@ -561,42 +561,21 @@
       "get": {
         "tags": ["meta"],
         "operationId": "healthz",
-        "summary": "健康探针（公开，返回版本与报告计数）",
+        "summary": "健康探针（公开）",
         "x-scope": "public",
         "security": [],
         "x-i18n": {
           "en-US": {
-            "summary": "Health probe, public; returns version and report count",
+            "summary": "Liveness probe, public",
             "responses": { "200": { "description": "ok" } }
           },
           "zh-TW": {
-            "summary": "健康探針（公開，返回版本與報告計數）",
+            "summary": "健康探針（公開）",
             "responses": { "200": { "description": "ok" } }
           }
         },
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s $BASE/healthz" }],
-        "responses": { "200": { "description": "ok", "content": { "application/json": { "example": { "ok": true, "version": "1.0.0", "commit": "a1b2c3d", "new": 1284 } } } } }
-      }
-    },
-    "/api/version": {
-      "get": {
-        "tags": ["meta"],
-        "operationId": "version",
-        "summary": "构建/版本信息（公开）",
-        "x-scope": "public",
-        "security": [],
-        "x-i18n": {
-          "en-US": {
-            "summary": "Build/version information, public",
-            "responses": { "200": { "description": "Version" } }
-          },
-          "zh-TW": {
-            "summary": "建置/版本資訊（公開）",
-            "responses": { "200": { "description": "版本" } }
-          }
-        },
-        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s $BASE/api/version" }],
-        "responses": { "200": { "description": "版本", "content": { "application/json": { "example": { "version": "1.0.0", "commit": "a1b2c3d", "buildDate": "2026-06-28T09:12:00Z" } } } } }
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "example": { "ok": true } } } } }
       }
     }
   }
