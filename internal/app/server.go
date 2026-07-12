@@ -131,12 +131,10 @@ func RunServer(cfgPath string) {
 	go s.scheduleLoop() // release one-shot 定时 jobs when their run_at passes (ADR 0007)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"ok":true,"version":%q,"commit":%q,"new":%d}`, version.Version, version.Commit, st.CountNew())
-	})
-	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) { // public: shown on the login/about page
-		writeJSON(w, map[string]any{"version": version.Version, "commit": version.Commit, "buildDate": version.BuildDate})
-	})
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	// Session-gated, not public: build identity (version/commit) is only shown in the signed-in
+	// app footer, so an anonymous scanner can't fingerprint the build against known CVEs.
+	mux.HandleFunc("GET /api/version", s.requireUserJSON(s.handleVersion))
 	mux.HandleFunc("GET /api/site", s.apiSite)            // public: brand title/logo for login + browser chrome
 	mux.HandleFunc("GET /api/openapi.json", s.apiOpenAPI) // public: OpenAPI 3.1 spec for the v1 machine API
 	mux.HandleFunc("GET /manifest.webmanifest", s.pwaManifest)
@@ -306,6 +304,21 @@ func RunServer(cfgPath string) {
 	if err := http.ListenAndServe(cfg.Listen, logMiddleware(gzipMiddleware(mux))); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// handleHealthz is the public, unauthenticated liveness probe. It returns nothing but liveness —
+// no data counts (business volume) and no build identity (version/commit), both of which would
+// help an anonymous scanner fingerprint the instance. Ops read the build from /api/version (which
+// requires a session) or the server logs.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleVersion returns build identity for the signed-in app footer. It is session-gated
+// (registered behind requireUserJSON) precisely so version/commit are NOT exposed to anonymous
+// callers: commit especially pins the exact public source, making CVE fingerprinting trivial.
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request, user string) {
+	writeJSON(w, map[string]any{"version": version.Version, "commit": version.Commit, "buildDate": version.BuildDate})
 }
 
 // AddUser creates or updates an account from the CLI (lockout fallback).
