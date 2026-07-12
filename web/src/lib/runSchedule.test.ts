@@ -1,8 +1,22 @@
 import { describe, it, expect } from 'vitest'
 import dayjs from 'dayjs'
-import { schedulePayload, scheduleError, type RunSchedule } from './runSchedule'
+import { schedulePayload, scheduleError, presetSummary, type RunSchedule } from './runSchedule'
+import type { RunPreset } from '../api/types'
 
 const base: RunSchedule = { mode: 'now', runAt: null, idle: false, urgent: false }
+
+// A stub translator that echoes its key, so the summary's shape is asserted without a locale file.
+const tk = (k: string) => k
+const dailyPreset = (invert: boolean): RunPreset => ({
+  id: 1,
+  label: 'x',
+  freq: 'daily',
+  intervals: [{ start: { time: '09:00' }, stop: { time: '12:00' } }],
+  on_overrun: 'next',
+  enabled: true,
+  invert,
+  ord: 0,
+})
 
 describe('schedulePayload', () => {
   it('immediate + idle → priority idle, no run_at/preset', () => {
@@ -41,5 +55,14 @@ describe('scheduleError', () => {
   it('a chosen preset / time is complete', () => {
     expect(scheduleError({ ...base, mode: 'preset', presetId: 3 })).toBe('')
     expect(scheduleError({ ...base, mode: 'scheduled', runAt: dayjs() })).toBe('')
+  })
+})
+
+describe('presetSummary', () => {
+  it('a normal preset lists its run windows', () => {
+    expect(presetSummary(dailyPreset(false), tk)).toBe('run.freq.daily 09:00–12:00')
+  })
+  it('an inverted preset marks the windows as time to avoid', () => {
+    expect(presetSummary(dailyPreset(true), tk)).toBe('run.freq.daily preset.summaryExcept 09:00–12:00')
   })
 })

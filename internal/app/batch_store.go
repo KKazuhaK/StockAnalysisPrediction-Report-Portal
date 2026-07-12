@@ -294,7 +294,7 @@ func (s *Store) CreateBatchJob(targetID int64, concurrency, maxRetries int, crea
 // submitter, and enqueue time (created_at), for the scheduler and the queue view. The
 // submitter feeds the fair-share factor (docs/adr/0008-multifactor-priority.md).
 func (s *Store) QueuedJobs() []BatchJob {
-	rows, err := s.query(`SELECT b.id, b.priority, COALESCE(b.created_by,''), b.created_at, b.run_at
+	rows, err := s.query(`SELECT b.id, b.priority, COALESCE(b.created_by,''), b.created_at, b.run_at, b.run_preset
 		FROM batch_jobs b
 		WHERE b.status='queued' ORDER BY b.id`)
 	if err != nil {
@@ -304,9 +304,9 @@ func (s *Store) QueuedJobs() []BatchJob {
 	var out []BatchJob
 	for rows.Next() {
 		var j BatchJob
-		var priority, createdBy, createdAt, runAt sql.NullString
-		rows.Scan(&j.ID, &priority, &createdBy, &createdAt, &runAt)
-		j.Status, j.Priority, j.CreatedBy, j.CreatedAt, j.RunAt = "queued", priority.String, createdBy.String, createdAt.String, runAt.String
+		var priority, createdBy, createdAt, runAt, runPreset sql.NullString
+		rows.Scan(&j.ID, &priority, &createdBy, &createdAt, &runAt, &runPreset)
+		j.Status, j.Priority, j.CreatedBy, j.CreatedAt, j.RunAt, j.RunPreset = "queued", priority.String, createdBy.String, createdAt.String, runAt.String, runPreset.String
 		out = append(out, j)
 	}
 	return out
@@ -390,7 +390,7 @@ func (s *Store) MarkItemRunning(itemID int64) bool {
 // are excluded. See docs/adr/0011-run-level-scheduling.md.
 func (s *Store) SchedulableJobs() []BatchJob {
 	rows, err := s.query(`SELECT b.id, b.target_id, b.status, b.priority,
-		b.concurrency, b.max_retries, COALESCE(b.created_by,''), b.created_at, b.run_at
+		b.concurrency, b.max_retries, COALESCE(b.created_by,''), b.created_at, b.run_at, b.run_preset
 		FROM batch_jobs b
 		WHERE b.status IN ('queued','running') ORDER BY b.id`)
 	if err != nil {
@@ -400,11 +400,11 @@ func (s *Store) SchedulableJobs() []BatchJob {
 	var out []BatchJob
 	for rows.Next() {
 		var j BatchJob
-		var priority, createdBy, createdAt, runAt sql.NullString
-		if err := rows.Scan(&j.ID, &j.TargetID, &j.Status, &priority, &j.Concurrency, &j.MaxRetries, &createdBy, &createdAt, &runAt); err != nil {
+		var priority, createdBy, createdAt, runAt, runPreset sql.NullString
+		if err := rows.Scan(&j.ID, &j.TargetID, &j.Status, &priority, &j.Concurrency, &j.MaxRetries, &createdBy, &createdAt, &runAt, &runPreset); err != nil {
 			continue
 		}
-		j.Priority, j.CreatedBy, j.CreatedAt, j.RunAt = priority.String, createdBy.String, createdAt.String, runAt.String
+		j.Priority, j.CreatedBy, j.CreatedAt, j.RunAt, j.RunPreset = priority.String, createdBy.String, createdAt.String, runAt.String, runPreset.String
 		out = append(out, j)
 	}
 	return out

@@ -44,6 +44,7 @@ const blankPreset = (): RunPreset => ({
   intervals: [defaultInterval('daily')],
   on_overrun: 'next',
   enabled: true,
+  invert: false,
   ord: 0,
 })
 
@@ -54,6 +55,7 @@ const presetBody = (p: RunPreset) => ({
   intervals: p.intervals,
   on_overrun: p.on_overrun,
   enabled: p.enabled,
+  invert: p.invert,
 })
 
 export default function RunPresetsEditor() {
@@ -132,7 +134,7 @@ export default function RunPresetsEditor() {
                   <Typography.Text type="secondary" style={{ flex: 1, minWidth: 120 }}>
                     {presetSummary(p, t)}
                   </Typography.Text>
-                  <Tag>{t('preset.overrun.' + p.on_overrun)}</Tag>
+                  {p.invert ? <Tag color="orange">{t('preset.invertTag')}</Tag> : <Tag>{t('preset.overrun.' + p.on_overrun)}</Tag>}
                   <Button size="small" icon={<EditOutlined />} onClick={() => setDraft({ ...p })} />
                   <Popconfirm title={t('preset.deleteConfirm')} onConfirm={() => remove(p.id)} okText={t('common.ok')} cancelText={t('common.cancel')}>
                     <Button size="small" danger icon={<DeleteOutlined />} />
@@ -210,17 +212,29 @@ function PresetForm({ draft, onChange }: { draft: RunPreset; onChange: (p: RunPr
           </Button>
         </Space>
       </Field>
-      <Field label={t('preset.overrunLabel')}>
-        <Select
-          value={draft.on_overrun}
-          onChange={(o) => set({ on_overrun: o as RunOverrun })}
-          style={{ width: 220 }}
-          options={OVERRUNS.map((o) => ({ value: o, label: t('preset.overrun.' + o) }))}
-        />
+      <Field label={t('preset.invert')}>
+        <Switch checked={draft.invert} onChange={(v) => set({ invert: v })} />
       </Field>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {t('preset.overrunHint')}
+        {t('preset.invertHint')}
       </Typography.Text>
+      {/* on_overrun is a "missed the window" policy — only meaningful for a normal (run-inside)
+          preset; an inverted preset just waits out its blocked hours, so hide it when inverted. */}
+      {!draft.invert && (
+        <>
+          <Field label={t('preset.overrunLabel')}>
+            <Select
+              value={draft.on_overrun}
+              onChange={(o) => set({ on_overrun: o as RunOverrun })}
+              style={{ width: 220 }}
+              options={OVERRUNS.map((o) => ({ value: o, label: t('preset.overrun.' + o) }))}
+            />
+          </Field>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t('preset.overrunHint')}
+          </Typography.Text>
+        </>
+      )}
       <Field label={t('preset.enabled')}>
         <Switch checked={draft.enabled} onChange={(v) => set({ enabled: v })} />
       </Field>

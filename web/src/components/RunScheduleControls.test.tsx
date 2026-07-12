@@ -15,6 +15,7 @@ const preset: RunPreset = {
   intervals: [],
   on_overrun: 'next',
   enabled: true,
+  invert: false,
   ord: 0,
 }
 

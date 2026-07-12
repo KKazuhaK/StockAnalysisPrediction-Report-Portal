@@ -170,7 +170,7 @@ func TestSamePeriod(t *testing.T) {
 // through the local wall-clock basis the scheduler uses.
 func TestResolvePresetWindow(t *testing.T) {
 	runAt, snap, ok := resolvePresetWindow("daily",
-		[]presetInterval{iv("00:30", "08:30")}, "next", ut(2026, 7, 8, 10, 0), time.UTC)
+		[]presetInterval{iv("00:30", "08:30")}, "next", false, ut(2026, 7, 8, 10, 0), time.UTC)
 	if !ok {
 		t.Fatal("resolvePresetWindow ok=false")
 	}
@@ -187,8 +187,64 @@ func TestResolvePresetWindow(t *testing.T) {
 	if !parseLocal(t, s.Until).Equal(ut(2026, 7, 9, 8, 30)) {
 		t.Fatalf("until = %q, want the 2026-07-09 08:30 instant", s.Until)
 	}
-	if _, _, ok := resolvePresetWindow("daily", []presetInterval{iv("bad", "08:30")}, "next", ut(2026, 7, 8, 10, 0), time.UTC); ok {
+	if _, _, ok := resolvePresetWindow("daily", []presetInterval{iv("bad", "08:30")}, "next", false, ut(2026, 7, 8, 10, 0), time.UTC); ok {
 		t.Fatal("a malformed window must resolve ok=false")
+	}
+}
+
+// An inverted preset (run OUTSIDE the intervals): when now is already outside a block the run is
+// eligible ASAP (run_at ""); when now is inside a block the run is deferred to that block's end so
+// it stays hidden until the block clears. The snapshot carries Invert and no Until (the scheduler
+// gates it live), and a malformed interval is still rejected.
+func TestResolveInvertWindow(t *testing.T) {
+	block := []presetInterval{iv("09:00", "12:00")} // "peak" hours the run must avoid
+
+	// Outside the block → run ASAP, snapshot marked inverted with no Until.
+	runAt, snap, ok := resolvePresetWindow("daily", block, "next", true, ut(2026, 7, 8, 8, 0), time.UTC)
+	if !ok {
+		t.Fatal("inverted resolve ok=false")
+	}
+	if runAt != "" {
+		t.Fatalf("outside a block should run ASAP (run_at \"\"), got %q", runAt)
+	}
+	var s runPresetSnapshot
+	if json.Unmarshal([]byte(snap), &s); !s.Invert || s.Until != "" || len(s.Intervals) != 1 {
+		t.Fatalf("inverted snapshot = %+v, want Invert=true Until=\"\" one interval", s)
+	}
+
+	// Inside the block → deferred to the block's end (12:00 today).
+	runAt2, _, ok := resolvePresetWindow("daily", block, "next", true, ut(2026, 7, 8, 10, 0), time.UTC)
+	if !ok {
+		t.Fatal("inverted resolve (inside block) ok=false")
+	}
+	if !parseLocal(t, runAt2).Equal(ut(2026, 7, 8, 12, 0)) {
+		t.Fatalf("inside a block should defer to its end 12:00, got run_at %q", runAt2)
+	}
+
+	if _, _, ok := resolvePresetWindow("daily", []presetInterval{iv("bad", "12:00")}, "next", true, ut(2026, 7, 8, 8, 0), time.UTC); ok {
+		t.Fatal("an inverted preset with a malformed interval must resolve ok=false")
+	}
+}
+
+// invertBlocksNow gates an inverted preset live at admission: a run is blocked while now is inside
+// any of the union's sub-windows and free otherwise. A non-inverted or empty snapshot never blocks.
+func TestInvertBlocksNow(t *testing.T) {
+	mk := func(invert bool) string {
+		b, _ := json.Marshal(runPresetSnapshot{Freq: "daily", Intervals: []presetInterval{iv("09:00", "12:00")}, Invert: invert})
+		return string(b)
+	}
+	inverted := mk(true)
+	if !invertBlocksNow(inverted, ut(2026, 7, 8, 10, 0), time.UTC) {
+		t.Fatal("inside the block, an inverted preset must block admission")
+	}
+	if invertBlocksNow(inverted, ut(2026, 7, 8, 8, 0), time.UTC) {
+		t.Fatal("outside the block, an inverted preset must NOT block admission")
+	}
+	if invertBlocksNow(mk(false), ut(2026, 7, 8, 10, 0), time.UTC) {
+		t.Fatal("a normal (non-inverted) preset must never block via invertBlocksNow")
+	}
+	if invertBlocksNow("", ut(2026, 7, 8, 10, 0), time.UTC) {
+		t.Fatal("an empty snapshot must never block")
 	}
 }
 
@@ -201,7 +257,7 @@ func TestRunPresetsCRUD(t *testing.T) {
 
 	id, err := st.CreateRunPreset(RunPreset{Label: "低峰期", Freq: "daily",
 		Intervals: `[{"start":{"time":"09:00"},"stop":{"time":"12:00"}},{"start":{"time":"14:00"},"stop":{"time":"18:00"}}]`,
-		OnOverrun: "next", Enabled: true})
+		OnOverrun: "next", Enabled: true, Invert: true})
 	if err != nil {
 		t.Fatalf("CreateRunPreset: %v", err)
 	}
@@ -217,7 +273,7 @@ func TestRunPresetsCRUD(t *testing.T) {
 	}
 
 	p, ok := st.GetRunPreset(id)
-	if !ok || p.Label != "低峰期" || p.Freq != "daily" || p.OnOverrun != "next" || !p.Enabled {
+	if !ok || p.Label != "低峰期" || p.Freq != "daily" || p.OnOverrun != "next" || !p.Enabled || !p.Invert {
 		t.Fatalf("GetRunPreset = %+v ok=%v", p, ok)
 	}
 	var got []presetInterval
@@ -225,11 +281,11 @@ func TestRunPresetsCRUD(t *testing.T) {
 		t.Fatalf("intervals round-trip lost: %s", p.Intervals)
 	}
 
-	p.Label, p.OnOverrun, p.Enabled = "低峰期A", "continue", false
+	p.Label, p.OnOverrun, p.Enabled, p.Invert = "低峰期A", "continue", false, false
 	if err := st.UpdateRunPreset(p); err != nil {
 		t.Fatalf("UpdateRunPreset: %v", err)
 	}
-	if p2, _ := st.GetRunPreset(id); p2.Label != "低峰期A" || p2.OnOverrun != "continue" || p2.Enabled {
+	if p2, _ := st.GetRunPreset(id); p2.Label != "低峰期A" || p2.OnOverrun != "continue" || p2.Enabled || p2.Invert {
 		t.Fatalf("after update = %+v", p2)
 	}
 

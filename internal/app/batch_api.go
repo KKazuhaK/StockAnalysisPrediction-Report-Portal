@@ -382,7 +382,7 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		}
 		var intervals []presetInterval
 		json.Unmarshal([]byte(p.Intervals), &intervals)
-		ra, snap, ok := resolvePresetWindow(p.Freq, intervals, p.OnOverrun, time.Now(), s.panelLocation())
+		ra, snap, ok := resolvePresetWindow(p.Freq, intervals, p.OnOverrun, p.Invert, time.Now(), s.panelLocation())
 		if !ok {
 			jsonError(w, http.StatusBadRequest, "preset window is misconfigured")
 			return

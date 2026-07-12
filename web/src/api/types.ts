@@ -380,6 +380,7 @@ export interface RunPreset {
   intervals: RunPresetInterval[]
   on_overrun: RunOverrun
   enabled: boolean
+  invert: boolean // true = run OUTSIDE the intervals (they become "do not run" / peak hours)
   ord: number
 }
 

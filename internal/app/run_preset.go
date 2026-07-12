@@ -205,6 +205,10 @@ type runPresetSnapshot struct {
 	Intervals []presetInterval `json:"intervals"`
 	OnOverrun string           `json:"on_overrun"`
 	Until     string           `json:"until"`
+	// Invert marks a "run outside these windows" preset: the scheduler gates it live at admission
+	// (invertBlocksNow) against every occurrence, so an inverted snapshot carries no Until and is
+	// never touched by the overrun sweep.
+	Invert bool `json:"invert,omitempty"`
 }
 
 // fmtLocal renders an absolute instant in the local wall-clock basis run_at/until are stored in.
@@ -213,11 +217,59 @@ type runPresetSnapshot struct {
 // the server's timezone.
 func fmtLocal(t time.Time) string { return t.In(time.Local).Format("2006-01-02 15:04:05") }
 
+// blockEnd reports whether now falls inside any of the union's sub-windows and, if so, the end of
+// the block it is in (the latest end when overlapping blocks stack). An inverted preset uses this
+// to know it must wait — and until when — before a run may start. loc is the panel timezone.
+func blockEnd(freq string, intervals []presetInterval, now time.Time, loc *time.Location) (end time.Time, inside bool) {
+	for _, iv := range intervals {
+		s, e, ok := nextInterval(freq, iv.Start, iv.Stop, now, loc)
+		if ok && !s.After(now) && e.After(now) { // start <= now < end → now is inside this sub-window
+			if !inside || e.After(end) {
+				end, inside = e, true
+			}
+		}
+	}
+	return end, inside
+}
+
+// invertBlocksNow reports whether an inverted preset snapshot forbids starting a run at now: the run
+// may only start OUTSIDE the union of intervals, so it is blocked while now is inside one. A
+// non-inverted, empty, or unparseable snapshot never blocks here — normal presets are gated by
+// run_at + the overrun sweep instead. loc is the panel timezone.
+func invertBlocksNow(runPreset string, now time.Time, loc *time.Location) bool {
+	if runPreset == "" {
+		return false
+	}
+	var snap runPresetSnapshot
+	if json.Unmarshal([]byte(runPreset), &snap) != nil || !snap.Invert {
+		return false
+	}
+	_, inside := blockEnd(snap.Freq, snap.Intervals, now, loc)
+	return inside
+}
+
 // resolvePresetWindow computes a job's run_at (the window start) and its run_preset snapshot for a
 // preset (the union of intervals) relative to now, interpreting anchors in loc (the panel
 // timezone). The same call rolls a window forward: past the old occurrence's end, nextWindow
 // returns the next eligible sub-window. ok=false for a preset with no resolvable window.
-func resolvePresetWindow(freq string, intervals []presetInterval, onOverrun string, now time.Time, loc *time.Location) (runAt, snapshot string, ok bool) {
+//
+// invert flips the polarity: an inverted preset runs OUTSIDE the intervals (they become peak hours
+// to avoid). It resolves to run_at = the end of the block now is inside (so it stays hidden until
+// the block clears), or "" (run ASAP) when now is already outside; the snapshot carries Invert and
+// no Until, and the scheduler keeps the run out of every future occurrence live at admission
+// (invertBlocksNow) rather than via the overrun sweep.
+func resolvePresetWindow(freq string, intervals []presetInterval, onOverrun string, invert bool, now time.Time, loc *time.Location) (runAt, snapshot string, ok bool) {
+	if invert {
+		if _, _, vok := nextWindow(freq, intervals, now, loc); !vok {
+			return "", "", false // a preset whose intervals don't resolve is still rejected
+		}
+		runAt = ""
+		if end, inside := blockEnd(freq, intervals, now, loc); inside {
+			runAt = fmtLocal(end)
+		}
+		b, _ := json.Marshal(runPresetSnapshot{Freq: freq, Intervals: intervals, OnOverrun: onOverrun, Invert: true})
+		return runAt, string(b), true
+	}
 	s, e, ok := nextWindow(freq, intervals, now, loc)
 	if !ok {
 		return "", "", false
@@ -233,7 +285,9 @@ func resolvePresetWindow(freq string, intervals []presetInterval, onOverrun stri
 
 // RunPreset is one configured preset. Intervals is a JSON array of {start, stop} presetInterval
 // (the union of sub-windows); which anchor fields apply depends on Freq (daily|weekly|monthly|
-// yearly). OnOverrun is continue|next|cancel.
+// yearly). OnOverrun is continue|next|cancel. Invert flips the polarity: a normal preset runs a
+// job INSIDE the intervals, an inverted one runs it OUTSIDE them (the intervals become peak hours
+// the run must avoid).
 type RunPreset struct {
 	ID        int64
 	Label     string
@@ -241,19 +295,21 @@ type RunPreset struct {
 	Intervals string // JSON [{start,stop}]
 	OnOverrun string
 	Enabled   bool
+	Invert    bool
 	Ord       int
 }
 
 const runPresetCols = `id, COALESCE(label,''), COALESCE(freq,''), COALESCE(intervals,'[]'),
-	COALESCE(on_overrun,'next'), COALESCE(enabled,1), COALESCE(ord,0)`
+	COALESCE(on_overrun,'next'), COALESCE(enabled,1), COALESCE(invert,0), COALESCE(ord,0)`
 
 func scanRunPreset(sc interface{ Scan(...any) error }) (RunPreset, bool) {
 	var p RunPreset
-	var enabled int
-	if err := sc.Scan(&p.ID, &p.Label, &p.Freq, &p.Intervals, &p.OnOverrun, &enabled, &p.Ord); err != nil {
+	var enabled, invert int
+	if err := sc.Scan(&p.ID, &p.Label, &p.Freq, &p.Intervals, &p.OnOverrun, &enabled, &invert, &p.Ord); err != nil {
 		return RunPreset{}, false
 	}
 	p.Enabled = enabled != 0
+	p.Invert = invert != 0
 	return p, true
 }
 
@@ -282,14 +338,14 @@ func (s *Store) GetRunPreset(id int64) (RunPreset, bool) {
 // CreateRunPreset inserts a preset, returning its new id. New presets sort after existing ones
 // (ord defaults to 0; ties break by id, so a fresh row lands last).
 func (s *Store) CreateRunPreset(p RunPreset) (int64, error) {
-	return s.insertID(`INSERT INTO run_presets(label,freq,intervals,on_overrun,enabled,ord)
-		VALUES(?,?,?,?,?,?)`, p.Label, p.Freq, p.Intervals, p.OnOverrun, boolInt(p.Enabled), p.Ord)
+	return s.insertID(`INSERT INTO run_presets(label,freq,intervals,on_overrun,enabled,invert,ord)
+		VALUES(?,?,?,?,?,?,?)`, p.Label, p.Freq, p.Intervals, p.OnOverrun, boolInt(p.Enabled), boolInt(p.Invert), p.Ord)
 }
 
 // UpdateRunPreset saves an edited preset (ord is managed by ReorderRunPresets, not here).
 func (s *Store) UpdateRunPreset(p RunPreset) error {
-	_, err := s.exec(`UPDATE run_presets SET label=?, freq=?, intervals=?, on_overrun=?, enabled=? WHERE id=?`,
-		p.Label, p.Freq, p.Intervals, p.OnOverrun, boolInt(p.Enabled), p.ID)
+	_, err := s.exec(`UPDATE run_presets SET label=?, freq=?, intervals=?, on_overrun=?, enabled=?, invert=? WHERE id=?`,
+		p.Label, p.Freq, p.Intervals, p.OnOverrun, boolInt(p.Enabled), boolInt(p.Invert), p.ID)
 	return err
 }
 
@@ -323,7 +379,7 @@ func runPresetJSON(p RunPreset) map[string]any {
 	return map[string]any{
 		"id": p.ID, "label": p.Label, "freq": p.Freq,
 		"intervals": intervals, "on_overrun": p.OnOverrun,
-		"enabled": p.Enabled, "ord": p.Ord,
+		"enabled": p.Enabled, "invert": p.Invert, "ord": p.Ord,
 	}
 }
 
@@ -342,13 +398,15 @@ func (s *Server) apiRunPresets(w http.ResponseWriter, r *http.Request, user stri
 	})
 }
 
-// presetInput is the create/update body; intervals is the union of sub-windows.
+// presetInput is the create/update body; intervals is the union of sub-windows. invert flips the
+// polarity (run OUTSIDE the intervals instead of inside).
 type presetInput struct {
 	Label     string           `json:"label"`
 	Freq      string           `json:"freq"`
 	Intervals []presetInterval `json:"intervals"`
 	OnOverrun string           `json:"on_overrun"`
 	Enabled   bool             `json:"enabled"`
+	Invert    bool             `json:"invert"`
 }
 
 // normalizePreset validates freq + every interval (each must resolve) and clamps on_overrun to a
@@ -370,7 +428,7 @@ func normalizePreset(in presetInput) (RunPreset, bool) {
 		}
 	}
 	b, _ := json.Marshal(in.Intervals)
-	return RunPreset{Label: in.Label, Freq: in.Freq, Intervals: string(b), OnOverrun: onOverrun, Enabled: in.Enabled}, true
+	return RunPreset{Label: in.Label, Freq: in.Freq, Intervals: string(b), OnOverrun: onOverrun, Enabled: in.Enabled, Invert: in.Invert}, true
 }
 
 func (s *Server) apiRunPresetCreate(w http.ResponseWriter, r *http.Request, user string) {

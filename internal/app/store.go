@@ -287,11 +287,14 @@ func (s *Store) baseSchemaStmts() []string {
 		// JSON array [{start,stop}] of sub-windows (the union — e.g. 09:00–12:00 and 14:00–18:00);
 		// each anchor is {weekday?,month?,day?,time:"HH:mm"} and the used fields depend on freq
 		// (daily|weekly|monthly|yearly). on_overrun (continue|next|cancel) decides what happens when
-		// a whole period's sub-windows are all missed. The job snapshots the rule, so this row is
-		// never referenced by a job (no FK); id is a plain surrogate for CRUD/reorder/pick.
+		// a whole period's sub-windows are all missed. invert (0/1, default 0) flips the polarity:
+		// a normal preset runs a job INSIDE the intervals, an inverted one runs it OUTSIDE them (the
+		// intervals become "do not run" / peak hours). invert is a plain additive column, so existing
+		// databases pick it up via ensureColumns — no migration step. The job snapshots the rule, so
+		// this row is never referenced by a job (no FK); id is a plain surrogate for CRUD/reorder/pick.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS run_presets(
 			id %s, label TEXT, freq TEXT, intervals TEXT,
-			on_overrun TEXT DEFAULT 'next', enabled INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`, pk),
+			on_overrun TEXT DEFAULT 'next', enabled INTEGER DEFAULT 1, invert INTEGER DEFAULT 0, ord INTEGER DEFAULT 0)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id, status)`,
 		// The batch console polls AllJobsFirstInputs (first row of every job) every 2s;
 		// without this the WHERE row_index=0 lookup is a full scan of batch_items — the

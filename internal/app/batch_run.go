@@ -387,6 +387,7 @@ func (s *Server) jobFactors(j BatchJob, now time.Time, usage map[string]float64)
 // hidden until its run_at passes, so it is never admitted early nor counted as waiting.
 func (s *Server) queuedItems() []queue.Item {
 	now := time.Now()
+	loc := s.panelLocation()
 	w := s.prioWeights()
 	usage := s.userUsage(now)
 	jobs := s.st.QueuedJobs()
@@ -394,6 +395,9 @@ func (s *Server) queuedItems() []queue.Item {
 	for _, j := range jobs {
 		if !runAtDue(j.RunAt, now) {
 			continue
+		}
+		if invertBlocksNow(j.RunPreset, now, loc) {
+			continue // inverted preset currently in a blocked window — not eligible to start now
 		}
 		f := s.jobFactors(j, now, usage)
 		items = append(items, queue.Item{ID: j.ID, Score: w.Score(f), Urgent: f.Urgent})
@@ -464,6 +468,9 @@ func (s *Server) sweepPresetWindowsLocked(now time.Time) {
 		if json.Unmarshal([]byte(j.RunPreset), &snap) != nil {
 			continue // unparseable snapshot: never strand a job on our own bug
 		}
+		if snap.Invert {
+			continue // inverted preset has no window-close overrun — admission gates it live
+		}
 		if snap.Until == "" || !runAtDue(snap.Until, now) {
 			continue // current sub-window still open — normal admission handles it
 		}
@@ -519,13 +526,17 @@ func (s *Server) admitLocked() {
 // Returns the scheduler items plus an id → (job, row) lookup for dispatch.
 func (s *Server) itemCandidates() ([]queue.Item, map[int64]candMeta) {
 	now := time.Now()
+	loc := s.panelLocation()
 	w := s.prioWeights()
 	usage := s.userUsage(now)
 	var cands []queue.Item
 	meta := map[int64]candMeta{}
 	for _, j := range s.st.SchedulableJobs() {
 		if !runAtDue(j.RunAt, now) {
-			continue // a not-yet-due 定时 job contributes no runs
+			continue // a not-yet-due scheduled job contributes no runs
+		}
+		if invertBlocksNow(j.RunPreset, now, loc) {
+			continue // inverted preset: this run may only start OUTSIDE its windows (ADR 0014)
 		}
 		_, running, _, _, _, _ := s.st.LiveJobCounts(j.ID)
 		window := j.Concurrency
