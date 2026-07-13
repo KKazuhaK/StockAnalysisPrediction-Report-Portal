@@ -347,6 +347,15 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, target_id BIGINT, conv_id TEXT DEFAULT '', created_by TEXT,
 			title TEXT DEFAULT '', created_at TEXT, updated_at TEXT, starred INTEGER DEFAULT 0)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_chat_conv_user ON chat_conversations(created_by, target_id, updated_at)`,
+		// Storage-cleanup audit log (docs/adr/0017-storage-cleanup.md): one row per real cleanup
+		// pass (scheduled or manual "clean now"; previews are not recorded), so an admin has a
+		// durable, browsable trail of what a destructive auto-delete removed and when. Trimmed to a
+		// ring buffer (InsertCleanupRun) so the audit table can't itself grow unbounded — idempotency
+		// of the scheduler lives in the meta key cleanup_last_run_period, never derived from this table.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS cleanup_runs(
+			id %s, ran_at TEXT, trigger TEXT, dry_run INTEGER DEFAULT 0, ok INTEGER DEFAULT 1, error TEXT DEFAULT '',
+			batch_deleted INTEGER DEFAULT 0, tokens_deleted INTEGER DEFAULT 0, reports_deleted INTEGER DEFAULT 0,
+			duration_ms INTEGER DEFAULT 0)`, pk),
 	}
 }
 

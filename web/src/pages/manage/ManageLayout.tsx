@@ -6,6 +6,7 @@ import {
   AppstoreAddOutlined,
   AppstoreOutlined,
   ControlOutlined,
+  DatabaseOutlined,
   FileTextOutlined,
   GlobalOutlined,
   KeyOutlined,
@@ -130,6 +131,11 @@ export default function ManageLayout() {
         { key: 'webhooks', label: t('nav.webhooks'), icon: <ApiOutlined /> },
         { key: 'apidoc', label: t('settings.apidoc'), icon: <FileTextOutlined /> },
       ],
+    },
+    {
+      type: 'group',
+      label: t('nav.group.system'),
+      children: [{ key: 'storage', label: t('nav.storage'), icon: <DatabaseOutlined /> }],
     },
   ]
 

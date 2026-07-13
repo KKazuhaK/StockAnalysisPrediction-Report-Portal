@@ -407,8 +407,8 @@ func (s *Server) queuedItems() []queue.Item {
 
 // scheduleLoop periodically re-runs admission so one-shot scheduled jobs start
 // when their run_at passes, even while the system is otherwise idle. The queue is
-// event-driven; this ticker is the only always-on timer (ADR 0007). It runs for
-// the process lifetime.
+// event-driven; this was the only always-on timer (ADR 0007) until cleanupLoop
+// (ADR 0017) joined it. It runs for the process lifetime.
 func (s *Server) scheduleLoop() {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()

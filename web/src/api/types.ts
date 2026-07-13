@@ -335,6 +335,66 @@ export interface UserGroupRow {
   members: number // primary-member count
 }
 
+// Storage-cleanup console (docs/adr/0017-storage-cleanup.md). Config + last-run summary; retention
+// floors clamp the day inputs. freq drives an admin-set daily/weekly/monthly retention pass.
+export interface CleanupConfig {
+  freq: 'off' | 'daily' | 'weekly' | 'monthly'
+  time: string // "HH:MM" panel timezone
+  weekday: number // 0=Sun..6=Sat (weekly)
+  monthday: number // 1..31 (monthly)
+  batch_enabled: boolean
+  batch_days: number
+  tokens_enabled: boolean
+  tokens_grace_days: number
+  reports_enabled: boolean
+  reports_days: number
+  batch_floor: number
+  reports_floor: number
+  last_run_period: string
+  last_result: CleanupResult | null
+}
+
+// The outcome of a cleanup pass (also the preview/run response shape).
+export interface CleanupResult {
+  at: string
+  trigger: string // schedule | manual | preview
+  dry_run: boolean
+  ok: boolean
+  error: string
+  batch: number
+  tokens: number
+  reports: number
+  duration_ms: number
+}
+
+export interface CleanupUsageCategory {
+  key: string
+  rows: number
+  bytes: number
+  eligible: number
+  oldest: string
+  newest: string
+}
+
+export interface CleanupUsage {
+  db_bytes: number
+  categories: CleanupUsageCategory[]
+}
+
+// One recorded cleanup pass in the audit history.
+export interface CleanupRun {
+  id: number
+  ran_at: string
+  trigger: string
+  dry_run: boolean
+  ok: boolean
+  error: string
+  batch_deleted: number
+  tokens_deleted: number
+  reports_deleted: number
+  duration_ms: number
+}
+
 export interface BatchConfig {
   max_jobs: number
   reserved_slots: number
