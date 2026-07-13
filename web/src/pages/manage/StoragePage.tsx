@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Divider, InputNumber, Select, Space, Switch, Table, Tag, Typography, theme } from 'antd'
+import { Alert, App, Button, Card, Divider, InputNumber, Select, Space, Switch, Table, Tag, TimePicker, Typography, theme } from 'antd'
 import { DatabaseOutlined, FileTextOutlined, KeyOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { CleanupConfig, CleanupResult, CleanupRun, CleanupUsage, CleanupUsageCategory } from '../../api/types'
@@ -286,7 +287,7 @@ export default function StoragePage() {
 
       <Card title={t('storage.title')}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>
-          <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
+          <Divider style={{ margin: '4px 0' }} titlePlacement="left" plain>
             {t('storage.scheduleTitle')}
           </Divider>
           <Typography.Text type="secondary">{t('storage.scheduleHint')}</Typography.Text>
@@ -294,13 +295,20 @@ export default function StoragePage() {
           {freq !== 'off' && (
             <Space wrap>
               <span style={{ display: 'inline-block', minWidth: 120 }}>{t('storage.time')}</span>
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value || '03:00')} aria-label={t('storage.time')} style={{ height: 32, padding: '0 8px' }} />
+              <TimePicker
+                format="HH:mm"
+                allowClear={false}
+                needConfirm={false}
+                value={dayjs('2000-01-01 ' + time)}
+                onChange={(d) => setTime(d ? d.format('HH:mm') : '03:00')}
+                aria-label={t('storage.time')}
+              />
             </Space>
           )}
           {freq === 'weekly' && row(t('storage.weekday'), <Select style={{ width: 160 }} value={weekday} onChange={setWeekday} options={weekdayOptions} />)}
           {freq === 'monthly' && row(t('storage.monthday'), <InputNumber min={1} max={31} value={monthday} onChange={(v) => setMonthday(v ?? 1)} />)}
 
-          <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
+          <Divider style={{ margin: '4px 0' }} titlePlacement="left" plain>
             {t('storage.targetsTitle')}
           </Divider>
           {row(
@@ -320,7 +328,7 @@ export default function StoragePage() {
             t('storage.tokensHint'),
           )}
 
-          <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
+          <Divider style={{ margin: '4px 0' }} titlePlacement="left" plain>
             {t('storage.reportsTarget')}
           </Divider>
           <Alert type="warning" showIcon message={t('storage.reportsDanger')} description={t('storage.reportsWarn')} />
