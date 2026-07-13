@@ -184,7 +184,9 @@ export default function AppView() {
           minHeight: 420,
           border: `1px solid ${tk.colorBorderSecondary}`,
           borderRadius: tk.borderRadius,
-          background: '#fff',
+          // Match the theme surface (same token sent to the app as themePayload.colorBg), not a
+          // fixed white — otherwise the iframe flashes white on open / bleeds white in dark mode.
+          background: tk.colorBgContainer,
         }}
       />
     </Space>
