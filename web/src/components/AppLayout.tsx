@@ -211,7 +211,7 @@ export default function AppLayout() {
             placement="bottomRight"
             open={accountOpen}
             onOpenChange={setAccountOpen}
-            styles={{ body: { padding: 8 } }}
+            styles={{ container: { padding: 8 } }}
             content={
               <div style={{ width: 240, maxWidth: '80vw' }}>
                 {/* On mobile the primary nav folds in here (the header buttons are hidden). */}

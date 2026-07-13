@@ -173,7 +173,7 @@ export default function SiteSettingsPage() {
             )
           }}
         </Form.Item>
-        <Divider orientation="left" orientationMargin={0}>
+        <Divider titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }}>
           {t('settings.footerSection')}
         </Divider>
         <Form.Item name="footerShowInfo" label={t('settings.footerShowInfo')} valuePropName="checked">
@@ -195,7 +195,7 @@ export default function SiteSettingsPage() {
         <Form.Item name="footerShowVersion" label={t('settings.footerShowVersion')} valuePropName="checked">
           <Switch />
         </Form.Item>
-        <Divider orientation="left" orientationMargin={0}>
+        <Divider titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }}>
           {t('settings.timeSection')}
         </Divider>
         <Form.Item name="timezone" label={t('settings.timezone')} style={{ marginBottom: 8 }}>

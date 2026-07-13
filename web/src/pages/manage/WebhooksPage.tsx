@@ -107,7 +107,7 @@ export default function WebhooksPage() {
         <Table rowKey="id" size="small" dataSource={hooks} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
       </Space>
 
-      <Modal title={t('webhook.add')} open={open} onOk={submit} onCancel={() => setOpen(false)} destroyOnClose>
+      <Modal title={t('webhook.add')} open={open} onOk={submit} onCancel={() => setOpen(false)} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="url" label={t('webhook.url')} rules={[{ required: true, message: t('webhook.required') }]}>
             <Input placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />

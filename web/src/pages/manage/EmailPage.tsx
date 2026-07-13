@@ -118,7 +118,7 @@ export default function EmailPage() {
           {t('email.publicUrlHint')}
         </Typography.Text>
 
-        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
+        <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
           {t('email.test')}
         </Divider>
         <Space wrap>

@@ -338,7 +338,7 @@ export default function UsersPage() {
         onCancel={() => setEditUser(null)}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           <Form.Item name="username" label={t('users.username')} rules={[{ required: true }]}>
@@ -374,7 +374,7 @@ export default function UsersPage() {
         onCancel={() => setPwUser(null)}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={pwForm} layout="vertical">
           <Form.Item name="password" label={t('users.newPassword')} rules={[{ required: true }]}>
@@ -637,7 +637,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
         onCancel={() => setEdit(null)}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label={t('users.groupName')} rules={[{ required: true }]}>

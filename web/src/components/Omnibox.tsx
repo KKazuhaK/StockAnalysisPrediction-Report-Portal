@@ -17,7 +17,7 @@ export default function Omnibox({ size = 'large', initial = '' }: { size?: 'larg
   const mobile = !Grid.useBreakpoint().md
   const [value, setValue] = useState(initial)
   const [options, setOptions] = useState<{ value: string; label: React.ReactNode; sym: string }[]>([])
-  const timer = useRef<number>()
+  const timer = useRef<number | undefined>(undefined)
 
   const fetchOptions = (q: string) => {
     window.clearTimeout(timer.current)

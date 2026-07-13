@@ -43,3 +43,16 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     }),
   })
 }
+
+// jsdom has no ResizeObserver; antd 6 routes far more components through
+// rc-resize-observer (it observes each element's box on mount) than v5 did, so its
+// absence now throws during render. Install an inert stub — layout measurements are
+// irrelevant to these component assertions.
+if (typeof globalThis !== 'undefined' && !('ResizeObserver' in globalThis)) {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverStub
+}

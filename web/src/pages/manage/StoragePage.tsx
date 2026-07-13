@@ -286,7 +286,7 @@ export default function StoragePage() {
 
       <Card title={t('storage.title')}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>
-          <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
+          <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
             {t('storage.scheduleTitle')}
           </Divider>
           <Typography.Text type="secondary">{t('storage.scheduleHint')}</Typography.Text>
@@ -300,7 +300,7 @@ export default function StoragePage() {
           {freq === 'weekly' && row(t('storage.weekday'), <Select style={{ width: 160 }} value={weekday} onChange={setWeekday} options={weekdayOptions} />)}
           {freq === 'monthly' && row(t('storage.monthday'), <InputNumber min={1} max={31} value={monthday} onChange={(v) => setMonthday(v ?? 1)} />)}
 
-          <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
+          <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
             {t('storage.targetsTitle')}
           </Divider>
           {row(
@@ -320,7 +320,7 @@ export default function StoragePage() {
             t('storage.tokensHint'),
           )}
 
-          <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
+          <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
             {t('storage.reportsTarget')}
           </Divider>
           <Alert type="warning" showIcon message={t('storage.reportsDanger')} description={t('storage.reportsWarn')} />

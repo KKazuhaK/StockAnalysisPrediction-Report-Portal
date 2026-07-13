@@ -165,7 +165,7 @@ export default function RunAnalysisModal({
       okButtonProps={{ loading: submitting, disabled: !targetId }}
       cancelText={t('common.cancel')}
       onCancel={onClose}
-      destroyOnClose
+      destroyOnHidden
     >
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
         {runnable.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}

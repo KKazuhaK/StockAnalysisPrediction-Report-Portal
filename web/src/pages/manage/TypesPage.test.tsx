@@ -62,7 +62,9 @@ describe('TypesPage — kind colors', () => {
     post.mockResolvedValue({ ok: true })
     renderPage()
 
-    const tag = await screen.findByText('投资决策')
+    // antd 6's Select renders the selected value as visible text (not just the input
+    // value as in v5), so the kind name now appears twice — scope to the Tag we assert on.
+    const tag = await screen.findByText('投资决策', { selector: '.ant-tag' })
     expect(tag.className).toContain('blue')
 
     // The swatch trigger opens a palette; picking a swatch posts immediately and closes it.

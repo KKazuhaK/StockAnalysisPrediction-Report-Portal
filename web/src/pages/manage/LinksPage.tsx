@@ -356,7 +356,7 @@ export default function LinksPage() {
         onCancel={() => setGroupOpen(false)}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={groupForm} layout="vertical">
           <Form.Item name="name" label={t('links.groupName')}>
@@ -374,7 +374,7 @@ export default function LinksPage() {
         </Form>
       </Modal>
 
-      <Modal open={open} title={editing ? t('common.edit') : t('common.add')} onOk={submit} onCancel={() => setOpen(false)} okText={t('common.save')} cancelText={t('common.cancel')} destroyOnClose>
+      <Modal open={open} title={editing ? t('common.edit') : t('common.add')} onOk={submit} onCancel={() => setOpen(false)} okText={t('common.save')} cancelText={t('common.cancel')} destroyOnHidden>
         <Form form={form} layout="vertical" onValuesChange={onValuesChange}>
           <Form.Item name="label" label={t('links.label')} rules={[{ required: true }]}>
             <Input />

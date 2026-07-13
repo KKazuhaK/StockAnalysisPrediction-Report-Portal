@@ -93,7 +93,7 @@ export default function RunQueueSettingsPage() {
           <InputNumber min={0} max={100} value={defaultPriority} onChange={(v) => setDefaultPriority(v ?? 50)} />,
         )}
 
-        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
+        <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
           {t('batch.admin.runDefaultsTitle')}
         </Divider>
         {row(
@@ -126,7 +126,7 @@ export default function RunQueueSettingsPage() {
               label: t('common.advanced'),
               children: (
                 <Space direction="vertical" size={GAP_FIELD} style={{ width: '100%' }}>
-                  <Divider orientation="left" orientationMargin={0} plain style={{ marginTop: 0 }}>
+                  <Divider titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain style={{ marginTop: 0 }}>
                     {t('batch.admin.difyTitle')}
                   </Divider>
                   {row(
@@ -144,7 +144,7 @@ export default function RunQueueSettingsPage() {
                     t('batch.admin.difyRunTimeoutHint'),
                     <InputNumber min={1} max={720} value={difyRunTimeout} onChange={(v) => setDifyRunTimeout(v || 180)} addonAfter={t('batch.admin.minutes')} />,
                   )}
-                  <Divider orientation="left" orientationMargin={0} plain>
+                  <Divider titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
                     {t('batch.admin.prioWeightsTitle')}
                   </Divider>
                   <Typography.Text type="secondary">{t('batch.admin.prioWeightsHint')}</Typography.Text>
@@ -187,7 +187,7 @@ export default function RunQueueSettingsPage() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', marginTop: 12 }}>
-        <Divider style={{ margin: '4px 0' }} orientation="left" orientationMargin={0} plain>
+        <Divider style={{ margin: '4px 0' }} titlePlacement="left" styles={{ content: { marginInlineStart: 0 } }} plain>
           {t('batch.admin.presetsTitle')}
         </Divider>
         <Typography.Text type="secondary">{t('batch.admin.presetsHint')}</Typography.Text>

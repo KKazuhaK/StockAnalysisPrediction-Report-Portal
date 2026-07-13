@@ -131,7 +131,7 @@ export default function LoginPage() {
         okText={t('login.forgotSend')}
         cancelText={t('common.cancel')}
         footer={forgotSent ? null : undefined}
-        destroyOnClose
+        destroyOnHidden
       >
         {forgotSent ? (
           <Typography.Paragraph>{t('login.forgotSent')}</Typography.Paragraph>

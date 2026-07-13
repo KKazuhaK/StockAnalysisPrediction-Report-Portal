@@ -34,7 +34,7 @@ export default function ScopePermissionModal({ open, appName, scopes, confirmLoa
       confirmLoading={confirmLoading}
       onOk={onConfirm}
       onCancel={onCancel}
-      destroyOnClose
+      destroyOnHidden
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text>{t('apps.permIntro', { name: appName })}</Typography.Text>

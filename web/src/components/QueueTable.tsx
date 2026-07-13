@@ -166,7 +166,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
       width={fullWidth ? '100%' : 680}
       open={open}
       onClose={onClose}
-      destroyOnClose
+      destroyOnHidden
       extra={
         selected.length > 0 ? (
           <Popconfirm title={t('queue.cancelRowsConfirm', { n: selected.length })} onConfirm={() => cancelRows(selected)}>
@@ -541,7 +541,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         okText={t('common.save')}
         cancelText={t('common.cancel')}
         onCancel={() => setReschedId(null)}
-        destroyOnClose
+        destroyOnHidden
       >
         <Space direction="vertical" style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('queue.rescheduleHint')}</Typography.Text>

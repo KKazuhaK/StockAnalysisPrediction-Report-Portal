@@ -157,7 +157,7 @@ export default function RunPresetsEditor() {
         onCancel={() => setDraft(null)}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         {draft && <PresetForm draft={draft} onChange={setDraft} />}
       </Modal>

@@ -245,7 +245,7 @@ export default function ChatAdminPage() {
         open={viewConv != null}
         onClose={() => setViewConv(null)}
         width={fullWidth ? '100%' : 640}
-        destroyOnClose
+        destroyOnHidden
         title={
           viewConv ? (
             <Space size={8} wrap>

@@ -877,7 +877,7 @@ export default function ChatPage() {
         onOk={submitRename}
         onCancel={() => setRenameId(null)}
         okButtonProps={{ disabled: !renameValue.trim() }}
-        destroyOnClose
+        destroyOnHidden
       >
         <Input
           value={renameValue}

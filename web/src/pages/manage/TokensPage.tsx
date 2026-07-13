@@ -119,7 +119,7 @@ export default function TokensPage() {
         onCancel={() => setOpen(false)}
         okText={t('common.add')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" initialValues={{ scope: 'all' }}>
           <Form.Item name="name" label={t('settings.tokenName')}>

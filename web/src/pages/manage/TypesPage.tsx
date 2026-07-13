@@ -367,7 +367,7 @@ export default function TypesPage() {
         onCancel={() => setOpen(false)}
         okText={t('common.add')}
         cancelText={t('common.cancel')}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={addForm} layout="vertical">
           <Form.Item name="name" label={t('types.addName')} rules={[{ required: true }]}>
