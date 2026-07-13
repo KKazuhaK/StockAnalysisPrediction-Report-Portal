@@ -151,6 +151,10 @@ function Themed() {
       theme={{
         algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: { colorPrimary: '#1677ff', borderRadius: 8 },
+        // antd 6 gives a left/right-titled Divider a leading rail (orientationMargin token,
+        // default 5%) so the text floats inward. Our section headers want the title flush to
+        // the edge, so zero the token globally — the native way, no per-Divider prop or CSS.
+        components: { Divider: { orientationMargin: 0 } },
         // A cssVar key PER THEME, not the single useId `cssVar: true` gives. antd caches the
         // generated CSS variables under this key; with one shared key, switching the algorithm at
         // runtime does not regenerate them, so neutral tokens (default button/select/tag fills)
