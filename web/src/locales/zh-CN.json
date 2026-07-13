@@ -712,5 +712,8 @@
   "storage.act": "清理超过 {{days}} 天的{{cat}}",
   "storage.confirmTitle": "确认清理？",
   "storage.confirmBody": "将永久删除 {{n}} 项超过 {{days}} 天的{{cat}}，此操作无法撤销。",
-  "storage.doClean": "确认清理"
+  "storage.doClean": "确认清理",
+  "update.title": "有新版本",
+  "update.desc": "应用已更新，刷新以载入最新版本。",
+  "update.refresh": "刷新"
 }

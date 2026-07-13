@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Badge, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
+import { App, Badge, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
 import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -10,6 +10,7 @@ import { useAuth } from '../auth'
 import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
 import { QUEUE_EVENT, RUN_ANALYSIS_EVENT } from '../lib/shortcuts'
+import { useVersionCheck } from '../lib/useVersionCheck'
 import Omnibox from './Omnibox'
 import RunAnalysisModal from './RunAnalysisModal'
 import QueueDrawer from './QueueDrawer'
@@ -62,6 +63,26 @@ export default function AppLayout() {
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
+  // Cloudflare-style "new version" prompt: once a deploy lands under this open tab, surface a
+  // persistent top notification with a Refresh action instead of force-reloading — the user
+  // finishes what they're doing and reloads on their terms. Keyed so repeat detections don't stack.
+  const updateAvailable = useVersionCheck()
+  const { notification } = App.useApp()
+  useEffect(() => {
+    if (!updateAvailable) return
+    notification.info({
+      key: 'rp-app-update',
+      message: t('update.title'),
+      description: t('update.desc'),
+      btn: (
+        <Button type="primary" size="small" onClick={() => window.location.reload()}>
+          {t('update.refresh')}
+        </Button>
+      ),
+      duration: 0,
+      placement: 'top',
+    })
+  }, [updateAvailable, notification, t])
   // Publish the real (wrap-aware) header height so the /manage sticky rail offsets by it
   // instead of assuming a fixed 64px. A ResizeObserver (not just a window-resize listener)
   // keeps it accurate whenever the header itself changes height — wrap/unwrap, font load,

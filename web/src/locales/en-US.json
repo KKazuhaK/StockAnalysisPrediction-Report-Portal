@@ -712,5 +712,8 @@
   "storage.act": "Clean {{cat}} older than {{days}}d",
   "storage.confirmTitle": "Clean now?",
   "storage.confirmBody": "Permanently delete {{n}} {{cat}} older than {{days}} days. This cannot be undone.",
-  "storage.doClean": "Clean"
+  "storage.doClean": "Clean",
+  "update.title": "New version available",
+  "update.desc": "The app was updated. Refresh to load the latest version.",
+  "update.refresh": "Refresh"
 }
