@@ -29,6 +29,7 @@ const BatchAdminPage = lazyRetry(() => import('./pages/manage/BatchAdminPage'))
 const RunQueueSettingsPage = lazyRetry(() => import('./pages/manage/RunQueueSettingsPage'))
 const ChatAdminPage = lazyRetry(() => import('./pages/manage/ChatAdminPage'))
 const WebhooksPage = lazyRetry(() => import('./pages/manage/WebhooksPage'))
+const StoragePage = lazyRetry(() => import('./pages/manage/StoragePage'))
 const AppsHub = lazyRetry(() => import('./pages/AppsHub'))
 const AppView = lazyRetry(() => import('./pages/AppView'))
 const AppsAdminPage = lazyRetry(() => import('./pages/manage/AppsAdminPage'))
@@ -127,6 +128,7 @@ function AppRoutes() {
           <Route path="assistant" element={<ChatAdminPage />} />
           <Route path="apps" element={<AppsAdminPage />} />
           <Route path="webhooks" element={<WebhooksPage />} />
+          <Route path="storage" element={<StoragePage />} />
           <Route path="apidoc" element={<ApiDocPage />} />
           {/* Back-compat: the old catch-all Settings tab split into these pages. */}
           <Route path="settings" element={<Navigate to="/manage/site" replace />} />

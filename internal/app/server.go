@@ -49,6 +49,7 @@ type Server struct {
 	chatMu      sync.Mutex                                                                 // guards chatLive/chatSeq
 	chatLive    map[int64]*chatTurn                                                        // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
 	chatSeq     int64                                                                      // monotonic in-flight chat-turn id
+	cleanupMu   sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -129,6 +130,7 @@ func RunServer(cfgPath string) {
 
 	s.resumeBatchJobs() // requeue items left in-flight by a restart and relaunch running jobs
 	go s.scheduleLoop() // release one-shot 定时 jobs when their run_at passes (ADR 0007)
+	go s.cleanupLoop()  // run the admin-configured storage-retention pass on its cadence (ADR 0017)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -250,6 +252,14 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/batch/presets/reorder", s.requireAdminJSON(s.apiRunPresetReorder))
 	mux.HandleFunc("PUT /api/admin/batch/presets/{id}", s.requireAdminJSON(s.apiRunPresetUpdate))
 	mux.HandleFunc("DELETE /api/admin/batch/presets/{id}", s.requireAdminJSON(s.apiRunPresetDelete))
+
+	// ---- Storage cleanup console (docs/adr/0017-storage-cleanup.md): admin-only (PermManage) ----
+	mux.HandleFunc("GET /api/admin/cleanup/config", s.requireAdminJSON(s.apiCleanupConfigGet))
+	mux.HandleFunc("POST /api/admin/cleanup/config", s.requireAdminJSON(s.apiCleanupConfigSave))
+	mux.HandleFunc("GET /api/admin/cleanup/usage", s.requireAdminJSON(s.apiCleanupUsage))
+	mux.HandleFunc("POST /api/admin/cleanup/preview", s.requireAdminJSON(s.apiCleanupPreview))
+	mux.HandleFunc("POST /api/admin/cleanup/run", s.requireAdminJSON(s.apiCleanupRunNow))
+	mux.HandleFunc("GET /api/admin/cleanup/history", s.requireAdminJSON(s.apiCleanupHistory))
 
 	// ---- Interactive chat / assistant (docs/adr/0012-interactive-chat.md) ----
 	// Cookie session, gated by PermRunBatch (a chat turn runs a Dify app). Conversations
