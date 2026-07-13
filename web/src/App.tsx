@@ -149,7 +149,13 @@ function Themed() {
       theme={{
         algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: { colorPrimary: '#1677ff', borderRadius: 8 },
-        cssVar: true,
+        // A cssVar key PER THEME, not the single useId `cssVar: true` gives. antd caches the
+        // generated CSS variables under this key; with one shared key, switching the algorithm at
+        // runtime does not regenerate them, so neutral tokens (default button/select/tag fills)
+        // stay stuck on the previous palette while colored tokens (colorPrimary is the same hex in
+        // both) still look right. Distinct keys give each palette its own scope, so a dark→light
+        // switch cleanly applies the light variables. See antd cssVar "unique key per theme".
+        cssVar: { key: dark ? 'rp-dark' : 'rp-light' },
       }}
     >
       <AntdApp style={{ height: '100%' }}>
