@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
-import { App, Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
+import { Alert, Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
 import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -81,26 +81,11 @@ export default function AppLayout() {
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
-  // Cloudflare-style "new version" prompt: once a deploy lands under this open tab, surface a
-  // persistent top notification with a Refresh action instead of force-reloading — the user
-  // finishes what they're doing and reloads on their terms. Keyed so repeat detections don't stack.
+  // "New version" prompt: once a deploy lands under this open tab, show an inline, dismissible banner
+  // (not a floating notification that overlapped content) with a Refresh action, so the user finishes
+  // what they're doing and reloads on their terms. Rendered as a sticky band right under the header.
   const updateAvailable = useVersionCheck()
-  const { notification } = App.useApp()
-  useEffect(() => {
-    if (!updateAvailable) return
-    notification.info({
-      key: 'rp-app-update',
-      message: t('update.title'),
-      description: t('update.desc'),
-      btn: (
-        <Button type="primary" size="small" onClick={() => window.location.reload()}>
-          {t('update.refresh')}
-        </Button>
-      ),
-      duration: 0,
-      placement: 'top',
-    })
-  }, [updateAvailable, notification, t])
+  const [updateDismissed, setUpdateDismissed] = useState(false)
   // Publish the real (wrap-aware) header height so the /manage sticky rail offsets by it
   // instead of assuming a fixed 64px. A ResizeObserver (not just a window-resize listener)
   // keeps it accurate whenever the header itself changes height — wrap/unwrap, font load,
@@ -347,6 +332,24 @@ export default function AppLayout() {
           </Popover>
         </Space>
       </Header>
+
+      {/* New-version banner: sticky right under the header (uses the published header height), so it
+          occupies its own space and never overlaps content — unlike the old floating notification. */}
+      {updateAvailable && !updateDismissed && (
+        <Alert
+          banner
+          type="info"
+          style={{ position: 'sticky', top: 'var(--rp-header-h, 64px)', zIndex: 19 }}
+          message={t('update.desc')}
+          action={
+            <Button type="primary" size="small" onClick={() => window.location.reload()}>
+              {t('update.refresh')}
+            </Button>
+          }
+          closable
+          onClose={() => setUpdateDismissed(true)}
+        />
+      )}
 
       {/* Back-navigation breadcrumb band, aligned to the content column (full-bleed on chat). */}
       {showCrumbs && (
