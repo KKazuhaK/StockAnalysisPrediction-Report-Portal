@@ -56,6 +56,12 @@ type gzipResponseWriter struct {
 }
 
 func (w *gzipResponseWriter) WriteHeader(code int) {
+	// An SSE (streaming) response must never be gzipped: compression buffers the body, which defeats
+	// live token-by-token delivery and conflicts with X-Accel-Buffering. Detect it from the
+	// handler-set Content-Type and pass it straight through. (Empty-body 304/204/1xx also pass through.)
+	if strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+		w.disabled = true
+	}
 	if code == http.StatusNotModified || code == http.StatusNoContent || (code >= 100 && code < 200) {
 		w.disabled = true
 	}
@@ -75,6 +81,19 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 		return w.ResponseWriter.Write(b)
 	}
 	return w.gz.Write(b)
+}
+
+// Flush re-exposes the underlying ResponseWriter's Flusher, which is otherwise hidden once we wrap
+// it — a streaming handler's `w.(http.Flusher)` check would fail and it would refuse to stream (the
+// chat SSE endpoint returned 500 "streaming unsupported" for exactly this reason). For a gzipped
+// response it first flushes the compressor so buffered bytes reach the client.
+func (w *gzipResponseWriter) Flush() {
+	if w.started && !w.disabled {
+		w.gz.Flush()
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (w *gzipResponseWriter) finish() {

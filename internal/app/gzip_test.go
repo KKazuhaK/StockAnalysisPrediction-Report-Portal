@@ -86,6 +86,37 @@ func TestGzipMiddleware(t *testing.T) {
 	}
 }
 
+// An SSE handler behind the gzip middleware must (a) obtain a working http.Flusher — the chat stream
+// endpoint returned 500 "streaming unsupported" when this failed — and (b) NOT be gzip-encoded, since
+// compression buffers the body and defeats live token delivery.
+func TestGzipSSEStreaming(t *testing.T) {
+	reachedFlush := false
+	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fl, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("SSE handler could not obtain http.Flusher through the gzip middleware")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("event: delta\ndata: hi\n\n"))
+		fl.Flush()
+		reachedFlush = true
+	}))
+	req := httptest.NewRequest("POST", "/api/chat/conversations/1/messages/stream", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !reachedFlush {
+		t.Fatal("handler did not complete")
+	}
+	if rec.Header().Get("Content-Encoding") == "gzip" {
+		t.Errorf("SSE response must NOT be gzip-encoded; headers=%v", rec.Header())
+	}
+	if !strings.Contains(rec.Body.String(), "event: delta") {
+		t.Errorf("SSE body not passed through raw: %q", rec.Body.String())
+	}
+}
+
 // A 304 (empty body) must pass through without a gzip body.
 func TestGzipSkipsEmptyBody(t *testing.T) {
 	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
