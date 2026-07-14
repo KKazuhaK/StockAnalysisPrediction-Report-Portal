@@ -120,6 +120,10 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [focused, setFocused] = useState(false)
   const [sending, setSending] = useState(false)
+  // After a dropped stream, the turn keeps running in Dify and we poll for its result. recovering
+  // keeps a visible "still generating — it'll appear automatically" indicator up for that whole
+  // window (instead of the UI looking idle and then the answer suddenly popping in).
+  const [recovering, setRecovering] = useState(false)
   const [loadingHist, setLoadingHist] = useState(false)
   const [intro, setIntro] = useState<{ opening: string } | null>(null)
   // Admin-set chat runtime: whether replies stream token-by-token, and how long to reconcile a
@@ -222,7 +226,7 @@ export default function ChatPage() {
   // visibly jerks on newlines. Smooth scrolling is reserved for the explicit "back to bottom" pill.
   useLayoutEffect(() => {
     if (pinnedRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [msgs, sending])
+  }, [msgs, sending, recovering])
 
   // Dify's history for a conversation, flattened into a message thread.
   const fetchHistory = async (id: number): Promise<Msg[]> => {
@@ -458,9 +462,12 @@ export default function ChatPage() {
         // shows a confirmed error on failure. A turn still running when the window elapses gets a
         // NEUTRAL note — never a false "failed" (replies range from seconds to minutes); the ambient
         // reconcile (reopen / return-to-tab) surfaces it once it finishes.
-        reconcilePoll(id).then((r) => {
-          if (r === 'running') setMsgs((m) => putAssistant(m, '_' + t('chat.stillRunning') + '_'))
-        })
+        setRecovering(true)
+        reconcilePoll(id)
+          .then((r) => {
+            if (r === 'running') setMsgs((m) => putAssistant(m, '_' + t('chat.stillRunning') + '_'))
+          })
+          .finally(() => setRecovering(false))
       }
     } finally {
       setSending(false)
@@ -856,13 +863,22 @@ export default function ChatPage() {
           ) : (
             <div style={{ padding: `${compact ? 20 : 24}px ${padX}px 8px` }}>
               {msgs.map(bubble)}
-              {sending && (
+              {(sending || recovering) && (
                 <div style={{ display: 'flex', gap: 12, marginBottom: 26 }}>
                   {assistantAvatar(30)}
-                  <div className="rp-typing" style={{ height: 30, color: token.colorTextTertiary }}>
-                    <span />
-                    <span />
-                    <span />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 30, color: token.colorTextTertiary }}>
+                    <span className="rp-typing">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                    {/* Live streaming shows just the dots; a dropped-stream recovery adds the label so the
+                        user knows it's still working and the answer will appear on its own. */}
+                    {recovering && !sending && (
+                      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                        {t('chat.stillRunning')}
+                      </Typography.Text>
+                    )}
                   </div>
                 </div>
               )}
@@ -898,7 +914,7 @@ export default function ChatPage() {
                     alignItems: 'center',
                     gap: 6,
                     height: 32,
-                    padding: sending ? '0 16px' : '0 14px',
+                    padding: sending || recovering ? '0 16px' : '0 14px',
                     borderRadius: 16,
                     background: token.colorBgElevated,
                     color: token.colorText,
@@ -909,7 +925,7 @@ export default function ChatPage() {
                     zIndex: 5,
                   }}
                 >
-                  {sending ? (
+                  {sending || recovering ? (
                     <span className="rp-typing" style={{ color: token.colorTextSecondary }}>
                       <span />
                       <span />
