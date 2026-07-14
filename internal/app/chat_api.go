@@ -17,12 +17,10 @@ import (
 // The portal is a passthrough — it sends one message + the conversation id and Dify owns
 // the history/context; this layer only indexes conversations so a user can list/reopen them.
 
-// chatTimeout bounds one blocking chat turn. Interactive replies (even agent apps with
-// tool calls) return in well under this; it is far shorter than a batch run's hour.
-const chatTimeout = 5 * time.Minute
-
-// difyChatClient builds a Dify client for a chat/agent target from its stored config.
-func difyChatClient(configJSON string) (*dify.Client, error) {
+// difyChatClient builds a Dify client for a chat/agent target from its stored config. timeout caps
+// one turn's server↔Dify request — the admin-set chat_turn_timeout_minutes (see chatTurnTimeout), so
+// long agent / deep-research replies can stream to the end instead of being cut off at a fixed 5 min.
+func difyChatClient(configJSON string, timeout time.Duration) (*dify.Client, error) {
 	var cfg difyTargetConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return nil, fmt.Errorf("dify target config: %w", err)
@@ -30,7 +28,7 @@ func difyChatClient(configJSON string) (*dify.Client, error) {
 	if cfg.BaseURL == "" || cfg.APIKey == "" {
 		return nil, fmt.Errorf("dify target: base_url and api_key are required")
 	}
-	return dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: chatTimeout}), nil
+	return dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: timeout}), nil
 }
 
 // chatTitle derives a conversation title from its first message (trimmed to a short line).
@@ -84,7 +82,7 @@ func (s *Server) apiChatTargetIntro(w http.ResponseWriter, r *http.Request, user
 		jsonError(w, http.StatusNotFound, "target not found")
 		return
 	}
-	client, err := difyChatClient(tgt.Config)
+	client, err := difyChatClient(tgt.Config, s.chatTurnTimeout())
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -216,7 +214,7 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusNotFound, "target not found")
 		return
 	}
-	client, err := difyChatClient(tgt.Config)
+	client, err := difyChatClient(tgt.Config, s.chatTurnTimeout())
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -226,7 +224,7 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 	// handler goroutine running; a fresh context isn't aborted with the browser). cancel() is ALSO
 	// the stop handle stored on the live turn so the owner or an admin can abort the run.
 	endUser := s.difyEndUser(conv.CreatedBy)
-	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.chatTurnTimeout())
 	defer cancel()
 	// Chat is interactive — it must not queue behind the batch run system (that queue exists to
 	// DEFER slow report runs; a chat turn can't wait). An independent ceiling instead sheds load
@@ -257,7 +255,7 @@ func (s *Server) apiChatSend(w http.ResponseWriter, r *http.Request, user string
 	if err != nil {
 		// A user/admin stop cancels ctx → ChatStream returns context.Canceled with the partial
 		// answer. Report that as a normal (stopped) reply, not a 502 — only a genuine Dify failure
-		// (or the chatTimeout → DeadlineExceeded) is an error.
+		// (or the turn timeout → DeadlineExceeded) is an error.
 		if ctx.Err() == context.Canceled {
 			s.st.AfterTurn(conv.ID, reply.ConversationID, chatTitle(query))
 			writeJSON(w, map[string]any{"answer": reply.Answer, "conversation_id": reply.ConversationID, "stopped": true})
@@ -303,13 +301,13 @@ func (s *Server) apiChatSendStream(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusNotFound, "target not found")
 		return
 	}
-	client, err := difyChatClient(tgt.Config)
+	client, err := difyChatClient(tgt.Config, s.chatTurnTimeout())
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	endUser := s.difyEndUser(conv.CreatedBy)
-	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.chatTurnTimeout())
 	defer cancel()
 	turnID, ok := s.chatAcquire(&chatTurn{
 		User: user, TargetID: tgt.ID, TargetName: tgt.Name,
@@ -374,7 +372,7 @@ func (s *Server) apiChatOutcome(w http.ResponseWriter, r *http.Request, user str
 		jsonError(w, http.StatusNotFound, "target not found")
 		return
 	}
-	client, err := difyChatClient(tgt.Config)
+	client, err := difyChatClient(tgt.Config, s.chatTurnTimeout())
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -404,7 +402,7 @@ func (s *Server) apiChatHistory(w http.ResponseWriter, r *http.Request, user str
 		jsonError(w, http.StatusNotFound, "target not found")
 		return
 	}
-	client, err := difyChatClient(tgt.Config)
+	client, err := difyChatClient(tgt.Config, s.chatTurnTimeout())
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -466,7 +464,7 @@ func (s *Server) apiAdminChatHistory(w http.ResponseWriter, r *http.Request, use
 		jsonError(w, http.StatusNotFound, "target not found")
 		return
 	}
-	client, err := difyChatClient(tgt.Config)
+	client, err := difyChatClient(tgt.Config, s.chatTurnTimeout())
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { App, Avatar, Button, Drawer, Dropdown, Empty, Grid, Input, Modal, Select, Spin, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
-import { ArrowUpOutlined, DeleteOutlined, EditOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined, StopOutlined, UnorderedListOutlined } from '@ant-design/icons'
+import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, EditOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined, StopOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError } from '../api/client'
@@ -128,10 +128,22 @@ export default function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null)
   // Whether the thread is scrolled to (near) the bottom. Auto-scroll only follows when it is,
   // so a poll refresh or a new message never yanks the user back down while they read above.
+  // pinnedRef drives the imperative auto-follow (no stale closure); atBottom mirrors it as state so
+  // the "back to bottom" pill can show/hide — set only when the boolean flips (no re-render per scroll).
   const pinnedRef = useRef(true)
+  const [atBottom, setAtBottom] = useState(true)
   const onThreadScroll = () => {
     const el = scrollRef.current
-    if (el) pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (!el) return
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    pinnedRef.current = near
+    setAtBottom((prev) => (prev === near ? prev : near))
+  }
+  // Jump to the bottom and resume auto-following (the pill's action).
+  const scrollToBottom = () => {
+    pinnedRef.current = true
+    setAtBottom(true)
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }
   // Mirrors of state read inside the poll interval (so the closure sees current values).
   const sendingRef = useRef(false)
@@ -205,8 +217,11 @@ export default function ChatPage() {
     }
   }, [targetId])
 
-  useEffect(() => {
-    if (pinnedRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+  // Auto-follow the stream: INSTANT (no 'smooth') and in a layout effect so the scroll lands before
+  // the browser paints the new content — a smooth animation re-triggered on every token stutters and
+  // visibly jerks on newlines. Smooth scrolling is reserved for the explicit "back to bottom" pill.
+  useLayoutEffect(() => {
+    if (pinnedRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [msgs, sending])
 
   // Dify's history for a conversation, flattened into a message thread.
@@ -600,7 +615,9 @@ export default function ChatPage() {
         }}
         autoSize={{ minRows: hero ? 2 : 1, maxRows: 8 }}
         placeholder={t('chat.inputPlaceholder')}
-        style={{ fontSize: 15, padding: '6px 8px', background: 'transparent', resize: 'none' }}
+        // antd 6's borderless TextArea leaks its own border/focus ring, doubling the composer's frame;
+        // force it flat so only the wrapper below draws the focus outline. (inline wins over antd's class.)
+        style={{ fontSize: 15, padding: '6px 8px', background: 'transparent', resize: 'none', border: 'none', boxShadow: 'none', outline: 'none' }}
       />
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingInline: 6, paddingBottom: 2 }}>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -864,7 +881,48 @@ export default function ChatPage() {
               </Typography.Text>
             </div>
           ) : (
-            <div style={{ padding: `${compact ? 10 : 12}px ${padX}px ${compact ? 12 : 16}px`, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+            <div style={{ position: 'relative', padding: `${compact ? 10 : 12}px ${padX}px ${compact ? 12 : 16}px`, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+              {/* Back-to-bottom pill: shows only when scrolled up. While generating it's a three-dot
+                  loader (tap to catch up to the live stream); when idle it's "↓ back to bottom". */}
+              {!atBottom && (
+                <button
+                  onClick={scrollToBottom}
+                  title={t('chat.backToBottom')}
+                  style={{
+                    position: 'absolute',
+                    bottom: '100%',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    marginBottom: 8,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    height: 32,
+                    padding: sending ? '0 16px' : '0 14px',
+                    borderRadius: 16,
+                    background: token.colorBgElevated,
+                    color: token.colorText,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    boxShadow: token.boxShadowSecondary,
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    zIndex: 5,
+                  }}
+                >
+                  {sending ? (
+                    <span className="rp-typing" style={{ color: token.colorTextSecondary }}>
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  ) : (
+                    <>
+                      <ArrowDownOutlined />
+                      {t('chat.backToBottom')}
+                    </>
+                  )}
+                </button>
+              )}
               {composer(false)}
             </div>
           ))}
