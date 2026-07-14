@@ -356,6 +356,27 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, ran_at TEXT, trigger TEXT, dry_run INTEGER DEFAULT 0, ok INTEGER DEFAULT 1, error TEXT DEFAULT '',
 			batch_deleted INTEGER DEFAULT 0, tokens_deleted INTEGER DEFAULT 0, reports_deleted INTEGER DEFAULT 0,
 			duration_ms INTEGER DEFAULT 0)`, pk),
+		// Recurring tasks (scheduled tasks; docs/adr/0018-recurring-tasks.md): a saved job template + a
+		// daily/weekly/monthly cadence a background loop fires into the run queue, indefinitely, until
+		// disabled. rows is the JSON job template (the exact shape CreateBatchJob takes: 1 row = a
+		// single run, N = a batch). priority is '' (normal — resolves to the creator's group base at
+		// fire time) or 'idle'; never 'urgent' (a recurring urgent run would drain the scarce urgent-run
+		// tickets every occurrence). freq/at_time/weekday/monthday reuse the storage-cleanup cadence engine
+		// (cadence.go), valued in the panel timezone. last_fired is the YYYY-MM-DD period-stamp that
+		// guards against a restart/slow-fire double-fire (stamped BEFORE the job is created). target_id
+		// is a live reference to batch_targets (the template tracks the current workflow), not a
+		// snapshot — a missing target is logged-and-skipped at fire time.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS recurring_tasks(
+			id %s, name TEXT, target_id BIGINT, rows TEXT DEFAULT '[]',
+			concurrency INTEGER DEFAULT 1, priority TEXT DEFAULT '', max_retries INTEGER DEFAULT 0,
+			freq TEXT, at_time TEXT, weekday INTEGER DEFAULT 1, monthday INTEGER DEFAULT 1,
+			enabled INTEGER DEFAULT 1, created_by TEXT, created_at TEXT, last_fired TEXT DEFAULT '')`, pk),
+		// recurring_runs: the fire→job audit chain (one row per firing), trimmed to a per-task ring
+		// (InsertRecurringRun). The scheduler's idempotency is NOT derived from this table (it lives in
+		// recurring_tasks.last_fired), so trimming can never cause a re-fire.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS recurring_runs(
+			id %s, task_id BIGINT, job_id BIGINT, fired_at TEXT)`, pk),
+		`CREATE INDEX IF NOT EXISTS idx_recurring_runs_task ON recurring_runs(task_id, id)`,
 	}
 }
 
@@ -1273,7 +1294,7 @@ func (s *Store) Links() []Link {
 		var newTab, visible sql.NullInt64
 		rows.Scan(&l.ID, &l.Label, &l.URL, &icon, &newTab, &l.Ord, &l.GroupID, &visible)
 		l.Icon = icon.String
-		l.NewTab = !newTab.Valid || newTab.Int64 != 0 // default: open in new tab
+		l.NewTab = !newTab.Valid || newTab.Int64 != 0    // default: open in new tab
 		l.Visible = !visible.Valid || visible.Int64 != 0 // default: shown
 		out = append(out, l)
 	}

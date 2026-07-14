@@ -128,9 +128,10 @@ func RunServer(cfgPath string) {
 		st.UpsertPlugin(difyPluginSlug, "Dify Workflow", "1.0.0", "{}", "bundled")
 	}
 
-	s.resumeBatchJobs() // requeue items left in-flight by a restart and relaunch running jobs
-	go s.scheduleLoop() // release one-shot 定时 jobs when their run_at passes (ADR 0007)
-	go s.cleanupLoop()  // run the admin-configured storage-retention pass on its cadence (ADR 0017)
+	s.resumeBatchJobs()  // requeue items left in-flight by a restart and relaunch running jobs
+	go s.scheduleLoop()  // release one-shot 定时 jobs when their run_at passes (ADR 0007)
+	go s.cleanupLoop()   // run the admin-configured storage-retention pass on its cadence (ADR 0017)
+	go s.recurringLoop() // fire recurring tasks into the run queue on their cadence (ADR 0018)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -252,6 +253,17 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/batch/presets/reorder", s.requireAdminJSON(s.apiRunPresetReorder))
 	mux.HandleFunc("PUT /api/admin/batch/presets/{id}", s.requireAdminJSON(s.apiRunPresetUpdate))
 	mux.HandleFunc("DELETE /api/admin/batch/presets/{id}", s.requireAdminJSON(s.apiRunPresetDelete))
+
+	// ---- Recurring tasks (scheduled tasks; docs/adr/0018-recurring-tasks.md) ----
+	// PermRunBatch (operators schedule their own recurring runs, not admin-only); every handler
+	// checks ownership in-line (a non-admin sees/edits only their own tasks, an admin all).
+	mux.HandleFunc("GET /api/admin/batch/recurring", s.requirePermJSON(PermRunBatch, s.apiRecurringList))
+	mux.HandleFunc("POST /api/admin/batch/recurring", s.requirePermJSON(PermRunBatch, s.apiRecurringCreate))
+	mux.HandleFunc("GET /api/admin/batch/recurring/{id}", s.requirePermJSON(PermRunBatch, s.apiRecurringDetail))
+	mux.HandleFunc("PUT /api/admin/batch/recurring/{id}", s.requirePermJSON(PermRunBatch, s.apiRecurringUpdate))
+	mux.HandleFunc("POST /api/admin/batch/recurring/{id}/enable", s.requirePermJSON(PermRunBatch, s.apiRecurringEnable))
+	mux.HandleFunc("POST /api/admin/batch/recurring/{id}/run", s.requirePermJSON(PermRunBatch, s.apiRecurringRunNow))
+	mux.HandleFunc("DELETE /api/admin/batch/recurring/{id}", s.requirePermJSON(PermRunBatch, s.apiRecurringDelete))
 
 	// ---- Storage cleanup console (docs/adr/0017-storage-cleanup.md): admin-only (PermManage) ----
 	mux.HandleFunc("GET /api/admin/cleanup/config", s.requireAdminJSON(s.apiCleanupConfigGet))

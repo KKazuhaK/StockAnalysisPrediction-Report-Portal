@@ -43,6 +43,17 @@
 //   - dify_api.go      Dify-native target configuration (ADR 0006)
 //   - dify_provider.go the dify.Client → batch.Provider adapter (stream / reconcile / stop)
 //
+// Recurring tasks + shared cadence (ADR 0018)
+//   - recurring.go       cadence loop (recurringLoop) that fires a saved rows template into the queue
+//   - recurring_api.go   admin HTTP surface (/api/admin/batch/recurring/*)
+//   - recurring_store.go recurring_tasks + recurring_runs persistence
+//   - cadence.go         shared daily/weekly/monthly due-check + next-occurrence (cleanup + recurring)
+//
+// Storage retention cleanup (ADR 0017)
+//   - cleanup.go       retention engine + the daily/weekly/monthly cadence loop (cleanupLoop)
+//   - cleanup_api.go   admin console HTTP surface (/api/admin/cleanup/*)
+//   - cleanup_store.go usage stats, retention delete queries, cleanup_runs audit log
+//
 // Interactive chat / assistant (ADR 0012)
 //   - chat_api.go   HTTP handlers (send / stop / history / conversations)
 //   - chat_gate.go  concurrency ceiling + in-flight registry + admin live view + stop
@@ -65,7 +76,7 @@
 //   - user_admin_api.go enterprise user-admin HTTP handlers
 //   - roles.go          Perm* constants + role→permission registry (RBAC-lite)
 //   - password_reset.go stateless HMAC email password reset
-//   - tickets.go        加急 priority tickets — per-user urgent-run quota (ADR 0005)
+//   - tickets.go        urgent-run priority tickets — per-user urgent-run quota (ADR 0005)
 //
 // Notifications
 //   - email.go emails a submitter when their batch job finishes (opt-in)

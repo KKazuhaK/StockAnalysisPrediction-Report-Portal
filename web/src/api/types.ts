@@ -562,3 +562,44 @@ export interface AppPreviewResp {
   preview: boolean
   app: AppSummary
 }
+
+// Recurring tasks (计划任务; docs/adr/0018-recurring-tasks.md): a saved job template + a
+// daily/weekly/monthly cadence that the server fires into the run queue.
+export interface RecurringTask {
+  id: number
+  name: string
+  target_id: number
+  target_name?: string
+  concurrency: number
+  priority: string // '' (normal) | 'idle'
+  max_retries: number
+  freq: string // daily | weekly | monthly
+  at_time: string // "HH:MM" (panel timezone)
+  weekday: number // 0=Sun..6=Sat (weekly)
+  monthday: number // 1..31 (monthly)
+  enabled: boolean
+  created_by: string
+  created_at: string
+  last_fired: string // YYYY-MM-DD period-stamp of the last fire ("" = never)
+  row_count: number
+  next_run?: string // computed next fire time (panel tz)
+}
+
+// One firing of a task → the batch job it created (the audit/history chain).
+export interface RecurringRun {
+  id: number
+  task_id: number
+  job_id: number
+  fired_at: string
+  job_status?: string
+}
+
+// The detail response adds the full template rows + fire history.
+export interface RecurringDetail extends RecurringTask {
+  rows: Record<string, string>[]
+  history: RecurringRun[]
+}
+
+export interface RecurringTasksResp {
+  tasks: RecurringTask[]
+}

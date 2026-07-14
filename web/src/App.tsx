@@ -34,6 +34,7 @@ const AppsHub = lazyRetry(() => import('./pages/AppsHub'))
 const AppView = lazyRetry(() => import('./pages/AppView'))
 const AppsAdminPage = lazyRetry(() => import('./pages/manage/AppsAdminPage'))
 const BatchConsole = lazyRetry(() => import('./pages/BatchConsole'))
+const RecurringConsole = lazyRetry(() => import('./pages/RecurringConsole'))
 const QueuePage = lazyRetry(() => import('./pages/QueuePage'))
 const ChatPage = lazyRetry(() => import('./pages/ChatPage'))
 
@@ -88,6 +89,14 @@ function AppRoutes() {
           element={
             <RequirePerm perm="run_batch">
               <BatchConsole />
+            </RequirePerm>
+          }
+        />
+        <Route
+          path="/apps/recurring"
+          element={
+            <RequirePerm perm="run_batch">
+              <RecurringConsole />
             </RequirePerm>
           }
         />

@@ -98,46 +98,10 @@ func (s *Server) cleanupConfigLoad() cleanupConfig {
 }
 
 // cleanupDue reports whether a scheduled cleanup should fire now and the YYYY-MM-DD period-stamp to
-// record if it does. It fires at most once per matching day — daily every day, weekly on Weekday,
-// monthly on Monthday (clamped to the month's length) — each at/after Time in loc. A lastRun stamp
-// equal to today's date suppresses re-firing (the restart double-fire guard).
+// record if it does — a thin adapter over the shared daily/weekly/monthly cadence engine
+// (cadenceDue, cadence.go), which the recurring-task scheduler (ADR 0018) also uses.
 func cleanupDue(c cleanupConfig, lastRun string, now time.Time, loc *time.Location) (bool, string) {
-	hh, mm, ok := parseHHMM(c.Time)
-	if !ok {
-		return false, ""
-	}
-	n := now.In(loc)
-	switch c.Freq {
-	case "daily":
-		// fires every day
-	case "weekly":
-		if c.Weekday < 0 || c.Weekday > 6 || int(n.Weekday()) != c.Weekday {
-			return false, ""
-		}
-	case "monthly":
-		if c.Monthday < 1 || c.Monthday > 31 {
-			return false, ""
-		}
-		last := time.Date(n.Year(), n.Month()+1, 0, 0, 0, 0, 0, loc).Day()
-		want := c.Monthday
-		if want > last {
-			want = last // day 31 in a short month fires on the last day
-		}
-		if n.Day() != want {
-			return false, ""
-		}
-	default:
-		return false, "" // off / unknown
-	}
-	sched := time.Date(n.Year(), n.Month(), n.Day(), hh, mm, 0, 0, loc)
-	if n.Before(sched) {
-		return false, ""
-	}
-	today := n.Format("2006-01-02")
-	if lastRun == today {
-		return false, ""
-	}
-	return true, today
+	return cadenceDue(c.Freq, c.Time, c.Weekday, c.Monthday, lastRun, now, loc)
 }
 
 // cleanupLoop is the second always-on ticker (amends ADR 0007's "only always-on timer"): once a
