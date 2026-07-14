@@ -61,6 +61,11 @@ export default function AppLayout() {
     return []
   }, [loc.pathname, t])
   const showCrumbs = crumbs.length > 0 && !onManage
+  // Reset the routed Suspense boundary when the top-level page changes, so navigating to a not-yet-
+  // loaded chunk shows the spinner at once instead of freezing on the previous page (React 19 + RR7
+  // keep the old UI during the transition otherwise). /manage/* collapses to one key — its tabs are
+  // nested under ManageLayout, which owns its own Suspense, so its shell must not remount per tab.
+  const suspenseKey = loc.pathname.startsWith('/manage') ? '/manage' : loc.pathname
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
   const [runOpen, setRunOpen] = useState(false)
   const [runTargetId, setRunTargetId] = useState<number | undefined>() // pinned workflow from an entry-button shortcut
@@ -86,6 +91,18 @@ export default function AppLayout() {
   // what they're doing and reloads on their terms. Rendered as a sticky band right under the header.
   const updateAvailable = useVersionCheck()
   const [updateDismissed, setUpdateDismissed] = useState(false)
+
+  // Warm the report-viewing chunks shortly after the shell mounts. StockPage/RunPage statically pull
+  // the heavy Markdown chunk, so pre-loading them makes clicking a report navigate near-instantly
+  // instead of waiting on a chunk download (paired with the keyed Suspense below, which shows a
+  // spinner if a click still races the download).
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void import('../pages/StockPage')
+      void import('../pages/RunPage')
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [])
   // Publish the real (wrap-aware) header height so the /manage sticky rail offsets by it
   // instead of assuming a fixed 64px. A ResizeObserver (not just a window-resize listener)
   // keeps it accurate whenever the header itself changes height — wrap/unwrap, font load,
@@ -380,7 +397,10 @@ export default function AppLayout() {
           ...(onChat ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } : {}),
         }}
       >
-        <Suspense fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
+        {/* Keyed by suspenseKey (above) so a cross-page navigation to a not-yet-loaded chunk shows the
+            spinner immediately instead of freezing on the old page. A cached/prefetched route resolves
+            synchronously, so this never flashes a spinner for an already-loaded page. */}
+        <Suspense key={suspenseKey} fallback={<div style={{ display: 'grid', placeItems: 'center', minHeight: '40vh' }}><Spin size="large" /></div>}>
           <Outlet />
         </Suspense>
       </Content>
