@@ -21,7 +21,7 @@ type ChatLiveTurn = {
   title: string
   started_at: string
 }
-type ChatLive = { turns: ChatLiveTurn[]; max_concurrent: number; stream: boolean; reconcile_seconds: number }
+type ChatLive = { turns: ChatLiveTurn[]; max_concurrent: number; stream: boolean; reconcile_seconds: number; turn_timeout_minutes: number }
 
 // One row in the admin conversation-oversight list; messages are fetched on demand (Dify holds them).
 type AdminConv = { id: number; created_by: string; target: string; title: string; updated_at: string; started: boolean }
@@ -39,6 +39,7 @@ export default function ChatAdminPage() {
   const [limit, setLimit] = useState(0)
   const [stream, setStream] = useState(true)
   const [reconcileSeconds, setReconcileSeconds] = useState(300)
+  const [turnTimeout, setTurnTimeout] = useState(20)
   const [turns, setTurns] = useState<ChatLiveTurn[]>([])
   const [auto, setAuto] = useState(true)
   const seeded = useRef(false)
@@ -59,6 +60,7 @@ export default function ChatAdminPage() {
           setLimit(r.max_concurrent ?? 0)
           setStream(r.stream !== false)
           setReconcileSeconds(r.reconcile_seconds ?? 300)
+          setTurnTimeout(r.turn_timeout_minutes ?? 20)
           seeded.current = true
         }
       })
@@ -76,7 +78,7 @@ export default function ChatAdminPage() {
   }, [auto])
 
   const save = async () => {
-    await api.post('/api/admin/chat/config', { max_concurrent: limit, stream, reconcile_seconds: reconcileSeconds })
+    await api.post('/api/admin/chat/config', { max_concurrent: limit, stream, reconcile_seconds: reconcileSeconds, turn_timeout_minutes: turnTimeout })
     message.success(t('common.saved'))
   }
 
@@ -156,8 +158,13 @@ export default function ChatAdminPage() {
             <Typography.Text type="secondary">{t('chatAdmin.streamHint')}</Typography.Text>
           </Space>
           <Space wrap>
+            <span style={{ display: 'inline-block', minWidth: 110 }}>{t('chatAdmin.turnTimeout')}</span>
+            <InputNumber min={1} max={120} value={turnTimeout} onChange={(v) => setTurnTimeout(v ?? 20)} addonAfter={t('chatAdmin.minutes')} />
+            <Typography.Text type="secondary">{t('chatAdmin.turnTimeoutHint')}</Typography.Text>
+          </Space>
+          <Space wrap>
             <span style={{ display: 'inline-block', minWidth: 110 }}>{t('chatAdmin.reconcile')}</span>
-            <InputNumber min={0} max={600} value={reconcileSeconds} onChange={(v) => setReconcileSeconds(v ?? 20)} addonAfter={t('chatAdmin.seconds')} />
+            <InputNumber min={1} max={120} value={Math.round(reconcileSeconds / 60)} onChange={(v) => setReconcileSeconds((v ?? 20) * 60)} addonAfter={t('chatAdmin.minutes')} />
             <Typography.Text type="secondary">{t('chatAdmin.reconcileHint')}</Typography.Text>
           </Space>
           <Button type="primary" onClick={save}>

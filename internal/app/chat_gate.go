@@ -59,14 +59,31 @@ func (s *Server) chatStreamEnabled() bool {
 	return s.st.GetSetting("chat_stream", "1") != "0"
 }
 
+// chatTurnTimeout caps one chat turn — how long the live stream + the server↔Dify request stay open
+// before giving up. Admin-set (chat_turn_timeout_minutes, default 20, clamped 1..120); it replaced a
+// fixed 5-minute const so long agent / deep-research replies can stream to the end. NOTE: for the live
+// stream to survive a reverse proxy this long, the proxy's read timeout (nginx proxy_read_timeout)
+// must be raised to match.
+func (s *Server) chatTurnTimeout() time.Duration {
+	n, err := strconv.Atoi(s.st.GetSetting("chat_turn_timeout_minutes", "20"))
+	if err != nil || n < 1 {
+		n = 20
+	}
+	if n > 120 {
+		n = 120
+	}
+	return time.Duration(n) * time.Minute
+}
+
 // chatReconcileSeconds is how long the browser actively polls Dify for a dropped turn's outcome
-// (default 300s = chatTimeout, the longest a turn can run — the poll exits early the moment Dify
+// (default = the turn timeout, the longest a turn can run — the poll exits early the moment Dify
 // reports success/failure, so a fast reply costs one poll). Admin-set. A turn that outlasts this
 // window is NOT declared failed: it's left running and the ambient reconcile picks it up later.
 func (s *Server) chatReconcileSeconds() int {
-	n, err := strconv.Atoi(s.st.GetSetting("chat_reconcile_seconds", "300"))
+	def := int(s.chatTurnTimeout() / time.Second)
+	n, err := strconv.Atoi(s.st.GetSetting("chat_reconcile_seconds", ""))
 	if err != nil || n < 0 {
-		return 300
+		return def
 	}
 	return n
 }
@@ -189,6 +206,7 @@ func (s *Server) apiAdminChatLive(w http.ResponseWriter, r *http.Request, user s
 	writeJSON(w, map[string]any{
 		"turns": out, "max_concurrent": s.chatMaxConcurrent(),
 		"stream": s.chatStreamEnabled(), "reconcile_seconds": s.chatReconcileSeconds(),
+		"turn_timeout_minutes": int(s.chatTurnTimeout() / time.Minute),
 	})
 }
 
@@ -227,9 +245,10 @@ func (s *Server) apiAdminChatStop(w http.ResponseWriter, r *http.Request, user s
 // apiAdminChatConfigSave sets the chat concurrency ceiling (0 = unlimited).
 func (s *Server) apiAdminChatConfigSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		MaxConcurrent    *int  `json:"max_concurrent"`
-		Stream           *bool `json:"stream"`
-		ReconcileSeconds *int  `json:"reconcile_seconds"`
+		MaxConcurrent      *int  `json:"max_concurrent"`
+		Stream             *bool `json:"stream"`
+		ReconcileSeconds   *int  `json:"reconcile_seconds"`
+		TurnTimeoutMinutes *int  `json:"turn_timeout_minutes"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -237,6 +256,13 @@ func (s *Server) apiAdminChatConfigSave(w http.ResponseWriter, r *http.Request, 
 	}
 	if in.MaxConcurrent != nil && *in.MaxConcurrent >= 0 {
 		s.st.SetSetting("chat_max_concurrent", strconv.Itoa(*in.MaxConcurrent))
+	}
+	if in.TurnTimeoutMinutes != nil && *in.TurnTimeoutMinutes >= 1 {
+		v := *in.TurnTimeoutMinutes
+		if v > 120 {
+			v = 120
+		}
+		s.st.SetSetting("chat_turn_timeout_minutes", strconv.Itoa(v))
 	}
 	if in.Stream != nil {
 		v := "0"
