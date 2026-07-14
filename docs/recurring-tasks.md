@@ -96,7 +96,7 @@ Click **New task** (or the edit icon on an existing row). The modal has:
 | **Target workflow** | Which run target (Dify workflow) to run. Followed live — see §5. |
 | **Rows (CSV)** | The job template. **One row per run** — a single row runs once, N rows run as a batch each firing. The CSV is header-based: the first line names the target's input columns, each subsequent line is one run's inputs. |
 | **Repeat**   | `daily` / `weekly` / `monthly` + a **time** (HH:MM, panel tz). Weekly adds a **weekday**; monthly adds a **day-of-month** (day 31 clamps to the last day of short months). |
-| **Priority** | `Normal` or `Idle` (run only when the queue is otherwise free). **Urgent is never available** — see §5. |
+| **Priority** | `Normal` or `Idle` (run only when the queue is otherwise free). **Admins** additionally get `Top priority` (urgent) and a custom base score (0–100) — see §5. |
 | **Concurrency / Max retries** | Per-firing batch settings, same meaning as the batch console. |
 | **Enabled**  | Off = paused (kept, but never fires). |
 
@@ -117,11 +117,15 @@ The list also shows each task's **Next run** (computed) and **Last fired** date 
 
 - **Panel timezone.** Cadence times are civil times in the business/panel timezone, not UTC and not
   the server's local zone.
-- **Priority is never urgent.** A recurring task fires unattended and repeatedly; allowing 加急/urgent
-  would silently drain the scarce urgent-run ticket allocation on *every* occurrence. So a task's
-  priority is limited to **idle** or **normal**, where "normal" resolves at each firing to the
-  creator's group-default base priority (it competes as its owner normally would). The API refuses to
-  store `urgent`.
+- **Priority: urgent is admin-only, and ticketless.** A recurring task fires unattended and
+  repeatedly; for a regular user, allowing urgent would silently drain the scarce urgent-run ticket
+  allocation on *every* occurrence — so a non-admin is limited to **idle** or **normal** (where
+  "normal" resolves at each firing to the creator's group-default base priority). An **admin** — the
+  governance layer — may instead pin a task to an explicit **base score (0–100)** or to **Top
+  priority (urgent)**; because the fire path never charges a ticket, this is free of ticket cost. The
+  trade-off: an urgent recurring task takes a reserved urgent slot on every firing and can outrank
+  ad-hoc urgent runs (the admin's explicit intent). A non-admin's attempt at urgent or a base number
+  is coerced to normal by the API.
 - **The target is a live reference, not a snapshot.** A task stores the target *id* and reads the
   current target at each firing, so editing the workflow takes effect on the next run. If the target
   is **deleted**, the firing is logged-and-skipped (the task is not auto-deleted). In the editor, a
@@ -152,7 +156,7 @@ ownership. Handlers: [`internal/app/recurring_api.go`](../internal/app/recurring
 
 Validation on create/update: non-empty `name`; the target must exist; `freq ∈ {daily, weekly,
 monthly}`; a valid `HH:MM`; `weekday ∈ 0..6` (weekly); `monthday ∈ 1..31` (monthly); at least one
-row; priority coerced to `''` (normal) or `idle` (never `urgent`).
+row; priority coerced to `''` (normal) or `idle`, with `urgent` / a base number honored only for an admin.
 
 ---
 
@@ -166,7 +170,7 @@ Two additive tables (SQLite + Postgres), created on startup with no migration �
 CREATE TABLE recurring_tasks(
   id, name, target_id,
   rows,                       -- JSON job template = rows[] (1 row = one run, N = a batch)
-  concurrency, priority,      -- priority: '' (normal) | 'idle'; never 'urgent'
+  concurrency, priority,      -- '' (normal) | 'idle' | (admin) 'urgent' | (admin) a base number 0..100
   max_retries,
   freq, at_time, weekday, monthday,   -- the cadence (panel tz)
   enabled, created_by, created_at,

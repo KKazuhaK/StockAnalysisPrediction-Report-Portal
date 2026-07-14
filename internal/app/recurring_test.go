@@ -209,25 +209,30 @@ func TestRecurringTickSkipsDisabled(t *testing.T) {
 	}
 }
 
-// Firing never uses the urgent lane: an 'idle' task fires an idle job; a normal (”) task resolves
-// to the creator's base priority number — never 'urgent'.
-func TestFireRecurringTaskNeverUrgent(t *testing.T) {
+// The fire path uses the task's stored priority as-is (idle / urgent / an explicit base number) and
+// resolves a blank to the creator's group base — never spending an urgent ticket (ADR 0018 sec 4).
+func TestFireRecurringTaskPriorityResolution(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
 	s := okProviderServer(st)
-
-	idleTask, _ := st.GetRecurringTask(seedRecurring(t, st, tgt, "alice",
-		RecurringTask{Name: "idle", Freq: "daily", AtTime: "00:00", Priority: "idle", Enabled: true}))
-	job, _ := s.fireRecurringTask(idleTask)
-	if j, _ := st.GetBatchJob(job); j.Priority != "idle" {
-		t.Errorf("idle task fired priority %q; want idle", j.Priority)
+	fire := func(p string) string {
+		task, _ := st.GetRecurringTask(seedRecurring(t, st, tgt, "alice",
+			RecurringTask{Name: "p", Freq: "daily", AtTime: "00:00", Priority: p, Enabled: true}))
+		job, _ := s.fireRecurringTask(task)
+		j, _ := st.GetBatchJob(job)
+		return j.Priority
 	}
-
-	normTask, _ := st.GetRecurringTask(seedRecurring(t, st, tgt, "alice",
-		RecurringTask{Name: "norm", Freq: "daily", AtTime: "00:00", Priority: "", Enabled: true}))
-	job2, _ := s.fireRecurringTask(normTask)
-	if j, _ := st.GetBatchJob(job2); j.Priority == "urgent" || j.Priority == "idle" || j.Priority == "" {
-		t.Errorf("normal task fired priority %q; want a base number", j.Priority)
+	if got := fire("idle"); got != "idle" {
+		t.Errorf("idle -> %q; want idle", got)
+	}
+	if got := fire(""); got == "urgent" || got == "idle" || got == "" {
+		t.Errorf("normal -> %q; want a resolved base number", got)
+	}
+	if got := fire("urgent"); got != "urgent" {
+		t.Errorf("urgent -> %q; want urgent (admin-configured, passed through, ticketless)", got)
+	}
+	if got := fire("90"); got != "90" {
+		t.Errorf("base 90 -> %q; want 90", got)
 	}
 }
 
@@ -253,37 +258,65 @@ func TestFireRecurringTaskSkips(t *testing.T) {
 	}
 }
 
-// The create endpoint rejects bad input and stores an attempted 'urgent' priority as normal (never
-// urgent, ADR 0018 §4).
+func seedAdminUser(t *testing.T, st *Store, name string) {
+	t.Helper()
+	if _, err := st.exec("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", name, "h", "admin"); err != nil {
+		t.Fatalf("seed admin user: %v", err)
+	}
+}
+
+// The create endpoint rejects bad input; a non-admin's attempt at urgent / an explicit base number is
+// coerced to normal, while an admin may pin urgent (top priority) or a base number.
 func TestApiRecurringCreateValidation(t *testing.T) {
 	st := newTestStore(t)
 	tgt := seedTarget(t, st)
 	s := &Server{st: st}
+	seedAdminUser(t, st, "boss")
 
-	post := func(body string) *httptest.ResponseRecorder {
+	postAs := func(user, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "/api/admin/batch/recurring", strings.NewReader(body))
 		rec := httptest.NewRecorder()
-		s.apiRecurringCreate(rec, req, "alice")
+		s.apiRecurringCreate(rec, req, user)
 		return rec
 	}
+	body := func(extra string) string {
+		return `{"name":"n","target_id":` + itoa(tgt) + `,"freq":"daily","at_time":"09:00","enabled":true,"rows":[{"code":"x"}]` + extra + `}`
+	}
+	lastPriority := func() string {
+		tasks := st.ListRecurringTasks()
+		if len(tasks) == 0 {
+			return "<none>"
+		}
+		return tasks[0].Priority // newest first
+	}
 
-	if rec := post(`{"name":"","target_id":` + itoa(tgt) + `,"freq":"daily","at_time":"09:00","rows":[{"code":"x"}]}`); rec.Code != http.StatusBadRequest {
+	if rec := postAs("alice", `{"name":"","target_id":`+itoa(tgt)+`,"freq":"daily","at_time":"09:00","rows":[{"code":"x"}]}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("empty name: status %d; want 400", rec.Code)
 	}
-	if rec := post(`{"name":"n","target_id":` + itoa(tgt) + `,"freq":"hourly","at_time":"09:00","rows":[{"code":"x"}]}`); rec.Code != http.StatusBadRequest {
+	if rec := postAs("alice", `{"name":"n","target_id":`+itoa(tgt)+`,"freq":"hourly","at_time":"09:00","rows":[{"code":"x"}]}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad freq: status %d; want 400", rec.Code)
 	}
-	if rec := post(`{"name":"n","target_id":` + itoa(tgt) + `,"freq":"daily","at_time":"09:00","rows":[]}`); rec.Code != http.StatusBadRequest {
+	if rec := postAs("alice", `{"name":"n","target_id":`+itoa(tgt)+`,"freq":"daily","at_time":"09:00","rows":[]}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("empty rows: status %d; want 400", rec.Code)
 	}
-	// A caller trying to sneak 'urgent' gets it downgraded to normal ('').
-	rec := post(`{"name":"n","target_id":` + itoa(tgt) + `,"freq":"daily","at_time":"09:00","priority":"urgent","enabled":true,"rows":[{"code":"x"}]}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("valid create: status %d; want 200 (%s)", rec.Code, rec.Body.String())
+
+	// Non-admin (alice): urgent and an explicit base number are both coerced to normal ('').
+	if rec := postAs("alice", body(`,"priority":"urgent"`)); rec.Code != http.StatusOK || lastPriority() != "" {
+		t.Errorf("non-admin urgent: status %d, stored %q; want 200 + '' (coerced)", rec.Code, lastPriority())
 	}
-	tasks := st.ListRecurringTasks()
-	if len(tasks) != 1 || tasks[0].Priority != "" {
-		t.Errorf("urgent not downgraded: %+v", tasks)
+	if rec := postAs("alice", body(`,"priority":"95"`)); rec.Code != http.StatusOK || lastPriority() != "" {
+		t.Errorf("non-admin base 95: status %d, stored %q; want 200 + '' (coerced)", rec.Code, lastPriority())
+	}
+	// Admin (boss): urgent and a base number are honored as stored.
+	if rec := postAs("boss", body(`,"priority":"urgent"`)); rec.Code != http.StatusOK || lastPriority() != "urgent" {
+		t.Errorf("admin urgent: status %d, stored %q; want 200 + 'urgent'", rec.Code, lastPriority())
+	}
+	if rec := postAs("boss", body(`,"priority":"90"`)); rec.Code != http.StatusOK || lastPriority() != "90" {
+		t.Errorf("admin base 90: status %d, stored %q; want 200 + '90'", rec.Code, lastPriority())
+	}
+	// 'idle' is open to anyone.
+	if rec := postAs("alice", body(`,"priority":"idle"`)); rec.Code != http.StatusOK || lastPriority() != "idle" {
+		t.Errorf("idle: status %d, stored %q; want 200 + 'idle'", rec.Code, lastPriority())
 	}
 }
 

@@ -65,10 +65,12 @@ func (s *Server) fireRecurringTask(task RecurringTask) (int64, error) {
 		log.Printf("recurring task %d (%q): target %d missing, skipped", task.ID, task.Name, task.TargetID)
 		return 0, nil
 	}
-	// Never urgent (ADR 0018 §4): 'idle' runs in the bottom lane; otherwise resolve the creator's
-	// group-default base priority at fire time so the task competes as its owner normally would.
-	priority := "idle"
-	if task.Priority != "idle" {
+	// Use the task's stored priority as-is: 'idle', 'urgent', or an explicit base number (all
+	// admin-configured governance, ADR 0018 §4); a blank means "normal" → resolve the creator's
+	// group-default base at fire time. This path never spends an urgent ticket — a recurring task's
+	// priority is a standing config decision, not an ad-hoc escalation.
+	priority := task.Priority
+	if priority == "" {
 		priority = strconv.Itoa(s.resolveBasePriority(task.CreatedBy))
 	}
 	conc := s.clampConcurrency(task.Concurrency)

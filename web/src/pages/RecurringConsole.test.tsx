@@ -13,6 +13,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../api/client', () => ({ api: apiMock }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
+vi.mock('../auth', () => ({ useAuth: () => ({ admin: true }) }))
 
 const targets = { targets: [{ id: 1, plugin_slug: 'dify', name: 'Daily Review', created_at: '', inputs: [{ key: 'code' }] }] }
 const tasks = {

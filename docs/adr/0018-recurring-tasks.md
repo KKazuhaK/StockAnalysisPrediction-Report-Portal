@@ -59,14 +59,23 @@ a living template meant to track the current workflow: it stores `target_id` and
 `batch_targets` row at each fire. If the target is deleted, the fire is logged-and-skipped (the task
 is not auto-deleted; an admin may re-point or remove it). This was the owner's explicit call.
 
-### 4. Priority: never urgent
+### 4. Priority: urgent is admin-only, and ticketless
 
-A recurring task fires unattended and repeatedly, so allowing 加急 would silently drain the scarce
-ticket allocation (ADR 0005) on every occurrence. A task's priority is therefore limited to the
-**non-urgent** lanes: `idle` (run-when-queue-free, ADR 0014) or normal — where "normal" resolves at
-each fire to the creator's group-default base priority (`resolveBasePriority`, ADR 0008), so a task
-competes as its owner normally would. `urgent` is never storable. (Symmetric to ADR 0007 §8, which
-also keeps group/default priority out of the urgent tier.)
+A recurring task fires unattended and repeatedly. For a **regular user**, allowing an urgent run
+would silently drain the scarce urgent-run ticket allocation (ADR 0005) on every occurrence — so a
+non-admin's task priority is limited to `idle` (run-when-queue-free, ADR 0014) or normal, where
+"normal" resolves at each fire to the creator's group-default base priority (`resolveBasePriority`,
+ADR 0008).
+
+An **admin**, however, is the governance layer, and the fire path never charges a ticket (tickets are
+spent only on the interactive run-submit, not in `fireRecurringTask`). So an admin may pin a recurring
+task to an explicit base priority (`0..100`) or to `urgent` (top priority) as a standing configuration
+decision — **ticketless**. The stored value is used verbatim at each fire (`''` → resolve owner base;
+otherwise `idle` / `urgent` / the number, passed straight to `CreateBatchJob`). The trade-off, taken
+deliberately: an urgent recurring task occupies a reserved urgent slot on every firing and can outrank
+ad-hoc urgent runs — which is the admin's explicit intent for a critical scheduled report. A
+non-admin's attempt to set urgent or a base number is coerced to normal at the API. (This **amends**
+the original "never urgent" decision, which was too strict for the governance case.)
 
 ### 5. Misfire policy: at-most-once-per-period, no backfill
 
@@ -98,7 +107,8 @@ CREATE TABLE IF NOT EXISTS recurring_runs(          -- fire → job audit chain 
 CREATE INDEX IF NOT EXISTS idx_recurring_runs_task ON recurring_runs(task_id, id);
 ```
 
-`priority` stores `''` (normal → resolve owner base at fire) or `'idle'`; never a number/`'urgent'`.
+`priority` stores `''` (normal → resolve owner base at fire), `'idle'`, or — only when set by an admin —
+`'urgent'` or an explicit base number (`0..100`); a non-admin is coerced to `''`.
 `recurring_runs` is a genuine history collection (not a 1:1 side table), so it doesn't run against
 ADR 0013's fold-side-tables direction; it is trimmed per task to a bounded ring so it can't grow
 unbounded.

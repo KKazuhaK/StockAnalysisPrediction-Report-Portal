@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,7 +20,7 @@ type recurringIn struct {
 	TargetID    int64               `json:"target_id"`
 	Rows        []map[string]string `json:"rows"`
 	Concurrency int                 `json:"concurrency"`
-	Priority    string              `json:"priority"` // "" (normal) | "idle"; never "urgent"
+	Priority    string              `json:"priority"` // "" normal | "idle" | (admin) "urgent" | (admin) a base number 0..100
 	MaxRetries  int                 `json:"max_retries"`
 	Freq        string              `json:"freq"` // daily | weekly | monthly
 	AtTime      string              `json:"at_time"`
@@ -30,8 +31,9 @@ type recurringIn struct {
 
 // validateRecurring turns a request body into a stored task, returning a non-empty error message on
 // bad input. It enforces the cadence vocabulary, a resolvable target, a non-empty template, and the
-// never-urgent priority rule (anything but "idle" stores as "" = normal).
-func (s *Server) validateRecurring(in recurringIn) (RecurringTask, string) {
+// priority rules: anyone may pick blank (normal) or idle; only an admin may set urgent (top priority)
+// or an explicit base number (0..100). A non-admin's attempt at either is coerced to normal.
+func (s *Server) validateRecurring(in recurringIn, admin bool) (RecurringTask, string) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		return RecurringTask{}, "name is required"
@@ -56,9 +58,19 @@ func (s *Server) validateRecurring(in recurringIn) (RecurringTask, string) {
 	if in.Freq == "monthly" && (in.Monthday < 1 || in.Monthday > 31) {
 		return RecurringTask{}, "monthday must be 1..31"
 	}
+	// '' (normal) resolves to the creator's group base at fire time; 'idle' is open to anyone; an
+	// admin may additionally pin 'urgent' (top priority, ticketless) or an explicit base number.
 	priority := ""
-	if in.Priority == "idle" {
-		priority = "idle" // the only non-normal lane a recurring task may pick (never urgent)
+	if in.Priority != "" {
+		b, urgent, idle := parsePriority(in.Priority)
+		switch {
+		case idle:
+			priority = "idle"
+		case urgent && admin:
+			priority = "urgent"
+		case !urgent && admin:
+			priority = strconv.Itoa(b)
+		}
 	}
 	conc := in.Concurrency
 	if conc < 1 {
@@ -137,7 +149,7 @@ func (s *Server) apiRecurringCreate(w http.ResponseWriter, r *http.Request, user
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	task, errMsg := s.validateRecurring(in)
+	task, errMsg := s.validateRecurring(in, s.isAdmin(user))
 	if errMsg != "" {
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return
@@ -175,7 +187,7 @@ func (s *Server) apiRecurringUpdate(w http.ResponseWriter, r *http.Request, user
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	task, errMsg := s.validateRecurring(in)
+	task, errMsg := s.validateRecurring(in, s.isAdmin(user))
 	if errMsg != "" {
 		jsonError(w, http.StatusBadRequest, errMsg)
 		return

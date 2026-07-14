@@ -764,5 +764,9 @@
   "recurring.histFired": "觸發時間",
   "recurring.histJob": "作業",
   "recurring.targetDeletedWarn": "原目標已被刪除，請重新選擇一個後再儲存。",
-  "recurring.history": "觸發歷史"
+  "recurring.history": "觸發歷史",
+  "recurring.priorityUrgent": "最優先",
+  "recurring.priorityCustom": "自訂分數",
+  "recurring.priorityBase": "優先級 {{n}}",
+  "nav.home": "首頁"
 }

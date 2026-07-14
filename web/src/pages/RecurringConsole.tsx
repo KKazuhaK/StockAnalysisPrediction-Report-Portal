@@ -4,6 +4,7 @@ import { ClockCircleOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, Pla
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
+import { useAuth } from '../auth'
 import type { BatchTarget, RecurringDetail, RecurringRun, RecurringTask, RecurringTasksResp } from '../api/types'
 import { csvToRows, toCSV } from '../lib/csv'
 
@@ -31,6 +32,7 @@ type Draft = typeof emptyDraft
 export default function RecurringConsole() {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
+  const { admin } = useAuth()
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [tasks, setTasks] = useState<RecurringTask[]>([])
   const [loading, setLoading] = useState(false)
@@ -69,6 +71,22 @@ export default function RecurringConsole() {
   const targetDeleted = draft.targetId != null && !draftTarget
 
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }))
+
+  // The priority Select shows a "mode"; the stored draft.priority is '' | 'idle' | 'urgent' | a number.
+  const priorityMode = draft.priority === '' ? 'normal' : draft.priority === 'idle' ? 'idle' : draft.priority === 'urgent' ? 'urgent' : 'custom'
+  const setPriorityMode = (m: string) => set('priority', m === 'normal' ? '' : m === 'custom' ? '80' : m)
+
+  // pickTarget selects a target and pre-fills (or swaps) the CSV header so the columns are visible and
+  // the user only types data rows. It preserves any data the user already entered — it only replaces
+  // an empty editor or one that still holds the previous target's bare header line.
+  const pickTarget = (v: number | undefined) => {
+    const newKeys = (targets.find((tg) => tg.id === v)?.inputs || []).map((i) => i.key)
+    const oldHeader = inputKeys.join(',')
+    setDraft((d) => {
+      const keepBody = d.csvText.trim() !== '' && d.csvText.trim() !== oldHeader
+      return { ...d, targetId: v, csvText: keepBody ? d.csvText : newKeys.join(',') }
+    })
+  }
 
   const openCreate = () => {
     setEditingId(null)
@@ -205,7 +223,12 @@ export default function RecurringConsole() {
     {
       title: t('recurring.colPriority'),
       dataIndex: 'priority',
-      render: (p: string) => (p === 'idle' ? <Tag>{t('recurring.priorityIdle')}</Tag> : <Tag color="blue">{t('recurring.priorityNormal')}</Tag>),
+      render: (p: string) => {
+        if (p === 'idle') return <Tag>{t('recurring.priorityIdle')}</Tag>
+        if (p === 'urgent') return <Tag color="red">{t('recurring.priorityUrgent')}</Tag>
+        if (p !== '' && !Number.isNaN(Number(p))) return <Tag color="gold">{t('recurring.priorityBase', { n: p })}</Tag>
+        return <Tag color="blue">{t('recurring.priorityNormal')}</Tag>
+      },
     },
     {
       title: t('recurring.colNext'),
@@ -298,7 +321,7 @@ export default function RecurringConsole() {
               style={{ width: '100%' }}
               placeholder={t('batch.selectTarget')}
               value={draft.targetId}
-              onChange={(v) => set('targetId', v)}
+              onChange={pickTarget}
               options={[
                 ...targets.map((tg) => ({ value: tg.id, label: tg.plugin_name ? `${tg.name}（${tg.plugin_name}）` : tg.name })),
                 // Keep the deleted target's slot labelled so the picker doesn't show a bare id.
@@ -350,15 +373,26 @@ export default function RecurringConsole() {
 
           <Space wrap>
             <Typography.Text>{t('recurring.fieldPriority')}</Typography.Text>
+            {/* Priority mode: normal/idle for anyone; admins additionally get urgent (top priority) and
+                a custom base score. The stored value is '' | 'idle' | 'urgent' | a number string. */}
             <Select
-              style={{ width: 200 }}
-              value={draft.priority}
-              onChange={(v) => set('priority', v)}
+              style={{ width: 220 }}
+              value={priorityMode}
+              onChange={setPriorityMode}
               options={[
-                { value: '', label: t('recurring.priorityNormal') },
+                { value: 'normal', label: t('recurring.priorityNormal') },
                 { value: 'idle', label: t('recurring.priorityIdleLong') },
+                ...(admin
+                  ? [
+                      { value: 'urgent', label: t('recurring.priorityUrgent') },
+                      { value: 'custom', label: t('recurring.priorityCustom') },
+                    ]
+                  : []),
               ]}
             />
+            {admin && priorityMode === 'custom' && (
+              <InputNumber min={0} max={100} value={Number(draft.priority) || 0} onChange={(v) => set('priority', String(v ?? 0))} aria-label={t('recurring.priorityCustom')} />
+            )}
             <Typography.Text>{t('batch.rowConcurrency')}</Typography.Text>
             <InputNumber min={1} max={20} value={draft.concurrency} onChange={(v) => set('concurrency', v ?? 1)} />
             <Typography.Text>{t('batch.maxRetries')}</Typography.Text>

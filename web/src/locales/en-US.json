@@ -764,5 +764,9 @@
   "recurring.histFired": "Fired at",
   "recurring.histJob": "Job",
   "recurring.targetDeletedWarn": "The original target was deleted — pick a new one before saving.",
-  "recurring.history": "History"
+  "recurring.history": "History",
+  "recurring.priorityUrgent": "Top priority",
+  "recurring.priorityCustom": "Custom score",
+  "recurring.priorityBase": "Priority {{n}}",
+  "nav.home": "Home"
 }

@@ -1,5 +1,5 @@
-import { Suspense, useEffect, useState } from 'react'
-import { App, Badge, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { App, Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
 import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -43,6 +43,24 @@ export default function AppLayout() {
   // a single scrollbar, not one for the page plus one for the thread.
   const onChat = loc.pathname === '/chat'
   const contentMaxWidth = onReader ? (wide ? 1760 : 1440) : 1240
+  // A back-navigation breadcrumb under the header. Shown on the main pages (apps + children, queue,
+  // chat, reader) but not on the home page (nothing to trace) or /manage (it has its own left rail).
+  // Ancestors are links; the current page is plain text. Third-party app pages (/apps/x/:id) show
+  // Home > Apps with both linked, since the app's own name isn't available in the layout.
+  const crumbs = useMemo<{ label: string; to?: string }[]>(() => {
+    const p = loc.pathname
+    const home = { label: t('nav.home'), to: '/' }
+    const apps = { label: t('nav.apps'), to: '/apps' }
+    if (p === '/apps') return [home, { label: t('nav.apps') }]
+    if (p === '/apps/recurring') return [home, apps, { label: t('nav.recurring') }]
+    if (p === '/apps/batch') return [home, apps, { label: t('nav.batch') }]
+    if (p.startsWith('/apps/x/')) return [home, apps]
+    if (p === '/queue') return [home, { label: t('nav.queue') }]
+    if (p === '/chat') return [home, { label: t('nav.chat') }]
+    if (p.startsWith('/stock/') || p.startsWith('/run/')) return [home, { label: decodeURIComponent(p.split('/')[2] || '') }]
+    return []
+  }, [loc.pathname, t])
+  const showCrumbs = crumbs.length > 0 && !onManage
   const [ver, setVer] = useState<{ version: string; commit: string; buildDate: string } | null>(null)
   const [runOpen, setRunOpen] = useState(false)
   const [runTargetId, setRunTargetId] = useState<number | undefined>() // pinned workflow from an entry-button shortcut
@@ -329,6 +347,13 @@ export default function AppLayout() {
           </Popover>
         </Space>
       </Header>
+
+      {/* Back-navigation breadcrumb band, aligned to the content column (full-bleed on chat). */}
+      {showCrumbs && (
+        <div style={{ maxWidth: onChat ? 'none' : contentMaxWidth, width: '100%', margin: '0 auto', padding: compact ? '10px 12px 0' : '14px 20px 0' }}>
+          <Breadcrumb items={crumbs.map((c) => ({ title: c.to ? <Link to={c.to}>{c.label}</Link> : c.label }))} />
+        </div>
+      )}
 
       {/* The announcement shows only on the home page, in its own fixed-width band (not
           inside the Content whose max-width flexes with reader "wide" mode). */}

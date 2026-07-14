@@ -764,5 +764,9 @@
   "recurring.histFired": "触发时间",
   "recurring.histJob": "作业",
   "recurring.targetDeletedWarn": "原目标已被删除，请重新选择一个后再保存。",
-  "recurring.history": "触发历史"
+  "recurring.history": "触发历史",
+  "recurring.priorityUrgent": "最优先",
+  "recurring.priorityCustom": "自定义分数",
+  "recurring.priorityBase": "优先级 {{n}}",
+  "nav.home": "首页"
 }
