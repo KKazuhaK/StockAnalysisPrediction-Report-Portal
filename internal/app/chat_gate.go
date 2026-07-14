@@ -75,17 +75,13 @@ func (s *Server) chatTurnTimeout() time.Duration {
 	return time.Duration(n) * time.Minute
 }
 
-// chatReconcileSeconds is how long the browser actively polls Dify for a dropped turn's outcome
-// (default = the turn timeout, the longest a turn can run — the poll exits early the moment Dify
-// reports success/failure, so a fast reply costs one poll). Admin-set. A turn that outlasts this
-// window is NOT declared failed: it's left running and the ambient reconcile picks it up later.
+// chatReconcileSeconds is how long the browser actively polls Dify for a dropped turn's outcome. It
+// is simply the turn timeout: a turn can't run longer than that, so polling for exactly that window
+// covers the worst case (the poll exits early the moment Dify reports success/failure). It is NOT a
+// separate admin knob — it always tracks chat_turn_timeout_minutes, so there is only one value to set.
+// A turn that outlasts the window is NOT declared failed: the ambient reconcile picks it up later.
 func (s *Server) chatReconcileSeconds() int {
-	def := int(s.chatTurnTimeout() / time.Second)
-	n, err := strconv.Atoi(s.st.GetSetting("chat_reconcile_seconds", ""))
-	if err != nil || n < 0 {
-		return def
-	}
-	return n
+	return int(s.chatTurnTimeout() / time.Second)
 }
 
 // chatAcquire registers an in-flight turn if the ceiling allows, returning its id. ok=false
@@ -205,8 +201,7 @@ func (s *Server) apiAdminChatLive(w http.ResponseWriter, r *http.Request, user s
 	}
 	writeJSON(w, map[string]any{
 		"turns": out, "max_concurrent": s.chatMaxConcurrent(),
-		"stream": s.chatStreamEnabled(), "reconcile_seconds": s.chatReconcileSeconds(),
-		"turn_timeout_minutes": int(s.chatTurnTimeout() / time.Minute),
+		"stream": s.chatStreamEnabled(), "turn_timeout_minutes": int(s.chatTurnTimeout() / time.Minute),
 	})
 }
 
@@ -247,7 +242,6 @@ func (s *Server) apiAdminChatConfigSave(w http.ResponseWriter, r *http.Request, 
 	var in struct {
 		MaxConcurrent      *int  `json:"max_concurrent"`
 		Stream             *bool `json:"stream"`
-		ReconcileSeconds   *int  `json:"reconcile_seconds"`
 		TurnTimeoutMinutes *int  `json:"turn_timeout_minutes"`
 	}
 	if err := readJSON(r, &in); err != nil {
@@ -270,9 +264,6 @@ func (s *Server) apiAdminChatConfigSave(w http.ResponseWriter, r *http.Request, 
 			v = "1"
 		}
 		s.st.SetSetting("chat_stream", v)
-	}
-	if in.ReconcileSeconds != nil && *in.ReconcileSeconds >= 0 {
-		s.st.SetSetting("chat_reconcile_seconds", strconv.Itoa(*in.ReconcileSeconds))
 	}
 	writeJSON(w, okJSON)
 }

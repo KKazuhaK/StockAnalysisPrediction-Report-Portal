@@ -658,9 +658,6 @@
   "chat.thinking": "Reasoning",
   "chatAdmin.stream": "Stream replies",
   "chatAdmin.streamHint": "Off: the reply returns all at once (fallback if streaming misbehaves behind a proxy).",
-  "chatAdmin.reconcile": "Reconcile window",
-  "chatAdmin.reconcileHint": "How long to actively poll Dify for a dropped turn’s result. A turn still running past this is NOT marked failed — it’s picked up when you reopen the chat (default = the per-turn limit).",
-  "chatAdmin.seconds": "sec",
   "chat.myChats": "My chats",
   "chat.readonlyOther": "Read-only — viewing {{user}}’s chats",
   "chat.stillRunning": "Still generating — this can take a while; it updates when it finishes.",
@@ -773,5 +770,5 @@
   "chat.backToBottom": "Back to bottom",
   "chatAdmin.minutes": "min",
   "chatAdmin.turnTimeout": "Per-turn limit",
-  "chatAdmin.turnTimeoutHint": "Longest one reply may run before the live stream gives up — raise it for long agent / deep-research replies. (Behind a reverse proxy, raise nginx proxy_read_timeout to match.)"
+  "chatAdmin.turnTimeoutHint": "Longest one reply may run before the live stream gives up — raise it for long agent / deep-research replies (it also bounds how long the browser recovers the answer after a dropped connection). Behind a reverse proxy, raise nginx proxy_read_timeout to match."
 }

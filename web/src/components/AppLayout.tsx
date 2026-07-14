@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
-import { Alert, Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, GlobalOutlined, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
+import { AppstoreOutlined, CloseOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -350,22 +350,37 @@ export default function AppLayout() {
         </Space>
       </Header>
 
-      {/* New-version banner: sticky right under the header (uses the published header height), so it
-          occupies its own space and never overlaps content — unlike the old floating notification. */}
+      {/* New-version banner: sticky right under the header. The info-colored bar spans full width, but
+          its content aligns to the same content column (contentMaxWidth) as the rest of the page — so on
+          an ultra-wide screen the text and buttons stay together instead of stretching to the far edges. */}
       {updateAvailable && !updateDismissed && (
-        <Alert
-          banner
-          type="info"
-          style={{ position: 'sticky', top: 'var(--rp-header-h, 64px)', zIndex: 19 }}
-          message={t('update.desc')}
-          action={
+        <div
+          style={{
+            position: 'sticky',
+            top: 'var(--rp-header-h, 64px)',
+            zIndex: 19,
+            background: token.colorInfoBg,
+            borderBottom: `1px solid ${token.colorInfoBorder}`,
+          }}
+        >
+          <div
+            style={{
+              maxWidth: onChat ? 'none' : contentMaxWidth,
+              margin: '0 auto',
+              padding: compact ? '8px 12px' : '8px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <InfoCircleFilled style={{ color: token.colorInfo, fontSize: 15, flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0, color: token.colorText, fontSize: 14 }}>{t('update.desc')}</span>
             <Button type="primary" size="small" onClick={() => window.location.reload()}>
               {t('update.refresh')}
             </Button>
-          }
-          closable
-          onClose={() => setUpdateDismissed(true)}
-        />
+            <Button type="text" size="small" aria-label={t('common.cancel')} icon={<CloseOutlined />} onClick={() => setUpdateDismissed(true)} />
+          </div>
+        </div>
       )}
 
       {/* Back-navigation breadcrumb band, aligned to the content column (full-bleed on chat). */}
