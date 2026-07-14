@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // postgres driver, registered as "pgx"
@@ -61,8 +62,9 @@ type LinkGroup struct {
 }
 
 type Store struct {
-	db     *sql.DB
-	driver string // "sqlite" | "postgres"
+	db       *sql.DB
+	driver   string     // "sqlite" | "postgres"
+	ticketMu sync.Mutex // serializes SpendTicket's read-refill-decrement so a concurrent double-spend can't over-draw a user's urgent quota (ADR 0005)
 }
 
 // OpenStore opens the database using the given driver. driver: "sqlite" (default) or "postgres";

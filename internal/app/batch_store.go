@@ -483,9 +483,21 @@ func (s *Store) QueuedPresetJobs() []BatchJob {
 // (finished/cancelled); callers gate on status so a running job is cancelled first. The
 // job's priority/run_at are columns on batch_jobs now, so they vanish with the row.
 func (s *Store) DeleteBatchJob(jobID int64) error {
-	s.exec("DELETE FROM batch_items WHERE job_id=?", jobID)
-	_, err := s.exec("DELETE FROM batch_jobs WHERE id=?", jobID)
-	return err
+	// One transaction, children first: without it a failed item-delete followed by a succeeded
+	// job-delete would strand orphan batch_items (no FK cascade) that keep inflating usage stats.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(s.bind("DELETE FROM batch_items WHERE job_id=?"), jobID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(s.bind("DELETE FROM batch_jobs WHERE id=?"), jobID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteFinishedJobs removes every terminal (finished / cancelled) job and its rows,
@@ -536,13 +548,26 @@ func (s *Store) RequeueItems(jobID int64, statuses ...string) (int, error) {
 	for _, st := range statuses {
 		args = append(args, st)
 	}
-	res, err := s.exec("UPDATE batch_items SET status='queued', error='', run_id='', conversation_id='', task_id='', started_at='', finished_at='' WHERE job_id=? AND status IN ("+ph+")", args...)
+	// One transaction: flipping items to 'queued' but failing to flip the parent job back to
+	// 'queued' would leave requeued items under a terminal job that the scheduler never re-admits.
+	tx, err := s.db.Begin()
 	if err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(s.bind("UPDATE batch_items SET status='queued', error='', run_id='', conversation_id='', task_id='', started_at='', finished_at='' WHERE job_id=? AND status IN ("+ph+")"), args...)
+	if err != nil {
+		tx.Rollback()
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
 	// Re-enter the queue (status 'queued'); the scheduler re-admits it by priority.
-	s.exec("UPDATE batch_jobs SET status='queued', finished_at='' WHERE id=?", jobID)
+	if _, err := tx.Exec(s.bind("UPDATE batch_jobs SET status='queued', finished_at='' WHERE id=?"), jobID); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return int(n), nil
 }
 

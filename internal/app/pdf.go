@@ -35,7 +35,11 @@ func htmlToPDF(html string) ([]byte, error) {
 	if bin == "" {
 		return nil, ErrNoWkhtmltopdf
 	}
+	// --disable-local-file-access blocks a report body from reading server files via
+	// file:// / relative paths (SSRF + local-file disclosure at export time); the input HTML is
+	// externally ingested, so it is untrusted. Kept minimal so legitimate remote images still render.
 	cmd := exec.Command(bin, "-q", "--encoding", "utf-8",
+		"--disable-local-file-access",
 		"--margin-top", "14mm", "--margin-bottom", "16mm",
 		"--margin-left", "14mm", "--margin-right", "14mm",
 		"-", "-") // stdin -> stdout

@@ -97,35 +97,53 @@ func TestAppTokenEndpoint(t *testing.T) {
 		t.Fatalf("InstallApp: %v", err)
 	}
 
+	mint := func(user string) []string {
+		req := httptest.NewRequest("POST", "/api/apps/hello/token", nil)
+		req.SetPathValue("id", "hello")
+		rec := httptest.NewRecorder()
+		s.apiAppToken(rec, req, user)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("apiAppToken(%s) → %d: %s", user, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Token  string   `json:"token"`
+			Scopes []string `json:"scopes"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out.Token == "" {
+			t.Fatal("empty token")
+		}
+		return out.Scopes
+	}
+
+	// A non-admin caller is downgraded to read-only: even though the app declares ingest, a read-only
+	// user must not be able to mint a write token and bypass the sandbox (security fix).
+	if sc := mint("user"); len(sc) != 1 || !contains(sc, "query") {
+		t.Fatalf("non-admin scopes = %v, want [query]", sc)
+	}
+
+	// An admin gets both declared+supported scopes, and /api/v1 accepts the token for each.
+	if err := s.st.UpsertUser(User{Username: "boss", PasswordHash: "x", Role: "admin"}); err != nil {
+		t.Fatalf("UpsertUser: %v", err)
+	}
+	if sc := mint("boss"); len(sc) != 2 || !contains(sc, "query") || !contains(sc, "ingest") {
+		t.Fatalf("admin scopes = %v, want [query ingest]", sc)
+	}
+	// Re-mint an admin token and confirm /api/v1 honors both scopes.
 	req := httptest.NewRequest("POST", "/api/apps/hello/token", nil)
 	req.SetPathValue("id", "hello")
 	rec := httptest.NewRecorder()
-	s.apiAppToken(rec, req, "user")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("apiAppToken → %d: %s", rec.Code, rec.Body.String())
-	}
+	s.apiAppToken(rec, req, "boss")
 	var out struct {
-		Token  string   `json:"token"`
-		Scopes []string `json:"scopes"`
+		Token string `json:"token"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if out.Token == "" {
-		t.Fatal("empty token")
-	}
-	// The app declared query+ingest; both are supported and thus granted.
-	if len(out.Scopes) != 2 || !contains(out.Scopes, "query") || !contains(out.Scopes, "ingest") {
-		t.Fatalf("scopes = %v, want [query ingest]", out.Scopes)
-	}
-
+	json.Unmarshal(rec.Body.Bytes(), &out)
 	authed := httptest.NewRequest("GET", "/api/v1/reports", nil)
 	authed.Header.Set("Authorization", "Bearer "+out.Token)
-	if !s.tokenOK(authed, "query") {
-		t.Fatal("minted token should pass query scope")
-	}
-	if !s.tokenOK(authed, "ingest") {
-		t.Fatal("minted token should pass ingest scope (phase 2)")
+	if !s.tokenOK(authed, "query") || !s.tokenOK(authed, "ingest") {
+		t.Fatal("admin-minted token should pass both query and ingest scopes")
 	}
 }
 

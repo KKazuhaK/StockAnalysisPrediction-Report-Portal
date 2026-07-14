@@ -26,6 +26,18 @@ func grantableScopes(req []string) []string {
 	return out
 }
 
+// dropScope returns scopes with drop removed (order preserved), used to downgrade a minted app
+// token to read-only when the caller lacks the privilege for a write scope.
+func dropScope(scopes []string, drop string) []string {
+	out := scopes[:0:0]
+	for _, s := range scopes {
+		if s != drop {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // appTokens is an in-memory registry of short-lived, scoped bearer tokens minted
 // when a user opens an app. The token authorizes the host-mediated /api/v1 bridge;
 // it is held by the trusted host page and never handed to the sandboxed iframe.

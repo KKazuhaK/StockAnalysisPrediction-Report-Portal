@@ -86,6 +86,10 @@ func (s *Store) TicketStatus(username string, allocation, periodDays int, now ti
 // ticket was spent and the count left afterward. Note: an allocation change takes
 // effect at the next period (a mid-period raise doesn't retroactively top up).
 func (s *Store) SpendTicket(username string, allocation, periodDays int, now time.Time) (bool, int) {
+	// Serialize the read-refill-decrement: two concurrent urgent submits must not both read the same
+	// remaining and each spend it (single-binary, so an in-process lock is sufficient and driver-agnostic).
+	s.ticketMu.Lock()
+	defer s.ticketMu.Unlock()
 	rem, ps := s.ticketRow(username)
 	if ps.IsZero() && allocation <= 0 {
 		return false, 0 // no allocation and no state — nothing to spend, nothing to persist

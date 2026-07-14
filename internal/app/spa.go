@@ -106,6 +106,17 @@ func spaHandlerFS(sub fs.FS, brand spaBranding, swVersion string) http.HandlerFu
 		// title/favicon (hashed asset names make caching safe).
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
+		// Defense-in-depth for the SPA document that renders externally-ingested report HTML:
+		// script-src 'self' (no 'unsafe-inline') neutralizes inline <script> / event-handler XSS even
+		// if a body slips past sanitization; frame-src 'self' still allows the same-origin app iframes
+		// (their own scripts run under the /app-assets response, not this CSP); style 'unsafe-inline'
+		// is required by antd. frame-ancestors 'self' also blocks clickjacking.
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self'; "+
+				"worker-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; "+
+				"form-action 'self'; frame-ancestors 'self'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Write(brandIndex(index, brand))
 	}
 }

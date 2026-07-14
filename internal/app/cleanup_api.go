@@ -119,12 +119,11 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 
 func (s *Server) apiCleanupUsage(w http.ResponseWriter, r *http.Request, user string) {
 	c := s.cleanupConfigLoad()
-	loc := s.panelLocation()
-	now := time.Now()
+	batchCut, tokenCut, reportsCut := c.cutoffs(time.Now())
 
-	batchEligible, _ := s.st.CountFinishedJobsBefore(now.In(loc).AddDate(0, 0, -c.BatchDays).Format("2006-01-02 15:04:05"))
-	tokEligible, _ := s.st.CountExpiredTokensBefore(now.In(loc).AddDate(0, 0, -c.TokensGraceDays).Format("2006-01-02 15:04:05"))
-	repEligible, _ := s.st.CountReportsIngestedBefore(now.UTC().AddDate(0, 0, -c.ReportsDays))
+	batchEligible, _ := s.st.CountFinishedJobsBefore(batchCut)
+	tokEligible, _ := s.st.CountExpiredTokensBefore(tokenCut)
+	repEligible, _ := s.st.CountReportsIngestedBefore(reportsCut)
 
 	batchOld, batchNew := s.st.usageSpan("batch_jobs", "finished_at")
 	tokOld, tokNew := s.st.usageSpan("api_tokens", "created_at")
@@ -187,21 +186,21 @@ func (s *Server) readTargets(r *http.Request) cleanupTargets {
 func (s *Server) apiCleanupPreview(w http.ResponseWriter, r *http.Request, user string) {
 	sel := s.readTargets(r)
 	c := s.cleanupConfigLoad()
-	loc := s.panelLocation()
 	now := time.Now()
+	batchCut, tokenCut, reportsCut := c.cutoffs(now)
 	res := cleanupResult{Trigger: "preview", DryRun: true, OK: true, At: now.UTC().Format(time.RFC3339)}
 	if sel.Batch {
-		n, err := s.st.CountFinishedJobsBefore(now.In(loc).AddDate(0, 0, -c.BatchDays).Format("2006-01-02 15:04:05"))
+		n, err := s.st.CountFinishedJobsBefore(batchCut)
 		res.Batch = n
 		res.note(err)
 	}
 	if sel.Tokens {
-		n, err := s.st.CountExpiredTokensBefore(now.In(loc).AddDate(0, 0, -c.TokensGraceDays).Format("2006-01-02 15:04:05"))
+		n, err := s.st.CountExpiredTokensBefore(tokenCut)
 		res.Tokens = n
 		res.note(err)
 	}
 	if sel.Reports {
-		n, err := s.st.CountReportsIngestedBefore(now.UTC().AddDate(0, 0, -c.ReportsDays))
+		n, err := s.st.CountReportsIngestedBefore(reportsCut)
 		res.Reports = n
 		res.note(err)
 	}

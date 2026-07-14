@@ -97,6 +97,18 @@ func (s *Server) cleanupConfigLoad() cleanupConfig {
 	return c
 }
 
+// cutoffs returns the retention cutoffs for a pass. batch/token compare against finished_at /
+// expires_at, which are written by nowStr() in the SYSTEM-local wall clock, so their cutoffs are
+// formatted from system-local time (NOT the panel timezone — a panel/container tz mismatch would
+// otherwise delete up to the offset short of the configured retention). reports compares against a
+// parsed UTC instant, so its cutoff is a UTC time.Time. now must be time.Now().
+func (c cleanupConfig) cutoffs(now time.Time) (batchCut, tokenCut string, reportsCut time.Time) {
+	batchCut = now.AddDate(0, 0, -c.BatchDays).Format("2006-01-02 15:04:05")
+	tokenCut = now.AddDate(0, 0, -c.TokensGraceDays).Format("2006-01-02 15:04:05")
+	reportsCut = now.UTC().AddDate(0, 0, -c.ReportsDays)
+	return
+}
+
 // cleanupDue reports whether a scheduled cleanup should fire now and the YYYY-MM-DD period-stamp to
 // record if it does — a thin adapter over the shared daily/weekly/monthly cadence engine
 // (cadenceDue, cadence.go), which the recurring-task scheduler (ADR 0018) also uses.
@@ -140,35 +152,33 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 
 	start := time.Now()
 	c := s.cleanupConfigLoad()
-	loc := s.panelLocation()
+	batchCut, tokenCut, reportsCut := c.cutoffs(start)
 	res := cleanupResult{Trigger: trigger, DryRun: dryRun, OK: true}
 
 	if sel.Batch {
-		cutoff := start.In(loc).AddDate(0, 0, -c.BatchDays).Format("2006-01-02 15:04:05")
 		var n int64
 		var err error
 		if dryRun {
-			n, err = s.st.CountFinishedJobsBefore(cutoff)
+			n, err = s.st.CountFinishedJobsBefore(batchCut)
 		} else {
-			n, err = s.st.DeleteFinishedJobsBefore(cutoff)
+			n, err = s.st.DeleteFinishedJobsBefore(batchCut)
 		}
 		res.Batch, _ = n, err
 		res.note(err)
 	}
 	if sel.Tokens {
-		cutoff := start.In(loc).AddDate(0, 0, -c.TokensGraceDays).Format("2006-01-02 15:04:05")
 		var n int64
 		var err error
 		if dryRun {
-			n, err = s.st.CountExpiredTokensBefore(cutoff)
+			n, err = s.st.CountExpiredTokensBefore(tokenCut)
 		} else {
-			n, err = s.st.DeleteExpiredTokensBefore(cutoff)
+			n, err = s.st.DeleteExpiredTokensBefore(tokenCut)
 		}
 		res.Tokens, _ = n, err
 		res.note(err)
 	}
 	if sel.Reports {
-		cutoff := start.UTC().AddDate(0, 0, -c.ReportsDays)
+		cutoff := reportsCut
 		var n int64
 		var err error
 		if dryRun {

@@ -120,6 +120,12 @@ func (s *Server) apiAppToken(w http.ResponseWriter, r *http.Request, user string
 		return
 	}
 	scopes := grantableScopes(app.Scopes)
+	// The app bridge returns the minted token to the caller's page, so a read-only user could read it
+	// off the wire and call /api/v1 directly, bypassing the sandbox. Gate the write scope on the
+	// caller's own privilege: only an admin gets `ingest`; everyone else is downgraded to read-only.
+	if !s.isAdmin(user) {
+		scopes = dropScope(scopes, "ingest")
+	}
 	token := s.appTok.mint(scopes, time.Now())
 	writeJSON(w, map[string]any{
 		"app": appJSON(app), "token": token, "scopes": scopes, "expires_in": int(appTokenTTL / time.Second),

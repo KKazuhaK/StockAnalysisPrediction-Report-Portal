@@ -171,6 +171,37 @@ func TestDeleteReportsIngestedBefore(t *testing.T) {
 	}
 }
 
+// The delete re-asserts sent_at: a report re-ingested (fresh sent_at) between the scan and the
+// delete is skipped, not destroyed — preserving the fail-closed guarantee across the window.
+func TestDeleteReportChunk_ReingestSkipped(t *testing.T) {
+	st := newTestStore(t)
+	old := time.Now().UTC().AddDate(0, 0, -800).Format(time.RFC3339)
+	fresh := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
+	// The report currently carries a FRESH sent_at (it was just re-ingested)...
+	if _, err := st.UpsertReport(Rep{UID: "r1", Symbol: "600000", Date: "2024-01-01", RType: "x", Time: fresh}); err != nil {
+		t.Fatal(err)
+	}
+	st.exec("INSERT INTO tracking_items(report_uid,symbol,itype,content,status) VALUES(?,?,?,?,?)", "r1", "600000", "assumption", "x", "pending")
+
+	// ...but the purge holds a STALE key from the earlier scan → must skip it.
+	if n, err := st.deleteReportChunk([]reportKey{{uid: "r1", sent: old}}); err != nil || n != 0 {
+		t.Fatalf("stale-key delete = %d,%v; want 0", n, err)
+	}
+	if st.GetByUID("r1") == nil {
+		t.Fatal("re-ingested report was wrongly deleted")
+	}
+	if countRows(t, st, "tracking_items") != 1 {
+		t.Errorf("tracking_items of a preserved report must NOT be cascaded")
+	}
+	// A key that matches the current sent_at deletes the report and cascades its items.
+	if n, err := st.deleteReportChunk([]reportKey{{uid: "r1", sent: fresh}}); err != nil || n != 1 {
+		t.Fatalf("matching-key delete = %d,%v; want 1", n, err)
+	}
+	if st.GetByUID("r1") != nil || countRows(t, st, "tracking_items") != 0 {
+		t.Errorf("matching delete should remove report + cascade tracking_items")
+	}
+}
+
 // Expired tokens older than the cutoff are removed; not-yet-expired, recently-expired (within
 // grace), and never-expiring (empty expires_at) tokens are kept.
 func TestDeleteExpiredTokensBefore(t *testing.T) {

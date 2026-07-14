@@ -12,4 +12,15 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('基础')
     expect(container.querySelector('.katex-html')?.textContent).toContain('%')
   })
+
+  it('sanitizes the HTML fallback: strips scripts and inline event handlers', () => {
+    const html = '<p>ok</p><img src=x onerror="window.__xss=1"><script>window.__xss=1</script>'
+    const { container } = render(<Markdown html={html} />)
+    // benign content survives...
+    expect(container.textContent).toContain('ok')
+    // ...but the script tag and the onerror handler are removed.
+    expect(container.querySelector('script')).toBeNull()
+    expect(container.querySelector('img')?.getAttribute('onerror')).toBeNull()
+    expect(container.innerHTML).not.toContain('onerror')
+  })
 })

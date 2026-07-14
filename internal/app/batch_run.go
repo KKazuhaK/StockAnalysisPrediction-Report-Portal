@@ -655,6 +655,13 @@ func (s *Server) startItem(job BatchJob, item batch.Item) {
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("batch job %d item %d panicked: %v", job.ID, item.ID, r)
+				// The run goroutine died mid-flight leaving the item 'running'; without a terminal
+				// mark, afterItem can never finalize and admission wedges at budget=1. Mark it
+				// Untracked (not Failed): a panic means we lost track of whether the run reached the
+				// backend, so "don't re-run" is the money-safe outcome (ADR 0015).
+				if err := s.st.FinishItem(item.ID, batch.Untracked, 1, "", fmt.Sprintf("panic: %v", r)); err != nil {
+					log.Printf("batch job %d item %d: mark untracked after panic: %v", job.ID, item.ID, err)
+				}
 			}
 			s.itemCancels.Delete(item.ID)
 			itemCancel()
@@ -803,6 +810,11 @@ func (s *Server) reconcileResumedItem(ref ResumeRef) {
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("batch resume: job %d item %d reconcile panicked: %v", ref.JobID, ref.ItemID, r)
+				// A reconcile panic leaves the item 'running'; mark it Untracked so the job can finalize
+				// (the run had already started on the backend, so it must never be re-run — ADR 0015).
+				if err := s.st.FinishItem(ref.ItemID, batch.Untracked, 1, ref.RunID, fmt.Sprintf("reconcile panic: %v", r)); err != nil {
+					log.Printf("batch resume: job %d item %d: mark untracked after panic: %v", ref.JobID, ref.ItemID, err)
+				}
 			}
 			s.afterItem(ref.JobID)
 		}()

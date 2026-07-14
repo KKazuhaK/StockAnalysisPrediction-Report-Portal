@@ -2,6 +2,7 @@ import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
+import DOMPurify from 'dompurify'
 import { Typography } from 'antd'
 import 'katex/dist/katex.min.css'
 
@@ -96,9 +97,12 @@ export default function Markdown({ md, html }: { md?: string; html?: string }) {
     )
   }
   if (html && html.trim()) {
+    // Report bodies are externally ingested (Dify / legacy import), so the HTML is untrusted:
+    // sanitize before injecting to strip <script>, inline event handlers (onerror/onload…), and
+    // other XSS vectors. Otherwise a crafted body_html would run in an admin's same-origin session.
     return (
       <Typography>
-        <div className="md-body" dangerouslySetInnerHTML={{ __html: html }} />
+        <div className="md-body" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />
       </Typography>
     )
   }

@@ -85,6 +85,11 @@ func RunServer(cfgPath string) {
 	if err != nil {
 		log.Fatalf("load config %s: %v", cfgPath, err)
 	}
+	// A blank secret_key (e.g. hand-edited config bypassing the first-run generator) would make the
+	// session HMAC forgeable — refuse to start rather than serve forgeable admin sessions.
+	if strings.TrimSpace(cfg.SecretKey) == "" {
+		log.Fatal("config: secret_key is empty — set a random secret_key (delete it to have one generated)")
+	}
 	if err := os.MkdirAll(config.DirOf(cfg.DBPath), 0o755); err != nil {
 		log.Fatal(err)
 	}
@@ -323,7 +328,18 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /", s.spaHandler())
 
 	log.Printf("report-portal %s | listen %s | db %s | reports:%d", version.String(), cfg.Listen, cfg.DBDriver, st.CountNew())
-	if err := http.ListenAndServe(cfg.Listen, logMiddleware(gzipMiddleware(mux))); err != nil {
+	// Explicit timeouts so a slow/idle client can't pin a goroutine+FD indefinitely (Slowloris).
+	// ReadHeaderTimeout bounds header dribble; IdleTimeout reaps idle keep-alives. ReadTimeout and
+	// WriteTimeout are deliberately left 0 (unbounded): SSE run/chat streams and PDF/zip exports are
+	// long-lived on the write side, and app-zip/asset uploads can be slow on the read side — each is
+	// bounded by its own MaxBytesReader / context deadline instead.
+	srv := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           logMiddleware(gzipMiddleware(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -179,7 +179,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: s.sign(u.Username), Path: "/",
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
+		HttpOnly: true, Secure: requestIsHTTPS(r), SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
 	})
 	s.st.TouchLastLogin(u.Username)
 	log.Printf("login %s", u.Username)
@@ -189,6 +189,16 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
 	writeJSON(w, okJSON)
+}
+
+// requestIsHTTPS reports whether the request reached the server over TLS, directly or via a
+// TLS-terminating reverse proxy (X-Forwarded-Proto: https). Used to set the session cookie's Secure
+// flag only when it won't break a plain-HTTP deployment (where the browser would drop a Secure cookie).
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // ---------- Home page: search + card list + pagination (reuses the SSR grouping/filtering logic) ----------
