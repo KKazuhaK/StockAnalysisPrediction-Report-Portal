@@ -1,4 +1,4 @@
-// App shortcuts: an entry-link (入口管理) button can trigger an internal action — open Run
+// App shortcuts: an entry-link (Links / entry-button) can trigger an internal action — open Run
 // Analysis, the queue, the assistant, the apps hub — instead of opening a URL. To avoid a
 // schema change, a shortcut is stored in the link's `url` as "rp:<key>"; everything else is
 // interpreted here. A shortcut can optionally carry a target so the action opens *pre-selected*
@@ -6,6 +6,8 @@
 // Dify-target id for run-analysis/chat, a string app id for apps). Run Analysis and the queue
 // live as a modal/drawer in AppLayout, so those two fire a window event that AppLayout listens
 // for; chat/apps are plain routes.
+
+import { BUILTIN_APPS, BUILTIN_PIN_PREFIX, builtinAppByKey } from './builtinApps'
 
 export const SHORTCUT_PREFIX = 'rp:'
 
@@ -62,10 +64,33 @@ export function shortcutUrl(key: ShortcutKey, param?: string | number): string {
 export function triggerShortcut(sc: AppShortcut, navigate: (to: string) => void, param?: string) {
   if (sc.route) {
     if (param && sc.key === 'chat') navigate(`${sc.route}?target=${encodeURIComponent(param)}`)
-    else if (param && sc.key === 'apps') navigate(`/apps/x/${encodeURIComponent(param)}`)
-    else navigate(sc.route)
+    else if (param && sc.key === 'apps') {
+      // A built-in app pins to its own route (/apps/recurring, …); a downloadable app opens its iframe.
+      if (param.startsWith(BUILTIN_PIN_PREFIX)) {
+        const app = builtinAppByKey(param.slice(BUILTIN_PIN_PREFIX.length))
+        navigate(app ? app.to : sc.route)
+      } else navigate(`/apps/x/${encodeURIComponent(param)}`)
+    } else navigate(sc.route)
   } else if (sc.event) {
     if (param) window.dispatchEvent(new CustomEvent(sc.event, { detail: { targetId: Number(param) } }))
     else window.dispatchEvent(new Event(sc.event))
   }
+}
+
+// shortcutPerm returns the permission a viewer must hold for this shortcut link to be shown/usable
+// (undefined = visible to everyone). An 'apps' shortcut pinned to a built-in app inherits that app's
+// permission (so an entry button to a run_batch-only app is hidden from users who lack it); a
+// downloadable-app pin has none (everyone may open installed apps); run-analysis / queue / chat
+// require run_batch via their `requiresRun` flag.
+export function shortcutPerm(res: ResolvedShortcut): string | undefined {
+  if (res.shortcut.key === 'apps' && res.param?.startsWith(BUILTIN_PIN_PREFIX)) {
+    return builtinAppByKey(res.param.slice(BUILTIN_PIN_PREFIX.length))?.perm || undefined
+  }
+  return res.shortcut.requiresRun ? 'run_batch' : undefined
+}
+
+// builtinAppOptions lists the built-in apps as entry-button pin choices (value `builtin:<key>`),
+// for the target picker in the entry-button editor. Downloadable apps are appended by the caller.
+export function builtinAppOptions(label: (titleKey: string) => string): { value: string; label: string }[] {
+  return BUILTIN_APPS.map((a) => ({ value: BUILTIN_PIN_PREFIX + a.key, label: label(a.titleKey) }))
 }

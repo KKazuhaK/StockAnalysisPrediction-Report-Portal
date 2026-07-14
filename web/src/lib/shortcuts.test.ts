@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { shortcutOfUrl, shortcutUrl, triggerShortcut, RUN_ANALYSIS_EVENT } from './shortcuts'
+import { shortcutOfUrl, shortcutUrl, triggerShortcut, shortcutPerm, builtinAppOptions, RUN_ANALYSIS_EVENT } from './shortcuts'
 
 describe('shortcutOfUrl', () => {
   it('returns undefined for a plain URL or empty', () => {
@@ -75,6 +75,21 @@ describe('triggerShortcut', () => {
     expect(nav).toHaveBeenCalledWith('/apps/x/deep-research')
   })
 
+  it('deep-links a built-in app pin to its own route, not the iframe path', () => {
+    const nav = vi.fn()
+    const r = shortcutOfUrl('rp:apps:builtin:recurring')!
+    expect(r.param).toBe('builtin:recurring')
+    triggerShortcut(r.shortcut, nav, r.param)
+    expect(nav).toHaveBeenCalledWith('/apps/recurring')
+  })
+
+  it('falls back to the apps hub for an unknown built-in pin', () => {
+    const nav = vi.fn()
+    const r = shortcutOfUrl('rp:apps:builtin:ghost')!
+    triggerShortcut(r.shortcut, nav, r.param)
+    expect(nav).toHaveBeenCalledWith('/apps')
+  })
+
   it('fires a plain event for a bare run-analysis shortcut', () => {
     const spy = vi.spyOn(window, 'dispatchEvent')
     const r = shortcutOfUrl('rp:run-analysis')!
@@ -91,5 +106,35 @@ describe('triggerShortcut', () => {
     const ev = spy.mock.calls[0][0] as CustomEvent
     expect(ev.type).toBe(RUN_ANALYSIS_EVENT)
     expect(ev.detail).toEqual({ targetId: 42 })
+  })
+})
+
+describe('shortcutPerm', () => {
+  const perm = (url: string) => shortcutPerm(shortcutOfUrl(url)!)
+
+  it('requires run_batch for run-analysis / queue / chat', () => {
+    expect(perm('rp:run-analysis')).toBe('run_batch')
+    expect(perm('rp:queue')).toBe('run_batch')
+    expect(perm('rp:chat')).toBe('run_batch')
+  })
+
+  it('is unrestricted for the apps hub and downloadable-app pins', () => {
+    expect(perm('rp:apps')).toBeUndefined()
+    expect(perm('rp:apps:deep-research')).toBeUndefined()
+  })
+
+  it('inherits a built-in app pin permission', () => {
+    expect(perm('rp:apps:builtin:recurring')).toBe('run_batch')
+    expect(perm('rp:apps:builtin:batch')).toBe('run_batch')
+  })
+})
+
+describe('builtinAppOptions', () => {
+  it('lists the built-in apps as builtin:<key> pin values, labelled via t', () => {
+    const opts = builtinAppOptions((k) => k) // identity t → returns the i18n key as label
+    const values = opts.map((o) => o.value)
+    expect(values).toContain('builtin:recurring')
+    expect(values).toContain('builtin:batch')
+    expect(opts.find((o) => o.value === 'builtin:recurring')?.label).toBe('nav.recurring')
   })
 })

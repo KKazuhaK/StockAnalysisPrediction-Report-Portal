@@ -28,7 +28,7 @@ import { useAuth } from '../auth'
 import Omnibox from '../components/Omnibox'
 import ReportCard from '../components/ReportCard'
 import { linkIconComponent } from '../components/linkIcons'
-import { shortcutOfUrl, triggerShortcut } from '../lib/shortcuts'
+import { shortcutOfUrl, shortcutPerm, triggerShortcut } from '../lib/shortcuts'
 
 const { RangePicker } = DatePicker
 
@@ -38,7 +38,6 @@ export default function HomePage() {
   const { token } = theme.useToken()
   const navigate = useNavigate()
   const { can } = useAuth()
-  const canRun = can('run_batch')
   const [sp, setSp] = useSearchParams()
   const [data, setData] = useState<HomeResp | null>(null)
   const [loading, setLoading] = useState(true)
@@ -121,13 +120,15 @@ export default function HomePage() {
   const typeOptions = (data?.types || []).map((x) => ({ value: x, label: x }))
 
   // Render one entry button. A shortcut link (url = "rp:<action>[:<target>]") triggers an
-  // internal action, optionally pre-selected on a specific target; a shortcut the user can't
-  // run (e.g. run-analysis without run_batch) is hidden (returns null).
+  // internal action, optionally pre-selected on a specific target; a shortcut whose target the
+  // viewer lacks permission for (run-analysis without run_batch, or an entry pinned to a
+  // permission-gated built-in app) is hidden (returns null).
   const renderLink = (l: LinkItem) => {
     const Icon = linkIconComponent(l.icon)
     const res = shortcutOfUrl(l.url)
     if (res) {
-      if (res.shortcut.requiresRun && !canRun) return null
+      const perm = shortcutPerm(res)
+      if (perm && !can(perm)) return null
       return (
         <Button key={l.id} icon={<Icon />} onClick={() => triggerShortcut(res.shortcut, navigate, res.param)}>
           {l.label}

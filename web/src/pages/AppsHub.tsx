@@ -5,39 +5,17 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
+import { BUILTIN_APPS } from '../lib/builtinApps'
 import type { AppsResp, AppSummary } from '../api/types'
 
-// The apps hub: a grid of user-facing apps. Batch-run is a compiled-in card (gated
-// by a permission); installed iframe apps (ADR 0003) are downloaded at runtime and
-// appear here for every user. Empty by default — the "app center" fills as you
-// install apps.
-interface BuiltinApp {
-  key: string
-  perm: string
-  to: string
-  icon: ReactNode
-  titleKey: string
-  descKey: string
+// The apps hub: a grid of user-facing apps. Built-in apps are compiled-in cards (each gated by a
+// permission; the registry lives in lib/builtinApps so the entry-button picker and shortcut router
+// agree with it); installed iframe apps (ADR 0003) are downloaded at runtime and appear here for
+// every user. Empty by default — the "app center" fills as you install apps.
+const BUILTIN_ICONS: Record<string, ReactNode> = {
+  batch: <PlayCircleOutlined />,
+  recurring: <ClockCircleOutlined />,
 }
-
-const BUILTINS: BuiltinApp[] = [
-  {
-    key: 'batch',
-    perm: 'run_batch',
-    to: '/apps/batch',
-    icon: <PlayCircleOutlined />,
-    titleKey: 'nav.batch',
-    descKey: 'apps.batchDesc',
-  },
-  {
-    key: 'recurring',
-    perm: 'run_batch',
-    to: '/apps/recurring',
-    icon: <ClockCircleOutlined />,
-    titleKey: 'nav.recurring',
-    descKey: 'apps.recurringDesc',
-  },
-]
 
 function AppCard({ icon, title, desc, tag, onClick }: { icon: ReactNode; title: string; desc?: string; tag?: string; onClick: () => void }) {
   const { token } = theme.useToken()
@@ -78,7 +56,8 @@ export default function AppsHub() {
       .catch(() => setApps([]))
   }, [])
 
-  const builtins = BUILTINS.filter((a) => can(a.perm))
+  // '' perm = everyone (matches shortcutPerm's registry contract; can('') is false, so guard on it).
+  const builtins = BUILTIN_APPS.filter((a) => !a.perm || can(a.perm))
   const isEmpty = builtins.length === 0 && apps.length === 0
 
   return (
@@ -93,7 +72,7 @@ export default function AppsHub() {
           {builtins.map((a) => (
             <AppCard
               key={a.key}
-              icon={a.icon}
+              icon={BUILTIN_ICONS[a.key] ?? <AppstoreOutlined />}
               title={t(a.titleKey)}
               desc={t(a.descKey)}
               tag={t('apps.builtin')}

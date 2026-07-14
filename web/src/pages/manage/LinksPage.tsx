@@ -11,7 +11,7 @@ import type { AppSummary, AppsResp, BatchTarget, ChatTarget, LinkGroup, LinkGrou
 import { difyModeKind } from '../../lib/batchUi'
 import { DragHandle, SortableItem } from './dnd'
 import { LINK_ICON_OPTIONS, linkIconComponent } from '../../components/linkIcons'
-import { APP_SHORTCUTS, shortcutOfUrl, shortcutUrl } from '../../lib/shortcuts'
+import { APP_SHORTCUTS, builtinAppOptions, shortcutOfUrl, shortcutUrl } from '../../lib/shortcuts'
 
 const iconSelectOptions = LINK_ICON_OPTIONS.map(({ value }) => {
   const Icon = linkIconComponent(value)
@@ -65,7 +65,8 @@ export default function LinksPage() {
   const targetOptionsFor = (key?: string): { value: string; label: string }[] => {
     if (key === 'run-analysis') return batchTargets.filter((tg) => difyModeKind(tg.mode) !== 'agent').map((tg) => ({ value: String(tg.id), label: tg.name }))
     if (key === 'chat') return chatTargets.map((tg) => ({ value: String(tg.id), label: tg.name }))
-    if (key === 'apps') return appList.map((a) => ({ value: a.id, label: a.name }))
+    // Built-in apps and installed downloadable apps are pinnable alike (built-in first).
+    if (key === 'apps') return [...builtinAppOptions((k) => t(k)), ...appList.map((a) => ({ value: a.id, label: a.name }))]
     return []
   }
 
@@ -205,6 +206,10 @@ export default function LinksPage() {
     load()
   }
   const onValuesChange = (changed: Record<string, unknown>) => {
+    // Changing the shortcut type invalidates any pinned target (its options come from the old type) —
+    // clear it so a stale value can't be saved (e.g. an apps `builtin:recurring` left on run-analysis
+    // would serialize to a malformed pin).
+    if ('shortcut' in changed) form.setFieldValue('shortcutTarget', undefined)
     if ('shortcutTarget' in changed && changed.shortcutTarget && !form.getFieldValue('label')) {
       const name = targetOptionsFor(form.getFieldValue('shortcut')).find((o) => o.value === changed.shortcutTarget)?.label
       if (name) form.setFieldValue('label', name)
