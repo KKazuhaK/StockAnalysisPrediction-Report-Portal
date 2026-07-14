@@ -768,5 +768,6 @@
   "recurring.priorityUrgent": "最優先",
   "recurring.priorityCustom": "自訂分數",
   "recurring.priorityBase": "優先級 {{n}}",
-  "nav.home": "首頁"
+  "nav.home": "首頁",
+  "queue.truncatedHint": "顯示最近 {{shown}} / 共 {{total}} 筆任務;更早的已完成任務已隱藏,可在「儲存清理」中清理。"
 }

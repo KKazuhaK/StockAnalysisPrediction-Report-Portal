@@ -225,6 +225,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const { admin, user } = useAuth()
   const mobile = !Grid.useBreakpoint().md
   const [jobs, setJobs] = useState<BatchJob[]>([])
+  const [total, setTotal] = useState(0)
   const [summary, setSummary] = useState<BatchQueueSummary | null>(null)
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [auto, setAuto] = useState(true)
@@ -238,7 +239,15 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const [selectedJobs, setSelectedJobs] = useState<Key[]>([])
 
   const load = () => {
-    api.get<{ jobs: BatchJob[] }>('/api/admin/batch/jobs').then((r) => setJobs(r.jobs || [])).catch(() => {})
+    // Bounded poll: the server returns every active job + the most recent terminal jobs (not the whole
+    // history) plus the true total, so the 3s poll stays cheap on a large finished-job backlog.
+    api
+      .get<{ jobs: BatchJob[]; total?: number }>('/api/admin/batch/jobs?limit=300')
+      .then((r) => {
+        setJobs(r.jobs || [])
+        setTotal(r.total ?? (r.jobs || []).length)
+      })
+      .catch(() => {})
     api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setSummary).catch(() => {})
   }
   useEffect(() => {
@@ -255,7 +264,12 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
 
   const targetName = (id: number) => targets.find((tg) => tg.id === id)?.name || `#${id}`
   const submitters = useMemo(() => [...new Set(jobs.map((j) => j.created_by).filter(Boolean))], [jobs])
-  const doneToday = useMemo(() => jobs.filter((j) => isTerminal(j.status) && (j.finished_at || '').startsWith(todayStr())).length, [jobs])
+  // Prefer the server-side count (exact even though the job list is paginated); fall back to counting
+  // the loaded page for an older server that doesn't send done_today.
+  const doneToday = useMemo(
+    () => summary?.done_today ?? jobs.filter((j) => isTerminal(j.status) && (j.finished_at || '').startsWith(todayStr())).length,
+    [summary, jobs],
+  )
   const canCancel = (j: BatchJob) => admin || j.created_by === user // matches the server ownership check
 
   const rows = useMemo(() => {
@@ -508,6 +522,11 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
           <Select showSearch optionFilterProp="label" allowClear placeholder={t('batch.col.createdBy')} style={{ width: 140 }} value={fUser || undefined} onChange={(v) => setFUser(v || '')} options={submitters.map((u) => ({ value: u, label: u }))} />
           <Select showSearch optionFilterProp="label" allowClear placeholder={t('run.workflow')} style={{ width: 200 }} value={fTarget} onChange={setFTarget} options={targets.map((tg) => ({ value: tg.id, label: tg.name }))} />
         </Space>
+        {total > jobs.length && (
+          <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+            {t('queue.truncatedHint', { shown: jobs.length, total })}
+          </Typography.Text>
+        )}
         {rows.length === 0 ? (
           <Empty description={t('queue.empty')} />
         ) : (

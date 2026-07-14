@@ -307,10 +307,24 @@ func normalizeRunAt(v string) (string, bool) {
 
 func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user string) {
 	waiting := s.queuedItems() // for the live "N ahead" of each queued job
-	firstInputs := s.st.AllJobsFirstInputs()
+	// Bound the poll: all active jobs + the most recent `limit` terminal jobs (default 300), so a
+	// large finished-job history doesn't get serialized on the single connection every 3s.
+	limit := 300
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 {
+		if n > 2000 {
+			n = 2000
+		}
+		limit = n
+	}
+	jobs, total := s.st.ListQueueJobs(limit)
+	ids := make([]int64, len(jobs))
+	for i, j := range jobs {
+		ids[i] = j.ID
+	}
+	firstInputs := s.st.JobsFirstInputs(ids)
 	now := time.Now()
-	out := make([]map[string]any, 0)
-	for _, j := range s.st.ListBatchJobs() {
+	out := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
 		m := jobJSON(j)
 		m["inputs"] = firstInputs[j.ID] // first row's inputs (JSON string) for a "标的" label
 		// A running job's stored counts are only written at finish; fill live counts
@@ -330,7 +344,9 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 		}
 		out = append(out, m)
 	}
-	writeJSON(w, map[string]any{"jobs": out, "budget": s.batchBudget()})
+	// total = all jobs in the DB; len(out) = what this bounded page returned, so the UI can show
+	// "recent N of M" and point at storage cleanup when older jobs are hidden.
+	writeJSON(w, map[string]any{"jobs": out, "total": total, "budget": s.batchBudget()})
 }
 
 // apiBatchJobCreate validates the target's plugin compiles, clamps concurrency to
@@ -687,7 +703,8 @@ func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user stri
 		"scheduled":    scheduled,
 		"budget":       s.batchBudget(),
 		"reserved":     s.batchReserved(),
-		"my_priority":  s.resolveBasePriority(user), // the caller's resolved base priority (0..100, ADR 0008)
+		"my_priority":  s.resolveBasePriority(user),                    // the caller's resolved base priority (0..100, ADR 0008)
+		"done_today":   s.st.CountFinishedOn(now.Format("2006-01-02")), // server-side count (exact under the paginated job list)
 	})
 }
 

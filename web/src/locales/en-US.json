@@ -768,5 +768,6 @@
   "recurring.priorityUrgent": "Top priority",
   "recurring.priorityCustom": "Custom score",
   "recurring.priorityBase": "Priority {{n}}",
-  "nav.home": "Home"
+  "nav.home": "Home",
+  "queue.truncatedHint": "Showing the {{shown}} most recent of {{total}} jobs — older finished jobs are hidden; prune them in Storage cleanup."
 }

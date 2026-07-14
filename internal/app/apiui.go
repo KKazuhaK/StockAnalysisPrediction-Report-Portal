@@ -168,14 +168,41 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	u := s.st.GetUser(strings.TrimSpace(in.Username))
+	uname := strings.TrimSpace(in.Username)
+	ipKey, userKey := "ip:"+clientIP(r), "u:"+uname
+	now := time.Now()
+	thr := s.loginThr
+	// Hard-block a flooding IP BEFORE the expensive bcrypt (CPU-exhaustion + single-source brute
+	// force). This is keyed by the real peer IP, so a legit user is only affected if they share the
+	// abuser's IP (a short-lived window), never by someone else attacking their account.
+	if thr != nil && thr.blocked(ipKey, now) {
+		jsonError(w, http.StatusTooManyRequests, "尝试过于频繁，请稍后再试")
+		return
+	}
+	// The password is checked FIRST: a correct password always succeeds (and clears the counters), so
+	// the per-account limit below can never lock a real owner out of their own account.
+	u := s.st.GetUser(uname)
 	if u == nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(in.Password)) != nil {
+		if thr != nil {
+			thr.record(ipKey, now)
+			thr.record(userKey, now)
+			// An account under sustained wrong-password pressure rejects further WRONG guesses; a
+			// correct password would have passed above, so this only rate-limits an attacker.
+			if thr.blocked(userKey, now) {
+				jsonError(w, http.StatusTooManyRequests, "尝试过于频繁，请稍后再试")
+				return
+			}
+		}
 		jsonError(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
 	if !u.Active {
 		jsonError(w, http.StatusForbidden, "账号已停用")
 		return
+	}
+	if thr != nil {
+		thr.reset(ipKey)
+		thr.reset(userKey)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: s.sign(u.Username), Path: "/",

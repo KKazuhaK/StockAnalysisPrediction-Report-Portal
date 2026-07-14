@@ -81,6 +81,7 @@ export interface BatchQueueSummary {
   budget: number // max concurrent runs (rows) allowed at once
   reserved: number // slots held for urgent runs
   my_priority?: number // the caller's resolved base priority (0..100, ADR 0008)
+  done_today?: number // terminal jobs finished today (server-side count; exact under the paginated list)
 }
 
 export interface BatchJob {

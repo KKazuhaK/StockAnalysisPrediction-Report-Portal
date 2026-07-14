@@ -768,5 +768,6 @@
   "recurring.priorityUrgent": "最优先",
   "recurring.priorityCustom": "自定义分数",
   "recurring.priorityBase": "优先级 {{n}}",
-  "nav.home": "首页"
+  "nav.home": "首页",
+  "queue.truncatedHint": "显示最近 {{shown}} / 共 {{total}} 条任务；更早的已完成任务已隐藏,可在“存储清理”中清理。"
 }

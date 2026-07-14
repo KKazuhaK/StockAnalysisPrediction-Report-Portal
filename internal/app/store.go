@@ -298,10 +298,17 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, label TEXT, freq TEXT, intervals TEXT,
 			on_overrun TEXT DEFAULT 'next', enabled INTEGER DEFAULT 1, invert INTEGER DEFAULT 0, ord INTEGER DEFAULT 0)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_job ON batch_items(job_id, status)`,
-		// The batch console polls AllJobsFirstInputs (first row of every job) every 2s;
+		// The batch console polls JobsFirstInputs (first row of the page's jobs) every 3s;
 		// without this the WHERE row_index=0 lookup is a full scan of batch_items — the
 		// fastest-growing table — and gets slow on a large job history.
 		`CREATE INDEX IF NOT EXISTS idx_batch_items_row0 ON batch_items(row_index, job_id)`,
+		// The scheduler + queue console filter batch_jobs by status on every 3s/12s poll
+		// (QueuedJobs / RunningJobCount / SchedulableJobs / QueuedPresetJobs) and the storage cleanup
+		// filters status + finished_at; a composite (status, finished_at) serves both — the status-only
+		// filters use the leftmost prefix, the cleanup predicate uses both columns. Without it these
+		// full-scan batch_jobs on the single SQLite connection. RecentJobActivity range-scans created_at.
+		`CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs(status, finished_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_batch_jobs_created ON batch_jobs(created_at)`,
 		// Run-queue priority (ADR 0004) and one-shot schedule run_at (ADR 0007) are now the
 		// batch_jobs.priority / run_at columns above (folded from the former job_queue /
 		// job_schedule side tables). The partial index over run_at is created by migrateV1toV2,

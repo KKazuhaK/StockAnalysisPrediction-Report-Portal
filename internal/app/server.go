@@ -50,6 +50,7 @@ type Server struct {
 	chatLive    map[int64]*chatTurn                                                        // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
 	chatSeq     int64                                                                      // monotonic in-flight chat-turn id
 	cleanupMu   sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
+	loginThr    *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -106,7 +107,7 @@ func RunServer(cfgPath string) {
 		bar := strings.Repeat("=", 52)
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
-	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute)}
+	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute), loginThr: newLoginThrottle()}
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()

@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
@@ -600,7 +601,12 @@ func (s *Store) GetBatchJob(id int64) (BatchJob, bool) {
 }
 
 func (s *Store) ListBatchJobs() []BatchJob {
-	rows, err := s.query(`SELECT ` + batchJobCols + ` ` + batchJobFrom + ` ORDER BY b.id DESC`)
+	return s.queryBatchJobs(`ORDER BY b.id DESC`)
+}
+
+// queryBatchJobs runs a SELECT of the shared job columns with the given WHERE/ORDER/LIMIT tail.
+func (s *Store) queryBatchJobs(tail string, args ...any) []BatchJob {
+	rows, err := s.query(`SELECT `+batchJobCols+` `+batchJobFrom+` `+tail, args...)
 	if err != nil {
 		return nil
 	}
@@ -612,6 +618,50 @@ func (s *Store) ListBatchJobs() []BatchJob {
 			continue
 		}
 		out = append(out, j)
+	}
+	return out
+}
+
+// ListQueueJobs returns the jobs the queue console shows: EVERY active job (queued / running /
+// cancelling — always few, so a pending or in-flight job is never hidden behind the limit) plus the
+// most recent termLimit terminal jobs (finished / cancelled / expired — the unbounded history),
+// newest-first, and the total job count. This bounds the 3s poll to O(active + termLimit) instead of
+// serializing the whole job history + every job's first-input blob on the single SQLite connection.
+func (s *Store) ListQueueJobs(termLimit int) ([]BatchJob, int) {
+	if termLimit <= 0 {
+		termLimit = 300
+	}
+	jobs := s.queryBatchJobs(`WHERE b.status IN ('queued','running','cancelling') ORDER BY b.id DESC`)
+	jobs = append(jobs, s.queryBatchJobs(`WHERE b.status IN ('finished','cancelled','expired') ORDER BY b.id DESC LIMIT ?`, termLimit)...)
+	sort.Slice(jobs, func(i, j int) bool { return jobs[i].ID > jobs[j].ID }) // active ids aren't always > terminal (a scheduled job)
+	var total int
+	s.queryRow("SELECT COUNT(*) FROM batch_jobs").Scan(&total)
+	return jobs, total
+}
+
+// JobsFirstInputs returns the first row's inputs (raw JSON) for the given job ids only — the
+// page-scoped form used by the console poll, so it reads O(page) rows instead of every job's row.
+func (s *Store) JobsFirstInputs(ids []int64) map[int64]string {
+	out := map[int64]string{}
+	if len(ids) == 0 {
+		return out
+	}
+	ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.query("SELECT job_id, inputs FROM batch_items WHERE row_index=0 AND job_id IN ("+ph+")", args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var inputs sql.NullString
+		if rows.Scan(&id, &inputs) == nil {
+			out[id] = inputs.String
+		}
 	}
 	return out
 }
@@ -678,23 +728,14 @@ func (s *Store) ItemJobAndStatus(itemID int64) (jobID int64, status string, ok b
 	return jobID, status, true
 }
 
-// AllJobsFirstInputs returns each job's first row's inputs (raw JSON string), so a
-// job list can show what a run is about (e.g. its 标的) without a per-job query.
-func (s *Store) AllJobsFirstInputs() map[int64]string {
-	out := map[int64]string{}
-	rows, err := s.query("SELECT job_id, inputs FROM batch_items WHERE row_index=0")
-	if err != nil {
-		return out
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var inputs sql.NullString
-		if rows.Scan(&id, &inputs) == nil {
-			out[id] = inputs.String
-		}
-	}
-	return out
+// CountFinishedOn counts terminal jobs whose finished_at falls on the given local date
+// (YYYY-MM-DD) — the server-side "done today" count, so the console tile stays exact even though the
+// job list is now paginated. finished_at is the local nowStr() wall clock; the (status,finished_at)
+// index serves this.
+func (s *Store) CountFinishedOn(dayPrefix string) int {
+	var n int
+	s.queryRow("SELECT COUNT(*) FROM batch_jobs WHERE status IN ('finished','cancelled') AND finished_at LIKE ?", dayPrefix+"%").Scan(&n)
+	return n
 }
 
 func (s *Store) BatchJobItems(jobID int64) []BatchItem {
