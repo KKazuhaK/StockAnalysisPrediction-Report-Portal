@@ -79,15 +79,20 @@ func (s *Store) columnExists(table, col string) bool {
 		return false
 	}
 	defer rows.Close()
+	found := false
 	for rows.Next() {
 		var cid, notnull, pk int
 		var name, ctype string
 		var dflt sql.NullString
 		if rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk) == nil && name == col {
-			return true
+			found = true
+			break
 		}
 	}
-	return false
+	if rows.Err() != nil {
+		return false // PRAGMA iteration failed; treat the column as absent (the guarded ADD COLUMN is idempotent)
+	}
+	return found
 }
 
 // duplicateColumnErr reports whether an ADD COLUMN failed only because the column already exists

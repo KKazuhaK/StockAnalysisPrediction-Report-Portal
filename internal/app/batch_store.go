@@ -619,6 +619,9 @@ func (s *Store) queryBatchJobs(tail string, args ...any) []BatchJob {
 		}
 		out = append(out, j)
 	}
+	if rows.Err() != nil {
+		return nil
+	}
 	return out
 }
 
@@ -663,6 +666,7 @@ func (s *Store) JobsFirstInputs(ids []int64) map[int64]string {
 			out[id] = inputs.String
 		}
 	}
+	_ = rows.Err()
 	return out
 }
 

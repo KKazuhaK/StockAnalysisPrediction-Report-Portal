@@ -85,6 +85,18 @@ func (s *Server) apiForgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	base := s.resetLinkBase()
 	eligible := u != nil && u.Active && u.Email != "" && s.emailEnabled()
+	// Rate-limit per resolved account so a flood of POSTs can't spam a victim's inbox or pile up SMTP
+	// goroutines/sockets. Only a real, eligible account ever spawns a send, so a per-account cap fully
+	// bounds it; the response stays a constant okJSON either way (no account-existence leak).
+	if eligible {
+		now := time.Now()
+		key := "pwreset:" + strings.ToLower(u.Username)
+		limited := s.loginThr != nil && s.loginThr.blocked(key, now)
+		if s.loginThr != nil {
+			s.loginThr.record(key, now)
+		}
+		eligible = !limited
+	}
 	if eligible && base != "" {
 		link := base + "/reset?token=" + url.QueryEscape(s.resetToken(u))
 		// Send off the request path: a synchronous SMTP round-trip only for real
