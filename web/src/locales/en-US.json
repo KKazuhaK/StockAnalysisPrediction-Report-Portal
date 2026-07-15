@@ -711,7 +711,7 @@
   "storage.confirmBody": "Permanently delete {{n}} {{cat}} older than {{days}} days. This cannot be undone.",
   "storage.doClean": "Clean",
   "update.title": "New version available",
-  "update.desc": "The app was updated. Refresh to load the latest version.",
+  "update.desc": "The portal was updated. Refresh to load the latest version.",
   "update.refresh": "Refresh",
   "nav.recurring": "Scheduled Tasks",
   "apps.recurringDesc": "Run a workflow on a repeating schedule — daily, weekly, or monthly.",

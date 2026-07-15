@@ -711,7 +711,7 @@
   "storage.confirmBody": "將永久刪除 {{n}} 項超過 {{days}} 天的{{cat}}，此操作無法復原。",
   "storage.doClean": "確認清理",
   "update.title": "有新版本",
-  "update.desc": "應用已更新，重新整理以載入最新版本。",
+  "update.desc": "門戶已更新，重新整理以載入最新版本。",
   "update.refresh": "重新整理",
   "nav.recurring": "計畫任務",
   "apps.recurringDesc": "依重複週期執行工作流程——每天、每週或每月自動觸發。",

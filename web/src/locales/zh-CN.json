@@ -711,7 +711,7 @@
   "storage.confirmBody": "将永久删除 {{n}} 项超过 {{days}} 天的{{cat}}，此操作无法撤销。",
   "storage.doClean": "确认清理",
   "update.title": "有新版本",
-  "update.desc": "应用已更新，刷新以载入最新版本。",
+  "update.desc": "门户已更新，刷新以载入最新版本。",
   "update.refresh": "刷新",
   "nav.recurring": "计划任务",
   "apps.recurringDesc": "按重复周期运行工作流——每天、每周或每月自动触发。",

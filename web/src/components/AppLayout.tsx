@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, CloseOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -89,11 +89,10 @@ export default function AppLayout() {
   useEffect(() => {
     api.get<{ version: string; commit: string; buildDate: string }>('/api/version').then(setVer).catch(() => {})
   }, [])
-  // "New version" prompt: once a deploy lands under this open tab, show an inline, dismissible banner
-  // (not a floating notification that overlapped content) with a Refresh action, so the user finishes
-  // what they're doing and reloads on their terms. Rendered as a sticky band right under the header.
+  // "New version" prompt: once a deploy lands under this open tab, show a persistent inline banner
+  // (not a floating notification that overlaps content) with a Refresh action. It stays until refresh
+  // so a user cannot accidentally dismiss the only indication that the open client is stale.
   const updateAvailable = useVersionCheck()
-  const [updateDismissed, setUpdateDismissed] = useState(false)
 
   // Warm the report-viewing chunks shortly after the shell mounts. StockPage/RunPage statically pull
   // the heavy Markdown chunk, so pre-loading them makes clicking a report navigate near-instantly
@@ -366,14 +365,14 @@ export default function AppLayout() {
       {/* New-version banner: sticky right under the header. The info-colored bar spans full width, but
           its content aligns to the same content column (contentMaxWidth) as the rest of the page — so on
           an ultra-wide screen the text and buttons stay together instead of stretching to the far edges. */}
-      {updateAvailable && !updateDismissed && (
+      {updateAvailable && (
         <div
+          className="rp-update-banner"
           style={{
             position: 'sticky',
             top: 'var(--rp-header-h, 64px)',
             zIndex: 19,
             background: token.colorInfoBg,
-            borderBottom: `1px solid ${token.colorInfoBorder}`,
           }}
         >
           <div
@@ -391,7 +390,6 @@ export default function AppLayout() {
             <Button type="primary" size="small" onClick={() => window.location.reload()}>
               {t('update.refresh')}
             </Button>
-            <Button type="text" size="small" aria-label={t('common.cancel')} icon={<CloseOutlined />} onClick={() => setUpdateDismissed(true)} />
           </div>
         </div>
       )}

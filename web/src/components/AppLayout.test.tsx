@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { Grid } from 'antd'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import AppLayout from './AppLayout'
+
+const updateState = vi.hoisted(() => ({ available: false }))
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('../site', () => ({
@@ -20,7 +22,7 @@ vi.mock('../auth', () => ({
   useAuth: () => ({ user: 'alice', name: 'Alice', admin: true, can: () => true, logout: vi.fn() }),
 }))
 vi.mock('../api/client', () => ({ api: { get: () => Promise.resolve({}) } }))
-vi.mock('../lib/useVersionCheck', () => ({ useVersionCheck: () => false }))
+vi.mock('../lib/useVersionCheck', () => ({ useVersionCheck: () => updateState.available }))
 vi.mock('./Omnibox', () => ({ default: () => <input aria-label="global-search" /> }))
 vi.mock('./RunAnalysisModal', () => ({ default: () => null }))
 vi.mock('./QueueDrawer', () => ({ default: () => null }))
@@ -40,6 +42,10 @@ function renderAt(path: string) {
 }
 
 describe('AppLayout mobile chat focus mode', () => {
+  beforeEach(() => {
+    updateState.available = false
+  })
+
   it('removes global search, actions, breadcrumbs, and content gutters on mobile chat', async () => {
     vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: false } as ReturnType<typeof Grid.useBreakpoint>)
     const { container } = renderAt('/chat')
@@ -63,5 +69,17 @@ describe('AppLayout mobile chat focus mode', () => {
     expect(screen.getByLabelText('global-search')).toBeTruthy()
     expect(screen.getByTitle('nav.runAnalysis')).toBeTruthy()
     expect(screen.getByText('nav.home')).toBeTruthy()
+  })
+
+  it('uses the info background without a dark separator under the update banner', async () => {
+    updateState.available = true
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: true } as ReturnType<typeof Grid.useBreakpoint>)
+    const { container } = renderAt('/queue')
+
+    expect(await screen.findByText('update.desc')).toBeTruthy()
+    const banner = container.querySelector<HTMLElement>('.rp-update-banner')
+    expect(banner).not.toBeNull()
+    expect(banner?.style.borderBottom).toBe('')
+    expect(screen.queryByLabelText('common.cancel')).toBeNull()
   })
 })
