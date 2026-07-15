@@ -757,6 +757,8 @@
   "recurring.fieldCadence": "Repeat",
   "recurring.dayOfMonth": "Day",
   "recurring.tzHint": "Fires in the panel timezone. A missed period (server offline) is skipped, not backfilled.",
+  "recurring.executionSettings": "Execution settings",
+  "recurring.executionSettingsHint": "Controls each queued batch",
   "recurring.fieldPriority": "Priority",
   "recurring.fieldEnabled": "Enabled",
   "recurring.historyTitle": "History · {{name}}",

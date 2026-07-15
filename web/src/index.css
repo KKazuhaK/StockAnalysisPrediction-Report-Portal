@@ -170,6 +170,71 @@ body {
   transform-origin: 50% 0 !important;
 }
 
+/* Recurring-task execution settings: keep priority, row concurrency, and retry
+   controls aligned as a deliberate group instead of an inline row that wraps labels
+   away from their inputs. */
+.rp-recurring-execution {
+  padding: 12px 14px 14px;
+  border: 1px solid var(--ant-color-border-secondary, rgba(128, 128, 128, 0.2));
+  border-radius: 10px;
+  background: var(--ant-color-fill-quaternary, rgba(128, 128, 128, 0.04));
+}
+.rp-recurring-execution-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.rp-recurring-execution-heading > .ant-typography:last-child {
+  font-size: 12px;
+  text-align: right;
+}
+.rp-recurring-execution-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 2fr) repeat(2, minmax(110px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.rp-recurring-execution-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+.rp-recurring-execution-field > .ant-typography {
+  font-size: 12px;
+}
+.rp-recurring-execution-field > .ant-input-number {
+  width: 100%;
+}
+.rp-recurring-priority-controls {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+}
+.rp-recurring-priority-controls > .ant-select {
+  min-width: 0;
+  flex: 1;
+}
+.rp-recurring-priority-controls > .ant-input-number {
+  width: 88px;
+  flex: 0 0 88px;
+}
+@media (max-width: 575px) {
+  .rp-recurring-execution-heading {
+    display: block;
+  }
+  .rp-recurring-execution-heading > .ant-typography:last-child {
+    display: block;
+    margin-top: 2px;
+    text-align: left;
+  }
+  .rp-recurring-execution-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Stock reading layout (StockPage) ──────────────────────────────────────────
    A container query on the available width, not the viewport, so it also reacts to
    the reader "wide" mode changing the page max-width. Wide enough: the timeline

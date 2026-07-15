@@ -757,6 +757,8 @@
   "recurring.fieldCadence": "重复",
   "recurring.dayOfMonth": "日期",
   "recurring.tzHint": "按面板时区触发。错过的周期（服务器离线）会跳过，不补跑。",
+  "recurring.executionSettings": "执行设置",
+  "recurring.executionSettingsHint": "控制每次进入队列的批量任务",
   "recurring.fieldPriority": "优先级",
   "recurring.fieldEnabled": "启用",
   "recurring.historyTitle": "触发历史 · {{name}}",

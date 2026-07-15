@@ -316,7 +316,7 @@ export default function RecurringConsole() {
         okText={t('common.save')}
         cancelText={t('common.cancel')}
         confirmLoading={saving}
-        width={640}
+        width={680}
         destroyOnHidden
       >
         <Space direction="vertical" size={12} style={{ width: '100%', marginTop: 8 }}>
@@ -391,33 +391,66 @@ export default function RecurringConsole() {
             {t('recurring.tzHint')}
           </Typography.Text>
 
-          <Space wrap>
-            <Typography.Text>{t('recurring.fieldPriority')}</Typography.Text>
-            {/* Priority mode: normal/idle for anyone; admins additionally get urgent (top priority) and
-                a custom base score. The stored value is '' | 'idle' | 'urgent' | a number string. */}
-            <Select
-              style={{ width: 220 }}
-              value={priorityMode}
-              onChange={setPriorityMode}
-              options={[
-                { value: 'normal', label: t('recurring.priorityNormal') },
-                { value: 'idle', label: t('recurring.priorityIdleLong') },
-                ...(admin
-                  ? [
-                      { value: 'urgent', label: t('recurring.priorityUrgent') },
-                      { value: 'custom', label: t('recurring.priorityCustom') },
-                    ]
-                  : []),
-              ]}
-            />
-            {admin && priorityMode === 'custom' && (
-              <InputNumber min={0} max={100} value={Number(draft.priority) || 0} onChange={(v) => set('priority', String(v ?? 0))} aria-label={t('recurring.priorityCustom')} />
-            )}
-            <Typography.Text>{t('batch.rowConcurrency')}</Typography.Text>
-            <InputNumber min={1} max={20} value={draft.concurrency} onChange={(v) => set('concurrency', v ?? 1)} />
-            <Typography.Text>{t('batch.maxRetries')}</Typography.Text>
-            <InputNumber min={0} max={5} value={draft.maxRetries} onChange={(v) => set('maxRetries', v ?? 0)} />
-          </Space>
+          <div className="rp-recurring-execution">
+            <div className="rp-recurring-execution-heading">
+              <Typography.Text strong>{t('recurring.executionSettings')}</Typography.Text>
+              <Typography.Text type="secondary">{t('recurring.executionSettingsHint')}</Typography.Text>
+            </div>
+            <div className="rp-recurring-execution-grid">
+              <div className="rp-recurring-execution-field rp-recurring-priority-field">
+                <Typography.Text type="secondary">{t('recurring.fieldPriority')}</Typography.Text>
+                <div className="rp-recurring-priority-controls">
+                  {/* Priority mode: normal/idle for anyone; admins additionally get urgent (top
+                      priority) and a custom base score. The stored value is '' | 'idle' | 'urgent'
+                      | a number string. */}
+                  <Select
+                    style={{ width: '100%' }}
+                    value={priorityMode}
+                    onChange={setPriorityMode}
+                    options={[
+                      { value: 'normal', label: t('recurring.priorityNormal') },
+                      { value: 'idle', label: t('recurring.priorityIdleLong') },
+                      ...(admin
+                        ? [
+                            { value: 'urgent', label: t('recurring.priorityUrgent') },
+                            { value: 'custom', label: t('recurring.priorityCustom') },
+                          ]
+                        : []),
+                    ]}
+                  />
+                  {admin && priorityMode === 'custom' && (
+                    <InputNumber
+                      min={0}
+                      max={100}
+                      value={Number(draft.priority) || 0}
+                      onChange={(v) => set('priority', String(v ?? 0))}
+                      aria-label={t('recurring.priorityCustom')}
+                    />
+                  )}
+                </div>
+              </div>
+              <div className="rp-recurring-execution-field">
+                <Typography.Text type="secondary">{t('batch.rowConcurrency')}</Typography.Text>
+                <InputNumber
+                  min={1}
+                  max={20}
+                  value={draft.concurrency}
+                  onChange={(v) => set('concurrency', v ?? 1)}
+                  aria-label={t('batch.rowConcurrency')}
+                />
+              </div>
+              <div className="rp-recurring-execution-field">
+                <Typography.Text type="secondary">{t('batch.maxRetries')}</Typography.Text>
+                <InputNumber
+                  min={0}
+                  max={5}
+                  value={draft.maxRetries}
+                  onChange={(v) => set('maxRetries', v ?? 0)}
+                  aria-label={t('batch.maxRetries')}
+                />
+              </div>
+            </div>
+          </div>
 
           <Space>
             <Switch checked={draft.enabled} onChange={(v) => set('enabled', v)} />
