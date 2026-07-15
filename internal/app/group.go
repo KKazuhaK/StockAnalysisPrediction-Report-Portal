@@ -21,10 +21,11 @@ type Group struct {
 	Time              string // latest member's ingest instant (when it was pushed to the portal; UTC RFC3339)
 }
 
-// runKind maps report type(s) to their canonical top-level kind — one of the four
-// pipelines we run (重组决策 / 投资决策 / 深度研究 / 技术分析), or 未分类 as the
+// runKind maps report type(s) to their canonical top-level kind — one of the five
+// pipelines we run (重组决策 / 投资决策 / 深度研究 / 技术分析 / 每日推荐), or 未分类 as the
 // catch-all. Keyword order encodes priority when a run mixes several types. 舆情 /
-// 事件监测 / 信号监测 belong to the 重组 pipeline (its sentiment/signal sub-models).
+// 事件监测 / 信号监测 belong to the 重组 pipeline (its sentiment/signal sub-models);
+// 盘前榜 / 精选 are the event-driven daily-pick cards (每日推荐).
 func runKind(types []string) string {
 	j := strings.Join(types, "")
 	switch {
@@ -36,6 +37,8 @@ func runKind(types []string) string {
 		return "深度研究"
 	case strings.Contains(j, "技术分析") || strings.Contains(j, "缠论"):
 		return "技术分析"
+	case strings.Contains(j, "盘前") || strings.Contains(j, "精选") || strings.Contains(j, "每日推荐"):
+		return "每日推荐"
 	case strings.Contains(j, "投资") || strings.Contains(j, "估值") ||
 		strings.Contains(j, "财务") || strings.Contains(j, "行业") ||
 		strings.Contains(j, "研报") || strings.Contains(j, "股权") ||
@@ -45,12 +48,12 @@ func runKind(types []string) string {
 	return "未分类"
 }
 
-// foldKind collapses any stored/legacy kind into the current buckets: the four
-// pipelines (重组决策 / 投资决策 / 深度研究 / 技术分析) plus 未分类. Legacy kinds
-// 事件监测→重组决策 (they were 舆情分析更新) and 其他→未分类; anything unknown → 未分类.
+// foldKind collapses any stored/legacy kind into the current buckets: the five
+// pipelines (重组决策 / 投资决策 / 深度研究 / 技术分析 / 每日推荐) plus 未分类. Legacy
+// kinds 事件监测→重组决策 (they were 舆情分析更新) and 其他→未分类; anything unknown → 未分类.
 func foldKind(k string) string {
 	switch k {
-	case "重组决策", "投资决策", "深度研究", "技术分析", "未分类":
+	case "重组决策", "投资决策", "深度研究", "技术分析", "每日推荐", "未分类":
 		return k
 	case "事件监测":
 		return "重组决策"
