@@ -757,6 +757,8 @@
   "recurring.fieldCadence": "重複",
   "recurring.dayOfMonth": "日期",
   "recurring.tzHint": "依面板時區觸發。錯過的週期（伺服器離線）會略過，不補跑。",
+  "recurring.executionSettings": "執行設定",
+  "recurring.executionSettingsHint": "控制每次進入佇列的批次任務",
   "recurring.fieldPriority": "優先級",
   "recurring.fieldEnabled": "啟用",
   "recurring.historyTitle": "觸發歷史 · {{name}}",

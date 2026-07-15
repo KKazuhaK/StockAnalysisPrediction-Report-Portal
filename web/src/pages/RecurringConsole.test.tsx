@@ -90,6 +90,8 @@ describe('RecurringConsole', () => {
     // the modal renders the name + target fields.
     expect((await screen.findAllByText('recurring.fieldName')).length).toBeGreaterThan(0)
     expect(screen.getAllByText('recurring.fieldTarget').length).toBeGreaterThan(0)
+    expect(screen.getByText('recurring.executionSettings')).toBeTruthy()
+    expect(document.querySelector('.rp-recurring-execution-grid')).not.toBeNull()
   })
 
   it('editing prefills the CSV editor WITH a header row so the template round-trips', async () => {
