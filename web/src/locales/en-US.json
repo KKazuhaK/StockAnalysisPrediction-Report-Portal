@@ -752,6 +752,8 @@
   "recurring.namePlaceholder": "e.g. Daily A-share close review",
   "recurring.fieldTarget": "Target workflow",
   "recurring.rowsHint": "One run per row; columns:",
+  "recurring.importCsv": "Import CSV",
+  "recurring.downloadCsv": "Download CSV",
   "recurring.fieldCadence": "Repeat",
   "recurring.dayOfMonth": "Day",
   "recurring.tzHint": "Fires in the panel timezone. A missed period (server offline) is skipped, not backfilled.",

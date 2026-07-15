@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { App, Button, Card, Drawer, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, TimePicker, Typography } from 'antd'
-import { ClockCircleOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, PlayCircleOutlined, PlusOutlined } from '@ant-design/icons'
+import { App, Button, Card, Drawer, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, TimePicker, Typography, Upload } from 'antd'
+import { ClockCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, HistoryOutlined, PlayCircleOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, RecurringDetail, RecurringRun, RecurringTask, RecurringTasksResp } from '../api/types'
-import { csvToRows, toCSV } from '../lib/csv'
+import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
 
 // Recurring-tasks console (计划任务; docs/adr/0018-recurring-tasks.md). A first-party app card
 // (gated by run_batch) that manages saved job templates + a daily/weekly/monthly cadence the server
@@ -81,11 +81,23 @@ export default function RecurringConsole() {
   // an empty editor or one that still holds the previous target's bare header line.
   const pickTarget = (v: number | undefined) => {
     const newKeys = (targets.find((tg) => tg.id === v)?.inputs || []).map((i) => i.key)
-    const oldHeader = inputKeys.join(',')
+    const oldHeader = toCSV(inputKeys, [])
     setDraft((d) => {
       const keepBody = d.csvText.trim() !== '' && d.csvText.trim() !== oldHeader
-      return { ...d, targetId: v, csvText: keepBody ? d.csvText : newKeys.join(',') }
+      return { ...d, targetId: v, csvText: keepBody ? d.csvText : toCSV(newKeys, []) }
     })
+  }
+
+  const readCSV = (file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => set('csvText', String(reader.result || ''))
+    reader.readAsText(file)
+    return false
+  }
+
+  const downloadDraftCSV = () => {
+    const base = draft.name.trim().replace(/[^a-zA-Z0-9._-]+/g, '-') || 'recurring-task'
+    downloadCSV(`${base}.csv`, draft.csvText || toCSV(inputKeys, []))
   }
 
   const openCreate = () => {
@@ -344,7 +356,15 @@ export default function RecurringConsole() {
                 onChange={(e) => set('csvText', e.target.value)}
                 placeholder={t('batch.csvPlaceholder', { keys: inputKeys.join(',') })}
               />
-              <Typography.Text type="secondary">{t('batch.parsedRows', { n: rows.length })}</Typography.Text>
+              <Space wrap style={{ marginTop: 6 }}>
+                <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={readCSV}>
+                  <Button icon={<UploadOutlined />}>{t('recurring.importCsv')}</Button>
+                </Upload>
+                <Button icon={<DownloadOutlined />} onClick={downloadDraftCSV}>
+                  {t('recurring.downloadCsv')}
+                </Button>
+                <Typography.Text type="secondary">{t('batch.parsedRows', { n: rows.length })}</Typography.Text>
+              </Space>
             </div>
           )}
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from 'antd'
 import RecurringConsole from './RecurringConsole'
@@ -101,5 +101,23 @@ describe('RecurringConsole', () => {
     const ta = screen.getByPlaceholderText('batch.csvPlaceholder') as HTMLTextAreaElement
     // header line + both data rows — NOT data-only (which csvToRows would eat as a header, blanking it).
     expect(ta.value).toBe('code\n600000\n000001')
+  })
+
+  it('imports a CSV file into a new task template', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('Close review')
+    await user.click(screen.getByRole('button', { name: /recurring\.new/ }))
+
+    fireEvent.mouseDown(screen.getAllByRole('combobox')[0])
+    await user.click(await screen.findByText('Daily Review'))
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')
+    expect(input).not.toBeNull()
+    await user.upload(input!, new File(['code\n600519\n000001'], 'rows.csv', { type: 'text/csv' }))
+
+    await waitFor(() => {
+      const editor = screen.getByPlaceholderText('batch.csvPlaceholder') as HTMLTextAreaElement
+      expect(editor.value).toBe('code\n600519\n000001')
+    })
   })
 })

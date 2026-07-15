@@ -752,6 +752,8 @@
   "recurring.namePlaceholder": "例如：每日 A 股收盘复盘",
   "recurring.fieldTarget": "目标工作流",
   "recurring.rowsHint": "每行生成一次运行；列：",
+  "recurring.importCsv": "导入 CSV",
+  "recurring.downloadCsv": "下载 CSV",
   "recurring.fieldCadence": "重复",
   "recurring.dayOfMonth": "日期",
   "recurring.tzHint": "按面板时区触发。错过的周期（服务器离线）会跳过，不补跑。",

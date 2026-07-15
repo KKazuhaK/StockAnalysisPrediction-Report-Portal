@@ -1,5 +1,6 @@
-// Minimal CSV helpers for the batch console. parseCSV supports quoted fields
-// (double quotes, "" escaping) so values may contain commas and newlines.
+// Shared CSV helpers for batch and recurring-run templates. parseCSV supports
+// quoted fields (double quotes, "" escaping) so values may contain commas and
+// newlines.
 
 export function parseCSV(text: string): string[][] {
   const rows: string[][] = []
@@ -65,4 +66,15 @@ export function toCSV(headers: string[], rows: (string | number)[][]): string {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
   return [headers, ...rows].map((r) => r.map(esc).join(',')).join('\n')
+}
+
+// downloadCSV saves an editor/template string as a UTF-8 CSV file in the browser.
+export function downloadCSV(name: string, text: string): void {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(url)
 }

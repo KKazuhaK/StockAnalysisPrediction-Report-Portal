@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { parseCSV, csvToRows, toCSV } from './csv'
+import { describe, it, expect, vi } from 'vitest'
+import { parseCSV, csvToRows, downloadCSV, toCSV } from './csv'
 
 describe('parseCSV', () => {
   it('parses simple rows', () => {
@@ -41,5 +41,22 @@ describe('csvToRows', () => {
 describe('toCSV', () => {
   it('quotes fields with commas', () => {
     expect(toCSV(['a', 'b'], [['x', 'y,z']])).toBe('a,b\nx,"y,z"')
+  })
+})
+
+describe('downloadCSV', () => {
+  it('creates and releases a CSV download URL', () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:csv')
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    downloadCSV('rows.csv', 'code\n600519')
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:csv')
+    createObjectURL.mockRestore()
+    revokeObjectURL.mockRestore()
+    click.mockRestore()
   })
 })

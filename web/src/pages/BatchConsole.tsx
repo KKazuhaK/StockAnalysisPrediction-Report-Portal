@@ -5,21 +5,11 @@ import { PlayCircleOutlined, UploadOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
-import { csvToRows } from '../lib/csv'
+import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
 import { BASE_MAX } from '../lib/batchUi'
 import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
 import RunScheduleControls from '../components/RunScheduleControls'
 import QueueTable from '../components/QueueTable'
-
-function download(name: string, text: string) {
-  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 export default function BatchConsole() {
   const { t } = useTranslation()
@@ -69,6 +59,19 @@ export default function BatchConsole() {
   const inputKeys = useMemo(() => (target?.inputs || []).map((i) => i.key), [target])
   const rows = useMemo(() => (inputKeys.length ? csvToRows(csvText, inputKeys) : []), [csvText, inputKeys])
 
+  // Match the recurring-task editor: selecting a workflow exposes its CSV columns immediately.
+  // Preserve real editor content when switching targets; replace only an empty editor or the old
+  // target's untouched header template.
+  const pickTarget = (v: number | undefined) => {
+    const newKeys = (targets.find((tg) => tg.id === v)?.inputs || []).map((i) => i.key)
+    const oldHeader = toCSV(inputKeys, [])
+    setCsvText((text) => {
+      const keepBody = text.trim() !== '' && text.trim() !== oldHeader
+      return keepBody ? text : toCSV(newKeys, [])
+    })
+    setTargetId(v)
+  }
+
   const readFile = (file: File) => {
     const reader = new FileReader()
     reader.onload = () => setCsvText(String(reader.result || ''))
@@ -102,7 +105,7 @@ export default function BatchConsole() {
       if (res.run_at) message.success(t('run.scheduledOk', { at: res.run_at }))
       else message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
       if (res.downgraded) message.warning(t('batch.ticketDowngraded'))
-      setCsvText('')
+      setCsvText(toCSV(inputKeys, []))
       setSchedule(emptySchedule)
       setNotify(false)
       loadTickets() // an urgent run may have spent a ticket; the embedded queue self-refreshes
@@ -135,7 +138,7 @@ export default function BatchConsole() {
                 style={{ minWidth: 280 }}
                 placeholder={t('batch.selectTarget')}
                 value={targetId}
-                onChange={setTargetId}
+                onChange={pickTarget}
                 options={targets.map((tg) => ({
                   value: tg.id,
                   label: tg.plugin_name ? `${tg.name}（${tg.plugin_name}）` : tg.name,
@@ -164,7 +167,7 @@ export default function BatchConsole() {
                 {inputKeys.map((k) => (
                   <Tag key={k}>{k}</Tag>
                 ))}
-                <Button type="link" size="small" onClick={() => download('template.csv', inputKeys.join(',') + '\n')}>
+                <Button type="link" size="small" onClick={() => downloadCSV('template.csv', toCSV(inputKeys, []))}>
                   {t('batch.downloadTemplate')}
                 </Button>
               </div>
