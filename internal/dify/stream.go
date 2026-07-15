@@ -283,8 +283,8 @@ func (c *Client) StopChat(ctx context.Context, taskID, user string) error {
 }
 
 // GetWorkflowRun fetches a run's current state by id, used to reconcile a dropped
-// stream without re-running the workflow. Status is one of running/succeeded/failed/
-// stopped.
+// stream without re-running the workflow. Status is one of running/succeeded/
+// partial-succeeded/failed/stopped.
 func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (RunResult, error) {
 	raw, err := c.do(ctx, http.MethodGet, "/workflows/run/"+runID, nil)
 	if err != nil {

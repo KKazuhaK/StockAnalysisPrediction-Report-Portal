@@ -252,21 +252,28 @@ func (p difyProvider) stop(taskID string) {
 	_ = p.c.StopWorkflow(ctx, taskID, p.user)
 }
 
-// difyTerminal reports whether a Dify status is final (succeeded / failed / stopped) —
+// difyTerminal reports whether a Dify status is final (succeeded / partial-succeeded /
+// failed / stopped) —
 // i.e. not empty and not "running".
 func difyTerminal(status string) bool {
 	return status != "" && status != "running"
 }
 
 // difyResultToBatch maps a Dify run outcome to the engine's per-row result. A Dify
-// workflow status is succeeded / failed / stopped; only succeeded is a success. A failure
-// always carries a non-empty Detail so a failed run is never shown in the queue with no
-// reason: Dify's own error when it gave one, else a synthesized note — Dify commonly reports
-// a failed / timed-out run (e.g. a long Deep Research run) with an empty error field.
+// workflow status is succeeded / partial-succeeded / failed / stopped. Partial success is
+// preserved as the engine's distinct partial outcome instead of being collapsed into failure.
+// A failure always carries a non-empty Detail so a failed run is never shown in the queue
+// with no reason: Dify's own error when it gave one, else a synthesized note — Dify commonly
+// reports a failed / timed-out run (e.g. a long Deep Research run) with an empty error field.
 func difyResultToBatch(r dify.RunResult) batch.RunResult {
-	out := batch.Failed
-	if r.Status == "succeeded" {
+	var out batch.Outcome
+	switch r.Status {
+	case "succeeded":
 		out = batch.Ok
+	case "partial-succeeded":
+		out = batch.Partial
+	default:
+		out = batch.Failed
 	}
 	detail := r.Error
 	if out == batch.Failed && detail == "" {

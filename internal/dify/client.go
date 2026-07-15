@@ -157,7 +157,7 @@ type RunResult struct {
 	WorkflowRunID  string
 	ConversationID string // chat/agent apps only; the handle used to reconcile a dropped chat run
 	TaskID         string // streaming only; needed to stop the run server-side
-	Status         string // running | succeeded | failed | stopped
+	Status         string // running | succeeded | partial-succeeded | failed | stopped
 	Error          string
 	Outputs        map[string]any
 	Raw            json.RawMessage

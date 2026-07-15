@@ -38,3 +38,4 @@ internal/web/dist/*
 .codex/
 .cursor/
 CLAUDE.md
+AGENTS.md

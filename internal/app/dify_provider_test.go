@@ -32,7 +32,12 @@ func difyRunStub(t *testing.T, runStatus string, httpCode int) *httptest.Server 
 }
 
 func TestDifyProviderStatusMapping(t *testing.T) {
-	cases := map[string]batch.Outcome{"succeeded": batch.Ok, "failed": batch.Failed, "stopped": batch.Failed}
+	cases := map[string]batch.Outcome{
+		"succeeded":         batch.Ok,
+		"partial-succeeded": batch.Partial,
+		"failed":            batch.Failed,
+		"stopped":           batch.Failed,
+	}
 	for status, want := range cases {
 		s := difyRunStub(t, status, 0)
 		p := difyProvider{c: dify.New(s.URL, "app-key", s.Client())}
@@ -44,6 +49,19 @@ func TestDifyProviderStatusMapping(t *testing.T) {
 		if res.Status != want || res.RunID != "run-9" {
 			t.Fatalf("status %s → %v (run %q), want %v", status, res.Status, res.RunID, want)
 		}
+	}
+}
+
+func TestDifyPartialSucceededHasNoFailureFallback(t *testing.T) {
+	got := difyResultToBatch(dify.RunResult{
+		WorkflowRunID: "run-partial",
+		Status:        "partial-succeeded",
+	})
+	if got.Status != batch.Partial {
+		t.Fatalf("status = %v, want partial", got.Status)
+	}
+	if got.Detail != "" {
+		t.Fatalf("detail = %q, want no synthesized failure detail", got.Detail)
 	}
 }
 
