@@ -42,6 +42,9 @@ export default function AppLayout() {
   // below the header, has no page footer, and only its message thread scrolls — so there's
   // a single scrollbar, not one for the page plus one for the thread.
   const onChat = loc.pathname === '/chat'
+  // Mobile chat is a focused, messenger-like surface: collapse global navigation chrome so
+  // the thread and composer get nearly the full viewport. Desktop keeps the full portal header.
+  const chatFocus = compact && onChat
   const contentMaxWidth = onReader ? (wide ? 1760 : 1440) : 1240
   // A back-navigation breadcrumb under the header. Shown on the main pages (apps + children, queue,
   // chat, reader) but not on the home page (nothing to trace) or /manage (it has its own left rail).
@@ -60,7 +63,7 @@ export default function AppLayout() {
     if (p.startsWith('/stock/') || p.startsWith('/run/')) return [home, { label: decodeURIComponent(p.split('/')[2] || '') }]
     return []
   }, [loc.pathname, t])
-  const showCrumbs = crumbs.length > 0 && !onManage
+  const showCrumbs = crumbs.length > 0 && !onManage && !chatFocus
   // Reset the routed Suspense boundary when the top-level page changes, so navigating to a not-yet-
   // loaded chunk shows the spinner at once instead of freezing on the previous page (React 19 + RR7
   // keep the old UI during the transition otherwise). /manage/* collapses to one key — its tabs are
@@ -155,22 +158,24 @@ export default function AppLayout() {
     <Layout style={{ minHeight: onChat ? undefined : '100vh', height: onChat ? '100dvh' : undefined, background: token.colorBgLayout }}>
       <Header
         id="rp-app-header"
+        aria-hidden={chatFocus}
+        className={chatFocus ? 'rp-app-header rp-app-header--chat-focus' : 'rp-app-header'}
         style={{
           position: 'sticky',
           top: 0,
           zIndex: 20,
-          display: 'flex',
+          display: chatFocus ? 'none' : 'flex',
           alignItems: 'center',
-          flexWrap: 'wrap',
-          rowGap: 8,
+          flexWrap: chatFocus ? 'nowrap' : 'wrap',
+          rowGap: chatFocus ? 0 : 8,
           gap: compact ? 8 : 16,
           height: 'auto',
-          minHeight: 64,
+          minHeight: chatFocus ? 48 : 64,
           // antd's Header sets line-height:64px, which children inherit as a 64px line
           // box — that stretched the wrapped mobile rows and the search box, adding
           // uneven whitespace. Reset it so items size to their content.
           lineHeight: 'normal',
-          padding: compact ? '8px 12px' : '0 20px',
+          padding: chatFocus ? '6px 10px' : compact ? '8px 12px' : '0 20px',
           background: token.colorBgContainer,
           borderBottom: `1px solid ${token.colorBorderSecondary}`,
         }}
@@ -188,14 +193,22 @@ export default function AppLayout() {
           }}
         >
           <SiteLogo size={22} color={token.colorPrimary} />
-          {!compact && title}
+          {!compact ? title : chatFocus ? t('nav.chat') : null}
         </Link>
 
         {/* On mobile the search drops to its own full-width row (order:2) below the controls.
             On the home page there is no header search, so don't force that empty row —
             otherwise the phantom line pushes the control row off-center in the header. */}
-        <div style={{ flex: onHome ? '0 0 auto' : 1, minWidth: compact && !onHome ? '100%' : 0, order: compact ? 2 : 0, display: 'flex' }}>
-          {!onHome && (
+        <div
+          className="rp-header-search"
+          style={{
+            flex: onHome ? '0 0 auto' : 1,
+            minWidth: compact && !onHome && !chatFocus ? '100%' : 0,
+            order: compact ? 2 : 0,
+            display: chatFocus ? 'none' : 'flex',
+          }}
+        >
+          {!onHome && !chatFocus && (
             <div style={{ width: '100%', maxWidth: compact ? undefined : 420 }}>
               <Omnibox size="middle" />
             </div>
@@ -205,7 +218,7 @@ export default function AppLayout() {
         {/* Vertical gap (14) clears the queue badge's overhang so a 2-digit count (10+)
             doesn't collide with the button on the wrapped row above it. */}
         <Space size={compact ? [8, 14] : 10} wrap style={{ flexShrink: 0, marginLeft: 'auto' }}>
-          {canRun && (
+          {canRun && !chatFocus && (
             // The primary action keeps its label even on mobile (unlike the other
             // nav buttons, which collapse to icons when compact).
             <Button
@@ -220,7 +233,7 @@ export default function AppLayout() {
               {t('nav.runAnalysis')}
             </Button>
           )}
-          {canRun && (
+          {canRun && !chatFocus && (
             // Queue glance with a live badge (everything not yet done: running + waiting
             // + scheduled). Icon-only on mobile.
             <Badge count={(queue?.running ?? 0) + (queue?.waiting ?? 0) + (queue?.scheduled ?? 0)} size="small" overflowCount={99} offset={[-4, 3]}>
@@ -399,10 +412,11 @@ export default function AppLayout() {
       )}
 
       <Content
+        className={chatFocus ? 'rp-chat-content rp-chat-content--mobile' : onChat ? 'rp-chat-content' : undefined}
         style={{
           // Phones get a slimmer side gutter so reading/content fills more of the narrow
           // screen; desktop keeps the roomier padding.
-          padding: onChat ? '16px 16px 12px' : onManage ? 0 : compact ? '16px 12px' : '24px 20px',
+          padding: chatFocus ? 0 : onChat ? '16px 16px 12px' : onManage ? 0 : compact ? '16px 12px' : '24px 20px',
           // Chat (like the admin console) runs full-bleed — it's a fixed-height app that should
           // use the entire screen width, not the reader's centered 1240 column.
           maxWidth: onManage || onChat ? 'none' : contentMaxWidth,

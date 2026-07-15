@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { App, Avatar, Button, Drawer, Dropdown, Empty, Grid, Input, Modal, Select, Spin, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
-import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, EditOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined, StopOutlined, UnorderedListOutlined } from '@ant-design/icons'
-import { useSearchParams } from 'react-router-dom'
+import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, EditOutlined, HomeOutlined, MessageOutlined, MoreOutlined, PlusOutlined, RobotOutlined, StarFilled, StarOutlined, StopOutlined, UnorderedListOutlined } from '@ant-design/icons'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError } from '../api/client'
 import { useAuth } from '../auth'
@@ -99,9 +99,10 @@ export default function ChatPage() {
   const { message, modal } = App.useApp()
   const { token } = theme.useToken()
   const { name, admin, user } = useAuth()
+  const navigate = useNavigate()
   const [sp] = useSearchParams()
   const compact = !Grid.useBreakpoint().md // phone / small tablet: fold the sidebar into a drawer
-  const padX = compact ? 16 : 32 // the thread/composer fill the panel width with this side gutter
+  const padX = compact ? 12 : 32 // the thread/composer fill the panel width with this side gutter
   const [navOpen, setNavOpen] = useState(false)
   const [targets, setTargets] = useState<ChatTarget[]>([])
   const [targetId, setTargetId] = useState<number>()
@@ -562,11 +563,11 @@ export default function ChatPage() {
   const bubble = (m: Msg, i: number) => {
     if (m.role === 'user') {
       return (
-        <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 22 }}>
+        <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: compact ? 16 : 22 }}>
           <div
             style={{
-              maxWidth: '84%',
-              padding: '10px 15px',
+              maxWidth: compact ? '90%' : '84%',
+              padding: compact ? '8px 13px' : '10px 15px',
               borderRadius: 18,
               borderTopRightRadius: 6,
               background: token.colorFillSecondary,
@@ -583,9 +584,9 @@ export default function ChatPage() {
       )
     }
     return (
-      <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 26 }}>
-        {assistantAvatar(30)}
-        <div style={{ flex: 1, minWidth: 0, paddingTop: 3 }}>
+      <div key={i} style={{ display: 'flex', gap: compact ? 0 : 12, marginBottom: compact ? 20 : 26 }}>
+        {!compact && assistantAvatar(30)}
+        <div style={{ flex: 1, minWidth: 0, paddingTop: compact ? 0 : 3 }}>
           <ChatContent content={m.content} />
         </div>
       </div>
@@ -596,12 +597,14 @@ export default function ChatPage() {
   // fills the panel width; `hero` = the centered new-conversation variant (taller default).
   const composer = (hero: boolean) => (
     <div
+      className={`rp-chat-composer${compact ? ' rp-chat-composer--compact' : ''}${hero ? ' rp-chat-composer--hero' : ''}`}
       style={{
         display: 'flex',
-        flexDirection: 'column',
+        flexDirection: compact ? 'row' : 'column',
+        alignItems: compact ? 'flex-end' : undefined,
         gap: 4,
-        padding: 8,
-        borderRadius: 22,
+        padding: compact ? 6 : 8,
+        borderRadius: compact ? 24 : 22,
         background: token.colorBgContainer,
         border: `1px solid ${focused ? token.colorPrimary : token.colorBorder}`,
         boxShadow: focused ? `0 0 0 3px ${token.colorPrimaryBg}` : token.boxShadowTertiary,
@@ -620,16 +623,21 @@ export default function ChatPage() {
             send()
           }
         }}
-        autoSize={{ minRows: hero ? 2 : 1, maxRows: 8 }}
+        autoSize={{ minRows: compact ? 1 : hero ? 2 : 1, maxRows: compact ? 5 : 8 }}
         placeholder={t('chat.inputPlaceholder')}
         // antd 6's borderless TextArea leaks its own border/focus ring, doubling the composer's frame;
         // force it flat so only the wrapper below draws the focus outline. (inline wins over antd's class.)
-        style={{ fontSize: 15, padding: '6px 8px', background: 'transparent', resize: 'none', border: 'none', boxShadow: 'none', outline: 'none' }}
+        style={{ flex: 1, fontSize: 15, padding: compact ? '7px 8px' : '6px 8px', background: 'transparent', resize: 'none', border: 'none', boxShadow: 'none', outline: 'none' }}
       />
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingInline: 6, paddingBottom: 2 }}>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {t('chat.enterHint')}
-        </Typography.Text>
+      <div
+        className="rp-chat-composer-actions"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: compact ? 'flex-end' : 'space-between', paddingInline: compact ? 0 : 6, paddingBottom: compact ? 0 : 2 }}
+      >
+        {!compact && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t('chat.enterHint')}
+          </Typography.Text>
+        )}
         {sending ? (
           <Button shape="circle" danger icon={<StopOutlined />} onClick={stopTurn} title={t('chat.stop')} />
         ) : (
@@ -779,7 +787,10 @@ export default function ChatPage() {
   const showHero = !loadingHist && msgs.length === 0
 
   return (
-    <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
+    <div
+      className={`rp-chat-page${compact ? ' rp-chat-page--compact' : ''}`}
+      style={{ display: 'flex', gap: compact ? 0 : 16, flex: 1, minHeight: 0 }}
+    >
       {/* Conversation list: a fixed left column on desktop, a drawer on mobile. */}
       {compact ? (
         <Drawer
@@ -798,20 +809,23 @@ export default function ChatPage() {
 
       {/* Message thread + composer */}
       <div
+        className={`rp-chat-panel${compact ? ' rp-chat-panel--compact' : ''}`}
         style={{
           flex: 1,
           minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
-          border: `1px solid ${token.colorBorderSecondary}`,
-          borderRadius: 12,
+          border: compact ? 'none' : `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: compact ? 0 : 12,
           overflow: 'hidden',
           background: token.colorBgContainer,
         }}
       >
         <div
+          className="rp-chat-toolbar"
           style={{
-            padding: '10px 16px',
+            padding: compact ? '6px 10px' : '10px 16px',
+            minHeight: compact ? 48 : undefined,
             borderBottom: `1px solid ${token.colorBorderSecondary}`,
             display: 'flex',
             alignItems: 'center',
@@ -819,15 +833,28 @@ export default function ChatPage() {
           }}
         >
           {compact && (
-            <Button icon={<UnorderedListOutlined />} onClick={() => setNavOpen(true)}>
-              {t('chat.conversations')}
-            </Button>
+            <Button
+              type="text"
+              icon={<UnorderedListOutlined />}
+              onClick={() => setNavOpen(true)}
+              aria-label={t('chat.conversations')}
+              title={t('chat.conversations')}
+            />
           )}
-          {assistantAvatar(26)}
+          {assistantAvatar(compact ? 24 : 26)}
           <Typography.Text strong ellipsis style={{ flex: 1, minWidth: 0 }}>
             {target?.name}
           </Typography.Text>
-          {difyModeTag(t, target?.mode)}
+          <span className="rp-chat-mode-tag">{difyModeTag(t, target?.mode)}</span>
+          {compact && (
+            <Button
+              type="text"
+              icon={<HomeOutlined />}
+              onClick={() => navigate('/')}
+              aria-label={t('nav.home')}
+              title={t('nav.home')}
+            />
+          )}
         </div>
 
         <div ref={scrollRef} onScroll={onThreadScroll} style={{ flex: 1, overflowY: 'auto' }}>
@@ -845,8 +872,8 @@ export default function ChatPage() {
                 flexDirection: 'column',
                 justifyContent: 'center',
                 alignItems: 'center',
-                padding: `24px ${padX}px 40px`,
-                gap: 20,
+                padding: `${compact ? 20 : 24}px ${padX}px ${compact ? 28 : 40}px`,
+                gap: compact ? 16 : 20,
               }}
             >
               <div style={{ textAlign: 'center' }}>
@@ -861,11 +888,11 @@ export default function ChatPage() {
               {!viewingOther && <div style={{ width: '100%' }}>{composer(true)}</div>}
             </div>
           ) : (
-            <div style={{ padding: `${compact ? 20 : 24}px ${padX}px 8px` }}>
+            <div style={{ padding: `${compact ? 16 : 24}px ${padX}px 8px` }}>
               {msgs.map(bubble)}
               {(sending || recovering) && (
-                <div style={{ display: 'flex', gap: 12, marginBottom: 26 }}>
-                  {assistantAvatar(30)}
+                <div style={{ display: 'flex', gap: compact ? 0 : 12, marginBottom: compact ? 20 : 26 }}>
+                  {!compact && assistantAvatar(30)}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 30, color: token.colorTextTertiary }}>
                     <span className="rp-typing">
                       <span />
@@ -897,7 +924,14 @@ export default function ChatPage() {
               </Typography.Text>
             </div>
           ) : (
-            <div style={{ position: 'relative', padding: `${compact ? 10 : 12}px ${padX}px ${compact ? 12 : 16}px`, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+            <div
+              className={`rp-chat-composer-dock${compact ? ' rp-chat-composer-dock--compact' : ''}`}
+              style={{
+                position: 'relative',
+                padding: compact ? '8px 10px calc(8px + env(safe-area-inset-bottom))' : `12px ${padX}px 16px`,
+                borderTop: `1px solid ${token.colorBorderSecondary}`,
+              }}
+            >
               {/* Back-to-bottom pill: shows only when scrolled up. While generating it's a three-dot
                   loader (tap to catch up to the live stream); when idle it's "↓ back to bottom". */}
               {!atBottom && (

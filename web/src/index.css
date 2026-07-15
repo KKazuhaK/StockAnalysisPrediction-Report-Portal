@@ -339,6 +339,17 @@ body {
   }
 }
 
+/* Mobile chat is a focused, edge-to-edge app. Long mode metadata yields first on the
+   narrowest phones, while the composer stays clear of the OS home indicator. */
+.rp-chat-composer-dock--compact {
+  flex-shrink: 0;
+}
+@media (max-width: 420px) {
+  .rp-chat-mode-tag {
+    display: none;
+  }
+}
+
 /* Inline-expand reveal: an entry group opening below its trigger eases in (fade + slight
    slide-down) instead of snapping open, so the row doesn't jump abruptly. Enter-only —
    closing unmounts the row. */
