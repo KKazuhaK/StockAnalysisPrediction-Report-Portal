@@ -654,6 +654,8 @@ var defaultSeedTypes = []struct {
 	// 技术分析 (Daily_Quote 缠论 / 技术分析)
 	{"技术分析", "技术分析", 0, false},
 	{"缠论分析", "技术分析", 10, false},
+	// 每日推荐 (event-driven pre-market picks; 盘前榜 is the daily summary card)
+	{"盘前榜", "每日推荐", 0, true},
 	// 未分类 (uncategorized / thematic — its own bucket)
 	{"未分类", "未分类", 0, false},
 }
@@ -677,6 +679,7 @@ var defaultKindColors = []struct {
 	{"投资决策", "green"},
 	{"深度研究", "geekblue"},
 	{"技术分析", "purple"},
+	{"每日推荐", "cyan"},
 	{"事件监测", "gold"},
 }
 
@@ -1181,7 +1184,7 @@ func safeFile(title, fallback string) string {
 
 // ---------- Report-type management ----------
 
-var kindOrder = []string{"重组决策", "投资决策", "深度研究", "技术分析", "未分类"}
+var kindOrder = []string{"重组决策", "投资决策", "深度研究", "技术分析", "每日推荐", "未分类"}
 
 // ---------- Account management ----------
 

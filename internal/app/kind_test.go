@@ -2,15 +2,16 @@ package app
 
 import "testing"
 
-// foldKind must collapse any stored/legacy kind into the five buckets (the four
+// foldKind must collapse any stored/legacy kind into the current buckets (the five
 // pipelines plus 未分类), with the two legacy remaps: 事件监测→重组决策 and 其他→未分类.
 // (runKind's mapping is covered by TestRunKindMapsEveryCategory.)
-func TestFoldKindCollapsesToFiveBuckets(t *testing.T) {
+func TestFoldKindCollapsesToBuckets(t *testing.T) {
 	cases := map[string]string{
 		"重组决策":    "重组决策",
 		"投资决策":    "投资决策",
 		"深度研究":    "深度研究",
 		"技术分析":    "技术分析",
+		"每日推荐":    "每日推荐",
 		"未分类":     "未分类",
 		"事件监测":    "重组决策",
 		"其他":      "未分类",
