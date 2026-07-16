@@ -61,7 +61,7 @@ func mustUpsert(t *testing.T, st *Store, r Rep) (int64, bool) {
 	return id, created
 }
 
-// Re-ingesting the same code+date+subtype overwrites the one row and reports the
+// Re-ingesting the same code+date+subtype+title overwrites the one row and reports the
 // same id back, so callers (tracking, webhooks, the ingest response) all agree.
 func TestUpsertReportDedupsOnIdentity(t *testing.T) {
 	eachDriver(t, func(t *testing.T, st *Store) {
@@ -72,7 +72,7 @@ func TestUpsertReportDedupsOnIdentity(t *testing.T) {
 		}
 
 		again := base
-		again.Title, again.MD = "T2", "v2"
+		again.MD = "v2" // a re-run of the same report: same identity, fresh body
 		id2, created2 := mustUpsert(t, st, again)
 		if created2 {
 			t.Error("re-ingest: created = true, want false (must overwrite, not insert)")
@@ -88,11 +88,44 @@ func TestUpsertReportDedupsOnIdentity(t *testing.T) {
 		if err != nil || got == nil {
 			t.Fatalf("GetNew(%d) = %v, %v", id1, got, err)
 		}
-		if got.MD != "v2" || got.Title != "T2" {
-			t.Errorf("after re-ingest MD=%q Title=%q, want v2/T2 (body was not overwritten)", got.MD, got.Title)
+		if got.MD != "v2" {
+			t.Errorf("after re-ingest MD=%q, want v2 (body was not overwritten)", got.MD)
 		}
 		if got.ID != id1 {
 			t.Errorf("GetNew().ID = %d, want %d", got.ID, id1)
+		}
+	})
+}
+
+// title IS part of the identity. rtype is a coarse registry label ("股权分析", "估值分析"):
+// production stores several genuinely different reports under one code+date+subtype,
+// told apart only by their title. Keying without the title merges them into one row and
+// destroys every report but the last — this is the v0.3.0 regression that took the portal
+// down, so it is pinned here.
+func TestUpsertReportTitleIsPartOfIdentity(t *testing.T) {
+	eachDriver(t, func(t *testing.T, st *Store) {
+		base := Rep{Symbol: "002891", RType: "估值分析", Date: "2026-04-24", Kind: "投资决策"}
+
+		a := base
+		a.Title, a.MD = "002891 估值分析 上篇", "a"
+		idA, createdA := mustUpsert(t, st, a)
+		if !createdA {
+			t.Error("first ingest: created = false, want true")
+		}
+
+		b := base
+		b.Title, b.MD = "002891 估值分析 下篇", "b"
+		idB, createdB := mustUpsert(t, st, b)
+		if !createdB || idB == idA {
+			t.Errorf("different title: id=%d created=%v, want a NEW row (id != %d)", idB, createdB, idA)
+		}
+
+		if n := countReports(t, st); n != 2 {
+			t.Fatalf("report count = %d, want 2 (different titles were merged into one report)", n)
+		}
+		gotA, _ := st.GetNew(idA)
+		if gotA == nil || gotA.MD != "a" {
+			t.Errorf("first report = %v, want body a intact (it was overwritten by the second)", gotA)
 		}
 	})
 }
@@ -170,6 +203,35 @@ func TestUpsertReportThematicDedupsOnTitle(t *testing.T) {
 			t.Fatalf("report count = %d, want 2 (thematic titles collided or duplicated)", n)
 		}
 	})
+}
+
+// Upgrade path. init() runs createBaseSchema (CREATE ... IF NOT EXISTS) BEFORE ensureColumns,
+// so a base-schema index over a column that only ensureColumns back-fills onto an existing
+// database can never resolve there: CREATE TABLE IF NOT EXISTS is a no-op once the table
+// exists, so the column is still missing when the index statement runs. Declaring idx_track_id
+// in the base schema did exactly that and left every pre-existing database unable to start —
+// a fresh DB hid it, because CREATE TABLE brought the column with it. Simulate the old shape
+// and assert the upgrade completes.
+func TestInitUpgradesDatabaseMissingReportID(t *testing.T) {
+	st := newTestStore(t)
+
+	// Roll tracking_items back to its pre-report_id shape.
+	if _, err := st.exec(`DROP INDEX IF EXISTS idx_track_id`); err != nil {
+		t.Fatalf("drop idx_track_id: %v", err)
+	}
+	if _, err := st.exec(`ALTER TABLE tracking_items DROP COLUMN report_id`); err != nil {
+		t.Fatalf("drop report_id: %v", err)
+	}
+	if st.columnExists("tracking_items", "report_id") {
+		t.Fatal("setup failed: report_id still present")
+	}
+
+	if err := st.init(); err != nil {
+		t.Fatalf("init on a database predating report_id: %v", err)
+	}
+	if !st.columnExists("tracking_items", "report_id") {
+		t.Error("report_id was not restored by ensureColumns")
+	}
 }
 
 // The id UpsertReport returns is the row it actually wrote, on both the insert and

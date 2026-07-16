@@ -10,13 +10,14 @@ import (
 	"testing"
 )
 
-// repByIdent looks a report up by its natural identity (code-or-title + date + subtype)
-// — the same tuple idx_reports_ident enforces. Tests used to reach for GetByUID and a
-// composite string; identity is now the DB's business, so they go through the index too.
-func repByIdent(t *testing.T, st *Store, ident, date, rtype string) *Rep {
+// repByIdent looks up the report a test ingested for a code+date+subtype. The full identity
+// also carries the title (see reportIdentExpr), but every caller here stores a single report
+// per code+date+subtype, so this coarser lookup stays unambiguous and keeps the call sites on
+// what they actually assert.
+func repByIdent(t *testing.T, st *Store, symbol, date, rtype string) *Rep {
 	t.Helper()
 	var id int64
-	if err := st.queryRow("SELECT id FROM reports WHERE "+reportIdentWhere, ident, date, rtype).Scan(&id); err != nil {
+	if err := st.queryRow("SELECT id FROM reports WHERE symbol=? AND rdate=? AND rtype=? ORDER BY id", symbol, date, rtype).Scan(&id); err != nil {
 		return nil
 	}
 	rep, err := st.GetNew(id)
@@ -89,8 +90,8 @@ func TestV1IngestContract(t *testing.T) {
 	if m["ok"] != true || m["created"] != true || !ok || id <= 0 {
 		t.Errorf("ingest body = %v, want ok:true created:true id:<positive number>", m)
 	}
-	// re-ingest same identity → created:false
-	if m := decode(do(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总"}`, "Bearer tok-all")); m["created"] != false {
+	// re-ingest same identity (title included — it is part of it) → created:false
+	if m := decode(do(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总","title":"t"}`, "Bearer tok-all")); m["created"] != false {
 		t.Errorf("re-ingest created = %v, want false", m["created"])
 	}
 

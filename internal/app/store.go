@@ -208,6 +208,8 @@ func (s *Store) ensureAdditiveIndexes() error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash) WHERE token_hash IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_reports_symbol_date_time ON reports(symbol,rdate,sent_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_reports_date_time ON reports(rdate,sent_at)`,
+		// Indexes a newly-added column: ensureColumns must have added report_id first.
+		`CREATE INDEX IF NOT EXISTS idx_track_id ON tracking_items(report_id)`,
 	} {
 		if _, err := s.exec(ddl); err != nil {
 			return fmt.Errorf("ensure additive index [%s]: %w", ddl, err)
@@ -216,12 +218,17 @@ func (s *Store) ensureAdditiveIndexes() error {
 	return nil
 }
 
-// reportIdentExpr is the SQL expression tuple that identifies a report: the stock code, falling
-// back to the title for thematic reports that have no code, plus the civil date and the subtype.
-// It is written ONCE and shared by the unique index and UpsertReport's ON CONFLICT target — those
-// two must match exactly for conflict inference to resolve, so they must never be edited apart.
-// Valid as-is on both SQLite and Postgres (both accept COALESCE/NULLIF as a bare index element).
-const reportIdentExpr = `COALESCE(NULLIF(symbol,''), title), rdate, rtype`
+// reportIdentExpr is the column tuple that identifies a report: stock code + civil date +
+// subtype + title. It is written ONCE and shared by the unique index and UpsertReport's
+// ON CONFLICT target — those two must match exactly for conflict inference to resolve, so
+// they must never be edited apart.
+//
+// title is load-bearing, not decoration: rtype is a coarse registry label ("股权分析",
+// "估值分析") and one code+date+subtype legitimately carries several different reports that
+// only their titles tell apart. Keying without it merges them and keeps only the last.
+// A thematic report has no code (symbol ''), and is likewise told apart by its title, so
+// this one tuple covers both without a code-or-title fallback expression.
+const reportIdentExpr = `symbol, rdate, rtype, title`
 
 const reportIdentIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_ident ON reports(` + reportIdentExpr + `)`
 
@@ -289,7 +296,9 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, report_id BIGINT, symbol TEXT, itype TEXT, content TEXT,
 			status TEXT DEFAULT 'pending', review_point TEXT, created_at TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_track_sym ON tracking_items(symbol, status)`,
-		`CREATE INDEX IF NOT EXISTS idx_track_id ON tracking_items(report_id)`,
+		// idx_track_id is NOT declared here: report_id is added to pre-existing databases by
+		// ensureColumns, which runs AFTER createBaseSchema — indexing it here would fail on
+		// every upgrade. It belongs in ensureAdditiveIndexes (which runs after) instead.
 		// Stock code → name (enables searching by name after ingest; sourced from eastmoney, synced on startup/fetchnames).
 		`CREATE TABLE IF NOT EXISTS stocks(code TEXT PRIMARY KEY, name TEXT, updated_at TEXT)`,
 		`CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name)`,
@@ -442,15 +451,18 @@ func (s *Store) createBaseSchema() error {
 	for _, st := range s.baseSchemaStmts() {
 		if _, err := s.exec(st); err != nil {
 			if st == reportIdentIndex {
-				// The only statement that can fail on a database whose rows are otherwise fine:
-				// the pre-v2 identity folded `kind` in, so one code+date+subtype could legally
-				// exist twice under two kinds. Those rows now collide. Say so — a bare
-				// "UNIQUE constraint failed" here reads as an unrelated startup crash.
+				// The only statement that can fail on a database whose rows are otherwise fine.
+				// The retired uid accepted a caller-supplied value, so an ingester that sent its
+				// own uid per run bypassed dedup entirely and stacked up several rows sharing this
+				// identity — re-runs of one report. They collide now. Say so, and hand over the
+				// query: a bare "UNIQUE constraint failed" reads as an unrelated startup crash.
 				return fmt.Errorf("create base schema: %w\nSQL: %s\n\n"+
-					"idx_reports_ident enforces one report per (symbol-or-title, rdate, rtype). This database "+
-					"holds rows that collide under it — most likely the same symbol+date+subtype stored twice "+
-					"under different kinds, which the retired uid identity allowed. Collapse the duplicates "+
-					"(keep one row per identity) before starting this version", err, st)
+					"idx_reports_ident enforces one report per (symbol, rdate, rtype, title). This database holds "+
+					"rows that collide under it — most likely repeated runs of the same report, which the retired "+
+					"uid identity let stack up. Inspect them with:\n\n"+
+					"  SELECT symbol, rdate, rtype, title, COUNT(*) FROM reports\n"+
+					"  GROUP BY 1,2,3,4 HAVING COUNT(*) > 1;\n\n"+
+					"then keep one row per identity (newest wins) before starting this version", err, st)
 			}
 			return fmt.Errorf("create base schema: %w\nSQL: %s", err, st)
 		}
@@ -1269,22 +1281,18 @@ func (s *Store) GetNew(rowid int64) (*Rep, error) {
 // reportIdentWhere matches one report by the identity reportIdentExpr indexes, for the
 // existence probe UpsertReport needs to tell an insert from an overwrite. It is the same
 // tuple spelled as a predicate; keep it in step with reportIdentExpr.
-const reportIdentWhere = `COALESCE(NULLIF(symbol,''), title)=? AND rdate=? AND rtype=?`
+const reportIdentWhere = `symbol=? AND rdate=? AND rtype=? AND title=?`
 
 // UpsertReport inserts a report, or overwrites the existing row that shares its identity
-// (see reportIdentExpr: code-or-title + date + subtype). Returns the id of the row actually
+// (see reportIdentExpr: code + date + subtype + title). Returns the id of the row actually
 // written — callers key tracking items, webhook payloads and API responses off it — and
 // created=true when a new row was inserted, false when an existing one was overwritten.
 func (s *Store) UpsertReport(r Rep) (int64, bool, error) {
-	ident := r.Symbol
-	if ident == "" {
-		ident = r.Title
-	}
 	// Probe first: ON CONFLICT alone cannot tell us which branch it took, and the portable
 	// alternatives (Postgres' xmax trick) do not exist on SQLite. Both statements run against
 	// idx_reports_ident, so this costs one extra index seek per ingest.
 	var prevID int64
-	err := s.queryRow("SELECT id FROM reports WHERE "+reportIdentWhere, ident, r.Date, r.RType).Scan(&prevID)
+	err := s.queryRow("SELECT id FROM reports WHERE "+reportIdentWhere, r.Symbol, r.Date, r.RType, r.Title).Scan(&prevID)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, false, err
 	}

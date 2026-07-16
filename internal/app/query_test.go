@@ -46,11 +46,16 @@ func TestQueryReportsPaginationAndFilters(t *testing.T) {
 // Ingest must signal whether the row was created or overwritten.
 func TestUpsertReportCreatedFlag(t *testing.T) {
 	st := newTestStore(t)
-	id, created, err := st.UpsertReport(Rep{Symbol: "300750", Date: "2026-01-01", RType: "汇总"})
+	// Both ingests carry the SAME identity (symbol+date+rtype+title) — a re-run of one
+	// report — so the second must overwrite rather than insert.
+	rep := Rep{Symbol: "300750", Date: "2026-01-01", RType: "汇总", Title: "300750 汇总"}
+	id, created, err := st.UpsertReport(rep)
 	if err != nil || !created {
 		t.Fatalf("first ingest created=%v err=%v, want created=true", created, err)
 	}
-	id2, created2, err := st.UpsertReport(Rep{Symbol: "300750", Date: "2026-01-01", RType: "汇总", Title: "updated"})
+	rerun := rep
+	rerun.MD = "updated"
+	id2, created2, err := st.UpsertReport(rerun)
 	if err != nil || created2 {
 		t.Fatalf("second ingest created=%v err=%v, want created=false", created2, err)
 	}
