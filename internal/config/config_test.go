@@ -3,8 +3,27 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestEnsureConfigGeneratesPrivateRandomSecret(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
+	c, err := EnsureConfig(path)
+	if err != nil {
+		t.Fatalf("EnsureConfig: %v", err)
+	}
+	if len(c.SecretKey) != 64 || strings.Trim(c.SecretKey, "0123456789abcdef") != "" {
+		t.Fatalf("SecretKey = %q, want 32 random bytes encoded as hex", c.SecretKey)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config mode = %o, want 600", got)
+	}
+}
 
 // The Docker image configures the database via RP_* env vars (12-factor), which
 // must override whatever the on-disk config.yaml says while leaving unset fields
@@ -16,6 +35,7 @@ func TestEnvOverridesFileConfig(t *testing.T) {
 	t.Setenv("RP_DB_DRIVER", "postgres")
 	t.Setenv("RP_DB_DSN", "postgres://u:p@db:5432/reports?sslmode=disable")
 	t.Setenv("RP_LISTEN", ":10560")
+	t.Setenv("RP_TRUSTED_PROXIES", "127.0.0.1, 10.0.0.0/8")
 
 	c, err := LoadConfig(path)
 	if err != nil {
@@ -32,6 +52,9 @@ func TestEnvOverridesFileConfig(t *testing.T) {
 	}
 	if c.SecretKey != "filekey" {
 		t.Errorf("SecretKey = %q, want filekey (no env → keep file value)", c.SecretKey)
+	}
+	if len(c.TrustedProxies) != 2 || c.TrustedProxies[1] != "10.0.0.0/8" {
+		t.Errorf("TrustedProxies = %v, want parsed env list", c.TrustedProxies)
 	}
 }
 

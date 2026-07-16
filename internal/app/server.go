@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -51,6 +52,7 @@ type Server struct {
 	chatSeq     int64                                                                      // monotonic in-flight chat-turn id
 	cleanupMu   sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
 	loginThr    *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
+	trustedNets []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -86,10 +88,12 @@ func RunServer(cfgPath string) {
 	if err != nil {
 		log.Fatalf("load config %s: %v", cfgPath, err)
 	}
-	// A blank secret_key (e.g. hand-edited config bypassing the first-run generator) would make the
-	// session HMAC forgeable — refuse to start rather than serve forgeable admin sessions.
-	if strings.TrimSpace(cfg.SecretKey) == "" {
-		log.Fatal("config: secret_key is empty — set a random secret_key (delete it to have one generated)")
+	if err := validateSessionSecret(cfg.SecretKey); err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	trustedNets, err := parseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		log.Fatalf("config: trusted_proxies: %v", err)
 	}
 	if err := os.MkdirAll(config.DirOf(cfg.DBPath), 0o755); err != nil {
 		log.Fatal(err)
@@ -107,15 +111,10 @@ func RunServer(cfgPath string) {
 		bar := strings.Repeat("=", 52)
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
-	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute), loginThr: newLoginThrottle()}
+	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute), loginThr: newLoginThrottle(), trustedNets: trustedNets}
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()
-
-	if st.CountTokens() == 0 { // on first run, create a default API token (managed on the System Settings page: multiple tokens / notes / expiry / scope)
-		st.CreateToken(randToken(), "default", "all", "")
-		log.Printf("default API token created (see Settings page)")
-	}
 
 	if len(st.TypeConfigs()) == 0 { // on first run, seed our real report types so the Types page isn't empty
 		n := seedDefaultTypes(st)
@@ -153,19 +152,19 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/reports", s.ingestReport)             // ingest
 	mux.HandleFunc("GET /api/reports", s.apiQueryReports)           // query/search historical reports
 	mux.HandleFunc("GET /api/reports/manifest", s.apiManifest)      // probe the manifest
-	mux.HandleFunc("GET /api/report", s.apiGetReport)               // fetch a single report body (by uid)
-	mux.HandleFunc("DELETE /api/report", s.apiDeleteReport)         // retract a report by uid (scope ingest)
+	mux.HandleFunc("GET /api/report", s.apiGetReport)               // fetch a single report body (by id)
+	mux.HandleFunc("DELETE /api/report", s.apiDeleteReport)         // retract a report by id (scope ingest)
 	mux.HandleFunc("GET /api/runs", s.apiRuns)                      // report-group view
 	mux.HandleFunc("GET /api/symbols", s.apiSymbols)                // stock list / autocomplete (also used by the omnibox)
 	mux.HandleFunc("GET /api/tracking", s.apiTracking)              // structured hypotheses / tracking items
 	mux.HandleFunc("PATCH /api/tracking/{id}", s.apiTrackingUpdate) // update one tracking item's status (scope ingest)
 
-	// ---- Dify machine API v1: clean contract (JSON errors, portal-derived uid, envelopes) ----
+	// ---- Dify machine API v1: clean contract (JSON errors, portal-derived identity, envelopes) ----
 	mux.HandleFunc("POST /api/v1/reports", s.v1Ingest)
 	mux.HandleFunc("GET /api/v1/reports", s.v1QueryReports)
-	mux.HandleFunc("GET /api/v1/reports/manifest", s.v1Manifest) // more specific than {uid}, matched first
-	mux.HandleFunc("GET /api/v1/reports/{uid}", s.v1GetReport)
-	mux.HandleFunc("DELETE /api/v1/reports/{uid}", s.v1DeleteReport)
+	mux.HandleFunc("GET /api/v1/reports/manifest", s.v1Manifest) // more specific than {id}, matched first
+	mux.HandleFunc("GET /api/v1/reports/{id}", s.v1GetReport)
+	mux.HandleFunc("DELETE /api/v1/reports/{id}", s.v1DeleteReport)
 	mux.HandleFunc("GET /api/v1/runs", s.v1Runs)
 	mux.HandleFunc("GET /api/v1/symbols", s.v1Symbols)
 	mux.HandleFunc("GET /api/v1/tracking", s.v1Tracking)
@@ -321,8 +320,8 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/webhooks/{id}/test", s.requireAdminJSON(s.apiWebhookTest))
 
 	// ---- Downloads: MD / PDF (cookie session) ----
-	mux.HandleFunc("GET /report/{rid}/md", s.requireUser(s.reportMD))
-	mux.HandleFunc("GET /report/{rid}/pdf", s.requireUser(s.reportPDF))
+	mux.HandleFunc("GET /report/{id}/md", s.requireUser(s.reportMD))
+	mux.HandleFunc("GET /report/{id}/pdf", s.requireUser(s.reportPDF))
 	mux.HandleFunc("GET /report/day.zip", s.requireUser(s.reportDayZip)) // every report a stock has on one date, as a ZIP of .md + .pdf
 
 	// ---- SPA: hand all other paths to React (deep links fall back to index.html) ----
@@ -336,13 +335,43 @@ func RunServer(cfgPath string) {
 	// bounded by its own MaxBytesReader / context deadline instead.
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           logMiddleware(gzipMiddleware(mux)),
+		Handler:           logMiddleware(gzipMiddleware(securityHeadersMiddleware(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// securityHeadersMiddleware supplies browser defenses consistently for JSON, downloads,
+// static assets, and error responses. Route-specific CSP headers remain authoritative because
+// handlers can overwrite the default-free header set below.
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// validateSessionSecret rejects missing, example, and undersized keys before the server starts.
+// A known or guessable key lets an attacker forge an administrator session because the cookie is
+// intentionally stateless. The generated default is 32 random bytes encoded as 64 hex digits.
+func validateSessionSecret(secret string) error {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return fmt.Errorf("secret_key is empty; remove a missing config file to generate a random one")
+	}
+	if secret == "replace-with-a-long-random-string" {
+		return fmt.Errorf("secret_key still has the public example value; generate one with `openssl rand -hex 32`")
+	}
+	if len(secret) < 32 {
+		return fmt.Errorf("secret_key must contain at least 32 characters of random data")
+	}
+	return nil
 }
 
 // handleHealthz is the public, unauthenticated liveness probe. It returns nothing but liveness —
@@ -362,6 +391,9 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request, user stri
 
 // AddUser creates or updates an account from the CLI (lockout fallback).
 func AddUser(cfgPath, name, pw string, admin bool) error {
+	if err := validateNewPassword(pw); err != nil {
+		return err
+	}
 	c, err := config.EnsureConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -462,10 +494,22 @@ func (s *Server) parseTemplates() {
 // ---------- Session / auth ----------
 
 func (s *Server) sign(user string) string {
+	u := s.st.GetUser(user)
+	if u == nil {
+		return ""
+	}
+	return s.signUser(*u)
+}
+
+func (s *Server) signUser(u User) string {
 	exp := time.Now().Add(7 * 24 * time.Hour).Unix()
-	msg := fmt.Sprintf("%s|%d", user, exp)
+	msg := fmt.Sprintf("v1|%s|%d|%d", u.Username, u.SessionRev, exp)
 	sig := s.hmac(msg)
-	return base64.RawURLEncoding.EncodeToString([]byte(msg)) + "." + sig
+	return encodeSessionMessage(msg) + "." + sig
+}
+
+func encodeSessionMessage(msg string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(msg))
 }
 
 func (s *Server) hmac(msg string) string {
@@ -474,50 +518,61 @@ func (s *Server) hmac(msg string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
-func (s *Server) verify(cookie string) string {
+func (s *Server) verify(cookie string) (string, int64) {
 	parts := strings.SplitN(cookie, ".", 2)
 	if len(parts) != 2 {
-		return ""
+		return "", 0
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return ""
+		return "", 0
 	}
 	msg := string(raw)
 	if !hmac.Equal([]byte(s.hmac(msg)), []byte(parts[1])) {
-		return ""
+		return "", 0
 	}
-	i := strings.LastIndex(msg, "|")
-	if i < 0 {
-		return ""
+	expSep := strings.LastIndex(msg, "|")
+	if expSep < 0 {
+		return "", 0
 	}
-	exp, err := strconv.ParseInt(msg[i+1:], 10, 64)
+	exp, err := strconv.ParseInt(msg[expSep+1:], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
-		return ""
+		return "", 0
 	}
-	return msg[:i]
-}
-
-func (s *Server) currentUser(r *http.Request) string {
-	c, err := r.Cookie(cookieName)
-	if err != nil {
-		return ""
+	// Cookies issued before session revisions used "username|expiry". Keep them valid at
+	// revision zero so this additive change does not force a logout or rewrite stored state.
+	// A later password change increments session_rev and invalidates them normally.
+	if !strings.HasPrefix(msg, "v1|") {
+		return msg[:expSep], 0
 	}
-	return s.verify(c.Value)
+	revSep := strings.LastIndex(msg[:expSep], "|")
+	if revSep < len("v1|") {
+		return "", 0
+	}
+	rev, err := strconv.ParseInt(msg[revSep+1:expSep], 10, 64)
+	if err != nil || rev < 0 {
+		return "", 0
+	}
+	return msg[len("v1|"):revSep], rev
 }
 
 // currentActiveUser returns the logged-in user only if the account still exists and
 // is enabled, so disabling an account takes effect immediately — even for a session
 // whose cookie is still valid.
 func (s *Server) currentActiveUser(r *http.Request) string {
-	u := s.currentUser(r)
-	if u == "" {
+	c, err := r.Cookie(cookieName)
+	if err != nil {
 		return ""
 	}
-	if usr := s.st.GetUser(u); usr == nil || !usr.Active {
+	user, rev := s.verify(c.Value)
+	if user == "" {
 		return ""
 	}
-	return u
+	usr := s.st.GetUser(user)
+	if usr == nil || !usr.Active || usr.SessionRev != rev {
+		return ""
+	}
+	return user
 }
 
 func (s *Server) isAdmin(user string) bool {
@@ -575,7 +630,12 @@ func (s *Server) filtersFrom(r *http.Request) (Filters, string, int, int) {
 func (s *Server) runMembers(key string) []Rep {
 	var members []Rep
 	if !strings.Contains(key, "|") {
-		if rep := s.loadRep(key); rep != nil {
+		// A "|"-less key is a thematic report's group key, which gkey() renders as its bare id.
+		id, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			return nil
+		}
+		if rep := s.loadRep(id); rep != nil {
 			members = []Rep{*rep}
 		}
 	} else {
@@ -693,7 +753,7 @@ func seedDefaultKindColors(st *Store) int {
 	return len(defaultKindColors)
 }
 
-func (s *Server) orderAndDefault(members []Rep) ([]Rep, string) {
+func (s *Server) orderAndDefault(members []Rep) ([]Rep, int64) {
 	cfg := s.st.TypeConfigs()
 	ord := func(r Rep) int {
 		if c, ok := cfg[r.RType]; ok {
@@ -734,22 +794,23 @@ func (s *Server) orderAndDefault(members []Rep) ([]Rep, string) {
 			out[i].Label = out[i].Label + " " + strconv.Itoa(n)
 		}
 	}
-	def, bestOrd := "", 1<<30
+	var def int64
+	bestOrd := 1 << 30
 	for _, m := range out {
 		if c, ok := cfg[m.RType]; ok && c.IsSummary && c.Ord < bestOrd {
-			bestOrd, def = c.Ord, m.RID
+			bestOrd, def = c.Ord, m.ID
 		}
 	}
-	if def == "" {
+	if def == 0 {
 		for _, m := range out {
 			if isSummary(m) {
-				def = m.RID
+				def = m.ID
 				break
 			}
 		}
 	}
-	if def == "" && len(out) > 0 {
-		def = out[len(out)-1].RID
+	if def == 0 && len(out) > 0 {
+		def = out[len(out)-1].ID
 	}
 	return out, def
 }
@@ -797,7 +858,6 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		UID      string `json:"uid"`
 		RunID    string `json:"run_id"`
 		Symbol   string `json:"symbol"`
 		Name     string `json:"name"` // optional: as-of company name; snapshotted so backdoor-listing/rename doesn't relabel old reports
@@ -836,19 +896,19 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 	}
 	s.st.RegisterType(rtype, kind)
 	s.names.EnsureOne(in.Symbol) // if this code has no name yet, do a background best-effort fetch from Tencent/Sina
-	// Identity key = symbol|date|category|subtype: the same type coming in again on the same day overwrites/updates it (run_id is just a batch label and does not participate in identity).
-	// Thematic reports (no single home stock) have no symbol — fall back to the title so
-	// different topics on the same day don't collide into one uid.
-	uid := firstNonEmpty(in.UID, firstNonEmpty(in.Symbol, in.Title)+"|"+in.Date+"|"+kind+"|"+rtype)
 	// Snapshot the as-of name: Dify-provided > current stocks name at ingest time.
 	// The report is immutable history, so a later rename/backdoor-listing won't relabel it.
 	name := firstNonEmpty(in.Name, s.names.Get(in.Symbol))
 	rep := Rep{
-		UID: uid, RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
+		RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
 		RType: rtype, Title: in.Title, Source: in.Source, Time: firstNonEmpty(in.Time, in.Date),
 		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML),
 	}
-	created, err := s.st.UpsertReport(rep)
+	// Identity is the store's business: code-or-title + date + subtype, enforced by a unique
+	// index, so the same subtype arriving again on the same day overwrites in place and hands
+	// back the same id. Neither kind nor run_id participates — this path used to fold kind in,
+	// which forked a report in two whenever the registry re-categorised its subtype.
+	id, created, err := s.st.UpsertReport(rep)
 	if err != nil {
 		log.Printf("ingest db error: %v", err)
 		http.Error(w, "database error", http.StatusInternalServerError)
@@ -859,14 +919,14 @@ func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
 		for _, t := range in.Tracking {
 			items = append(items, TrackingItem{IType: t.IType, Content: t.Content, Status: t.Status, ReviewPoint: t.ReviewPoint})
 		}
-		s.st.SetTracking(uid, in.Symbol, items)
+		s.st.SetTracking(id, in.Symbol, items)
 	}
-	log.Printf("ingest %s %s created=%v", in.Symbol, in.Date, created)
+	log.Printf("ingest %s %s id=%d created=%v", in.Symbol, in.Date, id, created)
 	s.fireEvent(EventReportIngested, map[string]any{
-		"uid": uid, "symbol": in.Symbol, "name": name, "date": in.Date,
+		"id": id, "symbol": in.Symbol, "name": name, "date": in.Date,
 		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source, "created": created,
 	})
-	writeJSON(w, map[string]any{"ok": true, "uid": uid, "created": created})
+	writeJSON(w, map[string]any{"ok": true, "id": id, "created": created})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -925,7 +985,7 @@ func (s *Server) apiQueryReports(w http.ResponseWriter, r *http.Request) {
 func (s *Server) repsJSON(reps []Rep, withBody bool) []map[string]any {
 	out := make([]map[string]any, 0, len(reps))
 	for _, r := range reps {
-		m := map[string]any{"uid": r.UID, "run_id": r.RunID, "symbol": r.Symbol, "name": s.names.Get(r.Symbol),
+		m := map[string]any{"id": r.ID, "run_id": r.RunID, "symbol": r.Symbol, "name": s.names.Get(r.Symbol),
 			"date": r.Date, "kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source}
 		if withBody {
 			m["body_md"] = r.MD
@@ -953,46 +1013,41 @@ func (s *Server) apiManifest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("manifest %s -> %v reports", symbol, m["total"])
 }
 
-// apiGetReport fetches a single report body. GET /api/report?uid=... (or rid=n123). Bearer token auth, scope query.
+// apiGetReport fetches a single report body. GET /api/report?id=123. Bearer token auth, scope query.
 func (s *Server) apiGetReport(w http.ResponseWriter, r *http.Request) {
 	if !s.canQuery(r) { // Bearer(query) or a logged-in browser session
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	q := r.URL.Query()
-	var rep *Rep
-	if uid := strings.TrimSpace(q.Get("uid")); uid != "" {
-		rep = s.st.GetByUID(uid)
-	} else if rid := strings.TrimSpace(q.Get("rid")); rid != "" {
-		rep = s.loadRep(rid)
-	}
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
+	rep := s.loadRep(id)
 	if rep == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, map[string]any{"uid": rep.UID, "run_id": rep.RunID, "symbol": rep.Symbol, "date": rep.Date,
+	writeJSON(w, map[string]any{"id": rep.ID, "run_id": rep.RunID, "symbol": rep.Symbol, "date": rep.Date,
 		"kind": rep.Kind, "subtype": rep.RType, "title": rep.Title, "source": rep.Source,
 		"body_md": rep.MD, "body_html": htmlOf(*rep)})
 }
 
-// apiDeleteReport retracts a report and its tracking items by uid. Bearer scope ingest. DELETE /api/report?uid=...
+// apiDeleteReport retracts a report and its tracking items by id. Bearer scope ingest. DELETE /api/report?id=123
 func (s *Server) apiDeleteReport(w http.ResponseWriter, r *http.Request) {
 	if !s.tokenOK(r, "ingest") {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	uid := strings.TrimSpace(r.URL.Query().Get("uid"))
-	if uid == "" {
-		http.Error(w, "uid required", http.StatusBadRequest)
+	id, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
+	if err != nil {
+		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	n, err := s.st.DeleteReport(uid)
+	n, err := s.st.DeleteReport(id)
 	if err != nil {
 		log.Printf("delete db error: %v", err)
 		http.Error(w, "database error", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("delete %s -> %d", uid, n)
+	log.Printf("delete %d -> %d", id, n)
 	writeJSON(w, map[string]any{"ok": true, "deleted": n}) // deleted:0 (not 404) so retries stay idempotent
 }
 
@@ -1086,43 +1141,39 @@ func (s *Server) apiTracking(w http.ResponseWriter, r *http.Request) {
 	items := s.st.QueryTracking(symbol, strings.TrimSpace(q.Get("status")), limit)
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, map[string]any{"id": it.ID, "report_uid": it.ReportUID, "itype": it.IType, "content": it.Content,
+		out = append(out, map[string]any{"id": it.ID, "report_id": it.ReportID, "itype": it.IType, "content": it.Content,
 			"status": it.Status, "review_point": it.ReviewPoint, "created_at": it.Created})
 	}
 	writeJSON(w, map[string]any{"symbol": symbol, "has": len(out) > 0, "count": len(out), "items": out})
 }
 
-func repInList(reps []Rep, rid string) bool {
+func repInList(reps []Rep, id int64) bool {
 	for _, r := range reps {
-		if r.RID == rid {
+		if r.ID == id {
 			return true
 		}
 	}
 	return false
 }
 
-// loadRep fetches a report including its body by rid.
-func (s *Server) loadRep(rid string) *Rep {
-	if strings.HasPrefix(rid, "n") {
-		id, err := strconv.ParseInt(rid[1:], 10, 64)
-		if err != nil {
-			return nil
-		}
-		rep, _ := s.st.GetNew(id)
-		return rep
+// loadRep fetches a report including its body by id.
+func (s *Server) loadRep(id int64) *Rep {
+	if id <= 0 {
+		return nil
 	}
-	return nil
+	rep, _ := s.st.GetNew(id)
+	return rep
 }
 
 // ---------- Export ----------
 
 func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
-	rep := s.loadRep(r.PathValue("rid"))
+	rep := s.loadRep(pathID(r, "id"))
 	if rep == nil {
 		http.Error(w, "报告不存在", 404)
 		return
 	}
-	fn := safeFile(s.repDisplayTitle(rep), rid(r)) + ".md"
+	fn := safeFile(s.repDisplayTitle(rep), strconv.FormatInt(rep.ID, 10)) + ".md"
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(fn))
 	w.Write([]byte(rep.MD))
@@ -1133,7 +1184,7 @@ func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
 func (s *Server) renderPDFHTML(rep *Rep) (string, error) {
 	data := *rep
 	data.Title = s.repDisplayTitle(rep) // fold the company name into the <h1>
-	data.HTML = htmlOf(data)
+	data.HTML = sanitizePDFBody(htmlOf(data))
 	var buf strings.Builder
 	if err := s.pdf.ExecuteTemplate(&buf, "pdf.html", data); err != nil {
 		return "", err
@@ -1142,7 +1193,7 @@ func (s *Server) renderPDFHTML(rep *Rep) (string, error) {
 }
 
 func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) {
-	rep := s.loadRep(r.PathValue("rid"))
+	rep := s.loadRep(pathID(r, "id"))
 	if rep == nil {
 		http.Error(w, "报告不存在", 404)
 		return
@@ -1152,7 +1203,7 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) 
 		http.Error(w, "render", 500)
 		return
 	}
-	pdf, err := htmlToPDF(renderedHTML)
+	pdf, err := htmlToPDFContext(r.Context(), renderedHTML)
 	if err == ErrNoWkhtmltopdf {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(503)
@@ -1168,13 +1219,11 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) 
 		http.Error(w, "PDF 生成失败: "+err.Error(), 500)
 		return
 	}
-	fn := safeFile(s.repDisplayTitle(rep), rid(r)) + ".pdf"
+	fn := safeFile(s.repDisplayTitle(rep), strconv.FormatInt(rep.ID, 10)) + ".pdf"
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(fn))
 	w.Write(pdf)
 }
-
-func rid(r *http.Request) string { return r.PathValue("rid") }
 
 func safeFile(title, fallback string) string {
 	if strings.TrimSpace(title) == "" {

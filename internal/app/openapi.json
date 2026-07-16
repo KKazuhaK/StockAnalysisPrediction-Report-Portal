@@ -3,15 +3,15 @@
   "info": {
     "title": "研报门户 · Dify 机器接口 (v1)",
     "version": "1.0.0",
-    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，去重身份由服务端按 `symbol|date|subtype` 判定（无 symbol 的专题报告按 `title|date|subtype` 判定，客户端不传 uid）；接口返回并寻址的 `uid` 是数字报告 id（形如 `n123`，ASCII、URL 安全）。多语言：请求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化后的 OpenAPI JSON。",
+    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，去重身份由服务端按 `symbol|date|subtype` 判定（无 symbol 的专题报告按 `title|date|subtype` 判定，客户端不传 id）；接口返回并寻址的 `id` 是该报告的数字 id。多语言：请求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化后的 OpenAPI JSON。",
     "x-i18n": {
       "en-US": {
         "title": "Research Report Portal · Dify Machine API (v1)",
-        "description": "Machine API for Dify workflows to ingest, query, and review research reports. Authentication: `Authorization: Bearer <token>`; tokens are managed in System Settings and use the `ingest`, `query`, or `all` scope. A browser cookie session also satisfies query access. Successful responses are JSON; errors use `{ok:false,error:{code,message}}`. Dates use `YYYY-MM-DD`. Ingest is an idempotent upsert. Deduplication is derived server-side from `symbol|date|subtype`; thematic reports without `symbol` use `title|date|subtype`. Clients do not send uid. Returned and path-addressed `uid` values are numeric report ids such as `n123` (ASCII and URL-safe). Localization: request `/api/openapi.json?lang=en-US` or `?lang=zh-TW` for a localized OpenAPI JSON document."
+        "description": "Machine API for Dify workflows to ingest, query, and review research reports. Authentication: `Authorization: Bearer <token>`; tokens are managed in System Settings and use the `ingest`, `query`, or `all` scope. A browser cookie session also satisfies query access. Successful responses are JSON; errors use `{ok:false,error:{code,message}}`. Dates use `YYYY-MM-DD`. Ingest is an idempotent upsert. Deduplication is derived server-side from `symbol|date|subtype`; thematic reports without `symbol` use `title|date|subtype`. Clients do not send an id. Returned and path-addressed `id` values are the report's numeric id. Localization: request `/api/openapi.json?lang=en-US` or `?lang=zh-TW` for a localized OpenAPI JSON document."
       },
       "zh-TW": {
         "title": "研報門戶 · Dify 機器介面 (v1)",
-        "description": "供 Dify 工作流入庫/查詢/複核研報的機器介面。鑑權：請求頭 `Authorization: Bearer <token>`（令牌在系統設定頁管理，作用域 ingest|query|all）；瀏覽器登入的 cookie 會話也滿足 query。成功響應為 JSON；錯誤統一為 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入庫為冪等 upsert，去重身份由服務端按 `symbol|date|subtype` 判定（無 symbol 的專題報告按 `title|date|subtype` 判定，客戶端不傳 uid）；介面返回並尋址的 `uid` 是數字報告 id（形如 `n123`，ASCII、URL 安全）。多語言：請求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化後的 OpenAPI JSON。"
+        "description": "供 Dify 工作流入庫/查詢/複核研報的機器介面。鑑權：請求頭 `Authorization: Bearer <token>`（令牌在系統設定頁管理，作用域 ingest|query|all）；瀏覽器登入的 cookie 會話也滿足 query。成功響應為 JSON；錯誤統一為 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入庫為冪等 upsert，去重身份由服務端按 `symbol|date|subtype` 判定（無 symbol 的專題報告按 `title|date|subtype` 判定，客戶端不傳 id）；介面返回並尋址的 `id` 是該報告的數字 id。多語言：請求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化後的 OpenAPI JSON。"
       }
     }
   },
@@ -158,7 +158,7 @@
           }
         },
         "properties": {
-          "uid": { "type": "string" },
+          "id": { "type": "integer", "format": "int64" },
           "run_id": { "type": "string" },
           "symbol": { "type": "string" },
           "name": { "type": "string", "description": "as-of 快照名（回退现名）" },
@@ -176,7 +176,7 @@
         "type": "object",
         "properties": {
           "id": { "type": "integer" },
-          "report_uid": { "type": "string" },
+          "report_id": { "type": "integer", "format": "int64" },
           "itype": { "type": "string" },
           "content": { "type": "string" },
           "status": { "type": "string" },
@@ -193,11 +193,11 @@
         "operationId": "ingestReport",
         "summary": "入库（幂等 upsert）一篇报告，可附带 tracking 假设项",
         "x-scope": "ingest",
-        "description": "去重身份由服务端按 symbol|date|subtype 判定；无 symbol 的专题报告按 title|date|subtype 判定（不接受客户端 uid，不含 kind）。再次入库同一身份会整行覆盖。响应 created 区分新建/覆盖，uid 是该报告的数字 id（形如 n123）。正文上限 16MB。若 body_md 存在，服务端以 Markdown 为准并丢弃 body_html，详情读取时再渲染 HTML。",
+        "description": "去重身份由服务端按 symbol|date|subtype 判定；无 symbol 的专题报告按 title|date|subtype 判定（不接受客户端 id，不含 kind）。再次入库同一身份会整行覆盖。响应 created 区分新建/覆盖，id 是该报告的数字 id。正文上限 16MB。若 body_md 存在，服务端以 Markdown 为准并丢弃 body_html，详情读取时再渲染 HTML。",
         "x-i18n": {
           "en-US": {
             "summary": "Ingest one report with idempotent upsert, optionally with tracking items",
-            "description": "Deduplication is derived server-side from symbol|date|subtype; thematic reports without symbol use title|date|subtype. Client-supplied uid is not accepted and kind is not part of identity. Re-ingesting the same identity overwrites the row. The `created` response field distinguishes create vs overwrite, and `uid` is the report's numeric id such as n123. Body size limit is 16 MB. If `body_md` is present, Markdown is authoritative and `body_html` is discarded; HTML is rendered again on detail reads.",
+            "description": "Deduplication is derived server-side from symbol|date|subtype; thematic reports without symbol use title|date|subtype. A client-supplied id is not accepted and kind is not part of identity. Re-ingesting the same identity overwrites the row. The `created` response field distinguishes create vs overwrite, and `id` is the report's numeric id. Body size limit is 16 MB. If `body_md` is present, Markdown is authoritative and `body_html` is discarded; HTML is rendered again on detail reads.",
             "responses": {
               "200": { "description": "Ingest succeeded" },
               "400": { "description": "bad_json / missing_param(symbol or title, subtype or rtype) / invalid_param(date)" },
@@ -207,7 +207,7 @@
           },
           "zh-TW": {
             "summary": "入庫（冪等 upsert）一篇報告，可附帶 tracking 假設項",
-            "description": "去重身份由服務端按 symbol|date|subtype 判定；無 symbol 的專題報告按 title|date|subtype 判定（不接受客戶端 uid，不含 kind）。再次入庫同一身份會整行覆蓋。響應 created 區分新建/覆蓋，uid 是該報告的數字 id（形如 n123）。正文上限 16MB。若 body_md 存在，服務端以 Markdown 為準並丟棄 body_html，詳情讀取時再渲染 HTML。",
+            "description": "去重身份由服務端按 symbol|date|subtype 判定；無 symbol 的專題報告按 title|date|subtype 判定（不接受客戶端 id，不含 kind）。再次入庫同一身份會整行覆蓋。響應 created 區分新建/覆蓋，id 是該報告的數字 id。正文上限 16MB。若 body_md 存在，服務端以 Markdown 為準並丟棄 body_html，詳情讀取時再渲染 HTML。",
             "responses": {
               "200": { "description": "入庫成功" },
               "400": { "description": "bad_json / missing_param(symbol 或 title、subtype 或 rtype) / invalid_param(date)" },
@@ -222,7 +222,7 @@
         },
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X POST $BASE/api/v1/reports \\\n  -H \"Authorization: Bearer <ingest-token>\" -H \"Content-Type: application/json\" \\\n  -d '{\"symbol\":\"300750\",\"date\":\"2026-07-02\",\"subtype\":\"汇总\",\"kind\":\"投资决策\",\"title\":\"宁德时代投资决策汇总\",\"source\":\"dify\",\"run_id\":\"r1\",\"body_md\":\"## 结论\\n增持\",\"tracking\":[{\"itype\":\"assumption\",\"content\":\"H2 出货 +20%\",\"review_point\":\"三季报\"}]}'" }],
         "responses": {
-          "200": { "description": "入库成功", "content": { "application/json": { "example": { "ok": true, "uid": "n123", "created": true } } } },
+          "200": { "description": "入库成功", "content": { "application/json": { "example": { "ok": true, "id": 123, "created": true } } } },
           "400": { "description": "bad_json / missing_param(symbol 或 title、subtype 或 rtype) / invalid_param(date)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "500": { "description": "数据库错误（db_error）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
@@ -271,7 +271,7 @@
         ],
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/reports \\\n  -H \"Authorization: Bearer <query-token>\" \\\n  --data-urlencode \"symbol=300750\" --data-urlencode \"date=today\" --data-urlencode \"with_body=1\"" }],
         "responses": {
-          "200": { "description": "命中列表", "content": { "application/json": { "example": { "ok": true, "count": 1, "total": 1, "offset": 0, "limit": 20, "items": [{ "uid": "n123", "run_id": "r1", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "time": "2026-07-02T08:15:03Z", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持" }] } } } },
+          "200": { "description": "命中列表", "content": { "application/json": { "example": { "ok": true, "count": 1, "total": 1, "offset": 0, "limit": 20, "items": [{ "id": 123, "run_id": "r1", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "time": "2026-07-02T08:15:03Z", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持" }] } } } },
           "400": { "description": "未提供任何过滤器（missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
@@ -310,7 +310,7 @@
         }
       }
     },
-    "/api/v1/reports/{uid}": {
+    "/api/v1/reports/{id}": {
       "get": {
         "tags": ["reports"],
         "operationId": "getReport",
@@ -334,10 +334,10 @@
             }
           }
         },
-        "parameters": [{ "name": "uid", "in": "path", "required": true, "schema": { "type": "string" }, "description": "报告 id（入库/查询返回的 uid 字段，形如 n123；仍兼容旧的 symbol|date|subtype）。", "x-i18n": { "en-US": { "description": "Report id returned as the `uid` field by ingest/query, such as n123. The legacy symbol|date|subtype composite id is still accepted." }, "zh-TW": { "description": "報告 id（入庫/查詢返回的 uid 欄位，形如 n123；仍相容舊的 symbol|date|subtype）。" } } }],
-        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -H \"Authorization: Bearer <query-token>\" \\\n  \"$BASE/api/v1/reports/n123\"" }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "报告 id（入库/查询返回的 id 字段）。", "x-i18n": { "en-US": { "description": "Report id, returned as the `id` field by ingest/query." }, "zh-TW": { "description": "報告 id（入庫/查詢返回的 id 欄位）。" } } }],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -H \"Authorization: Bearer <query-token>\" \\\n  \"$BASE/api/v1/reports/123\"" }],
         "responses": {
-          "200": { "description": "报告", "content": { "application/json": { "example": { "ok": true, "uid": "n123", "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "time": "2026-07-02T08:15:03Z", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持", "body_html": "<h2>结论</h2><p>增持</p>" } } } },
+          "200": { "description": "报告", "content": { "application/json": { "example": { "ok": true, "id": 123, "symbol": "300750", "name": "宁德时代", "date": "2026-07-02", "time": "2026-07-02T08:15:03Z", "kind": "投资决策", "subtype": "汇总", "title": "宁德时代投资决策汇总", "source": "dify", "body_md": "## 结论\n增持", "body_html": "<h2>结论</h2><p>增持</p>" } } } },
           "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "404": { "description": "id 未命中（not_found）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
@@ -365,8 +365,8 @@
             }
           }
         },
-        "parameters": [{ "name": "uid", "in": "path", "required": true, "schema": { "type": "string" }, "description": "报告 id（形如 n123；仍兼容旧的 symbol|date|subtype）。", "x-i18n": { "en-US": { "description": "Report id such as n123. The legacy symbol|date|subtype composite id is still accepted." }, "zh-TW": { "description": "報告 id（形如 n123；仍相容舊的 symbol|date|subtype）。" } } }],
-        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X DELETE -H \"Authorization: Bearer <ingest-token>\" \\\n  \"$BASE/api/v1/reports/n123\"" }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "报告 id。", "x-i18n": { "en-US": { "description": "Report id." }, "zh-TW": { "description": "報告 id。" } } }],
+        "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -X DELETE -H \"Authorization: Bearer <ingest-token>\" \\\n  \"$BASE/api/v1/reports/123\"" }],
         "responses": {
           "200": { "description": "已删；deleted=删除行数（0 也返回 200，幂等）", "content": { "application/json": { "example": { "ok": true, "deleted": 1 } } } },
           "401": { "description": "缺少或无效的 ingest 令牌", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
@@ -474,7 +474,7 @@
         ],
         "x-codeSamples": [{ "lang": "cURL", "source": "curl -s -G $BASE/api/v1/tracking -H \"Authorization: Bearer <query-token>\" --data-urlencode \"symbol=300750\" --data-urlencode \"status=pending\"" }],
         "responses": {
-          "200": { "description": "跟踪项", "content": { "application/json": { "example": { "ok": true, "symbol": "300750", "count": 1, "has": true, "items": [{ "id": 42, "report_uid": "n123", "itype": "assumption", "content": "H2 出货 +20%", "status": "pending", "review_point": "三季报", "created_at": "2026-07-02 08:15:03" }] } } } },
+          "200": { "description": "跟踪项", "content": { "application/json": { "example": { "ok": true, "symbol": "300750", "count": 1, "has": true, "items": [{ "id": 42, "report_id": 123, "itype": "assumption", "content": "H2 出货 +20%", "status": "pending", "review_point": "三季报", "created_at": "2026-07-02 08:15:03" }] } } } },
           "400": { "description": "symbol 缺失（missing_param）", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "无有效查询凭据", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }

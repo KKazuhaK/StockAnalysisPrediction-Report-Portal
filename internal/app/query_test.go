@@ -8,8 +8,8 @@ func TestQueryReportsPaginationAndFilters(t *testing.T) {
 	st := newTestStore(t)
 	st.SyncStocks(map[string]string{"300750": "宁德时代"})
 	for _, d := range []string{"2026-01-01", "2026-02-01", "2026-03-01"} {
-		if _, err := st.UpsertReport(Rep{
-			UID: "300750|" + d + "|投资决策|汇总", Symbol: "300750", Date: d, Kind: "投资决策",
+		if _, _, err := st.UpsertReport(Rep{
+			Symbol: "300750", Date: d, Kind: "投资决策",
 			RType: "汇总", Title: "投资决策汇总", Source: "dify", RunID: "run-" + d, Time: d, MD: "body",
 		}); err != nil {
 			t.Fatal(err)
@@ -22,8 +22,8 @@ func TestQueryReportsPaginationAndFilters(t *testing.T) {
 		t.Fatalf("page1: total=%d len=%d err=%v (want total=3 len=2)", total, len(p1), err)
 	}
 	p2, _, _ := st.QueryReports(ReportQuery{Symbol: "300750", Limit: 2, Offset: 2})
-	if len(p2) != 1 || p2[0].UID == p1[0].UID {
-		t.Fatalf("page2 len=%d overlap=%v", len(p2), p2[0].UID == p1[0].UID)
+	if len(p2) != 1 || p2[0].ID == p1[0].ID {
+		t.Fatalf("page2 len=%d overlap=%v", len(p2), p2[0].ID == p1[0].ID)
 	}
 
 	// keyword now matches company name and code (not just title/body)
@@ -46,20 +46,27 @@ func TestQueryReportsPaginationAndFilters(t *testing.T) {
 // Ingest must signal whether the row was created or overwritten.
 func TestUpsertReportCreatedFlag(t *testing.T) {
 	st := newTestStore(t)
-	created, err := st.UpsertReport(Rep{UID: "u1", Symbol: "300750", Date: "2026-01-01", RType: "汇总"})
+	id, created, err := st.UpsertReport(Rep{Symbol: "300750", Date: "2026-01-01", RType: "汇总"})
 	if err != nil || !created {
 		t.Fatalf("first ingest created=%v err=%v, want created=true", created, err)
 	}
-	created2, err := st.UpsertReport(Rep{UID: "u1", Symbol: "300750", Date: "2026-01-01", RType: "汇总", Title: "updated"})
+	id2, created2, err := st.UpsertReport(Rep{Symbol: "300750", Date: "2026-01-01", RType: "汇总", Title: "updated"})
 	if err != nil || created2 {
 		t.Fatalf("second ingest created=%v err=%v, want created=false", created2, err)
+	}
+	if id2 != id {
+		t.Errorf("overwrite returned id=%d, want the original %d", id2, id)
 	}
 }
 
 // Single tracking item can be updated by id (the hypothesis re-check loop).
 func TestUpdateTrackingStatus(t *testing.T) {
 	st := newTestStore(t)
-	if err := st.SetTracking("u1", "300750", []TrackingItem{{IType: "assumption", Content: "c1", Status: "pending"}}); err != nil {
+	id, _, err := st.UpsertReport(Rep{Symbol: "300750", Date: "2026-01-01", RType: "汇总"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetTracking(id, "300750", []TrackingItem{{IType: "assumption", Content: "c1", Status: "pending"}}); err != nil {
 		t.Fatal(err)
 	}
 	items := st.QueryTracking("300750", "", 100)
@@ -82,12 +89,13 @@ func TestUpdateTrackingStatus(t *testing.T) {
 // Reports can be deleted/retracted, cascading their tracking items; idempotent.
 func TestDeleteReport(t *testing.T) {
 	st := newTestStore(t)
-	if _, err := st.UpsertReport(Rep{UID: "u1", Symbol: "300750", Date: "2026-01-01", RType: "汇总"}); err != nil {
+	id, _, err := st.UpsertReport(Rep{Symbol: "300750", Date: "2026-01-01", RType: "汇总"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	st.SetTracking("u1", "300750", []TrackingItem{{IType: "assumption", Content: "c1"}})
+	st.SetTracking(id, "300750", []TrackingItem{{IType: "assumption", Content: "c1"}})
 
-	n, err := st.DeleteReport("u1")
+	n, err := st.DeleteReport(id)
 	if err != nil || n != 1 {
 		t.Fatalf("delete n=%d err=%v, want 1", n, err)
 	}
@@ -98,7 +106,7 @@ func TestDeleteReport(t *testing.T) {
 		t.Errorf("tracking items should be cascade-deleted")
 	}
 	// idempotent retry
-	if n2, err := st.DeleteReport("u1"); err != nil || n2 != 0 {
+	if n2, err := st.DeleteReport(id); err != nil || n2 != 0 {
 		t.Fatalf("re-delete n=%d err=%v, want 0", n2, err)
 	}
 }

@@ -121,19 +121,19 @@ func TestV1IngestFreezesNameKeepsHistory(t *testing.T) {
 	}
 
 	ingest("2026-07-03")
-	if r := s.st.GetByUID("600001|2026-07-03|综合决策"); r == nil || r.Name != "旧名" {
+	if r := repByIdent(t, s.st, "600001", "2026-07-03", "综合决策"); r == nil || r.Name != "旧名" {
 		t.Fatalf("first report name = %v, want 旧名", r)
 	}
 
 	// rename → the next report snapshots the new name
 	name = "新名"
 	ingest("2026-07-04")
-	if r := s.st.GetByUID("600001|2026-07-04|综合决策"); r == nil || r.Name != "新名" {
+	if r := repByIdent(t, s.st, "600001", "2026-07-04", "综合决策"); r == nil || r.Name != "新名" {
 		t.Fatalf("second report name = %v, want 新名", r)
 	}
 
 	// the earlier report is untouched
-	if r := s.st.GetByUID("600001|2026-07-03|综合决策"); r.Name != "旧名" {
+	if r := repByIdent(t, s.st, "600001", "2026-07-03", "综合决策"); r.Name != "旧名" {
 		t.Fatalf("history changed: earlier report name = %q, want 旧名", r.Name)
 	}
 }
@@ -145,11 +145,11 @@ func TestFreezeReportNames(t *testing.T) {
 	st := newTestStore(t)
 	st.SyncStocks(map[string]string{"600100": "华资名", "600200": "有名"})
 	// A: empty name, symbol known → frozen from stocks
-	st.UpsertReport(Rep{UID: "600100|2026-07-01|综合决策", Symbol: "600100", Date: "2026-07-01", RType: "综合决策", Kind: "重组决策", Title: "a"})
+	st.UpsertReport(Rep{Symbol: "600100", Date: "2026-07-01", RType: "综合决策", Kind: "重组决策", Title: "a"})
 	// B: already carries a frozen name → must be left as-is
-	st.UpsertReport(Rep{UID: "600200|2026-07-01|综合决策", Symbol: "600200", Name: "报告时名", Date: "2026-07-01", RType: "综合决策", Kind: "重组决策", Title: "b"})
+	st.UpsertReport(Rep{Symbol: "600200", Name: "报告时名", Date: "2026-07-01", RType: "综合决策", Kind: "重组决策", Title: "b"})
 	// C: empty name, symbol not in stocks → stays empty
-	st.UpsertReport(Rep{UID: "600300|2026-07-01|综合决策", Symbol: "600300", Date: "2026-07-01", RType: "综合决策", Kind: "重组决策", Title: "c"})
+	st.UpsertReport(Rep{Symbol: "600300", Date: "2026-07-01", RType: "综合决策", Kind: "重组决策", Title: "c"})
 
 	n, err := st.FreezeReportNames()
 	if err != nil {
@@ -158,13 +158,13 @@ func TestFreezeReportNames(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("frozen rows = %d, want 1", n)
 	}
-	if r := st.GetByUID("600100|2026-07-01|综合决策"); r.Name != "华资名" {
+	if r := repByIdent(t, st, "600100", "2026-07-01", "综合决策"); r.Name != "华资名" {
 		t.Fatalf("A name = %q, want 华资名 (frozen from stocks)", r.Name)
 	}
-	if r := st.GetByUID("600200|2026-07-01|综合决策"); r.Name != "报告时名" {
+	if r := repByIdent(t, st, "600200", "2026-07-01", "综合决策"); r.Name != "报告时名" {
 		t.Fatalf("B name = %q, want 报告时名 (unchanged)", r.Name)
 	}
-	if r := st.GetByUID("600300|2026-07-01|综合决策"); r.Name != "" {
+	if r := repByIdent(t, st, "600300", "2026-07-01", "综合决策"); r.Name != "" {
 		t.Fatalf("C name = %q, want empty (no stocks entry)", r.Name)
 	}
 
@@ -189,7 +189,7 @@ func TestV1IngestExplicitNameWins(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ingest: %d %s", rec.Code, rec.Body.String())
 	}
-	if r := s.st.GetByUID("600002|2026-07-03|综合决策"); r == nil || r.Name != "指定名" {
+	if r := repByIdent(t, s.st, "600002", "2026-07-03", "综合决策"); r == nil || r.Name != "指定名" {
 		t.Fatalf("report name = %v, want 指定名", r)
 	}
 }

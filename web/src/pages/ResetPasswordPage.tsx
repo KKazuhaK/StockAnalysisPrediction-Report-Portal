@@ -51,7 +51,7 @@ export default function ResetPasswordPage() {
               {t('reset.title')}
             </Typography.Title>
             <Form layout="vertical" onFinish={onFinish} requiredMark={false}>
-              <Form.Item name="password" label={t('reset.newPassword')} rules={[{ required: true, min: 6, message: t('reset.tooShort') }]}>
+              <Form.Item name="password" label={t('reset.newPassword')} rules={[{ required: true, min: 12, message: t('reset.tooShort') }]}>
                 <Input.Password prefix={<LockOutlined />} autoComplete="new-password" />
               </Form.Item>
               <Form.Item

@@ -2,11 +2,60 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
 )
+
+func TestCreateBatchJobIsAtomic(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	if _, err := st.exec(`CREATE TRIGGER reject_second_batch_item BEFORE INSERT ON batch_items
+		WHEN NEW.row_index=1 BEGIN SELECT RAISE(ABORT, 'injected item failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"x": "1"}, {"x": "2"}}, "normal"); err == nil {
+		t.Fatal("CreateBatchJob succeeded despite an item insert failure")
+	}
+	var jobs, items int
+	st.queryRow("SELECT COUNT(*) FROM batch_jobs").Scan(&jobs)
+	st.queryRow("SELECT COUNT(*) FROM batch_items").Scan(&items)
+	if jobs != 0 || items != 0 {
+		t.Fatalf("partial batch persisted after rollback: jobs=%d items=%d", jobs, items)
+	}
+}
+
+func TestCreateBatchJobRejectsUnboundedRows(t *testing.T) {
+	st := newTestStore(t)
+	rows := make([]map[string]string, maxBatchRows+1)
+	if _, err := st.CreateBatchJob(1, 1, 0, "admin", rows, "normal"); err == nil || !strings.Contains(err.Error(), "too many") {
+		t.Fatalf("CreateBatchJob over limit error = %v", err)
+	}
+}
+
+func TestSchedulableJobsIncludesLiveItemSnapshot(t *testing.T) {
+	st := newTestStore(t)
+	tgt := seedTarget(t, st)
+	job, err := st.CreateBatchJob(tgt, 3, 0, "admin", []map[string]string{{"x": "1"}, {"x": "2"}, {"x": "3"}}, "normal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := st.BatchJobItems(job)
+	if !st.MarkItemRunning(items[0].ID) {
+		t.Fatal("failed to mark first item running")
+	}
+	st.FinishItem(items[1].ID, batch.Ok, 1, "run-2", "")
+
+	jobs := st.SchedulableJobs()
+	if len(jobs) != 1 {
+		t.Fatalf("SchedulableJobs len = %d, want 1", len(jobs))
+	}
+	if jobs[0].runningItems != 1 || jobs[0].liveItems != 2 {
+		t.Fatalf("scheduler snapshot = running:%d live:%d, want 1/2", jobs[0].runningItems, jobs[0].liveItems)
+	}
+}
 
 // fakeProv adapts a function to batch.Provider for store-integration tests.
 type fakeProv struct {

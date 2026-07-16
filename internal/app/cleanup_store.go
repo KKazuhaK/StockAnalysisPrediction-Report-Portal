@@ -119,32 +119,36 @@ func (s *Store) DeleteExpiredTokensBefore(cutoff string) (int64, error) {
 
 // ---------- Target C: reports (core content, fail-closed) ----------
 
-// reportUIDsIngestedBefore returns the uids of reports whose sent_at parses (via parseReportInstant)
+// reportsIngestedBefore returns the ids of reports whose sent_at parses (via parseReportInstant)
 // to a UTC instant strictly before cutoff. sent_at is the last-write instant of a report (it is
 // overwritten on every re-ingest), and there is no server-stamped created_at, so it is the age
 // signal. It is heterogeneous — zoned RFC3339 on the v1 path, timezone-less microsecond form on
 // another — hence the multi-layout parse; a value with no precise instant (date-only/empty) is
 // SKIPPED (fail-closed: never delete a report we cannot prove is old). This biases to under-cleaning,
 // the safe failure mode for core content.
-type reportKey struct{ uid, sent string }
+type reportKey struct {
+	id   int64
+	sent string
+}
 
 // reportsDeleteChunk bounds how many reports one transaction deletes, so a large purge releases the
 // single SQLite writer between chunks instead of freezing all reads/writes until commit.
 const reportsDeleteChunk = 500
 
 func (s *Store) reportsIngestedBefore(cutoff time.Time) ([]reportKey, error) {
-	rows, err := s.query("SELECT uid, sent_at FROM reports")
+	rows, err := s.query("SELECT id, sent_at FROM reports")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var keys []reportKey
 	for rows.Next() {
-		var uid, sent sql.NullString
-		if err := rows.Scan(&uid, &sent); err != nil {
+		var id sql.NullInt64
+		var sent sql.NullString
+		if err := rows.Scan(&id, &sent); err != nil {
 			return nil, err
 		}
-		if !uid.Valid || uid.String == "" || !sent.Valid {
+		if !id.Valid || id.Int64 == 0 || !sent.Valid {
 			continue
 		}
 		t, ok := parseReportInstant(sent.String)
@@ -152,7 +156,7 @@ func (s *Store) reportsIngestedBefore(cutoff time.Time) ([]reportKey, error) {
 			continue // date-only / empty / malformed → keep
 		}
 		if t.Before(cutoff) {
-			keys = append(keys, reportKey{uid: uid.String, sent: sent.String})
+			keys = append(keys, reportKey{id: id.Int64, sent: sent.String})
 		}
 	}
 	return keys, rows.Err()
@@ -166,7 +170,7 @@ func (s *Store) CountReportsIngestedBefore(cutoff time.Time) (int64, error) {
 
 // DeleteReportsIngestedBefore deletes reports whose sent_at parses to an instant older than cutoff,
 // cascading their tracking_items. The scan captures each row's exact sent_at and the delete
-// RE-ASSERTS it (WHERE uid=? AND sent_at=?): a report re-ingested between scan and delete has a fresh
+// RE-ASSERTS it (WHERE id=? AND sent_at=?): a report re-ingested between scan and delete has a fresh
 // sent_at, so it no longer matches and is preserved — keeping the fail-closed guarantee across the
 // scan/delete window. Runs in bounded chunks (each its own tx) so a big purge doesn't hold the single
 // SQLite connection for the whole run. Returns how many reports were deleted (partial count on error).
@@ -200,7 +204,7 @@ func (s *Store) deleteReportChunk(keys []reportKey) (int64, error) {
 	}
 	var n int64
 	for _, k := range keys {
-		res, err := tx.Exec(s.bind("DELETE FROM reports WHERE uid=? AND sent_at=?"), k.uid, k.sent)
+		res, err := tx.Exec(s.bind("DELETE FROM reports WHERE id=? AND sent_at=?"), k.id, k.sent)
 		if err != nil {
 			tx.Rollback()
 			return n, err
@@ -209,7 +213,7 @@ func (s *Store) deleteReportChunk(keys []reportKey) (int64, error) {
 		if c == 0 {
 			continue // re-ingested (sent_at changed) or already gone — keep its tracking_items
 		}
-		if _, err := tx.Exec(s.bind("DELETE FROM tracking_items WHERE report_uid=?"), k.uid); err != nil {
+		if _, err := tx.Exec(s.bind("DELETE FROM tracking_items WHERE report_id=?"), k.id); err != nil {
 			tx.Rollback()
 			return n, err
 		}

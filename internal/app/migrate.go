@@ -3,15 +3,15 @@ package app
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 )
 
-// Schema-migration machinery, kept OUT of the core store (store.go) so the transitional,
-// per-version migration steps (migrate_v1_to_v2.go, and future migrate_vN_to_vM.go) can be
-// added and deleted without touching the main program. This file is permanent; the individual
-// migration-step files are disposable. See docs/adr/0013-v2-schema-consolidation.md.
+// Schema-reconciliation machinery lives outside the core store. Versioned data-move/drop steps
+// are intentionally absent at the v0.3 boundary; the complete v0.2 result is now the base schema.
+// See docs/adr/0013-v2-schema-consolidation.md.
+
+const schemaBaseline = 2
 
 // schemaVersion reads the internal schema-generation marker from meta. Absent (or unparseable)
 // means generation 1 — the pre-v0.2 shape that predates this marker. The generation is
@@ -31,27 +31,25 @@ func (s *Store) setSchemaVersion(n int) error {
 	return err
 }
 
-// migrate upgrades an existing database to the current schema generation, then stamps it. A fresh
-// database (born at the base schema) runs the pending step as a guarded no-op and is stamped
-// straight to the current generation; a genuine older database is folded up. Add a new step here
-// (and its migrate_vN_to_vM.go file) per boundary; delete the retired step's file at each major.
-func (s *Store) migrate() error {
-	cur := s.schemaVersion()
-	if cur >= 2 {
-		return nil // already current — stay quiet on a normal startup
+// requireSchemaBaseline enforces the major-boundary upgrade contract before any schema DDL runs.
+// An empty database is allowed and stamped after creation. A v0.1 database must first run the last
+// v0.2 release, which owns the now-squashed data movement; v0.3 never guesses or rewrites that data.
+func (s *Store) requireSchemaBaseline() (fresh bool, err error) {
+	if !s.tableExists("meta") {
+		for _, table := range []string{"reports", "users", "links", "batch_jobs"} {
+			if s.tableExists(table) {
+				return false, fmt.Errorf("unsupported pre-v0.2 database: first run v0.2.26 successfully, then upgrade to v0.3.0")
+			}
+		}
+		return true, nil
 	}
-	log.Printf("schema migration: database at generation %d, upgrading to 2 (%s)", cur, s.driver)
-	if err := s.migrateV1toV2(); err != nil {
-		return fmt.Errorf("migrate schema v1->v2: %w", err)
+	if version := s.schemaVersion(); version < schemaBaseline {
+		return false, fmt.Errorf("unsupported schema generation %d: first run v0.2.26 successfully, then upgrade to v0.3.0", version)
 	}
-	if err := s.setSchemaVersion(2); err != nil {
-		return err
-	}
-	log.Printf("schema migration: complete, now at generation 2")
-	return nil
+	return false, nil
 }
 
-// tableExists reports whether a table is present (guards the fold-copy steps in migration).
+// tableExists reports whether a table is present.
 // The Postgres path assumes the default `public` schema — consistent with the rest of the
 // store, which issues only unqualified DDL/DML and never sets a custom search_path.
 func (s *Store) tableExists(name string) bool {
@@ -96,7 +94,7 @@ func (s *Store) columnExists(table, col string) bool {
 }
 
 // duplicateColumnErr reports whether an ADD COLUMN failed only because the column already exists
-// (the idempotency signal for guarded migrations, on both SQLite and Postgres).
+// (the idempotency signal for additive reconciliation, on both SQLite and Postgres).
 func duplicateColumnErr(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists")
@@ -106,10 +104,9 @@ func duplicateColumnErr(err error) bool {
 // schema (baseSchemaStmts — the single source of truth) that an older database is missing, it runs
 // a plain ADD COLUMN. Adding a column carries no data, so it needs no versioned migration step —
 // declare the column in createBaseSchema and existing databases pick it up on the next startup.
-// Only data MOVES (folding a side table into a column) and DROPS still need an explicit,
-// generation-gated step in migrate(). Runs after migrate() so it sees the post-fold shape; a
-// column a plain ALTER can't add (a new PK/UNIQUE, or one needing a backfill) surfaces as a hard
-// error here — the signal that it genuinely needs a migration instead.
+// At a major boundary, databases must already satisfy the release-line baseline before this runs.
+// A column a plain ALTER cannot add (a new PK/UNIQUE, or one needing a backfill) surfaces as a hard
+// error — the signal that it needs an explicit design decision in a later release line.
 func (s *Store) ensureColumns() error {
 	for _, stmt := range s.baseSchemaStmts() {
 		table, cols, ok := parseCreateTable(stmt)

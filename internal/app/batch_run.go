@@ -433,7 +433,7 @@ func (s *Server) scheduleTick() {
 	// Runs are admitted first, so a job with more rows to run is never finalized early.
 	var done []BatchJob
 	for _, j := range s.st.SchedulableJobs() {
-		if queued, running, _, _, _, _ := s.st.LiveJobCounts(j.ID); queued == 0 && running == 0 {
+		if j.liveItems == 0 {
 			if fin := s.finalizeLocked(j.ID); fin != nil {
 				done = append(done, *fin)
 			}
@@ -538,12 +538,11 @@ func (s *Server) itemCandidates() ([]queue.Item, map[int64]candMeta) {
 		if invertBlocksNow(j.RunPreset, now, loc) {
 			continue // inverted preset: this run may only start OUTSIDE its windows (ADR 0014)
 		}
-		_, running, _, _, _, _ := s.st.LiveJobCounts(j.ID)
 		window := j.Concurrency
 		if window < 1 {
 			window = 1
 		}
-		if window -= running; window <= 0 {
+		if window -= j.runningItems; window <= 0 {
 			continue // this job already has its share of runs in flight
 		}
 		items, err := s.st.QueuedItems(j.ID)
@@ -756,10 +755,10 @@ func (s *Server) finalizeLocked(jobID int64) *BatchJob {
 // run is never duplicated:
 //   - run/conversation id       → RECONCILE to the true outcome, never re-run (reconcileResumedItem);
 //   - started but no such id     → a task id, or the stream opened (dify_started_at) with no id → the
-//                                  run started but left nothing to poll → mark UNTRACKED, never re-run
-//                                  (mirrors the in-process guard in dify_provider.go);
+//     run started but left nothing to poll → mark UNTRACKED, never re-run
+//     (mirrors the in-process guard in dify_provider.go);
 //   - no evidence it started     → no id and no stream-open stamp → never reached Dify → requeue and
-//                                  re-trigger.
+//     re-trigger.
 //
 // Then re-admit from the persisted item state and finalize any job with nothing left to run.
 func (s *Server) resumeBatchJobs() {

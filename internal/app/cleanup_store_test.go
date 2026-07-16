@@ -130,10 +130,15 @@ func TestParseReportInstant(t *testing.T) {
 // Date-only / empty / unparseable sent_at (and rdate) are never used.
 func TestDeleteReportsIngestedBefore(t *testing.T) {
 	st := newTestStore(t)
-	mk := func(uid, date, sentAt string) {
-		if _, err := st.UpsertReport(Rep{UID: uid, Symbol: "600000", Date: date, RType: "x", Time: sentAt}); err != nil {
-			t.Fatalf("seed report %s: %v", uid, err)
+	// Each row needs its own identity (code+date+subtype), so the case name doubles as the
+	// subtype — same-date rows would otherwise upsert onto each other.
+	ids := map[string]int64{}
+	mk := func(name, date, sentAt string) {
+		id, _, err := st.UpsertReport(Rep{Symbol: "600000", Date: date, RType: name, Time: sentAt})
+		if err != nil {
+			t.Fatalf("seed report %s: %v", name, err)
 		}
+		ids[name] = id
 	}
 	oldZ := time.Now().UTC().AddDate(0, 0, -800).Format(time.RFC3339)             // zoned Z
 	oldFrac := time.Now().UTC().AddDate(0, 0, -800).Format("2006-01-02T15:04:05.000000") // no-zone micros
@@ -147,7 +152,7 @@ func TestDeleteReportsIngestedBefore(t *testing.T) {
 	mk("empty-sent", "2020-01-01", "")                // empty → keep
 	mk("olddate-newinstant", "2000-01-01", recentZ)   // rdate old but sent_at recent → keep
 	// tracking items for an eligible report must cascade
-	st.exec("INSERT INTO tracking_items(report_uid,symbol,itype,content,status) VALUES(?,?,?,?,?)", "old-frac", "600000", "assumption", "x", "pending")
+	st.exec("INSERT INTO tracking_items(report_id,symbol,itype,content,status) VALUES(?,?,?,?,?)", ids["old-frac"], "600000", "assumption", "x", "pending")
 
 	cutoff := time.Now().UTC().AddDate(0, 0, -730)
 	if n, err := st.CountReportsIngestedBefore(cutoff); err != nil || n != 2 {
@@ -163,11 +168,17 @@ func TestDeleteReportsIngestedBefore(t *testing.T) {
 	if countRows(t, st, "tracking_items") != 0 {
 		t.Errorf("tracking_items should have cascaded to 0, got %d", countRows(t, st, "tracking_items"))
 	}
-	if st.GetByUID("old-z") != nil || st.GetByUID("old-frac") != nil {
+	gone := func(name string) bool {
+		rep, _ := st.GetNew(ids[name])
+		return rep == nil
+	}
+	if !gone("old-z") || !gone("old-frac") {
 		t.Errorf("both old reports should be gone")
 	}
-	if st.GetByUID("recent-z") == nil || st.GetByUID("recent-frac") == nil || st.GetByUID("legacy-dateonly") == nil || st.GetByUID("empty-sent") == nil {
-		t.Errorf("a kept report was wrongly deleted")
+	for _, name := range []string{"recent-z", "recent-frac", "legacy-dateonly", "empty-sent", "olddate-newinstant"} {
+		if gone(name) {
+			t.Errorf("kept report %q was wrongly deleted", name)
+		}
 	}
 }
 
@@ -178,26 +189,27 @@ func TestDeleteReportChunk_ReingestSkipped(t *testing.T) {
 	old := time.Now().UTC().AddDate(0, 0, -800).Format(time.RFC3339)
 	fresh := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
 	// The report currently carries a FRESH sent_at (it was just re-ingested)...
-	if _, err := st.UpsertReport(Rep{UID: "r1", Symbol: "600000", Date: "2024-01-01", RType: "x", Time: fresh}); err != nil {
+	id, _, err := st.UpsertReport(Rep{Symbol: "600000", Date: "2024-01-01", RType: "x", Time: fresh})
+	if err != nil {
 		t.Fatal(err)
 	}
-	st.exec("INSERT INTO tracking_items(report_uid,symbol,itype,content,status) VALUES(?,?,?,?,?)", "r1", "600000", "assumption", "x", "pending")
+	st.exec("INSERT INTO tracking_items(report_id,symbol,itype,content,status) VALUES(?,?,?,?,?)", id, "600000", "assumption", "x", "pending")
 
 	// ...but the purge holds a STALE key from the earlier scan → must skip it.
-	if n, err := st.deleteReportChunk([]reportKey{{uid: "r1", sent: old}}); err != nil || n != 0 {
+	if n, err := st.deleteReportChunk([]reportKey{{id: id, sent: old}}); err != nil || n != 0 {
 		t.Fatalf("stale-key delete = %d,%v; want 0", n, err)
 	}
-	if st.GetByUID("r1") == nil {
+	if rep, _ := st.GetNew(id); rep == nil {
 		t.Fatal("re-ingested report was wrongly deleted")
 	}
 	if countRows(t, st, "tracking_items") != 1 {
 		t.Errorf("tracking_items of a preserved report must NOT be cascaded")
 	}
 	// A key that matches the current sent_at deletes the report and cascades its items.
-	if n, err := st.deleteReportChunk([]reportKey{{uid: "r1", sent: fresh}}); err != nil || n != 1 {
+	if n, err := st.deleteReportChunk([]reportKey{{id: id, sent: fresh}}); err != nil || n != 1 {
 		t.Fatalf("matching-key delete = %d,%v; want 1", n, err)
 	}
-	if st.GetByUID("r1") != nil || countRows(t, st, "tracking_items") != 0 {
+	if rep, _ := st.GetNew(id); rep != nil || countRows(t, st, "tracking_items") != 0 {
 		t.Errorf("matching delete should remove report + cascade tracking_items")
 	}
 }

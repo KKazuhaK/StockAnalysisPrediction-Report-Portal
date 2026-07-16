@@ -1,7 +1,9 @@
 package app
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
@@ -23,10 +25,9 @@ func boolInt(b bool) int {
 	return 0
 }
 
-// Rep is the unified representation for both new and old reports (used for lists/grouping/reading).
+// Rep is the unified representation of a report (used for lists/grouping/reading).
 type Rep struct {
-	RID, Src      string // RID: "n<id>" new / "o<id>" old
-	UID           string // stable external id of a new report (used for upsert)
+	ID            int64 // the report's only identifier: reports.id, spoken by every API
 	Title, Symbol string
 	Name          string // company name snapshotted at ingest (backdoor-listing / rename safe)
 	RType, Date   string
@@ -173,24 +174,56 @@ func (s *Store) groupConcatDistinct(col string) string {
 	return fmt.Sprintf("GROUP_CONCAT(DISTINCT %s)", col)
 }
 
-// init opens/upgrades the database: it lays down the current-generation base schema, runs any
-// pending migration to bring an older database up to it, reconciles pure-additive columns, then
-// guarantees the fallback group.
+// init opens the database, enforces the current release-line baseline, lays down the complete
+// base schema, reconciles pure-additive columns and indexes, then guarantees the fallback group.
 func (s *Store) init() error {
+	fresh, err := s.requireSchemaBaseline()
+	if err != nil {
+		return err
+	}
 	if err := s.createBaseSchema(); err != nil {
 		return err
 	}
-	if err := s.migrate(); err != nil {
-		return err
-	}
 	// Additive columns need no versioned migration — they are auto-reconciled here (guarded, so a
-	// no-op once present). Only data moves/drops go through migrate().
+	// no-op once present). A major-boundary release never carries old data-move/drop steps.
 	if err := s.ensureColumns(); err != nil {
 		return err
+	}
+	if err := s.ensureAdditiveIndexes(); err != nil {
+		return err
+	}
+	if fresh {
+		if err := s.setSchemaVersion(schemaBaseline); err != nil {
+			return err
+		}
 	}
 	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
 	return nil
 }
+
+// ensureAdditiveIndexes complements ensureColumns for indexes that reference newly-added
+// columns. It runs after column reconciliation, is idempotent, and never drops or rebuilds data.
+func (s *Store) ensureAdditiveIndexes() error {
+	for _, ddl := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash) WHERE token_hash IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_reports_symbol_date_time ON reports(symbol,rdate,sent_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_reports_date_time ON reports(rdate,sent_at)`,
+	} {
+		if _, err := s.exec(ddl); err != nil {
+			return fmt.Errorf("ensure additive index [%s]: %w", ddl, err)
+		}
+	}
+	return nil
+}
+
+// reportIdentExpr is the SQL expression tuple that identifies a report: the stock code, falling
+// back to the title for thematic reports that have no code, plus the civil date and the subtype.
+// It is written ONCE and shared by the unique index and UpsertReport's ON CONFLICT target — those
+// two must match exactly for conflict inference to resolve, so they must never be edited apart.
+// Valid as-is on both SQLite and Postgres (both accept COALESCE/NULLIF as a bare index element).
+const reportIdentExpr = `COALESCE(NULLIF(symbol,''), title), rdate, rtype`
+
+const reportIdentIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_ident ON reports(` + reportIdentExpr + `)`
 
 // baseSchemaStmts returns the full current-generation schema as CREATE statements — the single
 // source of truth for the DB shape. createBaseSchema execs it on a fresh database; ensureColumns
@@ -198,18 +231,28 @@ func (s *Store) init() error {
 // additive column is declared here ONCE and picked up everywhere without a hand-written migration.
 // Per the squash contract (CLAUDE.md hard rules), this base schema equals the fully-migrated final
 // state of the previous release line: the six former 1:1 side tables are folded into parent
-// columns, the dead user_group_members table and links.collapsed column are gone, and the reports
-// surrogate key is `id`. See docs/adr/0013-v2-schema-consolidation.md.
+// columns, the dead user_group_members table and links.collapsed column are gone, and `id` is the
+// reports table's one and only identifier — the former synthetic `uid` column is retired and every
+// API speaks the numeric id. See docs/adr/0013-v2-schema-consolidation.md.
 func (s *Store) baseSchemaStmts() []string {
 	pk := s.pkAuto()
 	return []string{
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS reports(
 			id %s,
-			uid TEXT UNIQUE, title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
+			title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
 			kind TEXT, run_id TEXT,
 			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(rdate)`,
-		`CREATE INDEX IF NOT EXISTS idx_reports_sym  ON reports(symbol)`,
+		`CREATE INDEX IF NOT EXISTS idx_reports_sym ON reports(symbol)`,
+		`CREATE INDEX IF NOT EXISTS idx_reports_symbol_date_time ON reports(symbol,rdate,sent_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_reports_date_time ON reports(rdate,sent_at)`,
+		// Report dedup identity, enforced by the DB rather than a derived string column: the
+		// stock code — or the title when a thematic report has no code — plus the civil date and
+		// the subtype. Re-ingesting the same identity overwrites the row (see UpsertReport's
+		// matching ON CONFLICT target). kind is deliberately NOT part of identity: re-categorizing
+		// a subtype in the registry must never fork a report into two rows. run_id is only a
+		// batch label and likewise stays out.
+		reportIdentIndex,
 		// Entry buttons. group_id: the link group it belongs to (0 = ungrouped/top-level, shown inline).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
 			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1,
@@ -232,17 +275,21 @@ func (s *Store) baseSchemaStmts() []string {
 		// tables (docs/adr/0013-v2-schema-consolidation.md). active defaults to 1 (enabled).
 		`CREATE TABLE IF NOT EXISTS users(
 			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user',
-			display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT, group_id BIGINT)`,
+			display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT, group_id BIGINT,
+			session_rev BIGINT DEFAULT 0)`,
 		// API tokens (multiple, with note/scope/validity period/last used). scope: all|ingest|query.
+		// Existing plaintext token values stay untouched and remain valid. New writes leave token
+		// NULL and authenticate through token_hash; token_prefix is safe display metadata.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS api_tokens(
-			id %s, token TEXT UNIQUE, name TEXT, scope TEXT DEFAULT 'all',
+			id %s, token TEXT UNIQUE, token_hash TEXT, token_prefix TEXT,
+			name TEXT, scope TEXT DEFAULT 'all',
 			created_at TEXT, expires_at TEXT, last_used_at TEXT)`, pk),
 		// Structured "assumption/tracking items" for re-run review (common across report types). itype: assumption|tracking.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS tracking_items(
-			id %s, report_uid TEXT, symbol TEXT, itype TEXT, content TEXT,
+			id %s, report_id BIGINT, symbol TEXT, itype TEXT, content TEXT,
 			status TEXT DEFAULT 'pending', review_point TEXT, created_at TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_track_sym ON tracking_items(symbol, status)`,
-		`CREATE INDEX IF NOT EXISTS idx_track_uid ON tracking_items(report_uid)`,
+		`CREATE INDEX IF NOT EXISTS idx_track_id ON tracking_items(report_id)`,
 		// Stock code → name (enables searching by name after ingest; sourced from eastmoney, synced on startup/fetchnames).
 		`CREATE TABLE IF NOT EXISTS stocks(code TEXT PRIMARY KEY, name TEXT, updated_at TEXT)`,
 		`CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name)`,
@@ -309,10 +356,10 @@ func (s *Store) baseSchemaStmts() []string {
 		// full-scan batch_jobs on the single SQLite connection. RecentJobActivity range-scans created_at.
 		`CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs(status, finished_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_batch_jobs_created ON batch_jobs(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_batch_jobs_run_at ON batch_jobs(run_at) WHERE run_at <> ''`,
 		// Run-queue priority (ADR 0004) and one-shot schedule run_at (ADR 0007) are now the
 		// batch_jobs.priority / run_at columns above (folded from the former job_queue /
-		// job_schedule side tables). The partial index over run_at is created by migrateV1toV2,
-		// after the column is guaranteed to exist on an upgraded database.
+		// job_schedule side tables). The partial run_at index is part of the v0.3 base schema.
 		// Outbound event webhooks (extension point; see docs/adr/0002-extension-architecture.md).
 		// events is a comma-separated subscription list; last_* columns give the admin delivery visibility.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS webhooks(
@@ -390,11 +437,21 @@ func (s *Store) baseSchemaStmts() []string {
 }
 
 // createBaseSchema lays down the current-generation schema on a fresh database (CREATE ... IF NOT
-// EXISTS, so existing tables are left untouched — migrate() folds older shapes up and
-// ensureColumns tops up any missing additive column).
+// EXISTS, so existing tables are left untouched and ensureColumns tops up additive columns).
 func (s *Store) createBaseSchema() error {
 	for _, st := range s.baseSchemaStmts() {
 		if _, err := s.exec(st); err != nil {
+			if st == reportIdentIndex {
+				// The only statement that can fail on a database whose rows are otherwise fine:
+				// the pre-v2 identity folded `kind` in, so one code+date+subtype could legally
+				// exist twice under two kinds. Those rows now collide. Say so — a bare
+				// "UNIQUE constraint failed" here reads as an unrelated startup crash.
+				return fmt.Errorf("create base schema: %w\nSQL: %s\n\n"+
+					"idx_reports_ident enforces one report per (symbol-or-title, rdate, rtype). This database "+
+					"holds rows that collide under it — most likely the same symbol+date+subtype stored twice "+
+					"under different kinds, which the retired uid identity allowed. Collapse the duplicates "+
+					"(keep one row per identity) before starting this version", err, st)
+			}
 			return fmt.Errorf("create base schema: %w\nSQL: %s", err, st)
 		}
 	}
@@ -407,17 +464,19 @@ func (s *Store) createBaseSchema() error {
 // now that the profile attributes are nullable columns on users (folded from user_profiles,
 // ADR 0013): a NULL display_name/email/last_login reads as ” and a NULL active reads as 1.
 const userCols = `u.username,u.password_hash,u.role,
-	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,'')`
+	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,''),
+	COALESCE(u.session_rev,0)`
 
 func scanUser(scan func(...any) error) (User, error) {
 	var u User
 	var role, dn, email, last sql.NullString
-	var active sql.NullInt64
-	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last); err != nil {
+	var active, sessionRev sql.NullInt64
+	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev); err != nil {
 		return User{}, err
 	}
 	u.Role, u.DisplayName, u.Email, u.LastLogin = role.String, dn.String, email.String, last.String
 	u.Active = !active.Valid || active.Int64 != 0
+	u.SessionRev = sessionRev.Int64
 	return u, nil
 }
 
@@ -462,13 +521,14 @@ func (s *Store) UserByEmail(email string) *User {
 
 func (s *Store) UpsertUser(u User) error {
 	_, err := s.exec(`INSERT INTO users(username,password_hash,role) VALUES(?,?,?)
-		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,role=excluded.role`,
+		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,role=excluded.role,
+			session_rev=COALESCE(users.session_rev,0)+1`,
 		u.Username, u.PasswordHash, u.EffRole())
 	return err
 }
 
 func (s *Store) SetUserPassword(name, hash string) error {
-	_, err := s.exec("UPDATE users SET password_hash=? WHERE username=?", hash, name)
+	_, err := s.exec("UPDATE users SET password_hash=?,session_rev=COALESCE(session_rev,0)+1 WHERE username=?", hash, name)
 	return err
 }
 
@@ -650,8 +710,10 @@ func dir(sort string) string {
 
 // ---------- New reports ----------
 
-// SearchNew returns matching new reports (without body).
-func (s *Store) SearchNew(f Filters) ([]Rep, error) {
+// newReportFilter builds the shared reports predicate used by the full search and
+// the home-feed search. Keeping it in one place prevents their filter semantics
+// from drifting.
+func (s *Store) newReportFilter(f Filters) (string, []any) {
 	var where []string
 	var args []any
 	op := s.likeOp()
@@ -687,10 +749,17 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 		where = append(where, "r.rdate <= ?")
 		args = append(args, f.DateTo)
 	}
-	q := "SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
+	if len(where) == 0 {
+		return "", args
 	}
+	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+// SearchNew returns matching new reports (without body).
+func (s *Store) SearchNew(f Filters) ([]Rep, error) {
+	where, args := s.newReportFilter(f)
+	q := "SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
+	q += where
 	q += fmt.Sprintf(" ORDER BY r.rdate %s, r.sent_at %s", dir(f.Sort), dir(f.Sort))
 	rows, err := s.query(q, args...)
 	if err != nil {
@@ -704,13 +773,53 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 	return out, rows.Err()
 }
 
+// SearchNewLatest returns the reports needed by the home feed: every thematic
+// report plus every member on the latest matching date for each stock. It also
+// returns the count before that collapse. Doing the history collapse in SQL avoids
+// transferring and retaining every historical report merely to discard it in Go.
+func (s *Store) SearchNewLatest(f Filters) ([]Rep, int, error) {
+	where, args := s.newReportFilter(f)
+	q := `WITH filtered AS (
+		SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,
+			COUNT(*) OVER() AS filtered_total
+		FROM reports r LEFT JOIN stocks s ON s.code = r.symbol` + where + `
+	), ranked AS (
+		SELECT filtered.*,
+			CASE WHEN COALESCE(symbol,'')='' THEN 1
+			ELSE DENSE_RANK() OVER (PARTITION BY symbol ORDER BY rdate DESC) END AS date_rank
+		FROM filtered
+	)
+	SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,filtered_total
+	FROM ranked WHERE date_rank=1 ORDER BY rdate DESC,sent_at DESC`
+	rows, err := s.query(q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []Rep
+	var total int
+	for rows.Next() {
+		var id int64
+		var title, sym, name, rt, rd, kind, runID, src, sent sql.NullString
+		if err := rows.Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &total); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, Rep{
+			ID: id, Title: title.String, Symbol: sym.String, Name: name.String,
+			RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
+			Source: src.String, Time: sent.String,
+		})
+	}
+	return out, total, rows.Err()
+}
+
 // scanNewRow scans one new-report row (without body). Fixed column order: id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at.
 func scanNewRow(rows *sql.Rows) Rep {
 	var id int64
 	var title, sym, name, rt, rd, kind, runID, src, sent sql.NullString
 	rows.Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent)
 	return Rep{
-		RID: fmt.Sprintf("n%d", id), Src: "new", Title: title.String, Symbol: sym.String, Name: name.String,
+		ID: id, Title: title.String, Symbol: sym.String, Name: name.String,
 		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
 		Source: src.String, Time: sent.String,
 	}
@@ -718,21 +827,33 @@ func scanNewRow(rows *sql.Rows) Rep {
 
 // ApiToken is a single API token (multiple coexist, with note/scope/validity period).
 type ApiToken struct {
-	ID                                             int64
-	Token, Name, Scope, Created, Expires, LastUsed string
+	ID                                              int64
+	Prefix, Name, Scope, Created, Expires, LastUsed string
+}
+
+func tokenDigest(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func tokenPrefix(token string) string {
+	if len(token) <= 8 {
+		return token
+	}
+	return token[:8]
 }
 
 func (s *Store) CreateToken(token, name, scope, expires string) error {
 	if scope == "" {
 		scope = "all"
 	}
-	_, err := s.exec(`INSERT INTO api_tokens(token,name,scope,created_at,expires_at) VALUES(?,?,?,?,?)`,
-		token, name, scope, nowStr(), expires)
+	_, err := s.exec(`INSERT INTO api_tokens(token_hash,token_prefix,name,scope,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
+		tokenDigest(token), tokenPrefix(token), name, scope, nowStr(), expires)
 	return err
 }
 
 func (s *Store) ListTokens() []ApiToken {
-	rows, err := s.query(`SELECT id,token,name,scope,created_at,expires_at,last_used_at FROM api_tokens ORDER BY id DESC`)
+	rows, err := s.query(`SELECT id,COALESCE(NULLIF(token_prefix,''),SUBSTR(COALESCE(token,''),1,8)),name,scope,created_at,expires_at,last_used_at FROM api_tokens ORDER BY id DESC`)
 	if err != nil {
 		return nil
 	}
@@ -741,8 +862,9 @@ func (s *Store) ListTokens() []ApiToken {
 	for rows.Next() {
 		var t ApiToken
 		var name, scope, created, expires, last sql.NullString
-		rows.Scan(&t.ID, &t.Token, &name, &scope, &created, &expires, &last)
-		t.Name, t.Scope, t.Created, t.Expires, t.LastUsed = name.String, scope.String, created.String, expires.String, last.String
+		var prefix sql.NullString
+		rows.Scan(&t.ID, &prefix, &name, &scope, &created, &expires, &last)
+		t.Prefix, t.Name, t.Scope, t.Created, t.Expires, t.LastUsed = prefix.String, name.String, scope.String, created.String, expires.String, last.String
 		out = append(out, t)
 	}
 	return out
@@ -758,23 +880,33 @@ func (s *Store) CountTokens() (n int) {
 	return
 }
 
-// TokenValid validates a token: exists, not expired, scope matches (all or equal to need). Refreshes last_used on success.
+const tokenLastUsedWriteInterval = time.Minute
+
+// TokenValid validates a token: exists, not expired, scope matches (all or equal to need).
+// Successful requests refresh last_used_at at most once per minute. This preserves useful
+// activity data without turning every authenticated read into a database write.
 func (s *Store) TokenValid(token, need string) bool {
 	if token == "" {
 		return false
 	}
-	var scope, expires sql.NullString
-	err := s.queryRow("SELECT scope,expires_at FROM api_tokens WHERE token=?", token).Scan(&scope, &expires)
+	var scope, expires, lastUsed sql.NullString
+	digest := tokenDigest(token)
+	err := s.queryRow("SELECT scope,expires_at,last_used_at FROM api_tokens WHERE token_hash=? OR token=?", digest, token).Scan(&scope, &expires, &lastUsed)
 	if err != nil {
 		return false
 	}
-	if expires.String != "" && expires.String < nowStr() {
+	now := time.Now()
+	nowText := now.Format("2006-01-02 15:04:05")
+	if expires.String != "" && expires.String < nowText {
 		return false // expired
 	}
 	if need != "" && scope.String != "all" && scope.String != need {
 		return false // scope does not cover this operation
 	}
-	s.exec("UPDATE api_tokens SET last_used_at=? WHERE token=?", nowStr(), token)
+	last, parseErr := time.ParseInLocation("2006-01-02 15:04:05", lastUsed.String, time.Local)
+	if !lastUsed.Valid || lastUsed.String == "" || parseErr != nil || now.Sub(last) >= tokenLastUsedWriteInterval {
+		_, _ = s.exec("UPDATE api_tokens SET last_used_at=? WHERE token_hash=? OR token=?", nowText, digest, token)
+	}
 	return true
 }
 
@@ -891,7 +1023,7 @@ func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
 	from := "FROM reports r LEFT JOIN stocks s ON s.code = r.symbol WHERE " + whereClause
 	var total int
 	s.queryRow("SELECT COUNT(*) "+from, args...).Scan(&total)
-	sqlStr := fmt.Sprintf(`SELECT r.id,r.uid,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,r.body_md
+	sqlStr := fmt.Sprintf(`SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,r.body_md
 		%s ORDER BY r.rdate DESC, r.sent_at DESC LIMIT %d OFFSET %d`, from, limit, offset)
 	rows, err := s.query(sqlStr, args...)
 	if err != nil {
@@ -901,9 +1033,9 @@ func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
 	var out []Rep
 	for rows.Next() {
 		var id int64
-		var uid, title, sym, name, rt, rd, kind, runID, src, sent, md sql.NullString
-		rows.Scan(&id, &uid, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md)
-		r := Rep{RID: fmt.Sprintf("n%d", id), Src: "new", UID: uid.String, Title: title.String,
+		var title, sym, name, rt, rd, kind, runID, src, sent, md sql.NullString
+		rows.Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md)
+		r := Rep{ID: id, Title: title.String,
 			Symbol: sym.String, Name: name.String, RType: rt.String, Date: rd.String, Kind: kind.String,
 			RunID: runID.String, Source: src.String, Time: sent.String}
 		if f.WithBody {
@@ -914,31 +1046,17 @@ func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
 	return out, total, rows.Err()
 }
 
-// GetByUID fetches a single new report by uid (with body).
-func (s *Store) GetByUID(uid string) *Rep {
-	var id int64
-	var title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
-	err := s.queryRow(`SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html
-		FROM reports WHERE uid=?`, uid).Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
-	if err != nil {
-		return nil
-	}
-	return &Rep{RID: fmt.Sprintf("n%d", id), Src: "new", UID: uid, Title: title.String, Symbol: sym.String, Name: name.String,
-		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
-		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String}
-}
-
-// TrackingItem is a structured assumption/tracking item. ReportUID is the internal
-// composite key of the parent report; ReportRID is that report's numeric id (rid),
-// exposed by the v1 API.
+// TrackingItem is a structured assumption/tracking item. ReportID is the id of the
+// parent report, exposed as report_id by both APIs.
 type TrackingItem struct {
-	ID                                                                         int64
-	ReportUID, ReportRID, Symbol, IType, Content, Status, ReviewPoint, Created string
+	ID                                                   int64
+	ReportID                                             int64
+	Symbol, IType, Content, Status, ReviewPoint, Created string
 }
 
 // SetTracking overwrites a report's tracking items (on re-run, clears then writes to stay consistent with the latest body).
-func (s *Store) SetTracking(reportUID, symbol string, items []TrackingItem) error {
-	if _, err := s.exec("DELETE FROM tracking_items WHERE report_uid=?", reportUID); err != nil {
+func (s *Store) SetTracking(reportID int64, symbol string, items []TrackingItem) error {
+	if _, err := s.exec("DELETE FROM tracking_items WHERE report_id=?", reportID); err != nil {
 		return err
 	}
 	now := nowStr()
@@ -947,8 +1065,8 @@ func (s *Store) SetTracking(reportUID, symbol string, items []TrackingItem) erro
 		if status == "" {
 			status = "pending"
 		}
-		if _, err := s.exec(`INSERT INTO tracking_items(report_uid,symbol,itype,content,status,review_point,created_at)
-			VALUES(?,?,?,?,?,?,?)`, reportUID, symbol, it.IType, it.Content, status, it.ReviewPoint, now); err != nil {
+		if _, err := s.exec(`INSERT INTO tracking_items(report_id,symbol,itype,content,status,review_point,created_at)
+			VALUES(?,?,?,?,?,?,?)`, reportID, symbol, it.IType, it.Content, status, it.ReviewPoint, now); err != nil {
 			return err
 		}
 	}
@@ -966,10 +1084,8 @@ func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	// Join the parent report to expose its numeric id (rid). reports.uid is
-	// UNIQUE-indexed, so this is one index seek per row (the result is LIMIT-capped).
-	rows, err := s.query(fmt.Sprintf(`SELECT t.id,t.report_uid,r.id,t.symbol,t.itype,t.content,t.status,t.review_point,t.created_at
-		FROM tracking_items t LEFT JOIN reports r ON r.uid=t.report_uid
+	rows, err := s.query(fmt.Sprintf(`SELECT t.id,t.report_id,t.symbol,t.itype,t.content,t.status,t.review_point,t.created_at
+		FROM tracking_items t
 		WHERE %s ORDER BY t.created_at DESC, t.id DESC LIMIT %d`, strings.Join(where, " AND "), limit), args...)
 	if err != nil {
 		return nil
@@ -978,14 +1094,12 @@ func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
 	var out []TrackingItem
 	for rows.Next() {
 		var t TrackingItem
-		var uid, sym, it, c, st, rp, cr sql.NullString
-		var rowid sql.NullInt64
-		rows.Scan(&t.ID, &uid, &rowid, &sym, &it, &c, &st, &rp, &cr)
-		t.ReportUID, t.Symbol, t.IType, t.Content, t.Status, t.ReviewPoint, t.Created =
-			uid.String, sym.String, it.String, c.String, st.String, rp.String, cr.String
-		if rowid.Valid {
-			t.ReportRID = fmt.Sprintf("n%d", rowid.Int64)
-		}
+		var reportID sql.NullInt64
+		var sym, it, c, st, rp, cr sql.NullString
+		rows.Scan(&t.ID, &reportID, &sym, &it, &c, &st, &rp, &cr)
+		t.ReportID = reportID.Int64
+		t.Symbol, t.IType, t.Content, t.Status, t.ReviewPoint, t.Created =
+			sym.String, it.String, c.String, st.String, rp.String, cr.String
 		out = append(out, t)
 	}
 	return out
@@ -1135,10 +1249,10 @@ func (s *Store) NewBySymbol(symbol string) ([]Rep, error) {
 }
 
 func (s *Store) GetNew(rowid int64) (*Rep, error) {
-	var uid, title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
+	var title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
 	err := s.queryRow(
-		"SELECT uid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE id=?", rowid).
-		Scan(&uid, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
+		"SELECT title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE id=?", rowid).
+		Scan(&title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1146,40 +1260,63 @@ func (s *Store) GetNew(rowid int64) (*Rep, error) {
 		return nil, err
 	}
 	return &Rep{
-		RID: fmt.Sprintf("n%d", rowid), Src: "new", UID: uid.String, Title: title.String, Symbol: sym.String, Name: name.String,
+		ID: rowid, Title: title.String, Symbol: sym.String, Name: name.String,
 		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
 		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String,
 	}, nil
 }
 
-// UpsertReport inserts or overwrites a report by uid. Returns created=true when a
-// new row was inserted, false when an existing row was overwritten.
-func (s *Store) UpsertReport(r Rep) (bool, error) {
-	var x int
-	created := s.queryRow("SELECT 1 FROM reports WHERE uid=?", r.UID).Scan(&x) == sql.ErrNoRows
-	_, err := s.exec(`
-		INSERT INTO reports(uid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(uid) DO UPDATE SET title=excluded.title,symbol=excluded.symbol,name=excluded.name,
+// reportIdentWhere matches one report by the identity reportIdentExpr indexes, for the
+// existence probe UpsertReport needs to tell an insert from an overwrite. It is the same
+// tuple spelled as a predicate; keep it in step with reportIdentExpr.
+const reportIdentWhere = `COALESCE(NULLIF(symbol,''), title)=? AND rdate=? AND rtype=?`
+
+// UpsertReport inserts a report, or overwrites the existing row that shares its identity
+// (see reportIdentExpr: code-or-title + date + subtype). Returns the id of the row actually
+// written — callers key tracking items, webhook payloads and API responses off it — and
+// created=true when a new row was inserted, false when an existing one was overwritten.
+func (s *Store) UpsertReport(r Rep) (int64, bool, error) {
+	ident := r.Symbol
+	if ident == "" {
+		ident = r.Title
+	}
+	// Probe first: ON CONFLICT alone cannot tell us which branch it took, and the portable
+	// alternatives (Postgres' xmax trick) do not exist on SQLite. Both statements run against
+	// idx_reports_ident, so this costs one extra index seek per ingest.
+	var prevID int64
+	err := s.queryRow("SELECT id FROM reports WHERE "+reportIdentWhere, ident, r.Date, r.RType).Scan(&prevID)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, false, err
+	}
+	var id int64
+	// RETURNING id yields the written row on both the insert and the update branch, on
+	// SQLite and Postgres alike, so one statement serves both drivers.
+	if err := s.queryRow(`
+		INSERT INTO reports(title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(`+reportIdentExpr+`) DO UPDATE SET title=excluded.title,symbol=excluded.symbol,name=excluded.name,
 		  rtype=excluded.rtype,rdate=excluded.rdate,kind=excluded.kind,run_id=excluded.run_id,
-		  source=excluded.source,sent_at=excluded.sent_at,body_md=excluded.body_md,body_html=excluded.body_html`,
-		r.UID, r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.RunID, r.Source, r.Time, r.MD, r.HTML)
-	return created, err
+		  source=excluded.source,sent_at=excluded.sent_at,body_md=excluded.body_md,body_html=excluded.body_html
+		RETURNING id`,
+		r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.RunID, r.Source, r.Time, r.MD, r.HTML).Scan(&id); err != nil {
+		return 0, false, err
+	}
+	return id, prevID == 0, nil
 }
 
-// DeleteReport removes a report and its tracking items by uid (one tx). Returns
+// DeleteReport removes a report and its tracking items by id (one tx). Returns
 // the number of report rows deleted (0 = no match; safe to retry).
-func (s *Store) DeleteReport(uid string) (int64, error) {
+func (s *Store) DeleteReport(id int64) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
-	res, err := tx.Exec(s.bind("DELETE FROM reports WHERE uid=?"), uid)
+	res, err := tx.Exec(s.bind("DELETE FROM reports WHERE id=?"), id)
 	if err != nil {
 		tx.Rollback()
 		return 0, err
 	}
-	if _, err := tx.Exec(s.bind("DELETE FROM tracking_items WHERE report_uid=?"), uid); err != nil {
+	if _, err := tx.Exec(s.bind("DELETE FROM tracking_items WHERE report_id=?"), id); err != nil {
 		tx.Rollback()
 		return 0, err
 	}

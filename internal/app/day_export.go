@@ -2,7 +2,6 @@ package app
 
 import (
 	"archive/zip"
-	"bytes"
 	"fmt"
 	"log"
 	"net/http"
@@ -97,7 +96,7 @@ func (s *Server) reportDayZip(w http.ResponseWriter, r *http.Request, user strin
 		if m.Date != date {
 			continue
 		}
-		if full := s.loadRep(m.RID); full != nil {
+		if full := s.loadRep(m.ID); full != nil {
 			reps = append(reps, *full)
 		}
 	}
@@ -108,8 +107,14 @@ func (s *Server) reportDayZip(w http.ResponseWriter, r *http.Request, user strin
 
 	entries := dayExportEntries(reps)
 	pdfOK := wkhtmltopdfBin() != "" // render PDFs only when the tool exists; MD always works
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	name := s.names.Get(symbol)
+	if name == "" {
+		name = symbol
+	}
+	fn := sanitizeFilename(name+"_"+symbol+"_"+date) + ".zip"
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(fn))
+	zw := zip.NewWriter(w)
 	for _, e := range entries {
 		if fw, err := zw.Create(e.base + ".md"); err == nil {
 			fw.Write([]byte(e.rep.MD))
@@ -120,12 +125,12 @@ func (s *Server) reportDayZip(w http.ResponseWriter, r *http.Request, user strin
 		rep := e.rep
 		html, err := s.renderPDFHTML(&rep)
 		if err != nil {
-			log.Printf("day-export render %s: %v", e.rep.RID, err)
+			log.Printf("day-export render %d: %v", e.rep.ID, err)
 			continue
 		}
-		pdf, err := htmlToPDF(html)
+		pdf, err := htmlToPDFContext(r.Context(), html)
 		if err != nil {
-			log.Printf("day-export pdf %s: %v", e.rep.RID, err)
+			log.Printf("day-export pdf %d: %v", e.rep.ID, err)
 			continue
 		}
 		if fw, err := zw.Create(e.base + ".pdf"); err == nil {
@@ -141,17 +146,7 @@ func (s *Server) reportDayZip(w http.ResponseWriter, r *http.Request, user strin
 	}
 	if err := zw.Close(); err != nil {
 		log.Printf("day-export zip error: %v", err)
-		http.Error(w, "zip error", http.StatusInternalServerError)
 		return
 	}
-
-	name := s.names.Get(symbol)
-	if name == "" {
-		name = symbol
-	}
-	fn := sanitizeFilename(name+"_"+symbol+"_"+date) + ".zip"
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(fn))
-	w.Write(buf.Bytes())
 	log.Printf("day-export %s %s -> %d reports (pdf=%v)", symbol, date, len(entries), pdfOK)
 }

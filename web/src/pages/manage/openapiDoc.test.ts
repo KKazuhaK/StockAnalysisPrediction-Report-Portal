@@ -23,7 +23,7 @@ const spec = {
         requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/IngestRequest' } } } },
         'x-codeSamples': [{ lang: 'cURL', source: 'curl $BASE/api/v1/reports' }],
         responses: {
-          '200': { content: { 'application/json': { example: { ok: true, uid: 'x' } } } },
+          '200': { content: { 'application/json': { example: { ok: true, id: 1 } } } },
           '400': { description: 'missing_param' },
         },
       },

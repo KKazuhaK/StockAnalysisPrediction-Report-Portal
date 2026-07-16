@@ -43,7 +43,8 @@ func TestRestoreDefaultTypesWipesToFirstRunDefaults(t *testing.T) {
 	s.st.UpsertTypeConfig("重组交易分析", "重组决策", "", 6, false)   // custom type that DOES have report data
 
 	// A stored report keeps the (now-custom) type alive in the data. Restore must not touch report data.
-	if _, err := s.st.UpsertReport(Rep{UID: "r1", RType: "重组交易分析", Kind: "重组决策", Date: "2026-07-04"}); err != nil {
+	id, _, err := s.st.UpsertReport(Rep{Title: "r1", RType: "重组交易分析", Kind: "重组决策", Date: "2026-07-04"})
+	if err != nil {
 		t.Fatalf("UpsertReport: %v", err)
 	}
 
@@ -88,7 +89,7 @@ func TestRestoreDefaultTypesWipesToFirstRunDefaults(t *testing.T) {
 	}
 	// Report data itself is untouched — restore only resets this page's settings.
 	var kind string
-	s.st.queryRow("SELECT kind FROM reports WHERE uid=?", "r1").Scan(&kind)
+	s.st.queryRow("SELECT kind FROM reports WHERE id=?", id).Scan(&kind)
 	if kind != "重组决策" {
 		t.Fatalf("report kind = %q, restore must not touch report data", kind)
 	}

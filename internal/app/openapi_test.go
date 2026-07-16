@@ -22,7 +22,7 @@ func TestOpenAPISpecValid(t *testing.T) {
 		t.Fatalf("paths missing")
 	}
 	for _, p := range []string{
-		"/api/v1/reports", "/api/v1/reports/{uid}", "/api/v1/reports/manifest",
+		"/api/v1/reports", "/api/v1/reports/{id}", "/api/v1/reports/manifest",
 		"/api/v1/runs", "/api/v1/symbols", "/api/v1/tracking", "/api/v1/tracking/{id}",
 		"/api/v1/now", "/healthz",
 	} {

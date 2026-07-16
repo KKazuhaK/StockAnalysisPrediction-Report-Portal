@@ -162,7 +162,14 @@ jobs:
           OWNER_LC: ${{ needs.setup.outputs.owner_lc }}
           REPO_LC: ${{ needs.setup.outputs.repo_lc }}
         run: |
-          cat <<EOF > release_notes.md
+          notes_file="docs/releases/${VERSION}.md"
+          if [ -f "${notes_file}" ]; then
+            cat "${notes_file}" > release_notes.md
+            printf '\n' >> release_notes.md
+          else
+            : > release_notes.md
+          fi
+          cat <<EOF >> release_notes.md
           ### Docker 镜像 (ghcr.io)
 
           \`\`\`shell

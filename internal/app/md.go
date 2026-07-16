@@ -4,12 +4,31 @@ import (
 	"bytes"
 	"html/template"
 
+	"github.com/microcosm-cc/bluemonday"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 )
 
 // mdRenderer: GitHub-flavored Markdown (tables, strikethrough, autolinks, etc.).
 var mdRenderer = goldmark.New(goldmark.WithExtensions(extension.GFM))
+
+// pdfBodyPolicy preserves report typography while removing every element and attribute that can
+// fetch a URL, execute code, or carry CSS. wkhtmltopdf runs server-side, so browser-oriented XSS
+// sanitization alone is insufficient: an image, stylesheet, iframe, or CSS url() would become SSRF.
+var pdfBodyPolicy = func() *bluemonday.Policy {
+	p := bluemonday.NewPolicy()
+	p.AllowElements(
+		"a", "abbr", "b", "blockquote", "br", "code", "dd", "del", "details", "div", "dl", "dt",
+		"em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "kbd", "li", "ol", "p", "pre",
+		"s", "small", "span", "strong", "sub", "summary", "sup", "table", "tbody", "td", "tfoot",
+		"th", "thead", "tr", "u", "ul",
+	)
+	p.AllowAttrs("colspan", "rowspan").OnElements("td", "th")
+	p.SkipElementsContent("script", "style", "iframe", "object", "embed", "svg", "math", "template")
+	return p
+}()
+
+func sanitizePDFBody(body string) string { return pdfBodyPolicy.Sanitize(body) }
 
 // mdToHTML renders Markdown to HTML. On failure it falls back to an escaped <pre>.
 func mdToHTML(md string) string {

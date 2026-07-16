@@ -159,14 +159,14 @@ func TestResetPassword(t *testing.T) {
 	s.st.UpsertUser(User{Username: "kaz", PasswordHash: "hash1", Role: "user"})
 	tok := s.resetToken(s.st.GetUser("kaz"))
 
-	if rec := postJSON(t, s.apiResetPassword, `{"token":"`+tok+`","password":"newpass123"}`); rec.Code != http.StatusOK {
+	if rec := postJSON(t, s.apiResetPassword, `{"token":"`+tok+`","password":"newpass123456"}`); rec.Code != http.StatusOK {
 		t.Fatalf("reset → %d: %s", rec.Code, rec.Body.String())
 	}
-	if u := s.st.GetUser("kaz"); bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("newpass123")) != nil {
+	if u := s.st.GetUser("kaz"); bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("newpass123456")) != nil {
 		t.Error("password was not updated")
 	}
 	// The token is now spent (the hash it bound to changed).
-	if rec := postJSON(t, s.apiResetPassword, `{"token":"`+tok+`","password":"another12"}`); rec.Code == http.StatusOK {
+	if rec := postJSON(t, s.apiResetPassword, `{"token":"`+tok+`","password":"another123456"}`); rec.Code == http.StatusOK {
 		t.Error("a reused reset token was accepted")
 	}
 	// Garbage token and short password are rejected.

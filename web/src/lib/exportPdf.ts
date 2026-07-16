@@ -88,15 +88,15 @@ export function isAbortError(e: unknown): boolean {
 // an AbortSignal to make it cancelable; aborting rejects with an AbortError and, unlike
 // a real network error, does NOT fall back to print (the user asked to stop).
 export async function exportReportPdf(
-  rid: string,
+  id: number,
   report: ReportForPrint,
   signal?: AbortSignal,
 ): Promise<PdfExportResult> {
   try {
-    const res = await fetch(`/report/${encodeURIComponent(rid)}/pdf`, { credentials: 'same-origin', signal })
+    const res = await fetch(`/report/${id}/pdf`, { credentials: 'same-origin', signal })
     if (shouldDownloadPdf({ ok: res.ok, contentType: res.headers.get('content-type') })) {
       const blob = await res.blob()
-      const safe = safeFilename(report.title || rid).slice(0, 80)
+      const safe = safeFilename(report.title || String(id)).slice(0, 80)
       downloadBlob(blob, `${safe}.pdf`)
       return 'downloaded'
     }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -169,7 +170,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uname := strings.TrimSpace(in.Username)
-	ipKey, userKey := "ip:"+clientIP(r), "u:"+uname
+	ipKey, userKey := "ip:"+clientIP(r, s.trustedNets), "u:"+uname
 	now := time.Now()
 	thr := s.loginThr
 	// Hard-block a flooding IP BEFORE the expensive bcrypt (CPU-exhaustion + single-source brute
@@ -205,8 +206,8 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		thr.reset(userKey)
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.sign(u.Username), Path: "/",
-		HttpOnly: true, Secure: requestIsHTTPS(r), SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
+		Name: cookieName, Value: s.signUser(*u), Path: "/",
+		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets), SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
 	})
 	s.st.TouchLastLogin(u.Username)
 	log.Printf("login %s", u.Username)
@@ -218,14 +219,18 @@ func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, okJSON)
 }
 
-// requestIsHTTPS reports whether the request reached the server over TLS, directly or via a
-// TLS-terminating reverse proxy (X-Forwarded-Proto: https). Used to set the session cookie's Secure
-// flag only when it won't break a plain-HTTP deployment (where the browser would drop a Secure cookie).
-func requestIsHTTPS(r *http.Request) bool {
+// requestIsHTTPS reports whether the request reached the server over TLS, directly or through an
+// explicitly trusted TLS-terminating proxy. An untrusted client cannot spoof X-Forwarded-Proto and
+// make a plain-HTTP deployment issue an unusable Secure session cookie.
+func requestIsHTTPS(r *http.Request, trusted []*net.IPNet) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return ipTrusted(net.ParseIP(host), trusted) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // ---------- Home page: search + card list + pagination (reuses the SSR grouping/filtering logic) ----------
@@ -235,8 +240,8 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 	var reps []Rep
 	var newTotal, oldTotal int
 	if src == "all" || src == "new" {
-		nn, _ := s.st.SearchNew(f)
-		newTotal = len(nn)
+		nn, total, _ := s.st.SearchNewLatest(f)
+		newTotal = total
 		reps = append(reps, nn...)
 	}
 	// oldTotal stays 0: legacy reports were migrated into the reports table and now
@@ -291,7 +296,7 @@ func groupsJSON(gs []Group) []map[string]any {
 	for _, g := range gs {
 		members := make([]map[string]any, 0, len(g.Members))
 		for _, m := range g.Members {
-			members = append(members, map[string]any{"rid": m.RID, "rtype": m.RType, "kind": repKind(m), "title": m.Title})
+			members = append(members, map[string]any{"id": m.ID, "rtype": m.RType, "kind": repKind(m), "title": m.Title})
 		}
 		out = append(out, map[string]any{
 			"key": g.Key, "symbol": g.Symbol, "name": g.Name, "curName": g.CurName, "title": g.Title, "date": g.Date,
@@ -358,23 +363,23 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	for i := range kindReps {
 		kindReps[i].Label = label(kindReps[i])
 	}
-	kindReps, defRID := s.orderAndDefault(kindReps)
-	selRID := q.Get("r")
-	if !repInList(kindReps, selRID) {
-		selRID = defRID
+	kindReps, defID := s.orderAndDefault(kindReps)
+	selID, _ := strconv.ParseInt(q.Get("r"), 10, 64)
+	if !repInList(kindReps, selID) {
+		selID = defID
 	}
-	rep := s.loadRep(selRID)
+	rep := s.loadRep(selID)
 	timeline := make([]map[string]any, 0, len(order)) // newest to oldest
 	for _, d := range order {
 		timeline = append(timeline, map[string]any{"date": d, "n": len(byDate[d])})
 	}
 	subtabs := make([]map[string]any, 0, len(kindReps))
 	for _, m := range kindReps {
-		subtabs = append(subtabs, map[string]any{"rid": m.RID, "label": m.Label, "rtype": m.RType})
+		subtabs = append(subtabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType})
 	}
 	writeJSON(w, map[string]any{
 		"symbol": symbol, "name": s.names.Get(symbol),
-		"selDate": selDate, "selKind": selKind, "selRID": selRID,
+		"selDate": selDate, "selKind": selKind, "selId": selID,
 		"timeline": timeline, "kinds": kinds, "subtabs": subtabs,
 		"rep": repJSON(rep, s.names.Get),
 	})
@@ -388,26 +393,27 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 		jsonError(w, http.StatusNotFound, "未找到该 run")
 		return
 	}
-	members, defRID := s.orderAndDefault(members)
-	selRID := r.URL.Query().Get("r")
-	if !repInList(members, selRID) {
-		selRID = defRID
+	members, defID := s.orderAndDefault(members)
+	selID, _ := strconv.ParseInt(r.URL.Query().Get("r"), 10, 64)
+	if !repInList(members, selID) {
+		selID = defID
 	}
-	rep := s.loadRep(selRID)
+	rep := s.loadRep(selID)
 	tabs := make([]map[string]any, 0, len(members))
 	for _, m := range members {
-		tabs = append(tabs, map[string]any{"rid": m.RID, "label": m.Label, "rtype": m.RType})
+		tabs = append(tabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType})
 	}
 	first := members[0]
 	writeJSON(w, map[string]any{
 		"key": key, "symbol": first.Symbol, "name": s.names.Get(first.Symbol), "date": first.Date,
-		"selRID": selRID, "tabs": tabs, "rep": repJSON(rep, s.names.Get),
+		"selId": selID, "tabs": tabs, "rep": repJSON(rep, s.names.Get),
 	})
 }
 
-// apiRepBody fetches a single report body by rid (frontend lazy-loads on tab switch, avoiding a full-page refetch).
+// apiRepBody fetches a single report body by id (frontend lazy-loads on tab switch, avoiding a full-page refetch).
 func (s *Server) apiRepBody(w http.ResponseWriter, r *http.Request, user string) {
-	rep := s.loadRep(strings.TrimSpace(r.URL.Query().Get("rid")))
+	id, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
+	rep := s.loadRep(id)
 	if rep == nil {
 		jsonError(w, http.StatusNotFound, "报告不存在")
 		return
@@ -425,13 +431,13 @@ func repJSON(rep *Rep, nameOf func(string) string) map[string]any {
 	}
 	asof := firstNonEmpty(rep.Name, cur) // as-of snapshot; fall back to current for pre-snapshot reports
 	return map[string]any{
-		"rid": rep.RID, "uid": rep.UID, "title": rep.Title, "symbol": rep.Symbol,
+		"id": rep.ID, "title": rep.Title, "symbol": rep.Symbol,
 		"name": asof, "curName": cur, // name = as-of; curName = current (client shows both when they differ)
 		// displayTitle folds the as-of name into the title ("001696 宗申动力 投资决策建议") for the
 		// reader heading and print-fallback filename; the server computes it once so the download
 		// filenames (MD/PDF Content-Disposition) and the SPA agree. Raw title stays for machine use.
 		"displayTitle": displayTitle(rep.Title, rep.Symbol, asof),
-		"date": rep.Date, "time": rep.Time, "kind": repKind(*rep), "rtype": rep.RType, "source": rep.Source,
+		"date":         rep.Date, "time": rep.Time, "kind": repKind(*rep), "rtype": rep.RType, "source": rep.Source,
 		"md": rep.MD, "html": rep.HTML,
 	}
 }
@@ -798,11 +804,19 @@ func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string)
 		jsonError(w, http.StatusBadRequest, "username and password required")
 		return
 	}
+	if err := validateNewPassword(in.Password); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if s.st.GetUser(name) != nil {
 		jsonError(w, http.StatusBadRequest, "username already exists")
 		return
 	}
-	h, _ := bcrypt.GenerateFromPassword([]byte(in.Password), 12)
+	h, err := bcrypt.GenerateFromPassword([]byte(in.Password), 12)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "could not set password")
+		return
+	}
 	s.st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: validRole(in.Role)})
 	s.st.SetUserProfile(name, strings.TrimSpace(in.DisplayName), strings.TrimSpace(in.Email))
 	s.st.SetPrimaryGroup(name, in.PrimaryGroup)
@@ -834,9 +848,20 @@ func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string
 		}
 		s.st.SetUserRole(name, newRole)
 	}
-	if pw := strings.TrimSpace(in.Password); pw != "" {
-		h, _ := bcrypt.GenerateFromPassword([]byte(pw), 12)
-		s.st.SetUserPassword(name, string(h))
+	if pw := in.Password; pw != "" {
+		if err := validateNewPassword(pw); err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h, err := bcrypt.GenerateFromPassword([]byte(pw), 12)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "could not set password")
+			return
+		}
+		if err := s.st.SetUserPassword(name, string(h)); err != nil {
+			jsonError(w, http.StatusInternalServerError, "could not set password")
+			return
+		}
 	}
 	if in.DisplayName != nil || in.Email != nil {
 		dn, em := u.DisplayName, u.Email
@@ -1059,7 +1084,7 @@ func (s *Server) apiAdminTokens(w http.ResponseWriter, r *http.Request, user str
 	ts := s.st.ListTokens()
 	out := make([]map[string]any, 0, len(ts))
 	for _, t := range ts {
-		out = append(out, map[string]any{"id": t.ID, "token": t.Token, "name": t.Name,
+		out = append(out, map[string]any{"id": t.ID, "prefix": t.Prefix, "name": t.Name,
 			"scope": t.Scope, "created": t.Created, "expires": t.Expires, "lastUsed": t.LastUsed})
 	}
 	writeJSON(w, map[string]any{"tokens": out})
@@ -1067,13 +1092,25 @@ func (s *Server) apiAdminTokens(w http.ResponseWriter, r *http.Request, user str
 
 func (s *Server) apiTokenAdd(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct{ Name, Scope, Expires string }
-	readJSON(r, &in)
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if in.Scope != "all" && in.Scope != "ingest" && in.Scope != "query" {
+		jsonError(w, http.StatusBadRequest, "invalid token scope")
+		return
+	}
 	exp := strings.TrimSpace(in.Expires)
 	if len(exp) == 10 { // date only → expires at 23:59:59 that day
 		exp += " 23:59:59"
 	}
-	s.st.CreateToken(randToken(), strings.TrimSpace(in.Name), in.Scope, exp)
-	writeJSON(w, okJSON)
+	token := randToken()
+	if err := s.st.CreateToken(token, strings.TrimSpace(in.Name), in.Scope, exp); err != nil {
+		jsonError(w, http.StatusInternalServerError, "could not create token")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, map[string]any{"ok": true, "token": token})
 }
 
 func (s *Server) apiTokenDelete(w http.ResponseWriter, r *http.Request, user string) {

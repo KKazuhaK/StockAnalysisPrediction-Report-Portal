@@ -3,11 +3,14 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
 )
+
+const maxBatchRows = 5000
 
 // This file is the persistence layer for the batch-run feature: plugin/target/job/item
 // CRUD that the app-layer run-level scheduler drives. See
@@ -37,6 +40,7 @@ type BatchJob struct {
 	CreatedBy, CreatedAt, StartedAt, FinishedAt string
 	RunAt                                       string // one-shot scheduled start (ADR 0007); "" = run ASAP
 	RunPreset                                   string // JSON preset-window snapshot (ADR 0014); "" = none
+	runningItems, liveItems                     int    // scheduler snapshot; populated by SchedulableJobs
 }
 
 type BatchItem struct {
@@ -153,7 +157,7 @@ func (s *Store) FinishJob(jobID int64, cancelled bool) error {
 
 // ResetInFlightItems requeues crash-orphaned 'running' items that show NO evidence of ever reaching
 // Dify — no run/conversation/task id AND no dify_started_at stamp — so a resumed job re-triggers
-// them from scratch. Re-running is data-idempotent (report ingest upserts on uid) though NOT
+// them from scratch. Re-running is data-idempotent (report ingest upserts on identity) though NOT
 // cost-idempotent (a re-run still burns tokens), so this bucket is deliberately the narrowest: only
 // rows that never opened a stream. Everything that shows it started is handled without a re-run —
 // a run/conversation id → RECONCILE (ResumableInFlightItems); a task_id or a dify_started_at stamp
@@ -273,20 +277,50 @@ func (s *Store) CancellingJobIDs() []int64 {
 // given priority and its items. The scheduler admits it to 'running' later, subject
 // to the global budget (see docs/adr/0004-run-queue.md).
 func (s *Store) CreateBatchJob(targetID int64, concurrency, maxRetries int, createdBy string, rows []map[string]string, priority string) (int64, error) {
+	if len(rows) == 0 {
+		return 0, fmt.Errorf("batch job has no rows")
+	}
+	if len(rows) > maxBatchRows {
+		return 0, fmt.Errorf("too many batch rows: %d (max %d)", len(rows), maxBatchRows)
+	}
 	if priority == "" {
 		priority = "normal"
 	}
 	now := nowStr()
-	jobID, err := s.insertID(`INSERT INTO batch_jobs(target_id,status,concurrency,max_retries,total,created_by,created_at,started_at,priority)
-		VALUES(?,?,?,?,?,?,?,?,?)`, targetID, "queued", concurrency, maxRetries, len(rows), createdBy, now, "", priority)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
+	defer tx.Rollback()
+	jobSQL := `INSERT INTO batch_jobs(target_id,status,concurrency,max_retries,total,created_by,created_at,started_at,priority)
+		VALUES(?,?,?,?,?,?,?,?,?)`
+	args := []any{targetID, "queued", concurrency, maxRetries, len(rows), createdBy, now, "", priority}
+	var jobID int64
+	if s.driver == "postgres" {
+		err = tx.QueryRow(s.bind(jobSQL+" RETURNING id"), args...).Scan(&jobID)
+	} else {
+		var res sql.Result
+		res, err = tx.Exec(s.bind(jobSQL), args...)
+		if err == nil {
+			jobID, err = res.LastInsertId()
+		}
+	}
+	if err != nil {
+		return 0, err
+	}
+	stmt, err := tx.Prepare(s.bind(`INSERT INTO batch_items(job_id,row_index,inputs,status) VALUES(?,?,?,'queued')`))
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
 	for i, row := range rows {
 		b, _ := json.Marshal(row)
-		if _, err := s.exec(`INSERT INTO batch_items(job_id,row_index,inputs,status) VALUES(?,?,?,'queued')`, jobID, i, string(b)); err != nil {
-			return jobID, err
+		if _, err := stmt.Exec(jobID, i, string(b)); err != nil {
+			return 0, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
 	return jobID, nil
 }
@@ -391,7 +425,9 @@ func (s *Store) MarkItemRunning(itemID int64) bool {
 // are excluded. See docs/adr/0011-run-level-scheduling.md.
 func (s *Store) SchedulableJobs() []BatchJob {
 	rows, err := s.query(`SELECT b.id, b.target_id, b.status, b.priority,
-		b.concurrency, b.max_retries, COALESCE(b.created_by,''), b.created_at, b.run_at, b.run_preset
+		b.concurrency, b.max_retries, COALESCE(b.created_by,''), b.created_at, b.run_at, b.run_preset,
+		(SELECT COUNT(*) FROM batch_items i WHERE i.job_id=b.id AND i.status='running'),
+		(SELECT COUNT(*) FROM batch_items i WHERE i.job_id=b.id AND i.status IN ('queued','running'))
 		FROM batch_jobs b
 		WHERE b.status IN ('queued','running') ORDER BY b.id`)
 	if err != nil {
@@ -402,7 +438,7 @@ func (s *Store) SchedulableJobs() []BatchJob {
 	for rows.Next() {
 		var j BatchJob
 		var priority, createdBy, createdAt, runAt, runPreset sql.NullString
-		if err := rows.Scan(&j.ID, &j.TargetID, &j.Status, &priority, &j.Concurrency, &j.MaxRetries, &createdBy, &createdAt, &runAt, &runPreset); err != nil {
+		if err := rows.Scan(&j.ID, &j.TargetID, &j.Status, &priority, &j.Concurrency, &j.MaxRetries, &createdBy, &createdAt, &runAt, &runPreset, &j.runningItems, &j.liveItems); err != nil {
 			continue
 		}
 		j.Priority, j.CreatedBy, j.CreatedAt, j.RunAt, j.RunPreset = priority.String, createdBy.String, createdAt.String, runAt.String, runPreset.String

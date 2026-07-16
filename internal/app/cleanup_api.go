@@ -141,7 +141,7 @@ func (s *Server) apiCleanupUsage(w http.ResponseWriter, r *http.Request, user st
 				batchEligible, batchOld, batchNew),
 			cat("tokens",
 				s.st.usageCount("api_tokens"),
-				s.st.usageBytes("api_tokens", "LENGTH(COALESCE(token,''))+LENGTH(COALESCE(name,''))"),
+				s.st.usageBytes("api_tokens", "LENGTH(COALESCE(token,''))+LENGTH(COALESCE(token_hash,''))+LENGTH(COALESCE(token_prefix,''))+LENGTH(COALESCE(name,''))"),
 				tokEligible, tokOld, tokNew),
 			cat("reports",
 				s.st.usageCount("reports"),

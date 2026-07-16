@@ -8,10 +8,10 @@ import type { TokenRow } from '../../api/types'
 const SCOPE_COLORS: Record<string, string> = { all: 'gold', ingest: 'blue', query: 'green' }
 
 // Bearer tokens for the machine API (/api/v1 and the legacy ingest/query routes).
-// Scopes: all / ingest / query. Tokens are shown masked and copyable.
+// Scopes: all / ingest / query. A secret is shown once on creation; the table keeps only its prefix.
 export default function TokensPage() {
   const { t } = useTranslation()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const [tokens, setTokens] = useState<TokenRow[]>([])
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
@@ -36,13 +36,23 @@ export default function TokensPage() {
 
   const create = async () => {
     const v = await form.validateFields()
-    await api.post('/api/admin/tokens', {
+    const result = await api.post<{ token: string }>('/api/admin/tokens', {
       name: v.name || '',
       scope: v.scope || 'all',
       expires: v.expires ? v.expires.format('YYYY-MM-DD') : '',
     })
     setOpen(false)
-    message.success(t('common.done'))
+    modal.success({
+      title: t('settings.tokenCreated'),
+      content: (
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Typography.Text>{t('settings.tokenCreatedHint')}</Typography.Text>
+          <Typography.Text copyable={{ text: result.token }} code style={{ wordBreak: 'break-all' }}>
+            {result.token}
+          </Typography.Text>
+        </Space>
+      ),
+    })
     load()
   }
 
@@ -85,12 +95,8 @@ export default function TokensPage() {
           { title: t('settings.tokenName'), dataIndex: 'name', render: (n: string) => n || '—' },
           {
             title: t('settings.tokenValue'),
-            dataIndex: 'token',
-            render: (tok: string) => (
-              <Typography.Text copyable={{ text: tok }} style={{ fontFamily: 'monospace' }}>
-                {tok.slice(0, 8)}…{tok.slice(-4)}
-              </Typography.Text>
-            ),
+            dataIndex: 'prefix',
+            render: (prefix: string) => <Typography.Text style={{ fontFamily: 'monospace' }}>{prefix}…</Typography.Text>,
           },
           {
             title: t('settings.tokenScope'),

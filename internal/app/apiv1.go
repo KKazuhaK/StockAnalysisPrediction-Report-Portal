@@ -4,8 +4,9 @@ package app
 // legacy bare /api/* paths (kept for compat):
 //   - errors are a JSON envelope {ok:false, error:{code,message}} (never plain text)
 //   - collections use a uniform {ok:true, count, items:[...]} shape (+ total/offset/limit)
-//   - report identity is portal-derived & deterministic (symbol|date|rtype); the client
-//     never supplies uid, and the server-inferred kind is NOT part of identity
+//   - report identity is portal-derived & deterministic (symbol-or-title + date + rtype,
+//     enforced by a unique index); the client never supplies an id, and the server-inferred
+//     kind is NOT part of identity
 //   - date is validated (YYYY-MM-DD); the as-of name snapshot is honored on every path
 
 import (
@@ -29,36 +30,15 @@ func validReportDate(s string) bool {
 	return err == nil
 }
 
-// deriveUID is the portal-generated, deterministic identity for a report. kind is
-// intentionally excluded so registry re-categorization can never fork identity. This
-// composite stays the internal upsert/dedup key; the v1 API exposes the numeric rid
-// instead (see v1RepJSON / v1ReportByPathID).
-func deriveUID(symbol, date, rtype string) string {
-	return symbol + "|" + date + "|" + rtype
-}
-
-// parseNewRID parses a new-report rid ("n123") to its numeric id. ok=false for anything else
-// (a composite uid, an old-report "o…" id, or garbage).
-func parseNewRID(id string) (int64, bool) {
-	if len(id) < 2 || id[0] != 'n' {
-		return 0, false
-	}
-	n, err := strconv.ParseInt(id[1:], 10, 64)
-	if err != nil || n <= 0 {
-		return 0, false
-	}
-	return n, true
-}
-
-// v1ReportByPathID resolves a v1 report path value to its stored report. The value is
-// the report's rid ("n123", the id the v1 API speaks); the internal composite uid is
-// still accepted for back-compat. Returns nil if there is no such report.
+// v1ReportByPathID resolves a v1 report {id} path value to its stored report.
+// Returns nil if the value is not a positive integer or there is no such report.
 func (s *Server) v1ReportByPathID(id string) *Rep {
-	if rowid, ok := parseNewRID(id); ok {
-		rep, _ := s.st.GetNew(rowid)
-		return rep
+	rowid, err := strconv.ParseInt(id, 10, 64)
+	if err != nil || rowid <= 0 {
+		return nil
 	}
-	return s.st.GetByUID(id)
+	rep, _ := s.st.GetNew(rowid)
+	return rep
 }
 
 // ingestInstant is the real time-of-day stamped onto a report's sent_at. It is a
@@ -66,7 +46,7 @@ func (s *Server) v1ReportByPathID(id string) *Rep {
 // correctly; a client-supplied `time` is honored only when it parses as a full
 // RFC3339 instant (e.g. the utc from GET /api/v1/now), never the old date-only
 // fallback. The instant is stored/returned in UTC and localized for display
-// client-side; it never enters the identity uid (symbol|date|subtype).
+// client-side; it never enters the report identity (symbol-or-title + date + subtype).
 func ingestInstant(clientTime string) string {
 	if t := strings.TrimSpace(clientTime); t != "" {
 		if _, err := time.Parse(time.RFC3339, t); err == nil {
@@ -120,10 +100,9 @@ func v1err(w http.ResponseWriter, status int, code, msg string) {
 // v1RepJSON shapes a report for v1 responses. name prefers the stored as-of snapshot,
 // falling back to the current name only when no snapshot was recorded.
 func (s *Server) v1RepJSON(r Rep, withBody bool) map[string]any {
-	// "uid" carries the numeric report id (rid, "n123") — a stable, ASCII, URL-safe id.
-	// The composite symbol|date|rtype remains the internal dedup key, never exposed.
+	// "id" is the report's numeric row id — the one identifier every API speaks.
 	m := map[string]any{
-		"uid": r.RID, "run_id": r.RunID, "symbol": r.Symbol,
+		"id": r.ID, "run_id": r.RunID, "symbol": r.Symbol,
 		"name": firstNonEmpty(r.Name, s.names.Get(r.Symbol)),
 		"date": r.Date, "time": r.Time, "kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source,
 	}
@@ -133,7 +112,7 @@ func (s *Server) v1RepJSON(r Rep, withBody bool) map[string]any {
 	return m
 }
 
-// POST /api/v1/reports — ingest (portal-derived uid, validated). scope ingest.
+// POST /api/v1/reports — ingest (portal-derived identity, validated). scope ingest.
 func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	if !s.tokenOK(r, "ingest") {
 		v1err(w, http.StatusUnauthorized, "unauthorized", "missing or invalid ingest token")
@@ -186,17 +165,16 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		kind = runKind([]string{rtype})
 	}
 	s.st.RegisterType(rtype, kind)
-	// Thematic reports (no single home stock) have no symbol — fall back to the title so
-	// different topics on the same day don't collide into one uid.
-	uid := deriveUID(firstNonEmpty(in.Symbol, in.Title), in.Date, rtype)
 	// Freeze the as-of name onto this report row: an explicit payload name wins,
 	// otherwise resolve the current live name (rename-safe; earlier reports keep theirs).
 	name := cleanName(in.Name)
 	if name == "" {
 		name = s.names.Resolve(in.Symbol)
 	}
-	created, err := s.st.UpsertReport(Rep{
-		UID: uid, RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
+	// Identity is resolved by the store's unique index (code-or-title + date + subtype),
+	// so a re-ingest overwrites in place and hands back the same id.
+	id, created, err := s.st.UpsertReport(Rep{
+		RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
 		RType: rtype, Title: in.Title, Source: in.Source, Time: ingestInstant(in.Time),
 		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML),
 	})
@@ -210,20 +188,14 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		for _, t := range in.Tracking {
 			items = append(items, TrackingItem{IType: t.IType, Content: t.Content, Status: t.Status, ReviewPoint: t.ReviewPoint})
 		}
-		s.st.SetTracking(uid, in.Symbol, items)
+		s.st.SetTracking(id, in.Symbol, items)
 	}
-	// Resolve the report's numeric id (rid) — the value the v1 API and the webhook
-	// event speak as "uid"; the composite symbol|date|rtype stays the internal dedup key.
-	rid := ""
-	if rep := s.st.GetByUID(uid); rep != nil {
-		rid = rep.RID
-	}
-	log.Printf("v1 ingest %s %s created=%v", in.Symbol, in.Date, created)
+	log.Printf("v1 ingest %s %s id=%d created=%v", in.Symbol, in.Date, id, created)
 	s.fireEvent(EventReportIngested, map[string]any{
-		"uid": rid, "symbol": in.Symbol, "name": name, "date": in.Date,
+		"id": id, "symbol": in.Symbol, "name": name, "date": in.Date,
 		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source, "created": created,
 	})
-	writeJSON(w, map[string]any{"ok": true, "uid": rid, "created": created})
+	writeJSON(w, map[string]any{"ok": true, "id": id, "created": created})
 }
 
 // GET /api/v1/reports — search. scope query.
@@ -282,13 +254,13 @@ func (s *Server) v1QueryReports(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "count": len(items), "total": total, "offset": offset, "limit": limit, "items": items})
 }
 
-// GET /api/v1/reports/{uid} — single report with body. scope query.
+// GET /api/v1/reports/{id} — single report with body. scope query.
 func (s *Server) v1GetReport(w http.ResponseWriter, r *http.Request) {
 	if !s.canQuery(r) {
 		v1err(w, http.StatusUnauthorized, "unauthorized", "missing or invalid query credentials")
 		return
 	}
-	rep := s.v1ReportByPathID(r.PathValue("uid"))
+	rep := s.v1ReportByPathID(r.PathValue("id"))
 	if rep == nil {
 		v1err(w, http.StatusNotFound, "not_found", "no report with that id")
 		return
@@ -299,25 +271,20 @@ func (s *Server) v1GetReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, m)
 }
 
-// DELETE /api/v1/reports/{uid} — retract a report (cascades tracking). scope ingest.
+// DELETE /api/v1/reports/{id} — retract a report (cascades tracking). scope ingest.
 func (s *Server) v1DeleteReport(w http.ResponseWriter, r *http.Request) {
 	if !s.tokenOK(r, "ingest") {
 		v1err(w, http.StatusUnauthorized, "unauthorized", "missing or invalid ingest token")
 		return
 	}
-	// Accept the rid ("n123") the API now speaks, resolving it to the internal
-	// composite uid so the tracking cascade still keys on it; a composite uid still works.
-	id := r.PathValue("uid")
-	uid := id
-	if rowid, ok := parseNewRID(id); ok {
-		rep, _ := s.st.GetNew(rowid)
-		if rep == nil {
-			writeJSON(w, map[string]any{"ok": true, "deleted": 0})
-			return
-		}
-		uid = rep.UID
+	// The tracking cascade keys on report_id, so the id deletes both directly — no
+	// lookup needed. A non-numeric id simply matches nothing (deleted=0, idempotent).
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": true, "deleted": 0})
+		return
 	}
-	n, err := s.st.DeleteReport(uid)
+	n, err := s.st.DeleteReport(id)
 	if err != nil {
 		log.Printf("v1 delete db error: %v", err)
 		v1err(w, http.StatusInternalServerError, "db_error", "database error")
@@ -400,7 +367,7 @@ func (s *Server) v1Tracking(w http.ResponseWriter, r *http.Request) {
 	items := s.st.QueryTracking(symbol, strings.TrimSpace(q.Get("status")), limit)
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, map[string]any{"id": it.ID, "report_uid": it.ReportRID, "itype": it.IType,
+		out = append(out, map[string]any{"id": it.ID, "report_id": it.ReportID, "itype": it.IType,
 			"content": it.Content, "status": it.Status, "review_point": it.ReviewPoint, "created_at": it.Created})
 	}
 	writeJSON(w, map[string]any{"ok": true, "symbol": symbol, "count": len(out), "has": len(out) > 0, "items": out})

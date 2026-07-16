@@ -11,6 +11,7 @@ type User struct {
 	Email        string  //
 	Active       bool    // false = disabled; disabled accounts cannot log in
 	LastLogin    string  // timestamp of the last successful login ("" = never)
+	SessionRev   int64   // incremented on password changes; signed sessions carry this revision
 	Groups       []int64 // vestigial (group model B uses a single primary group_id); unused
 }
 

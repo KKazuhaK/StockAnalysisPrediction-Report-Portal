@@ -38,6 +38,7 @@ import { api } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchQueueSummary, BatchTarget } from '../api/types'
 import { BASE_MAX, fmtInputs, InputsPreview, isTerminal, isUrgent, priorityNum, priorityTag, statusTag } from '../lib/batchUi'
+import { startVisiblePoll } from '../lib/visiblePoll'
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
@@ -61,9 +62,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
     if (jobId == null) return
     setDetail(null)
     setSelected([])
-    load()
-    const id = setInterval(load, 2500)
-    return () => clearInterval(id)
+    return startVisiblePoll(load, 2500)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId])
 
@@ -238,27 +237,26 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const [reschedAt, setReschedAt] = useState<Dayjs | null>(null)
   const [selectedJobs, setSelectedJobs] = useState<Key[]>([])
 
-  const load = () => {
+  const load = async () => {
     // Bounded poll: the server returns every active job + the most recent terminal jobs (not the whole
     // history) plus the true total, so the 3s poll stays cheap on a large finished-job backlog.
-    api
+    const jobsRequest = api
       .get<{ jobs: BatchJob[]; total?: number }>('/api/admin/batch/jobs?limit=300')
       .then((r) => {
         setJobs(r.jobs || [])
         setTotal(r.total ?? (r.jobs || []).length)
       })
       .catch(() => {})
-    api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setSummary).catch(() => {})
+    const summaryRequest = api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setSummary).catch(() => {})
+    await Promise.all([jobsRequest, summaryRequest])
   }
   useEffect(() => {
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
-    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
     if (!auto) return
-    const id = setInterval(load, 3000)
-    return () => clearInterval(id)
+    return startVisiblePoll(load, 3000)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auto])
 

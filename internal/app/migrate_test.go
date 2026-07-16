@@ -60,6 +60,12 @@ func TestEnsureColumnsBackfillsAdditive(t *testing.T) {
 		name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`); err != nil {
 		t.Fatalf("seed link_groups: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT)`); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO meta(k,v) VALUES('schema_version','2')`); err != nil {
+		t.Fatalf("seed schema baseline: %v", err)
+	}
 	if _, err := db.Exec(`INSERT INTO link_groups(name,mode) VALUES('legacy','popover')`); err != nil {
 		t.Fatalf("seed row: %v", err)
 	}
