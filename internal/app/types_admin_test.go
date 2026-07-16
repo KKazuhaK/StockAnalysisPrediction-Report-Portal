@@ -7,6 +7,25 @@ import (
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
+func TestApiAdminTypesKeepsUncategorizedGroupLast(t *testing.T) {
+	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "test-secret"}}
+	s.st.UpsertTypeConfig("daily", "每日推荐", "", 0, false)
+	s.st.UpsertTypeConfig("uncategorized", "未分类", "", 0, false)
+
+	code, out := call(t, s.apiAdminTypes, `{}`, "admin")
+	if code != http.StatusOK {
+		t.Fatalf("apiAdminTypes returned %d", code)
+	}
+	groups, ok := out["groups"].([]any)
+	if !ok || len(groups) != 2 {
+		t.Fatalf("groups = %#v, want two groups", out["groups"])
+	}
+	last, ok := groups[len(groups)-1].(map[string]any)
+	if !ok || last["kind"] != "未分类" {
+		t.Fatalf("last group = %#v, want uncategorized", groups[len(groups)-1])
+	}
+}
+
 // The "Restore defaults" button wipes the type configuration and re-seeds the
 // shipped first-run defaults, so the page returns to exactly what the program
 // generates on first run. Admin-added custom types are removed; already-stored
