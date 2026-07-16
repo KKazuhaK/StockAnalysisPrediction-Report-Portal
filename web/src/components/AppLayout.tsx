@@ -361,9 +361,10 @@ export default function AppLayout() {
         </Space>
       </Header>
 
-      {/* New-version banner: sticky right under the header. The info-colored bar spans full width, but
-          its content aligns to the same content column (contentMaxWidth) as the rest of the page — so on
-          an ultra-wide screen the text and buttons stay together instead of stretching to the far edges. */}
+      {/* New-version banner: sticky right under the header. The info-colored bar spans full width while
+          the notice itself — icon, text, button — is one centred group, so the button always sits beside
+          the sentence it belongs to. Letting the text flex-grow instead pinned the button to the far edge
+          of the 1240px content column, leaving the two marooned at opposite ends of a wide screen. */}
       {updateAvailable && (
         <div
           className="rp-update-banner"
@@ -381,11 +382,17 @@ export default function AppLayout() {
               padding: compact ? '8px 12px' : '8px 20px',
               display: 'flex',
               alignItems: 'center',
+              justifyContent: 'center',
+              flexWrap: 'wrap',
               gap: 10,
             }}
           >
-            <InfoCircleFilled style={{ color: token.colorInfo, fontSize: 15, flexShrink: 0 }} />
-            <span style={{ flex: 1, minWidth: 0, color: token.colorText, fontSize: 14 }}>{t('update.desc')}</span>
+            {/* Icon and sentence are one unit: when the row wraps on a phone, only the button drops to
+                its own line — the icon must never strand itself above the text it annotates. */}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <InfoCircleFilled style={{ color: token.colorInfo, fontSize: 15, flexShrink: 0 }} />
+              <span style={{ minWidth: 0, color: token.colorText, fontSize: 14 }}>{t('update.desc')}</span>
+            </span>
             <Button type="primary" size="small" onClick={() => window.location.reload()}>
               {t('update.refresh')}
             </Button>
