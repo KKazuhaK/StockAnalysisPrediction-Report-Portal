@@ -175,13 +175,20 @@ func (s *Store) groupConcatDistinct(col string) string {
 }
 
 // init opens the database, enforces the current release-line baseline, lays down the complete
-// base schema, reconciles pure-additive columns and indexes, then guarantees the fallback group.
+// base schema, reconciles pure-additive columns, then guarantees the fallback group.
+//
+// The three schema steps are ordered, and the order is the whole point: tables, THEN columns,
+// THEN indexes. An index may cover a column introduced after the table (idx_track_id over
+// tracking_items.report_id), and CREATE TABLE IF NOT EXISTS is a no-op on a database that
+// already has the table — so on every upgrade that column arrives from ensureColumns, not from
+// the CREATE TABLE. Building indexes last means baseSchemaStmts can declare EVERY index next to
+// its table without anyone having to know which release each column landed in.
 func (s *Store) init() error {
 	fresh, err := s.requireSchemaBaseline()
 	if err != nil {
 		return err
 	}
-	if err := s.createBaseSchema(); err != nil {
+	if err := s.createBaseTables(); err != nil {
 		return err
 	}
 	// Additive columns need no versioned migration — they are auto-reconciled here (guarded, so a
@@ -189,7 +196,7 @@ func (s *Store) init() error {
 	if err := s.ensureColumns(); err != nil {
 		return err
 	}
-	if err := s.ensureAdditiveIndexes(); err != nil {
+	if err := s.createBaseIndexes(); err != nil {
 		return err
 	}
 	if fresh {
@@ -198,23 +205,6 @@ func (s *Store) init() error {
 		}
 	}
 	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
-	return nil
-}
-
-// ensureAdditiveIndexes complements ensureColumns for indexes that reference newly-added
-// columns. It runs after column reconciliation, is idempotent, and never drops or rebuilds data.
-func (s *Store) ensureAdditiveIndexes() error {
-	for _, ddl := range []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash) WHERE token_hash IS NOT NULL`,
-		`CREATE INDEX IF NOT EXISTS idx_reports_symbol_date_time ON reports(symbol,rdate,sent_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_reports_date_time ON reports(rdate,sent_at)`,
-		// Indexes a newly-added column: ensureColumns must have added report_id first.
-		`CREATE INDEX IF NOT EXISTS idx_track_id ON tracking_items(report_id)`,
-	} {
-		if _, err := s.exec(ddl); err != nil {
-			return fmt.Errorf("ensure additive index [%s]: %w", ddl, err)
-		}
-	}
 	return nil
 }
 
@@ -291,14 +281,13 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, token TEXT UNIQUE, token_hash TEXT, token_prefix TEXT,
 			name TEXT, scope TEXT DEFAULT 'all',
 			created_at TEXT, expires_at TEXT, last_used_at TEXT)`, pk),
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash) WHERE token_hash IS NOT NULL`,
 		// Structured "assumption/tracking items" for re-run review (common across report types). itype: assumption|tracking.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS tracking_items(
 			id %s, report_id BIGINT, symbol TEXT, itype TEXT, content TEXT,
 			status TEXT DEFAULT 'pending', review_point TEXT, created_at TEXT)`, pk),
 		`CREATE INDEX IF NOT EXISTS idx_track_sym ON tracking_items(symbol, status)`,
-		// idx_track_id is NOT declared here: report_id is added to pre-existing databases by
-		// ensureColumns, which runs AFTER createBaseSchema — indexing it here would fail on
-		// every upgrade. It belongs in ensureAdditiveIndexes (which runs after) instead.
+		`CREATE INDEX IF NOT EXISTS idx_track_id ON tracking_items(report_id)`,
 		// Stock code → name (enables searching by name after ingest; sourced from eastmoney, synced on startup/fetchnames).
 		`CREATE TABLE IF NOT EXISTS stocks(code TEXT PRIMARY KEY, name TEXT, updated_at TEXT)`,
 		`CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name)`,
@@ -445,10 +434,24 @@ func (s *Store) baseSchemaStmts() []string {
 	}
 }
 
-// createBaseSchema lays down the current-generation schema on a fresh database (CREATE ... IF NOT
-// EXISTS, so existing tables are left untouched and ensureColumns tops up additive columns).
-func (s *Store) createBaseSchema() error {
+// isIndexDDL reports whether a base-schema statement creates an index rather than a table.
+// It is what lets init apply the two kinds in separate passes with ensureColumns between them.
+func isIndexDDL(stmt string) bool {
+	u := strings.ToUpper(strings.TrimSpace(stmt))
+	return strings.HasPrefix(u, "CREATE INDEX") || strings.HasPrefix(u, "CREATE UNIQUE INDEX")
+}
+
+// createBaseTables applies every CREATE TABLE in the base schema; createBaseIndexes applies every
+// index, and must run after ensureColumns (see init). Both are CREATE ... IF NOT EXISTS, so an
+// existing database is left untouched and a re-run is a no-op.
+func (s *Store) createBaseTables() error  { return s.execBaseSchema(false) }
+func (s *Store) createBaseIndexes() error { return s.execBaseSchema(true) }
+
+func (s *Store) execBaseSchema(indexes bool) error {
 	for _, st := range s.baseSchemaStmts() {
+		if isIndexDDL(st) != indexes {
+			continue
+		}
 		if _, err := s.exec(st); err != nil {
 			if st == reportIdentIndex {
 				// The only statement that can fail on a database whose rows are otherwise fine.
