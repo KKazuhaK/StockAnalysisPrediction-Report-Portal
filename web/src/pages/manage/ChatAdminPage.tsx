@@ -4,6 +4,7 @@ import { EyeOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import { formatReportTime } from '../../lib/datetime'
+import { startVisiblePoll } from '../../lib/visiblePoll'
 import Markdown from '../../components/Markdown'
 import type { ChatTurn } from '../../api/types'
 
@@ -66,13 +67,11 @@ export default function ChatAdminPage() {
   const loadConvs = () =>
     api.get<{ conversations: AdminConv[] }>('/api/admin/chat/conversations').then((r) => setConvs(r.conversations || [])).catch(() => {})
   useEffect(() => {
-    load()
     loadConvs()
   }, [])
   useEffect(() => {
     if (!auto) return
-    const id = setInterval(load, 3000)
-    return () => clearInterval(id)
+    return startVisiblePoll(load, 3000)
   }, [auto])
 
   const save = async () => {

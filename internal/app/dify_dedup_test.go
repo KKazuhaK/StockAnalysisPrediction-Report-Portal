@@ -26,8 +26,8 @@ func seedDedupServer(t *testing.T) *Server {
 		{"2026-07-01", "汇总"},
 	}
 	for _, r := range seed {
-		if _, err := st.UpsertReport(Rep{
-			UID: deriveUID("600160", r.date, r.subtype), Symbol: "600160", Date: r.date,
+		if _, _, err := st.UpsertReport(Rep{
+			Symbol: "600160", Date: r.date,
 			Kind: "投资决策", RType: r.subtype, Title: "t", Source: "dify", Time: r.date, MD: "body",
 		}); err != nil {
 			t.Fatalf("seed %s/%s: %v", r.date, r.subtype, err)

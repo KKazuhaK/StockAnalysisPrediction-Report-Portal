@@ -11,6 +11,44 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func TestClientIPTrustsOnlyConfiguredProxyChain(t *testing.T) {
+	nets, err := parseTrustedProxies([]string{"10.0.0.0/8", "192.0.2.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	direct := httptest.NewRequest("POST", "/api/login", nil)
+	direct.RemoteAddr = "203.0.113.5:1234"
+	direct.Header.Set("X-Forwarded-For", "198.51.100.9")
+	if got := clientIP(direct, nets); got != "203.0.113.5" {
+		t.Fatalf("untrusted peer spoofed client IP: %s", got)
+	}
+
+	proxied := httptest.NewRequest("POST", "/api/login", nil)
+	proxied.RemoteAddr = "192.0.2.10:443"
+	proxied.Header.Set("X-Forwarded-For", "198.51.100.9, 10.1.2.3")
+	if got := clientIP(proxied, nets); got != "198.51.100.9" {
+		t.Fatalf("trusted proxy chain resolved to %s", got)
+	}
+}
+
+func TestRequestIsHTTPSTrustsForwardedProtoOnlyFromConfiguredProxy(t *testing.T) {
+	trusted, err := parseTrustedProxies([]string{"10.0.0.0/8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "http://portal/api/login", nil)
+	r.Header.Set("X-Forwarded-Proto", "https")
+	r.RemoteAddr = "203.0.113.10:1234"
+	if requestIsHTTPS(r, trusted) {
+		t.Fatal("untrusted client spoofed X-Forwarded-Proto")
+	}
+	r.RemoteAddr = "10.0.0.2:1234"
+	if !requestIsHTTPS(r, trusted) {
+		t.Fatal("trusted TLS proxy was not recognized")
+	}
+}
+
 // Regression for the account-lockout DoS: an attacker failing an account past the ceiling must NOT
 // prevent the real owner (correct password, from a different IP) from logging in.
 func TestLoginNoAccountLockout(t *testing.T) {
@@ -75,17 +113,16 @@ func TestLoginThrottle(t *testing.T) {
 	}
 }
 
-// clientIP uses the RemoteAddr host (port stripped) and deliberately IGNORES a spoofable
-// X-Forwarded-For, so an attacker can't rotate the header to evade the per-IP limit.
+// With no configured trusted proxy, clientIP uses RemoteAddr and ignores X-Forwarded-For.
 func TestClientIP(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/login", nil)
 	r.RemoteAddr = "203.0.113.9:5555"
-	if got := clientIP(r); got != "203.0.113.9" {
+	if got := clientIP(r, nil); got != "203.0.113.9" {
 		t.Errorf("RemoteAddr host = %q; want 203.0.113.9", got)
 	}
 	// A spoofed XFF must NOT change the throttle key.
 	r.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.1")
-	if got := clientIP(r); got != "203.0.113.9" {
+	if got := clientIP(r, nil); got != "203.0.113.9" {
 		t.Errorf("XFF must be ignored; got %q, want 203.0.113.9", got)
 	}
 }

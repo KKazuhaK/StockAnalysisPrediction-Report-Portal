@@ -29,12 +29,12 @@ func TestFoldKindCollapsesToBuckets(t *testing.T) {
 // by folding their explicit kind; unchanged rows are left alone.
 func TestRecomputeKinds(t *testing.T) {
 	st := newTestStore(t)
-	ins := "INSERT INTO reports(uid,symbol,rtype,rdate,kind,source,sent_at) VALUES(?,?,?,?,?,?,?)"
-	st.exec(ins, "legacy|1", "600000", "舆情分析", "2026-01-01", "事件监测", "legacy", "2026-01-01") // → 重组决策
-	st.exec(ins, "legacy|2", "600001", "宏观", "2026-01-02", "宏观", "legacy", "2026-01-02")     // → 未分类
-	st.exec(ins, "legacy|3", "600002", "估值分析", "2026-01-03", "投资决策", "legacy", "2026-01-03") // stays 投资决策
-	st.exec(ins, "n|1", "600003", "舆情分析", "2026-01-04", "事件监测", "dify", "2026-01-04")        // fold → 重组决策
-	st.exec(ins, "legacy|4", "600004", "专题研究", "2026-01-05", "未分类", "legacy", "2026-01-05")
+	ins := "INSERT INTO reports(id,symbol,rtype,rdate,kind,source,sent_at) VALUES(?,?,?,?,?,?,?)"
+	st.exec(ins, 1, "600000", "舆情分析", "2026-01-01", "事件监测", "legacy", "2026-01-01") // → 重组决策
+	st.exec(ins, 2, "600001", "宏观", "2026-01-02", "宏观", "legacy", "2026-01-02")     // → 未分类
+	st.exec(ins, 3, "600002", "估值分析", "2026-01-03", "投资决策", "legacy", "2026-01-03") // stays 投资决策
+	st.exec(ins, 4, "600003", "舆情分析", "2026-01-04", "事件监测", "dify", "2026-01-04")        // fold → 重组决策
+	st.exec(ins, 5, "600004", "专题研究", "2026-01-05", "未分类", "legacy", "2026-01-05")
 	st.UpsertTypeConfig("专题研究", "深度研究", "", 0, false) // 类型管理 mapping → 深度研究
 
 	n, err := st.RecomputeKinds()
@@ -42,18 +42,18 @@ func TestRecomputeKinds(t *testing.T) {
 		t.Fatalf("RecomputeKinds: %v", err)
 	}
 	if n != 4 {
-		t.Errorf("updated = %d, want 4 (legacy|3 unchanged)", n)
+		t.Errorf("updated = %d, want 4 (id=3 unchanged)", n)
 	}
-	check := func(uid, want string) {
+	check := func(id int64, want string) {
 		var k string
-		st.queryRow("SELECT kind FROM reports WHERE uid=?", uid).Scan(&k)
+		st.queryRow("SELECT kind FROM reports WHERE id=?", id).Scan(&k)
 		if k != want {
-			t.Errorf("%s kind = %q, want %q", uid, k, want)
+			t.Errorf("id=%d kind = %q, want %q", id, k, want)
 		}
 	}
-	check("legacy|1", "重组决策")
-	check("legacy|2", "未分类")
-	check("legacy|3", "投资决策")
-	check("n|1", "重组决策")
-	check("legacy|4", "深度研究") // 类型管理 mapping wins over runKind
+	check(1, "重组决策")
+	check(2, "未分类")
+	check(3, "投资决策")
+	check(4, "重组决策")
+	check(5, "深度研究") // 类型管理 mapping wins over runKind
 }

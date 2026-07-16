@@ -59,14 +59,35 @@ export function validateApiRequest(msg: unknown, scopes: string[]): Validated {
     return { ok: false, error: `method ${method} not permitted` }
   }
   if (typeof m.path !== 'string') return { ok: false, error: 'path must be a string' }
-  const path = m.path
+  const rawPath = m.path
   // Must be a same-origin API path, not an absolute/protocol-relative URL, and
-  // must not try to climb out of the v1 namespace.
-  if (!path.startsWith('/api/v1/')) return { ok: false, error: 'path must be under /api/v1/' }
-  if (path.includes('..') || path.includes('//') || /\s/.test(path)) {
+  // must not try to climb out of the v1 namespace. URL parsing is required here:
+  // browsers normalize encoded dot segments before fetch, so a raw string check alone
+  // would accept /api/v1/%2e%2e/admin and then request /api/admin.
+  if (!rawPath.startsWith('/api/v1/') || /\s/.test(rawPath)) {
     return { ok: false, error: 'path is malformed' }
   }
-  return { ok: true, method, path, body: m.body }
+  let decoded = rawPath
+  try {
+    // Reject double-encoded traversal too. Two passes cover the browser/server decoding
+    // boundary without accepting an ambiguous path that different stacks parse differently.
+    for (let i = 0; i < 2; i += 1) decoded = decodeURIComponent(decoded)
+  } catch {
+    return { ok: false, error: 'path is malformed' }
+  }
+  if (decoded.includes('..') || decoded.includes('//') || decoded.includes('\\')) {
+    return { ok: false, error: 'path is malformed' }
+  }
+  let url: URL
+  try {
+    url = new URL(rawPath, 'https://app-bridge.invalid')
+  } catch {
+    return { ok: false, error: 'path is malformed' }
+  }
+  if (url.origin !== 'https://app-bridge.invalid' || !url.pathname.startsWith('/api/v1/') || url.hash) {
+    return { ok: false, error: 'path must be under /api/v1/' }
+  }
+  return { ok: true, method, path: url.pathname + url.search, body: m.body }
 }
 
 // hasReqId reports whether a message carries a usable request id (so the host can

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -99,10 +100,10 @@ func TestReportMDDownloadFilenameFoldsCompanyName(t *testing.T) {
 	if err != nil || len(reps) == 0 {
 		t.Fatalf("NewBySymbol: err=%v n=%d", err, len(reps))
 	}
-	ridStr := reps[0].RID
+	idStr := strconv.FormatInt(reps[0].ID, 10)
 
-	req := httptest.NewRequest("GET", "/report/"+ridStr+"/md", nil)
-	req.SetPathValue("rid", ridStr)
+	req := httptest.NewRequest("GET", "/report/"+idStr+"/md", nil)
+	req.SetPathValue("id", idStr)
 	w := httptest.NewRecorder()
 	s.reportMD(w, req, "tester")
 

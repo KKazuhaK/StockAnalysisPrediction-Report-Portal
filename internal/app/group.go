@@ -3,6 +3,7 @@ package app
 import (
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -94,12 +95,12 @@ func collapseLatestBySymbol(gs []Group) []Group {
 	return out
 }
 
-// gkey grouping key = symbol|date; if there is no symbol, each stands alone (using RID).
+// gkey grouping key = symbol|date; if there is no symbol, each stands alone (using its id).
 func gkey(r Rep) string {
 	if r.Symbol != "" {
 		return r.Symbol + "|" + r.Date
 	}
-	return r.RID
+	return strconv.FormatInt(r.ID, 10)
 }
 
 func isSummary(r Rep) bool {
@@ -140,14 +141,16 @@ func buildGroups(reps []Rep, nameOf func(string) string) []Group {
 		k := gkey(r)
 		g, ok := m[k]
 		if !ok {
-			g = &Group{Key: k, Symbol: r.Symbol, Date: r.Date, Source: r.Source, Src: r.Src}
+			// Src is always "new": the legacy-portal integration is gone, so every report in
+			// the store is a local one. The field (and the SPA's g.src) is kept as the
+			// new/legacy origin axis it was built for, now with only one possible value —
+			// retiring it means dropping the legacy-origin badge and the ?src= list filter
+			// too, a user-visible change of its own rather than part of this refactor.
+			g = &Group{Key: k, Symbol: r.Symbol, Date: r.Date, Source: r.Source, Src: "new"}
 			m[k] = g
 			order = append(order, k)
 		}
 		g.Members = append(g.Members, r)
-		if r.Src == "new" {
-			g.Src = "new"
-		}
 	}
 	out := make([]Group, 0, len(order))
 	for _, k := range order {

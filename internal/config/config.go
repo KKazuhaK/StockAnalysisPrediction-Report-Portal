@@ -17,11 +17,12 @@ import (
 
 // Config is the infrastructure config: listen port, session key, database.
 type Config struct {
-	Listen    string `yaml:"listen"`
-	SecretKey string `yaml:"secret_key"`
-	DBDriver  string `yaml:"db_driver"` // "sqlite" (default) | "postgres"
-	DBPath    string `yaml:"db_path"`   // sqlite file path
-	DBDSN     string `yaml:"db_dsn"`    // postgres DSN
+	Listen         string   `yaml:"listen"`
+	SecretKey      string   `yaml:"secret_key"`
+	TrustedProxies []string `yaml:"trusted_proxies"` // CIDRs/IPs allowed to supply X-Forwarded-For
+	DBDriver       string   `yaml:"db_driver"`       // "sqlite" (default) | "postgres"
+	DBPath         string   `yaml:"db_path"`         // sqlite file path
+	DBDSN          string   `yaml:"db_dsn"`          // postgres DSN
 }
 
 // DBSource returns the connection source for OpenStore (sqlite=file path, postgres=DSN).
@@ -61,7 +62,7 @@ db_path: "data/portal.db"
 	if d := DirOf(path); d != "" {
 		os.MkdirAll(d, 0o755)
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 // LoadConfig reads and parses the YAML config, applying defaults for empty fields.
@@ -81,6 +82,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("RP_SECRET_KEY"); v != "" {
 		c.SecretKey = v
+	}
+	if v := os.Getenv("RP_TRUSTED_PROXIES"); v != "" {
+		c.TrustedProxies = splitNonEmpty(v)
 	}
 	if v := os.Getenv("RP_DB_DRIVER"); v != "" {
 		c.DBDriver = v
@@ -102,6 +106,16 @@ func LoadConfig(path string) (*Config, error) {
 		c.DBPath = "data/portal.db"
 	}
 	return &c, nil
+}
+
+func splitNonEmpty(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // DirOf returns the directory portion of a path, or "." if there is none.

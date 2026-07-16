@@ -7,11 +7,8 @@ PGID="${PGID:-10001}"
 
 mkdir -p /app/config /app/data
 
-# First run: seed the image's example config into ./config for host-side editing.
-if [ ! -f /app/config/config.yaml ] && [ -f /app/config.example.yaml ]; then
-  cp /app/config.example.yaml /app/config/config.yaml
-  echo "[entrypoint] generated default /app/config/config.yaml — edit it (secret_key/accounts/legacy portal), then docker compose restart"
-fi
+# Do not seed config.example.yaml here: it intentionally contains no deployment secret.
+# With no config file the binary creates config.yaml itself with a fresh random secret_key.
 
 # Docker does not chown bind mounts; self-heal here so the non-root process can read/write config/data.
 chown -R "$PUID:$PGID" /app/config /app/data 2>/dev/null || true

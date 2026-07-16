@@ -44,7 +44,14 @@ describe('validateApiRequest', () => {
   })
 
   it('refuses traversal and malformed paths', () => {
-    for (const path of ['/api/v1/../admin', '/api/v1//x', '/api/v1/a b']) {
+    for (const path of [
+      '/api/v1/../admin',
+      '/api/v1/%2e%2e/admin/tokens',
+      '/api/v1/.%2E/admin/tokens',
+      '/api/v1/%252e%252e/admin/tokens',
+      '/api/v1//x',
+      '/api/v1/a b',
+    ]) {
       expect(validateApiRequest({ type: API_MESSAGE, reqId: 1, path }, q).ok).toBe(false)
     }
   })

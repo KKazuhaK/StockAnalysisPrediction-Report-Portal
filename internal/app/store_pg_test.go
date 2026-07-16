@@ -42,16 +42,16 @@ func TestPostgresQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenStore postgres: %v", err)
 	}
-	for _, tbl := range []string{"reports", "stocks"} {
+	for _, tbl := range []string{"reports", "stocks", "api_tokens"} {
 		if _, err := st.exec("DELETE FROM " + tbl); err != nil {
 			t.Fatalf("clean %s: %v", tbl, err)
 		}
 	}
-	ins := "INSERT INTO reports(uid,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"
-	if _, err := st.exec(ins, "u1", "T1", "600160", "Apple Inc", "交易分析", "2026-07-01", "重组决策", "run1", "dify", nowStr(), "body one", ""); err != nil {
+	ins := "INSERT INTO reports(title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+	if _, err := st.exec(ins, "T1", "600160", "Apple Inc", "交易分析", "2026-07-01", "重组决策", "run1", "dify", nowStr(), "body one", ""); err != nil {
 		t.Fatalf("insert 1: %v", err)
 	}
-	if _, err := st.exec(ins, "u2", "T2", "600160", "Apple Inc", "舆情分析", "2026-07-01", "重组决策", "run1", "dify", nowStr(), "body two", ""); err != nil {
+	if _, err := st.exec(ins, "T2", "600160", "Apple Inc", "舆情分析", "2026-07-01", "重组决策", "run1", "dify", nowStr(), "body two", ""); err != nil {
 		t.Fatalf("insert 2: %v", err)
 	}
 	// ListRuns must fold both subtypes into one run (STRING_AGG must not error).
@@ -76,7 +76,7 @@ func TestPostgresQueries(t *testing.T) {
 
 	// FreezeReportNames: the correlated-subquery UPDATE must run on Postgres and only
 	// touch un-named rows whose symbol is known.
-	if _, err := st.exec(ins, "u3", "T3", "600161", "", "交易分析", "2026-07-01", "重组决策", "run2", "dify", nowStr(), "body three", ""); err != nil {
+	if _, err := st.exec(ins, "T3", "600161", "", "交易分析", "2026-07-01", "重组决策", "run2", "dify", nowStr(), "body three", ""); err != nil {
 		t.Fatalf("insert 3: %v", err)
 	}
 	if _, err := st.exec("INSERT INTO stocks(code,name,updated_at) VALUES(?,?,?)", "600161", "Frozen Co", nowStr()); err != nil {
@@ -89,10 +89,29 @@ func TestPostgresQueries(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("frozen rows = %d, want 1 (only the un-named u3)", n)
 	}
-	if r := st.GetByUID("u3"); r == nil || r.Name != "Frozen Co" {
-		t.Fatalf("u3 name = %v, want Frozen Co", r)
+	if r := repByIdent(t, st, "600161", "2026-07-01", "交易分析"); r == nil || r.Name != "Frozen Co" {
+		t.Fatalf("T3 name = %v, want Frozen Co", r)
 	}
-	if r := st.GetByUID("u1"); r == nil || r.Name != "Apple Inc" {
-		t.Fatalf("u1 name = %v, want Apple Inc (already-named row must be untouched)", r)
+	if r := repByIdent(t, st, "600160", "2026-07-01", "交易分析"); r == nil || r.Name != "Apple Inc" {
+		t.Fatalf("T1 name = %v, want Apple Inc (already-named row must be untouched)", r)
+	}
+
+	// Generation-3 credential storage and report indexes must use Postgres-valid SQL too.
+	const token = "postgres-token-secret"
+	if err := st.CreateToken(token, "pg", "query", ""); err != nil {
+		t.Fatalf("CreateToken postgres: %v", err)
+	}
+	if !st.TokenValid(token, "query") {
+		t.Fatal("digest-backed Postgres token was rejected")
+	}
+	var plaintext string
+	if err := st.queryRow(`SELECT COALESCE(token,'') FROM api_tokens WHERE name='pg'`).Scan(&plaintext); err != nil || plaintext != "" {
+		t.Fatalf("Postgres plaintext token = %q, err=%v", plaintext, err)
+	}
+	for _, index := range []string{"idx_api_tokens_hash", "idx_reports_symbol_date_time", "idx_reports_date_time"} {
+		var n int
+		if err := st.queryRow(`SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname=?`, index).Scan(&n); err != nil || n != 1 {
+			t.Errorf("Postgres index %s count=%d err=%v", index, n, err)
+		}
 	}
 }

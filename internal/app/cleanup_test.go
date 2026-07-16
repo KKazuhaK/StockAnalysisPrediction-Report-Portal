@@ -60,7 +60,7 @@ func TestRunCleanupRespectsToggles(t *testing.T) {
 	// tokens + reports disabled (defaults).
 	seedJob(t, st, "finished", agoLocal(120))
 	st.CreateToken("tok", "n", "all", agoLocal(120))
-	st.UpsertReport(Rep{UID: "r1", Symbol: "600000", Date: "2020-01-01", RType: "x",
+	st.UpsertReport(Rep{Symbol: "600000", Date: "2020-01-01", RType: "x",
 		Time: time.Now().UTC().AddDate(0, 0, -900).Format(time.RFC3339)})
 
 	res := s.runCleanup("manual", false, s.cleanupConfigLoad().scheduledTargets())
@@ -88,7 +88,7 @@ func TestRunCleanupReportsFloorClamp(t *testing.T) {
 	s := &Server{st: st}
 	st.SetSetting("cleanup_reports_enabled", "1")
 	st.SetSetting("cleanup_reports_days", "5") // below the 365 floor
-	st.UpsertReport(Rep{UID: "r-6d", Symbol: "600000", Date: "2026-07-01", RType: "x",
+	st.UpsertReport(Rep{Symbol: "600000", Date: "2026-07-01", RType: "x",
 		Time: time.Now().UTC().AddDate(0, 0, -6).Format(time.RFC3339)})
 
 	res := s.runCleanup("manual", false, cleanupTargets{Reports: true})

@@ -176,8 +176,7 @@ export interface SymbolInfo {
 }
 
 export interface Rep {
-  rid: string
-  uid: string
+  id: number
   title: string
   displayTitle: string // title with the as-of company name folded in ("001696 宗申动力 投资决策建议"); server-computed so it matches the MD/PDF download filenames
   symbol: string
@@ -193,7 +192,7 @@ export interface Rep {
 }
 
 export interface GroupMember {
-  rid: string
+  id: number
   rtype: string
   kind: string
   title: string
@@ -235,7 +234,7 @@ export interface TimelineNode {
 }
 
 export interface SubTab {
-  rid: string
+  id: number
   label: string
   rtype: string
 }
@@ -245,7 +244,7 @@ export interface StockResp {
   name: string
   selDate: string
   selKind: string
-  selRID: string
+  selId: number
   timeline: TimelineNode[]
   kinds: string[]
   subtabs: SubTab[]
@@ -257,7 +256,7 @@ export interface RunResp {
   symbol: string
   name: string
   date: string
-  selRID: string
+  selId: number
   tabs: SubTab[]
   rep: Rep | null
 }
@@ -513,7 +512,7 @@ export interface SiteSettings {
 
 export interface TokenRow {
   id: number
-  token: string
+  prefix: string
   name: string
   scope: string
   created: string

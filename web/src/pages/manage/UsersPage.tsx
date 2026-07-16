@@ -350,7 +350,7 @@ export default function UsersPage() {
           <Form.Item name="email" label={t('users.email')} rules={[{ type: 'email', message: t('users.emailInvalid') }]}>
             <Input autoComplete="off" />
           </Form.Item>
-          <Form.Item name="password" label={editUser === 'new' ? t('users.password') : t('users.newPassword')} rules={editUser === 'new' ? [{ required: true }] : []}>
+          <Form.Item name="password" label={editUser === 'new' ? t('users.password') : t('users.newPassword')} rules={[{ required: editUser === 'new', min: 12, message: t('reset.tooShort') }]}>
             <Input.Password autoComplete="new-password" />
           </Form.Item>
           <Form.Item name="role" label={t('users.role')}>
@@ -377,7 +377,7 @@ export default function UsersPage() {
         destroyOnHidden
       >
         <Form form={pwForm} layout="vertical">
-          <Form.Item name="password" label={t('users.newPassword')} rules={[{ required: true }]}>
+          <Form.Item name="password" label={t('users.newPassword')} rules={[{ required: true, min: 12, message: t('reset.tooShort') }]}>
             <Input.Password autoComplete="new-password" />
           </Form.Item>
         </Form>

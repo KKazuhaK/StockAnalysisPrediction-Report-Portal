@@ -5,21 +5,25 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// v1 identity is portal-derived and deterministic: symbol|date|rtype (no kind).
-func TestDeriveUID(t *testing.T) {
-	if got := deriveUID("300750", "2026-07-02", "汇总"); got != "300750|2026-07-02|汇总" {
-		t.Errorf("deriveUID = %q, want 300750|2026-07-02|汇总", got)
+// repByIdent looks a report up by its natural identity (code-or-title + date + subtype)
+// — the same tuple idx_reports_ident enforces. Tests used to reach for GetByUID and a
+// composite string; identity is now the DB's business, so they go through the index too.
+func repByIdent(t *testing.T, st *Store, ident, date, rtype string) *Rep {
+	t.Helper()
+	var id int64
+	if err := st.queryRow("SELECT id FROM reports WHERE "+reportIdentWhere, ident, date, rtype).Scan(&id); err != nil {
+		return nil
 	}
-	// kind is NOT part of identity, so it can't fork the uid
-	a := deriveUID("300750", "2026-07-02", "汇总")
-	b := deriveUID("300750", "2026-07-02", "汇总")
-	if a != b {
-		t.Errorf("deriveUID not deterministic: %q vs %q", a, b)
+	rep, err := st.GetNew(id)
+	if err != nil {
+		t.Fatalf("GetNew(%d): %v", id, err)
 	}
+	return rep
 }
 
 func TestValidReportDate(t *testing.T) {
@@ -74,17 +78,16 @@ func TestV1IngestContract(t *testing.T) {
 		t.Errorf("no-auth body = %v, want ok:false + error{}", m)
 	}
 
-	// valid ingest → 200, portal-derived uid, created:true
+	// valid ingest → 200, portal-derived numeric id, created:true
 	rec = do(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总","kind":"投资决策","title":"t","body_md":"x"}`, "Bearer tok-all")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ingest status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	m := decode(rec)
-	uid, _ := m["uid"].(string)
-	// The v1 API speaks the numeric report id (rid, "n123") as "uid"; the composite
-	// symbol|date|rtype stays the internal dedup key and is never exposed.
-	if m["ok"] != true || m["created"] != true || !strings.HasPrefix(uid, "n") || strings.Contains(uid, "|") {
-		t.Errorf("ingest body = %v, want ok:true created:true uid:<rid like n1>", m)
+	// The v1 API speaks the numeric report id as "id" — a JSON number, the store's row id.
+	id, ok := m["id"].(float64)
+	if m["ok"] != true || m["created"] != true || !ok || id <= 0 {
+		t.Errorf("ingest body = %v, want ok:true created:true id:<positive number>", m)
 	}
 	// re-ingest same identity → created:false
 	if m := decode(do(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总"}`, "Bearer tok-all")); m["created"] != false {
@@ -117,7 +120,7 @@ func TestV1IngestDoesNotPersistDerivedHTML(t *testing.T) {
 		t.Fatalf("ingest status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	rep := s.st.GetByUID("600160|2026-07-02|综合决策")
+	rep := repByIdent(t, s.st, "600160", "2026-07-02", "综合决策")
 	if rep == nil {
 		t.Fatal("report not found")
 	}
@@ -133,7 +136,7 @@ func TestV1IngestDoesNotPersistDerivedHTML(t *testing.T) {
 		`{"symbol":"600161","date":"2026-07-02","subtype":"综合决策","body_html":"<p>legacy</p>"}`))
 	req2.Header.Set("Authorization", "Bearer tok-all")
 	s.v1Ingest(httptest.NewRecorder(), req2)
-	rep2 := s.st.GetByUID("600161|2026-07-02|综合决策")
+	rep2 := repByIdent(t, s.st, "600161", "2026-07-02", "综合决策")
 	if rep2 == nil || rep2.HTML != "<p>legacy</p>" {
 		t.Errorf("caller-supplied HTML not stored verbatim: %+v", rep2)
 	}
@@ -144,7 +147,7 @@ func TestV1IngestDoesNotPersistDerivedHTML(t *testing.T) {
 		`{"symbol":"600162","date":"2026-07-02","subtype":"综合决策","body_md":"# hi","body_html":"<p>should be dropped</p>"}`))
 	req3.Header.Set("Authorization", "Bearer tok-all")
 	s.v1Ingest(httptest.NewRecorder(), req3)
-	rep3 := s.st.GetByUID("600162|2026-07-02|综合决策")
+	rep3 := repByIdent(t, s.st, "600162", "2026-07-02", "综合决策")
 	if rep3 == nil {
 		t.Fatal("report not found")
 	}
@@ -169,7 +172,7 @@ func TestV1IngestCleansExplicitName(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ingest status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rep := s.st.GetByUID("000528|2026-07-02|综合决策")
+	rep := repByIdent(t, s.st, "000528", "2026-07-02", "综合决策")
 	if rep == nil {
 		t.Fatal("report not found")
 	}
@@ -178,14 +181,14 @@ func TestV1IngestCleansExplicitName(t *testing.T) {
 	}
 }
 
-// The v1 API's report identity is the numeric rid ("n123"): ingest returns it as
-// "uid", and GET/{id} resolves it — while the internal composite uid still works for
-// back-compat. The field/route name stays "uid" so external callers (Dify) don't change.
-func TestV1ReportIdentityIsRid(t *testing.T) {
+// The v1 API's report identity is the numeric row id: ingest returns it as "id" (a JSON
+// number), and GET /api/v1/reports/{id} resolves it. The old composite uid is gone from
+// the wire entirely — there is exactly one identifier now.
+func TestV1ReportIdentityIsNumericID(t *testing.T) {
 	s := newV1Server(t)
 	get := func(id string) (*httptest.ResponseRecorder, map[string]any) {
 		req := httptest.NewRequest("GET", "/api/v1/reports/"+id, nil)
-		req.SetPathValue("uid", id)
+		req.SetPathValue("id", id)
 		req.Header.Set("Authorization", "Bearer tok-all")
 		rec := httptest.NewRecorder()
 		s.v1GetReport(rec, req)
@@ -201,26 +204,29 @@ func TestV1ReportIdentityIsRid(t *testing.T) {
 	s.v1Ingest(irec, ing)
 	var im map[string]any
 	json.Unmarshal(irec.Body.Bytes(), &im)
-	rid, _ := im["uid"].(string)
-	if !strings.HasPrefix(rid, "n") || strings.Contains(rid, "|") {
-		t.Fatalf("ingest uid = %q, want a numeric rid (nN)", rid)
+	id, ok := im["id"].(float64) // JSON numbers decode as float64
+	if !ok || id <= 0 {
+		t.Fatalf("ingest id = %v (%T), want a positive JSON number", im["id"], im["id"])
+	}
+	if _, stale := im["uid"]; stale {
+		t.Errorf("ingest response still carries a uid key: %v", im)
 	}
 
-	// Fetch by the returned rid → the response's uid echoes the rid.
-	rec, m := get(rid)
-	if rec.Code != http.StatusOK || m["uid"] != rid || m["symbol"] != "600519" {
-		t.Fatalf("get by rid = %d %v, want 200 uid:%s symbol:600519", rec.Code, m, rid)
+	// Fetch by the returned id → the response's id echoes it back.
+	rec, m := get(strconv.FormatInt(int64(id), 10))
+	if rec.Code != http.StatusOK || m["id"] != id || m["symbol"] != "600519" {
+		t.Fatalf("get by id = %d %v, want 200 id:%v symbol:600519", rec.Code, m, id)
 	}
 
-	// Back-compat: the internal composite uid still resolves.
-	if rec, _ := get(deriveUID("600519", "2026-07-01", "汇总")); rec.Code != http.StatusOK {
-		t.Fatalf("back-compat get by composite uid = %d, want 200", rec.Code)
+	// The composite uid is not an identifier any more: it must not resolve.
+	if rec, _ := get("600519|2026-07-01|汇总"); rec.Code != http.StatusNotFound {
+		t.Errorf("get by legacy composite uid = %d, want 404 (composite ids are retired)", rec.Code)
 	}
 }
 
-// The tracking endpoint reports its parent by the same numeric report id (rid) the
-// report API speaks — not the internal composite uid.
-func TestV1TrackingReportUIDIsRid(t *testing.T) {
+// The tracking endpoint reports its parent by the same numeric report id the report
+// API speaks, as report_id.
+func TestV1TrackingReportIDIsNumeric(t *testing.T) {
 	s := newV1Server(t)
 	ing := httptest.NewRequest("POST", "/api/v1/reports", strings.NewReader(
 		`{"symbol":"600519","date":"2026-07-01","subtype":"汇总","body_md":"# hi","tracking":[{"itype":"assumption","content":"H2 +20%"}]}`))
@@ -229,7 +235,7 @@ func TestV1TrackingReportUIDIsRid(t *testing.T) {
 	s.v1Ingest(irec, ing)
 	var im map[string]any
 	json.Unmarshal(irec.Body.Bytes(), &im)
-	rid, _ := im["uid"].(string)
+	id, _ := im["id"].(float64)
 
 	req := httptest.NewRequest("GET", "/api/v1/tracking?symbol=600519", nil)
 	req.Header.Set("Authorization", "Bearer tok-all")
@@ -241,8 +247,8 @@ func TestV1TrackingReportUIDIsRid(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("tracking items = %v, want 1", m["items"])
 	}
-	if got := items[0].(map[string]any)["report_uid"]; got != rid {
-		t.Errorf("tracking report_uid = %v, want the rid %s (not the composite uid)", got, rid)
+	if got := items[0].(map[string]any)["report_id"]; got != id {
+		t.Errorf("tracking report_id = %v, want the numeric id %v", got, id)
 	}
 }
 
@@ -255,8 +261,13 @@ func TestV1GetReportDerivesHTMLOnRead(t *testing.T) {
 	ireq.Header.Set("Authorization", "Bearer tok-all")
 	s.v1Ingest(httptest.NewRecorder(), ireq)
 
-	greq := httptest.NewRequest("GET", "/api/v1/reports/600160|2026-07-02|综合决策", nil)
-	greq.SetPathValue("uid", "600160|2026-07-02|综合决策")
+	rep := repByIdent(t, s.st, "600160", "2026-07-02", "综合决策")
+	if rep == nil {
+		t.Fatal("report not found")
+	}
+	idStr := strconv.FormatInt(rep.ID, 10)
+	greq := httptest.NewRequest("GET", "/api/v1/reports/"+idStr, nil)
+	greq.SetPathValue("id", idStr)
 	greq.Header.Set("Authorization", "Bearer tok-all")
 	grec := httptest.NewRecorder()
 	s.v1GetReport(grec, greq)

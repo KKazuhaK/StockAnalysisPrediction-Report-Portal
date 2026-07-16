@@ -70,7 +70,8 @@ export default function StockPage() {
 
   const setDate = (d: string) => setSp({ date: d })
   const setKind = (k: string) => setSp({ date: data.selDate, kind: k })
-  const setRid = (rid: string) => setSp({ date: data.selDate, kind: data.selKind, r: rid })
+  // The report id is numeric in the JSON contract but stays a string in the `?r=` query.
+  const setId = (id: number) => setSp({ date: data.selDate, kind: data.selKind, r: String(id) })
   const rep = data.rep
 
   // Back + stock name/code. This is the page's identity/nav header — it sits at the very
@@ -102,7 +103,7 @@ export default function StockPage() {
   const exportControls = rep ? (
     compact ? (
       <ExportMenu
-        rid={rep.rid}
+        id={rep.id}
         report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
         symbol={data.symbol}
         date={data.selDate}
@@ -110,11 +111,11 @@ export default function StockPage() {
       />
     ) : (
       <>
-        <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
+        <Button icon={<DownloadOutlined />} href={`/report/${rep.id}/md`}>
           {t('stock.exportMd')}
         </Button>
         <ExportPdfButton
-          rid={rep.rid}
+          id={rep.id}
           report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
         />
         <ExportDayButton symbol={data.symbol} date={data.selDate} name={data.name} />
@@ -161,9 +162,9 @@ export default function StockPage() {
                 // dragging the whole page.
                 <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
                   <Segmented
-                    value={data.selRID}
-                    onChange={(v) => setRid(String(v))}
-                    options={data.subtabs.map((s) => ({ label: s.label, value: s.rid }))}
+                    value={data.selId}
+                    onChange={(v) => setId(Number(v))}
+                    options={data.subtabs.map((s) => ({ label: s.label, value: s.id }))}
                   />
                 </div>
               )}

@@ -1,8 +1,10 @@
 package app
 
 import (
+	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -71,16 +73,59 @@ func (l *loginThrottle) reset(key string) {
 	delete(l.recs, key)
 }
 
-// clientIP is the caller IP for throttling: the RemoteAddr host. X-Forwarded-For is deliberately NOT
-// trusted — it is attacker-controlled on a directly-exposed deployment, so honoring it would let an
-// attacker rotate the header to mint a fresh key per request and evade the per-IP limit entirely.
-// Behind a trusted reverse proxy RemoteAddr is the proxy's IP (a shared bucket, hence the account key
-// and password-first check carry the real protection); such deployments should also rate-limit at
-// the proxy.
-func clientIP(r *http.Request) string {
+func parseTrustedProxies(entries []string) ([]*net.IPNet, error) {
+	out := make([]*net.IPNet, 0, len(entries))
+	for _, raw := range entries {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if ip := net.ParseIP(raw); ip != nil {
+			bits := 128
+			if ip.To4() != nil {
+				ip, bits = ip.To4(), 32
+			}
+			out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		_, block, err := net.ParseCIDR(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid IP/CIDR %q", raw)
+		}
+		out = append(out, block)
+	}
+	return out, nil
+}
+
+func ipTrusted(ip net.IP, trusted []*net.IPNet) bool {
+	for _, block := range trusted {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP trusts X-Forwarded-For only when the immediate peer is explicitly configured as a
+// trusted proxy. Walking the chain from right to left prevents a client-supplied leftmost value
+// from bypassing the limiter when the trusted proxy appends the real address.
+func clientIP(r *http.Request, trusted []*net.IPNet) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	peer := net.ParseIP(host)
+	if peer == nil || !ipTrusted(peer, trusted) {
+		return host
+	}
+	current := peer
+	chain := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(chain) - 1; i >= 0 && ipTrusted(current, trusted); i-- {
+		next := net.ParseIP(strings.TrimSpace(chain[i]))
+		if next == nil {
+			continue
+		}
+		current = next
+	}
+	return current.String()
 }

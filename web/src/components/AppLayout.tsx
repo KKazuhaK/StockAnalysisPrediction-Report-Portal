@@ -11,6 +11,7 @@ import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
 import { QUEUE_EVENT, RUN_ANALYSIS_EVENT } from '../lib/shortcuts'
 import { useVersionCheck } from '../lib/useVersionCheck'
+import { startVisiblePoll } from '../lib/visiblePoll'
 import Omnibox from './Omnibox'
 import RunAnalysisModal from './RunAnalysisModal'
 import QueueDrawer from './QueueDrawer'
@@ -124,11 +125,9 @@ export default function AppLayout() {
   }, [])
   // Light poll for the header queue badge (the drawer refreshes faster when open).
   useEffect(() => {
-    if (!canRun) return
+    if (!canRun || queueOpen) return
     const load = () => api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
-    load()
-    const id = setInterval(load, 12000)
-    return () => clearInterval(id)
+    return startVisiblePoll(load, 12000)
   }, [canRun, queueOpen])
 
   // Run Analysis + the queue live here as a modal/drawer, but an entry-link shortcut (from

@@ -50,14 +50,13 @@ func TestRunKindMapsEveryCategory(t *testing.T) {
 }
 
 // A card's kind tags should reflect EVERY distinct top-level kind present in the
-// group (not one arbitrarily-collapsed guess), ordered by kindOrder — for legacy
-// groups just like for new ones.
+// group (not one arbitrarily-collapsed guess), ordered by kindOrder.
 func TestBuildGroupsShowsAllKinds(t *testing.T) {
 	name := func(string) string { return "利通电子" }
 	reps := []Rep{
-		{RID: "o1", Src: "old", Symbol: "603629", Date: "2026-07-01", RType: "估值分析"},    // → 投资决策
-		{RID: "o2", Src: "old", Symbol: "603629", Date: "2026-07-01", RType: "重组分析"},    // → 重组决策
-		{RID: "o3", Src: "old", Symbol: "603629", Date: "2026-07-01", RType: "重组基本面分析"}, // → 重组决策 (dup)
+		{ID: 1, Symbol: "603629", Date: "2026-07-01", RType: "估值分析"},    // → 投资决策
+		{ID: 2, Symbol: "603629", Date: "2026-07-01", RType: "重组分析"},    // → 重组决策
+		{ID: 3, Symbol: "603629", Date: "2026-07-01", RType: "重组基本面分析"}, // → 重组决策 (dup)
 	}
 	gs := buildGroups(reps, name)
 	if len(gs) != 1 {
@@ -98,11 +97,11 @@ func TestKindOrderHasRestructuringDecision(t *testing.T) {
 func TestCollapseLatestBySymbol(t *testing.T) {
 	name := func(string) string { return "麦加芯彩" }
 	reps := []Rep{
-		{RID: "n1", Src: "new", Symbol: "603062", Date: "2026-07-05", RType: "投资决策建议", Time: "2026-07-05 00:50"},
-		{RID: "n2", Src: "new", Symbol: "603062", Date: "2026-07-01", RType: "估值分析", Time: "2026-07-01 09:44"},
-		{RID: "n3", Src: "new", Symbol: "689009", Date: "2026-07-05", RType: "投资决策建议", Time: "2026-07-05 00:37"},
-		{RID: "n4", Src: "new", Symbol: "", Date: "2026-07-04", RType: "专题研究", Title: "CPO行业深度研究", Time: "2026-07-04 10:00"},
-		{RID: "n5", Src: "new", Symbol: "", Date: "2026-07-03", RType: "专题研究", Title: "AI算力研究", Time: "2026-07-03 10:00"},
+		{ID: 1, Symbol: "603062", Date: "2026-07-05", RType: "投资决策建议", Time: "2026-07-05 00:50"},
+		{ID: 2, Symbol: "603062", Date: "2026-07-01", RType: "估值分析", Time: "2026-07-01 09:44"},
+		{ID: 3, Symbol: "689009", Date: "2026-07-05", RType: "投资决策建议", Time: "2026-07-05 00:37"},
+		{ID: 4, Symbol: "", Date: "2026-07-04", RType: "专题研究", Title: "CPO行业深度研究", Time: "2026-07-04 10:00"},
+		{ID: 5, Symbol: "", Date: "2026-07-03", RType: "专题研究", Title: "AI算力研究", Time: "2026-07-03 10:00"},
 	}
 	col := collapseLatestBySymbol(buildGroups(reps, name))
 	if len(col) != 4 { // 603062 (latest), 689009, + 2 thematic

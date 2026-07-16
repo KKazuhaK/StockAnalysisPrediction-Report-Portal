@@ -86,11 +86,11 @@ export default function RunPage() {
           </Space>
           {rep && (
             <Space wrap>
-              <Button icon={<DownloadOutlined />} href={`/report/${rep.rid}/md`}>
+              <Button icon={<DownloadOutlined />} href={`/report/${rep.id}/md`}>
                 {t('stock.exportMd')}
               </Button>
               <ExportPdfButton
-                rid={rep.rid}
+                id={rep.id}
                 report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
               />
             </Space>
@@ -102,9 +102,9 @@ export default function RunPage() {
           // mobile instead of dragging the whole page.
           <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
             <Segmented
-              value={data.selRID}
+              value={data.selId}
               onChange={(v) => setSp({ r: String(v) })}
-              options={data.tabs.map((s) => ({ label: s.label, value: s.rid }))}
+              options={data.tabs.map((s) => ({ label: s.label, value: s.id }))}
             />
           </div>
         )}

@@ -30,7 +30,7 @@ func TestFireEventDeliversToSubscribers(t *testing.T) {
 	// A subscriber to a different event must NOT be called.
 	st.CreateWebhook(recv.URL, []string{"other.event"}, "")
 
-	s.fireEvent(EventReportIngested, map[string]any{"uid": "600519|2026-07-03|A"})
+	s.fireEvent(EventReportIngested, map[string]any{"id": int64(42)})
 
 	select {
 	case r := <-got:
@@ -40,8 +40,8 @@ func TestFireEventDeliversToSubscribers(t *testing.T) {
 		if want := "sha256=" + webhook.Sign("shh", []byte(r.body)); r.sig != want {
 			t.Errorf("signature = %q, want %q", r.sig, want)
 		}
-		if !strings.Contains(r.body, "600519|2026-07-03|A") {
-			t.Errorf("body = %q", r.body)
+		if !strings.Contains(r.body, `"id":42`) {
+			t.Errorf("body = %q, want the numeric report id", r.body)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("matching subscriber was not called")

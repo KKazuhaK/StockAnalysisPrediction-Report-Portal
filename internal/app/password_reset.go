@@ -135,8 +135,8 @@ func (s *Server) apiResetPassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "this reset link is invalid or has expired")
 		return
 	}
-	if len(in.Password) < 6 {
-		jsonError(w, http.StatusBadRequest, "password must be at least 6 characters")
+	if err := validateNewPassword(in.Password); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h, err := bcrypt.GenerateFromPassword([]byte(in.Password), 12)

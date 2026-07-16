@@ -89,7 +89,9 @@ export default function AppView() {
             Authorization: `Bearer ${token}`,
             ...(v.method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
           },
-          credentials: 'same-origin',
+          // The scoped Bearer token is the sole credential for bridge traffic. Never attach the
+          // host session cookie: a parsing bug must not turn an app request into an admin request.
+          credentials: 'omit',
           body: v.method !== 'GET' && v.body !== undefined ? JSON.stringify(v.body) : undefined,
         })
       try {

@@ -15,7 +15,7 @@ Owner acceptance bar (2026-07-08): proceed only if **(a)** external callers are 
   `/api/v1` machine API and the webhook layer reference none of the touched tables. The `rid`
   wire format is derived (`fmt.Sprintf("n%d", id)`), so `reports.rowid → id` does not change it.
 - **(b) Simpler.** 27 → 20 tables, three joins removed, one consistent PK name. The only added
-  code is the one-time `migrateV1toV2` function — transitional, isolated, deleted at v0.3.0.
+  code was the one-time `migrateV1toV2` function — transitional, isolated, and deleted at v0.3.0.
   (`V1`/`V2` in the migration name = internal **schema generation** 1 → 2, independent of the
   release tag; schema generation 2 ships in release v0.2.0.)
 
@@ -127,6 +127,15 @@ Verified end-to-end:
   a clean no-op. The repo's `TEST_POSTGRES_DSN` integration test passes on the v0.2 schema.
 - **`user_groups.priority` NULL semantics** stay "inherit" (column nullable, no default; empty
   string clears to NULL) — confirmed by `TestResolveBasePriority`.
+
+### v0.3 boundary squash
+
+Completed on 2026-07-16. `migrate_v1_to_v2.go` and its data-movement tests were deleted, and
+`idx_batch_jobs_run_at` was folded into the base schema. v0.3 performs only guarded additive
+column/index reconciliation. Startup rejects a generation-1 database before issuing schema DDL and
+directs the operator to run v0.2.26 first; this preserves the cross-boundary upgrade contract without
+carrying destructive migration code into the new release line. Fresh databases are created from the
+complete base schema and stamped at generation 2.
 
 ## Non-goals
 

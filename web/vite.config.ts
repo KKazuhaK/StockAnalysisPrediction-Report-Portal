@@ -26,13 +26,13 @@ export default defineConfig({
     chunkSizeWarningLimit: 1600,
     rollupOptions: {
       output: {
-        // Split the big, stable vendor libs into their own chunks so an app-code
-        // release doesn't invalidate them — the browser keeps antd/react cached
-        // across versions. Route-only deps (markdown, dnd-kit) are left to Rollup,
-        // which keeps them in the lazy route chunks that import them.
+        // Keep React in a stable vendor chunk. Ant Design is deliberately left to
+        // Rollup: forcing every antd/rc module into one manual chunk made code used
+        // only by lazy admin routes part of the initial module-preload graph.
+        // Route-only dependencies (markdown, dnd-kit, admin-only antd components)
+        // can now remain behind their route boundary.
         manualChunks(id) {
           if (!id.includes('node_modules')) return
-          if (id.includes('/antd/') || id.includes('/@ant-design/') || id.includes('/rc-')) return 'antd'
           if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router') || id.includes('/scheduler/')) return 'react'
         },
       },

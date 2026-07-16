@@ -62,10 +62,10 @@ func TestV1IngestTitleOnlyIdentity(t *testing.T) {
 		_, j2 := postV1Ingest(t, s, map[string]any{
 			"date": "2026-07-05", "kind": "深度研究", "subtype": "专题研究", "title": "医药行业深度研究", "body_md": "b",
 		})
-		u1, _ := j1["uid"].(string)
-		u2, _ := j2["uid"].(string)
-		if u1 == "" || u2 == "" || u1 == u2 {
-			t.Fatalf("expected distinct rids, got %v vs %v", u1, u2)
+		id1, _ := j1["id"].(float64)
+		id2, _ := j2["id"].(float64)
+		if id1 <= 0 || id2 <= 0 || id1 == id2 {
+			t.Fatalf("expected distinct ids, got %v vs %v", j1["id"], j2["id"])
 		}
 	})
 
@@ -76,8 +76,8 @@ func TestV1IngestTitleOnlyIdentity(t *testing.T) {
 		_, j2 := postV1Ingest(t, s, map[string]any{
 			"date": "2026-07-06", "kind": "深度研究", "subtype": "专题研究", "title": "红利策略复盘", "body_md": "v2",
 		})
-		if j1["uid"] != j2["uid"] {
-			t.Fatalf("expected same rid on repeat, got %v vs %v", j1["uid"], j2["uid"])
+		if j1["id"] != j2["id"] {
+			t.Fatalf("expected same id on repeat, got %v vs %v", j1["id"], j2["id"])
 		}
 		if j1["created"] != true || j2["created"] != false {
 			t.Fatalf("expected created=true then false, got %v then %v", j1["created"], j2["created"])

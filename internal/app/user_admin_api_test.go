@@ -36,7 +36,7 @@ func TestUserAdminEnrichedFlow(t *testing.T) {
 	gid := int64(g["id"].(float64))
 
 	// Create a user with display name / email / primary group.
-	code, _ := call(t, s.apiUserAdd, fmt.Sprintf(`{"username":"alice","password":"pw12345678","role":"operator","display_name":"Alice A","email":"a@x.com","primary_group":%d}`, gid), "admin")
+	code, _ := call(t, s.apiUserAdd, fmt.Sprintf(`{"username":"alice","password":"pw1234567890","role":"operator","display_name":"Alice A","email":"a@x.com","primary_group":%d}`, gid), "admin")
 	if code != http.StatusOK {
 		t.Fatalf("apiUserAdd → %d", code)
 	}
@@ -96,11 +96,11 @@ func TestUserAdminEnrichedFlow(t *testing.T) {
 
 func TestLoginGatingAndLastLogin(t *testing.T) {
 	s := userAdminServer(t)
-	call(t, s.apiUserAdd, `{"username":"bob","password":"pw12345678","role":"user"}`, "admin")
+	call(t, s.apiUserAdd, `{"username":"bob","password":"pw1234567890","role":"user"}`, "admin")
 
 	login := func() int {
 		rec := httptest.NewRecorder()
-		s.apiLogin(rec, httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"username":"bob","password":"pw12345678"}`)))
+		s.apiLogin(rec, httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"username":"bob","password":"pw1234567890"}`)))
 		return rec.Code
 	}
 
@@ -129,8 +129,8 @@ func TestLoginGatingAndLastLogin(t *testing.T) {
 
 func TestBulkActionsAndGuards(t *testing.T) {
 	s := userAdminServer(t)
-	call(t, s.apiUserAdd, `{"username":"u1","password":"pw12345678","role":"user"}`, "admin")
-	call(t, s.apiUserAdd, `{"username":"u2","password":"pw12345678","role":"user"}`, "admin")
+	call(t, s.apiUserAdd, `{"username":"u1","password":"pw1234567890","role":"user"}`, "admin")
+	call(t, s.apiUserAdd, `{"username":"u2","password":"pw1234567890","role":"user"}`, "admin")
 
 	// Bulk disable u1 + u2.
 	code, r := call(t, s.apiUsersBulk, `{"action":"disable","usernames":["u1","u2"]}`, "admin")
