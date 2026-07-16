@@ -18,7 +18,7 @@ vi.mock('../api/client', () => ({
         kinds: ['A'],
         subtabs: [{ label: 'Sub', rid: '1' }],
         timeline: [],
-        rep: { rid: 1, name: 'Test Co', title: 'Report Title', date: '2026-07-07', source: 'x', html: '', md: '# hi', time: '' },
+        rep: { rid: 1, name: 'Test Co', title: 'Report Title', displayTitle: '001238 Test Co Report Title', date: '2026-07-07', source: 'x', html: '', md: '# hi', time: '' },
       }),
   },
   qs: () => '',
@@ -45,9 +45,10 @@ vi.mock('../components/ExportButtons', () => ({
 describe('StockPage', () => {
   it('renders the report after data loads (no hook-order crash)', async () => {
     render(<StockPage />)
-    // Reaching the report title proves the component rendered past the loading→loaded
-    // transition without a hooks-count mismatch.
-    expect(await screen.findByText('Report Title')).toBeTruthy()
+    // Reaching the report heading proves the component rendered past the loading→loaded
+    // transition without a hooks-count mismatch. The heading uses the server-composed
+    // displayTitle (company name folded in), not the bare stored title.
+    expect(await screen.findByText('001238 Test Co Report Title')).toBeTruthy()
     expect(screen.getByText('stock.back')).toBeTruthy()
   })
 })

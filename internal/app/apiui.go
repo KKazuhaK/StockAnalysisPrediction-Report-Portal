@@ -427,6 +427,10 @@ func repJSON(rep *Rep, nameOf func(string) string) map[string]any {
 	return map[string]any{
 		"rid": rep.RID, "uid": rep.UID, "title": rep.Title, "symbol": rep.Symbol,
 		"name": asof, "curName": cur, // name = as-of; curName = current (client shows both when they differ)
+		// displayTitle folds the as-of name into the title ("001696 宗申动力 投资决策建议") for the
+		// reader heading and print-fallback filename; the server computes it once so the download
+		// filenames (MD/PDF Content-Disposition) and the SPA agree. Raw title stays for machine use.
+		"displayTitle": displayTitle(rep.Title, rep.Symbol, asof),
 		"date": rep.Date, "time": rep.Time, "kind": repKind(*rep), "rtype": rep.RType, "source": rep.Source,
 		"md": rep.MD, "html": rep.HTML,
 	}

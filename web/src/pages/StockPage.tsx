@@ -103,7 +103,7 @@ export default function StockPage() {
     compact ? (
       <ExportMenu
         rid={rep.rid}
-        report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+        report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
         symbol={data.symbol}
         date={data.selDate}
         name={data.name}
@@ -115,7 +115,7 @@ export default function StockPage() {
         </Button>
         <ExportPdfButton
           rid={rep.rid}
-          report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+          report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
         />
         <ExportDayButton symbol={data.symbol} date={data.selDate} name={data.name} />
       </>
@@ -170,7 +170,7 @@ export default function StockPage() {
               <Card
                 className="rp-doc-card"
                 styles={{ body: { paddingTop: 8 } }}
-                title={rep?.title}
+                title={rep?.displayTitle}
                 // Report actions live in the card header: exports + reading settings, the
                 // two things you do to the report you're looking at.
                 extra={

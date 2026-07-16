@@ -1120,7 +1120,7 @@ func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
 		http.Error(w, "报告不存在", 404)
 		return
 	}
-	fn := safeFile(rep.Title, rid(r)) + ".md"
+	fn := safeFile(s.repDisplayTitle(rep), rid(r)) + ".md"
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(fn))
 	w.Write([]byte(rep.MD))
@@ -1130,6 +1130,7 @@ func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
 // the HTML column wasn't persisted — md-only reports don't store a redundant copy.
 func (s *Server) renderPDFHTML(rep *Rep) (string, error) {
 	data := *rep
+	data.Title = s.repDisplayTitle(rep) // fold the company name into the <h1>
 	data.HTML = htmlOf(data)
 	var buf strings.Builder
 	if err := s.pdf.ExecuteTemplate(&buf, "pdf.html", data); err != nil {
@@ -1165,7 +1166,7 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) 
 		http.Error(w, "PDF 生成失败: "+err.Error(), 500)
 		return
 	}
-	fn := safeFile(rep.Title, rid(r)) + ".pdf"
+	fn := safeFile(s.repDisplayTitle(rep), rid(r)) + ".pdf"
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(fn))
 	w.Write(pdf)

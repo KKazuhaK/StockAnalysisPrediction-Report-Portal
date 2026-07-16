@@ -179,6 +179,7 @@ export interface Rep {
   rid: string
   uid: string
   title: string
+  displayTitle: string // title with the as-of company name folded in ("001696 宗申动力 投资决策建议"); server-computed so it matches the MD/PDF download filenames
   symbol: string
   name: string // as-of company name (snapshot at ingest)
   curName?: string // current company name; differs after rename / backdoor listing

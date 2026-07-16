@@ -91,7 +91,7 @@ export default function RunPage() {
               </Button>
               <ExportPdfButton
                 rid={rep.rid}
-                report={{ title: rep.title, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+                report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
               />
             </Space>
           )}
@@ -108,7 +108,7 @@ export default function RunPage() {
             />
           </div>
         )}
-          <Card className="rp-doc-card" title={rep?.title} extra={rep ? <ReaderControls /> : undefined} style={readerVars}>
+          <Card className="rp-doc-card" title={rep?.displayTitle} extra={rep ? <ReaderControls /> : undefined} style={readerVars}>
             {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
           </Card>
         </Space>
