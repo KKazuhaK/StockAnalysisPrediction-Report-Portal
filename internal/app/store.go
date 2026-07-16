@@ -239,8 +239,12 @@ func (s *Store) baseSchemaStmts() []string {
 			title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
 			kind TEXT, run_id TEXT,
 			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT)`, pk),
-		`CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(rdate)`,
-		`CREATE INDEX IF NOT EXISTS idx_reports_sym ON reports(symbol)`,
+		// These two carry every lookup by code or date. Single-column idx_reports_sym(symbol) and
+		// idx_reports_date(rdate) used to sit beside them and are gone: a B-tree already serves its
+		// leftmost prefix, so both were answered by a wider index anyway. Measured on 30k rows,
+		// Postgres never once chose idx_reports_sym — symbol lookups go to idx_reports_ident — and
+		// dropping idx_reports_date moved rdate lookups onto idx_reports_date_time for +0.9% cost.
+		// They only ever charged write amplification on every ingest. Don't reintroduce them.
 		`CREATE INDEX IF NOT EXISTS idx_reports_symbol_date_time ON reports(symbol,rdate,sent_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_reports_date_time ON reports(rdate,sent_at)`,
 		// Report dedup identity, enforced by the DB rather than a derived string column: the
