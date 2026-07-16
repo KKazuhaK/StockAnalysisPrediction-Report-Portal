@@ -590,7 +590,8 @@ func (s *Server) apiAdminTypes(w http.ResponseWriter, r *http.Request, user stri
 	cfg := s.st.TypeConfigs()
 	// Group each type by its ACTUAL category so custom (user-added) categories get
 	// their own group. Order: preset categories (that have rows), then custom
-	// categories (sorted), then the "其他" catch-all last.
+	// categories (sorted), then legacy fallback rows, with the current
+	// uncategorized group always last.
 	presets := []string{"重组决策", "投资决策", "深度研究", "技术分析", "事件监测"}
 	presetSet := map[string]bool{}
 	for _, k := range presets {
@@ -623,9 +624,16 @@ func (s *Server) apiAdminTypes(w http.ResponseWriter, r *http.Request, user stri
 			order = append(order, k)
 		}
 	}
-	order = append(order, custom...)
+	for _, k := range custom {
+		if k != "未分类" {
+			order = append(order, k)
+		}
+	}
 	if len(byKind["其他"]) > 0 {
 		order = append(order, "其他")
+	}
+	if len(byKind["未分类"]) > 0 {
+		order = append(order, "未分类")
 	}
 
 	var groups []map[string]any
