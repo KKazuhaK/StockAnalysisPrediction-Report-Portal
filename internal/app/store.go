@@ -454,18 +454,17 @@ func (s *Store) execBaseSchema(indexes bool) error {
 		}
 		if _, err := s.exec(st); err != nil {
 			if st == reportIdentIndex {
-				// The only statement that can fail on a database whose rows are otherwise fine.
-				// The retired uid accepted a caller-supplied value, so an ingester that sent its
-				// own uid per run bypassed dedup entirely and stacked up several rows sharing this
-				// identity — re-runs of one report. They collide now. Say so, and hand over the
-				// query: a bare "UNIQUE constraint failed" reads as an unrelated startup crash.
+				// The only statement that can fail on a database whose rows are otherwise fine:
+				// history predating this index can hold rows that collide under it. Hand over the
+				// query rather than a theory of how they got there — a bare "UNIQUE constraint
+				// failed" here reads as an unrelated startup crash.
 				return fmt.Errorf("create base schema: %w\nSQL: %s\n\n"+
 					"idx_reports_ident enforces one report per (symbol, rdate, rtype, title). This database holds "+
-					"rows that collide under it — most likely repeated runs of the same report, which the retired "+
-					"uid identity let stack up. Inspect them with:\n\n"+
+					"rows that collide under it, from before the index existed. Inspect them with:\n\n"+
 					"  SELECT symbol, rdate, rtype, title, COUNT(*) FROM reports\n"+
 					"  GROUP BY 1,2,3,4 HAVING COUNT(*) > 1;\n\n"+
-					"then keep one row per identity (newest wins) before starting this version", err, st)
+					"Archive them (CREATE TABLE ... AS SELECT) and keep one row per identity — prefer a row with a\n"+
+					"body, newest wins — before starting this version", err, st)
 			}
 			return fmt.Errorf("create base schema: %w\nSQL: %s", err, st)
 		}
