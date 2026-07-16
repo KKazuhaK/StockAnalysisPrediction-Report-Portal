@@ -9,7 +9,7 @@ import (
 
 func TestApiAdminTypesKeepsUncategorizedGroupLast(t *testing.T) {
 	s := &Server{st: newTestStore(t), cfg: &config.Config{SecretKey: "test-secret"}}
-	s.st.UpsertTypeConfig("daily", "每日推荐", "", 0, false)
+	s.st.UpsertTypeConfig("daily", "每日金股", "", 0, false)
 	s.st.UpsertTypeConfig("uncategorized", "未分类", "", 0, false)
 
 	code, out := call(t, s.apiAdminTypes, `{}`, "admin")

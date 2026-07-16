@@ -37,7 +37,9 @@ func TestRunKindMapsEveryCategory(t *testing.T) {
 		"资本运作分析":  "重组决策",
 		"技术分析":    "技术分析",
 		"缠论分析":    "技术分析",
-		"盘前榜":     "每日推荐",
+		"盘前":      "每日金股",
+		"盘中":      "每日金股",
+		"盘后":      "每日金股",
 		"未分类":     "未分类",
 	}
 	for rtype, want := range cases {
