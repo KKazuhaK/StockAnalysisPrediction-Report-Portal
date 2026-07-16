@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { App, Button, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd'
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
+import { CopyOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import type { TokenRow } from '../../api/types'
 
 const SCOPE_COLORS: Record<string, string> = { all: 'gold', ingest: 'blue', query: 'green' }
+
+// A token is a fixed-width secret: proportional type makes it unreadable and unverifiable.
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
 
 // Bearer tokens for the machine API (/api/v1 and the legacy ingest/query routes).
 // Scopes: all / ingest / query. A secret is shown once on creation; the table keeps only its prefix.
@@ -42,18 +45,41 @@ export default function TokensPage() {
       expires: v.expires ? v.expires.format('YYYY-MM-DD') : '',
     })
     setOpen(false)
+    // The secret is shown exactly once, so this dialog is the only chance to get it out intact.
+    // It gets a read-only field rather than running text: a field never breaks the token across
+    // lines, selects itself on focus, and scrolls instead of wrapping when the modal is narrow.
     modal.success({
       title: t('settings.tokenCreated'),
+      // Sized so all 48 monospace chars clear the copy button and the confirm icon's indent (~40px
+      // of slack measured against SF Mono, the widest of the stack). Should a font ever overrun it
+      // anyway, the field scrolls and Copy still yields the whole secret — it degrades, not breaks.
+      width: 640,
       content: (
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <Typography.Text>{t('settings.tokenCreatedHint')}</Typography.Text>
-          <Typography.Text copyable={{ text: result.token }} code style={{ wordBreak: 'break-all' }}>
-            {result.token}
+        <Space direction="vertical" size={12} style={{ width: '100%', marginTop: 8 }}>
+          <Space.Compact style={{ width: '100%' }}>
+            <Input readOnly value={result.token} onFocus={(e) => e.currentTarget.select()} style={{ fontFamily: MONO }} />
+            <Button icon={<CopyOutlined />} onClick={() => copyToken(result.token)}>
+              {t('common.copy')}
+            </Button>
+          </Space.Compact>
+          <Typography.Text type="warning" style={{ fontSize: 12 }}>
+            {t('settings.tokenCreatedHint')}
           </Typography.Text>
         </Space>
       ),
     })
     load()
+  }
+
+  // navigator.clipboard needs a secure context; where it is unavailable the field above is still
+  // focus-to-select, so the token stays recoverable by hand rather than silently lost.
+  const copyToken = async (token: string) => {
+    try {
+      await navigator.clipboard.writeText(token)
+      message.success(t('common.done'))
+    } catch {
+      message.warning(t('settings.tokenCreatedHint'))
+    }
   }
 
   const remove = async (id: number) => {
@@ -96,7 +122,11 @@ export default function TokensPage() {
           {
             title: t('settings.tokenValue'),
             dataIndex: 'prefix',
-            render: (prefix: string) => <Typography.Text style={{ fontFamily: 'monospace' }}>{prefix}…</Typography.Text>,
+            render: (prefix: string) => (
+              <Typography.Text type="secondary" style={{ fontFamily: MONO }}>
+                {prefix}…
+              </Typography.Text>
+            ),
           },
           {
             title: t('settings.tokenScope'),
