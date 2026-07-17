@@ -55,6 +55,17 @@ func TestV1IngestTitleOnlyIdentity(t *testing.T) {
 		}
 	})
 
+	// A title excuses a missing symbol (that is the thematic case above) — it must not also
+	// excuse a missing date, which the identity and the whole feed are ordered by.
+	t.Run("date empty is rejected even when a title stands in for the symbol", func(t *testing.T) {
+		rec, m := postV1Ingest(t, s, map[string]any{
+			"title": "x", "subtype": "专题研究", "body_md": "body",
+		})
+		if rec.Code != http.StatusBadRequest || m["ok"] != false {
+			t.Fatalf("status=%d body=%v, want 400 ok:false", rec.Code, m)
+		}
+	})
+
 	t.Run("different titles same day don't collide", func(t *testing.T) {
 		_, j1 := postV1Ingest(t, s, map[string]any{
 			"date": "2026-07-05", "kind": "深度研究", "subtype": "专题研究", "title": "半导体行业深度研究", "body_md": "a",

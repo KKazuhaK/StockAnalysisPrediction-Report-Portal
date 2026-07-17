@@ -22,7 +22,9 @@
 //   - apiui.go   browser SPA API — cookie session (rp_session), requireUserJSON
 //   - apiv1.go   versioned machine API /api/v1 — Bearer token (ADR 0002)
 //   - openapi.go the OpenAPI 3.1 spec served for the v1 API
-//     (the original /api/reports… token API handlers live in server.go)
+//     (v1 is the entire machine surface: the pre-v1 /api/reports… token API it grew out of
+//     was retired once Dify's tool schemas spoke only v1. /api/symbols, the omnibox's
+//     autocomplete, is all that stayed behind in server.go — and it is a browser route.)
 //
 // Store & schema (dual-driver SQLite/Postgres, no ORM)
 //   - store.go            the Store type, base schema (baseSchemaStmts), dialect helpers

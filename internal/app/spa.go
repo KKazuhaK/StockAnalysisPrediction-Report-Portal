@@ -68,6 +68,13 @@ func spaHandlerFS(sub fs.FS, brand spaBranding, swVersion string) http.HandlerFu
 	swRaw, _ := fs.ReadFile(sub, "sw.js")
 	swJS := bytes.ReplaceAll(swRaw, []byte("__RP_SW_VERSION__"), []byte(swCacheTag(swVersion)))
 	return func(w http.ResponseWriter, r *http.Request) {
+		// This handler is the mux's `GET /` catch-all, so an /api/ path that matches no
+		// route lands here and would be served the app shell with a 200 — a caller would
+		// parse HTML as a successful answer. Retired endpoints must say so out loud.
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+			v1err(w, http.StatusNotFound, "not_found", "no such endpoint: "+r.URL.Path)
+			return
+		}
 		if ierr != nil { // frontend not built yet
 			http.Error(w, "frontend not built — run: cd web && npm ci && npm run build", http.StatusServiceUnavailable)
 			return

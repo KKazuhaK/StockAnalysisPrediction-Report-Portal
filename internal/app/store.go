@@ -981,7 +981,7 @@ func keysOf(m map[string]bool) []string {
 }
 
 // QueryReports lets Dify query historical new reports by code/keyword/category/subtype/date range (date descending). symbol may be empty (searches the whole database). withBody includes body_md.
-// ReportQuery is the filter for QueryReports (Dify /api/reports search).
+// ReportQuery is the filter for QueryReports (Dify /api/v1/reports search).
 type ReportQuery struct {
 	Symbol, Q, Kind, RType, Source, RunID, Since, Until string
 	Limit, Offset                                       int

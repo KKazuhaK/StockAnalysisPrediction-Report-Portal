@@ -17,7 +17,7 @@ func TestGzipMiddleware(t *testing.T) {
 	}))
 
 	// /api/* + Accept-Encoding gzip → compressed, decodes back to the original
-	req := httptest.NewRequest("GET", "/api/reports", nil)
+	req := httptest.NewRequest("GET", "/api/v1/reports", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -38,7 +38,7 @@ func TestGzipMiddleware(t *testing.T) {
 
 	// no Accept-Encoding → passthrough, uncompressed
 	rec2 := httptest.NewRecorder()
-	h.ServeHTTP(rec2, httptest.NewRequest("GET", "/api/reports", nil))
+	h.ServeHTTP(rec2, httptest.NewRequest("GET", "/api/v1/reports", nil))
 	if rec2.Header().Get("Content-Encoding") == "gzip" {
 		t.Error("must not gzip when the client does not accept it")
 	}
@@ -122,7 +122,7 @@ func TestGzipSkipsEmptyBody(t *testing.T) {
 	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotModified)
 	}))
-	req := httptest.NewRequest("GET", "/api/reports", nil)
+	req := httptest.NewRequest("GET", "/api/v1/reports", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

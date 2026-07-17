@@ -50,7 +50,7 @@ db_path: "data/portal.db"
 
 ## Dify 入库接口
 
-Dify 工作流用 HTTP 节点 `POST /api/reports` 入库，请求头 `Authorization: Bearer <令牌>`（令牌在「系统设置 → API 令牌」建，scope 含 `ingest`）。完整接口清单见网页「系统设置 → 接口说明」。请求体：
+Dify 工作流用 HTTP 节点 `POST /api/v1/reports` 入库，请求头 `Authorization: Bearer <令牌>`（令牌在「系统设置 → API 令牌」建，scope 含 `ingest`）。完整接口清单见网页「系统设置 → 接口说明」，机器可读的规格是 `/api/openapi.json`。请求体：
 
 ```json
 {
@@ -69,9 +69,11 @@ Dify 工作流用 HTTP 节点 `POST /api/reports` 入库，请求头 `Authorizat
 }
 ```
 
-- 只 `symbol` / `date` 必填。
+- 必填：`date`、`subtype`，以及 `symbol` 和 `title` 至少有一个（宏观/行业/策略等专题报告没有个股代码，靠 `title` 立身）。
+- **`symbol` 传了就不能是空字符串**：空 `symbol` 一律 400。空不等于「不限」——它意味着上游把代码弄丢了，静默放行会让报告落到别人名下。
 - **`name`**：可选，入库当时的公司名快照。**借壳/改名后老报告仍显示当时名**（如老报告「鼎泰新材」不会被改成现名「顺丰控股」），显示时若与现名不同会两者都标出；不传则取名录里的现名。
-- `kind`（大类）不传则按 `subtype` 推断；**身份键 = `symbol|date|kind|subtype`，同键覆盖更新**（重跑同一天同类型即覆盖，`run_id` 只是批次标签）。
+- `kind`（大类）不传则按 `subtype` 推断，**它不参与身份**（否则大类改归类会把一份报告劈成两份）。
+- **身份键 = `symbol|date|subtype|title`，同键覆盖更新**（重跑同一天同标题的同类型报告即覆盖，`run_id` 只是批次标签）。标题参与身份，所以同一天同类型的不同选题各自成篇、互不覆盖。
 
 ## 本地开发
 

@@ -148,16 +148,10 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /manifest.webmanifest", s.pwaManifest)
 	mux.HandleFunc("GET /pwa-icon", s.pwaIcon)
 
-	// ---- Dify machine API: Bearer token auth (kept unchanged; the workflow depends on it) ----
-	mux.HandleFunc("POST /api/reports", s.ingestReport)             // ingest
-	mux.HandleFunc("GET /api/reports", s.apiQueryReports)           // query/search historical reports
-	mux.HandleFunc("GET /api/reports/manifest", s.apiManifest)      // probe the manifest
-	mux.HandleFunc("GET /api/report", s.apiGetReport)               // fetch a single report body (by id)
-	mux.HandleFunc("DELETE /api/report", s.apiDeleteReport)         // retract a report by id (scope ingest)
-	mux.HandleFunc("GET /api/runs", s.apiRuns)                      // report-group view
-	mux.HandleFunc("GET /api/symbols", s.apiSymbols)                // stock list / autocomplete (also used by the omnibox)
-	mux.HandleFunc("GET /api/tracking", s.apiTracking)              // structured hypotheses / tracking items
-	mux.HandleFunc("PATCH /api/tracking/{id}", s.apiTrackingUpdate) // update one tracking item's status (scope ingest)
+	// The machine API is /api/v1/* (apiv1.go) — the pre-v1 routes that used to sit here were
+	// retired once Dify's tool schemas spoke only v1. This one is the remainder, and it is not
+	// a machine route at all: the omnibox's autocomplete, called from the browser.
+	mux.HandleFunc("GET /api/symbols", s.apiSymbols) // stock list / autocomplete (omnibox)
 
 	// ---- Dify machine API v1: clean contract (JSON errors, portal-derived identity, envelopes) ----
 	mux.HandleFunc("POST /api/v1/reports", s.v1Ingest)
@@ -851,259 +845,18 @@ func (s *Server) tokenOK(r *http.Request, need string) bool {
 	return s.st.TokenValid(got, need)
 }
 
-// ingestReport is the ingest endpoint for new reports (called by the Dify workflow's HTTP node). Bearer token auth.
-func (s *Server) ingestReport(w http.ResponseWriter, r *http.Request) {
-	if !s.tokenOK(r, "ingest") {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var in struct {
-		RunID    string `json:"run_id"`
-		Symbol   string `json:"symbol"`
-		Name     string `json:"name"` // optional: as-of company name; snapshotted so backdoor-listing/rename doesn't relabel old reports
-		Date     string `json:"date"`
-		Kind     string `json:"kind"`
-		Subtype  string `json:"subtype"`
-		RType    string `json:"rtype"`
-		Title    string `json:"title"`
-		Source   string `json:"source"`
-		Time     string `json:"time"`
-		BodyMD   string `json:"body_md"`
-		BodyHTML string `json:"body_html"`
-		Tracking []struct {
-			IType       string `json:"itype"`
-			Content     string `json:"content"`
-			Status      string `json:"status"`
-			ReviewPoint string `json:"review_point"`
-		} `json:"tracking"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&in); err != nil {
-		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if in.Date == "" || (in.Symbol == "" && in.Title == "") {
-		http.Error(w, "date and (symbol or title) required", http.StatusBadRequest)
-		return
-	}
-	rtype := firstNonEmpty(in.Subtype, in.RType)
-	// Top-level category: explicit from Dify > already registered in the registry > runKind fallback; and auto-register this subtype → category.
-	kind := in.Kind
-	if kind == "" {
-		kind = s.st.TypeKind(rtype)
-	}
-	if kind == "" {
-		kind = runKind([]string{rtype})
-	}
-	s.st.RegisterType(rtype, kind)
-	s.names.EnsureOne(in.Symbol) // if this code has no name yet, do a background best-effort fetch from Tencent/Sina
-	// Snapshot the as-of name: Dify-provided > current stocks name at ingest time.
-	// The report is immutable history, so a later rename/backdoor-listing won't relabel it.
-	name := firstNonEmpty(in.Name, s.names.Get(in.Symbol))
-	rep := Rep{
-		RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
-		RType: rtype, Title: in.Title, Source: in.Source, Time: firstNonEmpty(in.Time, in.Date),
-		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML),
-	}
-	// Identity is the store's business: code-or-title + date + subtype, enforced by a unique
-	// index, so the same subtype arriving again on the same day overwrites in place and hands
-	// back the same id. Neither kind nor run_id participates — this path used to fold kind in,
-	// which forked a report in two whenever the registry re-categorised its subtype.
-	id, created, err := s.st.UpsertReport(rep)
-	if err != nil {
-		log.Printf("ingest db error: %v", err)
-		http.Error(w, "database error", http.StatusInternalServerError)
-		return
-	}
-	if len(in.Tracking) > 0 { // only update when tracking items are present (overwrite the old ones to match the latest body)
-		items := make([]TrackingItem, 0, len(in.Tracking))
-		for _, t := range in.Tracking {
-			items = append(items, TrackingItem{IType: t.IType, Content: t.Content, Status: t.Status, ReviewPoint: t.ReviewPoint})
-		}
-		s.st.SetTracking(id, in.Symbol, items)
-	}
-	log.Printf("ingest %s %s id=%d created=%v", in.Symbol, in.Date, id, created)
-	s.fireEvent(EventReportIngested, map[string]any{
-		"id": id, "symbol": in.Symbol, "name": name, "date": in.Date,
-		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source, "created": created,
-	})
-	writeJSON(w, map[string]any{"ok": true, "id": id, "created": created})
-}
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(v)
 }
 
-// apiQueryReports queries/searches historical reports (used by Dify to re-check hypotheses / tracking items). Bearer token auth, scope query.
-// GET /api/reports?symbol=300750&q=关键字&kind=投资决策&subtype=汇总&since=&until=&limit=20&with_body=1
-// At least one of symbol and q must be given; when symbol is empty, search the whole database by keyword.
-func (s *Server) apiQueryReports(w http.ResponseWriter, r *http.Request) {
-	if !s.canQuery(r) { // Bearer(query) or a logged-in browser session
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	q := r.URL.Query()
-	symbol := strings.TrimSpace(q.Get("symbol"))
-	kw := strings.TrimSpace(q.Get("q"))
-	runID := strings.TrimSpace(q.Get("run_id"))
-	if symbol == "" && kw == "" && runID == "" {
-		http.Error(w, "symbol, q or run_id required", http.StatusBadRequest)
-		return
-	}
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	if limit <= 0 || limit > 200 {
-		limit = 20
-	}
-	offset, _ := strconv.Atoi(q.Get("offset"))
-	if offset < 0 {
-		offset = 0
-	}
-	withBody := q.Get("with_body") == "1" || q.Get("with_body") == "true"
-	since, until := q.Get("since"), q.Get("until")
-	if d := strings.TrimSpace(q.Get("date")); d != "" { // date (an exact day; "today" is an alias)
-		if d == "today" {
-			d = time.Now().Format("2006-01-02")
-		}
-		since, until = d, d
-	}
-	reps, total, err := s.st.QueryReports(ReportQuery{
-		Symbol: symbol, Q: kw, Kind: q.Get("kind"), RType: firstNonEmpty(q.Get("subtype"), q.Get("rtype")),
-		Source: strings.TrimSpace(q.Get("source")), RunID: runID,
-		Since: since, Until: until, Limit: limit, Offset: offset, WithBody: withBody,
-	})
-	if err != nil {
-		log.Printf("query db error: %v", err)
-		http.Error(w, "database error", http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, map[string]any{"symbol": symbol, "q": kw, "has": total > 0,
-		"count": len(reps), "total": total, "offset": offset, "limit": limit, "reports": s.repsJSON(reps, withBody)})
-	log.Printf("query symbol=%s -> %d/%d reports", symbol, len(reps), total)
-}
 
-// repsJSON converts []Rep into Dify-friendly JSON (includes the company name; includes body_md when withBody is set).
-func (s *Server) repsJSON(reps []Rep, withBody bool) []map[string]any {
-	out := make([]map[string]any, 0, len(reps))
-	for _, r := range reps {
-		m := map[string]any{"id": r.ID, "run_id": r.RunID, "symbol": r.Symbol, "name": s.names.Get(r.Symbol),
-			"date": r.Date, "kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source}
-		if withBody {
-			m["body_md"] = r.MD
-		}
-		out = append(out, m)
-	}
-	return out
-}
 
-// apiManifest lists "what reports exist" for a symbol: total count, each date (with category), and all categories/subtypes. Lets Dify probe before fetching.
-// GET /api/reports/manifest?symbol=300750
-func (s *Server) apiManifest(w http.ResponseWriter, r *http.Request) {
-	if !s.canQuery(r) { // Bearer(query) or a logged-in browser session
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	symbol := strings.TrimSpace(r.URL.Query().Get("symbol"))
-	if symbol == "" {
-		http.Error(w, "symbol required", http.StatusBadRequest)
-		return
-	}
-	m := s.st.Manifest(symbol)
-	m["name"] = s.names.Get(symbol)
-	writeJSON(w, m)
-	log.Printf("manifest %s -> %v reports", symbol, m["total"])
-}
 
-// apiGetReport fetches a single report body. GET /api/report?id=123. Bearer token auth, scope query.
-func (s *Server) apiGetReport(w http.ResponseWriter, r *http.Request) {
-	if !s.canQuery(r) { // Bearer(query) or a logged-in browser session
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	id, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
-	rep := s.loadRep(id)
-	if rep == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	writeJSON(w, map[string]any{"id": rep.ID, "run_id": rep.RunID, "symbol": rep.Symbol, "date": rep.Date,
-		"kind": rep.Kind, "subtype": rep.RType, "title": rep.Title, "source": rep.Source,
-		"body_md": rep.MD, "body_html": htmlOf(*rep)})
-}
 
-// apiDeleteReport retracts a report and its tracking items by id. Bearer scope ingest. DELETE /api/report?id=123
-func (s *Server) apiDeleteReport(w http.ResponseWriter, r *http.Request) {
-	if !s.tokenOK(r, "ingest") {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	id, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
-	if err != nil {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
-	}
-	n, err := s.st.DeleteReport(id)
-	if err != nil {
-		log.Printf("delete db error: %v", err)
-		http.Error(w, "database error", http.StatusInternalServerError)
-		return
-	}
-	log.Printf("delete %d -> %d", id, n)
-	writeJSON(w, map[string]any{"ok": true, "deleted": n}) // deleted:0 (not 404) so retries stay idempotent
-}
 
-// apiTrackingUpdate updates one tracking item's status/review_point by id (the hypothesis re-check loop).
-// Bearer scope ingest. PATCH /api/tracking/{id} with body {status?, review_point?}.
-func (s *Server) apiTrackingUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.tokenOK(r, "ingest") {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.Error(w, "bad id", http.StatusBadRequest)
-		return
-	}
-	var in struct {
-		Status      string `json:"status"`
-		ReviewPoint string `json:"review_point"`
-	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) // empty body tolerated
-	if strings.TrimSpace(in.Status) == "" && strings.TrimSpace(in.ReviewPoint) == "" {
-		http.Error(w, "status or review_point required", http.StatusBadRequest)
-		return
-	}
-	ok, err := s.st.UpdateTrackingStatus(id, strings.TrimSpace(in.Status), strings.TrimSpace(in.ReviewPoint))
-	if err != nil {
-		log.Printf("tracking update db error: %v", err)
-		http.Error(w, "database error", http.StatusInternalServerError)
-		return
-	}
-	if !ok {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "id": id, "status": in.Status})
-}
 
-// apiRuns is the report-group view (one generation run = same symbol + date + category). GET /api/runs?symbol=300750&date= (optional)
-func (s *Server) apiRuns(w http.ResponseWriter, r *http.Request) {
-	if !s.canQuery(r) { // Bearer(query) or a logged-in browser session
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	symbol := strings.TrimSpace(r.URL.Query().Get("symbol"))
-	if symbol == "" {
-		http.Error(w, "symbol required", http.StatusBadRequest)
-		return
-	}
-	runs := s.st.ListRuns(symbol, strings.TrimSpace(r.URL.Query().Get("date")))
-	out := make([]map[string]any, 0, len(runs))
-	for _, r := range runs {
-		out = append(out, map[string]any{"symbol": r.Symbol, "date": r.Date, "kind": r.Kind,
-			"run_id": r.RunID, "subtypes": r.Subtypes, "count": r.Count})
-	}
-	writeJSON(w, map[string]any{"symbol": symbol, "name": s.names.Get(symbol), "has": len(out) > 0, "count": len(out), "runs": out})
-}
 
 // apiSymbols lists stocks that have reports / autocomplete. GET /api/symbols?q=300&limit=50
 func (s *Server) apiSymbols(w http.ResponseWriter, r *http.Request) {
@@ -1125,27 +878,6 @@ func (s *Server) apiSymbols(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"count": len(out), "symbols": out})
 }
 
-// apiTracking returns structured hypotheses / tracking items (for re-run review). GET /api/tracking?symbol=300750&status=pending&limit=100
-func (s *Server) apiTracking(w http.ResponseWriter, r *http.Request) {
-	if !s.canQuery(r) { // Bearer(query) or a logged-in browser session
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	q := r.URL.Query()
-	symbol := strings.TrimSpace(q.Get("symbol"))
-	if symbol == "" {
-		http.Error(w, "symbol required", http.StatusBadRequest)
-		return
-	}
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	items := s.st.QueryTracking(symbol, strings.TrimSpace(q.Get("status")), limit)
-	out := make([]map[string]any, 0, len(items))
-	for _, it := range items {
-		out = append(out, map[string]any{"id": it.ID, "report_id": it.ReportID, "itype": it.IType, "content": it.Content,
-			"status": it.Status, "review_point": it.ReviewPoint, "created_at": it.Created})
-	}
-	writeJSON(w, map[string]any{"symbol": symbol, "has": len(out) > 0, "count": len(out), "items": out})
-}
 
 func repInList(reps []Rep, id int64) bool {
 	for _, r := range reps {

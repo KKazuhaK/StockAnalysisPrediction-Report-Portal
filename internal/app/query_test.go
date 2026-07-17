@@ -2,7 +2,7 @@ package app
 
 import "testing"
 
-// GET /api/reports needs real pagination (offset + total), name/code-aware
+// GET /api/v1/reports needs real pagination (offset + total), name/code-aware
 // keyword search, and source/run_id filters.
 func TestQueryReportsPaginationAndFilters(t *testing.T) {
 	st := newTestStore(t)

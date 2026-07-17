@@ -85,9 +85,9 @@ func decodeFilenameStar(t *testing.T, cd string) string {
 // descriptor" title + as-of company name) must download as "001696 宗申动力 投资决策建议.md",
 // with the company name folded into the actual Content-Disposition filename.
 func TestReportMDDownloadFilenameFoldsCompanyName(t *testing.T) {
-	s := newIngestTestServer(t)
+	s := newV1Server(t)
 
-	rec, _ := postIngest(t, s, map[string]any{
+	rec, _ := postV1Ingest(t, s, map[string]any{
 		"symbol": "001696", "name": "宗申动力", "date": "2026-07-16",
 		"kind": "投资决策", "subtype": "投资决策建议",
 		"title": "001696 投资决策建议", "body_md": "# body",
@@ -118,7 +118,7 @@ func TestReportMDDownloadFilenameFoldsCompanyName(t *testing.T) {
 // repJSON must expose displayTitle (folded) for the SPA heading while leaving the raw
 // title field untouched for machine consumers.
 func TestRepJSONExposesDisplayTitle(t *testing.T) {
-	s := newIngestTestServer(t)
+	s := newV1Server(t)
 	j := repJSON(&Rep{Title: "001696 投资决策建议", Symbol: "001696", Name: "宗申动力"}, s.names.Get)
 	if j["displayTitle"] != "001696 宗申动力 投资决策建议" {
 		t.Errorf("displayTitle = %v, want folded", j["displayTitle"])
