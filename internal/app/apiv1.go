@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -88,6 +89,24 @@ func (s *Server) v1Now(w http.ResponseWriter, r *http.Request) {
 		"datetime": now.In(loc).Format("2006-01-02 15:04:05"),
 		"tz":       loc.String(),
 	})
+}
+
+// rejectBlankSymbol guards the difference between an ABSENT symbol and a BLANK one, and
+// returns the error message when the caller sent the latter. Absent means "any stock" — that
+// is how thematic reports, which carry no code, are legitimately queried. Blank means the
+// caller had a symbol, lost it, and does not know: silently dropping the condition turns
+// "the previous 股权分析 of MY stock" into "the previous 股权分析 of ANY stock".
+//
+// That is not hypothetical. On 2026-07-16 a workflow's symbol resolved to "" upstream, this
+// endpoint handed it a different company's report, and the model wrote an "incremental
+// update" of that company under the caller's own run. Failing here costs one loud 400;
+// answering costs a report about the wrong business.
+func rejectBlankSymbol(q url.Values) string {
+	if !q.Has("symbol") || strings.TrimSpace(q.Get("symbol")) != "" {
+		return ""
+	}
+	return "symbol was sent but is blank — omit the parameter entirely to search every stock, " +
+		"or pass a real code. A blank symbol usually means the caller lost it upstream."
 }
 
 // v1err writes a JSON error envelope with the given HTTP status and machine code.
@@ -206,6 +225,10 @@ func (s *Server) v1QueryReports(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	symbol := strings.TrimSpace(q.Get("symbol"))
+	if err := rejectBlankSymbol(q); err != "" {
+		v1err(w, http.StatusBadRequest, "invalid_param", err)
+		return
+	}
 	kw := strings.TrimSpace(q.Get("q"))
 	runID := strings.TrimSpace(q.Get("run_id"))
 	subtype := firstNonEmpty(strings.TrimSpace(q.Get("subtype")), strings.TrimSpace(q.Get("rtype")))
