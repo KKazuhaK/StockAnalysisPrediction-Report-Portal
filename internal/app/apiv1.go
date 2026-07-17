@@ -1,12 +1,14 @@
 package app
 
-// apiv1.go — the clean, versioned Dify machine API (/api/v1). Differences from the
-// legacy bare /api/* paths (kept for compat):
+// apiv1.go — the Dify machine API (/api/v1), and the portal's entire machine surface. The
+// pre-v1 bare /api/* paths this grew out of were retired once Dify's tool schemas spoke
+// only v1, so what follows is no longer a contrast with them — it is simply the contract:
 //   - errors are a JSON envelope {ok:false, error:{code,message}} (never plain text)
 //   - collections use a uniform {ok:true, count, items:[...]} shape (+ total/offset/limit)
-//   - report identity is portal-derived & deterministic (symbol-or-title + date + rtype,
+//   - report identity is portal-derived & deterministic (symbol + date + rtype + title,
 //     enforced by a unique index); the client never supplies an id, and the server-inferred
-//     kind is NOT part of identity
+//     kind is NOT part of identity. Title always participates — a symbol-less thematic
+//     report is told apart by it, and so are two topics sharing a subtype on one day.
 //   - date is validated (YYYY-MM-DD); the as-of name snapshot is honored on every path
 
 import (
@@ -47,7 +49,7 @@ func (s *Server) v1ReportByPathID(id string) *Rep {
 // correctly; a client-supplied `time` is honored only when it parses as a full
 // RFC3339 instant (e.g. the utc from GET /api/v1/now), never the old date-only
 // fallback. The instant is stored/returned in UTC and localized for display
-// client-side; it never enters the report identity (symbol-or-title + date + subtype).
+// client-side; it never enters the report identity (symbol + date + subtype + title).
 func ingestInstant(clientTime string) string {
 	if t := strings.TrimSpace(clientTime); t != "" {
 		if _, err := time.Parse(time.RFC3339, t); err == nil {

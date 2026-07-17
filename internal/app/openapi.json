@@ -3,15 +3,15 @@
   "info": {
     "title": "研报门户 · Dify 机器接口 (v1)",
     "version": "1.0.0",
-    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，去重身份由服务端按 `symbol|date|subtype` 判定（无 symbol 的专题报告按 `title|date|subtype` 判定，客户端不传 id）；接口返回并寻址的 `id` 是该报告的数字 id。多语言：请求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化后的 OpenAPI JSON。",
+    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，去重身份由服务端按 `symbol|date|subtype|title` 判定（title 恒参与；无 symbol 的专题报告靠 title 立身。客户端不传 id，kind 不参与）；接口返回并寻址的 `id` 是该报告的数字 id。多语言：请求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化后的 OpenAPI JSON。",
     "x-i18n": {
       "en-US": {
         "title": "Research Report Portal · Dify Machine API (v1)",
-        "description": "Machine API for Dify workflows to ingest, query, and review research reports. Authentication: `Authorization: Bearer <token>`; tokens are managed in System Settings and use the `ingest`, `query`, or `all` scope. A browser cookie session also satisfies query access. Successful responses are JSON; errors use `{ok:false,error:{code,message}}`. Dates use `YYYY-MM-DD`. Ingest is an idempotent upsert. Deduplication is derived server-side from `symbol|date|subtype`; thematic reports without `symbol` use `title|date|subtype`. Clients do not send an id. Returned and path-addressed `id` values are the report's numeric id. Localization: request `/api/openapi.json?lang=en-US` or `?lang=zh-TW` for a localized OpenAPI JSON document."
+        "description": "Machine API for Dify workflows to ingest, query, and review research reports. Authentication: `Authorization: Bearer <token>`; tokens are managed in System Settings and use the `ingest`, `query`, or `all` scope. A browser cookie session also satisfies query access. Successful responses are JSON; errors use `{ok:false,error:{code,message}}`. Dates use `YYYY-MM-DD`. Ingest is an idempotent upsert. Deduplication is derived server-side from `symbol|date|subtype|title`; title always participates, and a thematic report without a `symbol` is identified by its title. `kind` is not part of identity. Clients do not send an id. Returned and path-addressed `id` values are the report's numeric id. Localization: request `/api/openapi.json?lang=en-US` or `?lang=zh-TW` for a localized OpenAPI JSON document."
       },
       "zh-TW": {
         "title": "研報門戶 · Dify 機器介面 (v1)",
-        "description": "供 Dify 工作流入庫/查詢/複核研報的機器介面。鑑權：請求頭 `Authorization: Bearer <token>`（令牌在系統設定頁管理，作用域 ingest|query|all）；瀏覽器登入的 cookie 會話也滿足 query。成功響應為 JSON；錯誤統一為 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入庫為冪等 upsert，去重身份由服務端按 `symbol|date|subtype` 判定（無 symbol 的專題報告按 `title|date|subtype` 判定，客戶端不傳 id）；介面返回並尋址的 `id` 是該報告的數字 id。多語言：請求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化後的 OpenAPI JSON。"
+        "description": "供 Dify 工作流入庫/查詢/複核研報的機器介面。鑑權：請求頭 `Authorization: Bearer <token>`（令牌在系統設定頁管理，作用域 ingest|query|all）；瀏覽器登入的 cookie 會話也滿足 query。成功響應為 JSON；錯誤統一為 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入庫為冪等 upsert，去重身份由服務端按 `symbol|date|subtype|title` 判定（title 恆參與；無 symbol 的專題報告靠 title 立身。客戶端不傳 id，kind 不參與）；介面返回並尋址的 `id` 是該報告的數字 id。多語言：請求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化後的 OpenAPI JSON。"
       }
     }
   },
@@ -495,11 +495,11 @@
         "operationId": "ingestReport",
         "summary": "入库（幂等 upsert）一篇报告，可附带 tracking 假设项",
         "x-scope": "ingest",
-        "description": "去重身份由服务端按 symbol|date|subtype 判定；无 symbol 的专题报告按 title|date|subtype 判定（不接受客户端 id，不含 kind）。再次入库同一身份会整行覆盖。响应 created 区分新建/覆盖，id 是该报告的数字 id。正文上限 16MB。若 body_md 存在，服务端以 Markdown 为准并丢弃 body_html，详情读取时再渲染 HTML。",
+        "description": "去重身份由服务端按 symbol|date|subtype|title 判定（不接受客户端 id，不含 kind）。title 恒参与，所以同一天同类型的不同选题各自成篇、互不覆盖；无 symbol 的专题报告靠 title 立身。再次入库同一身份会整行覆盖。响应 created 区分新建/覆盖，id 是该报告的数字 id。正文上限 16MB。若 body_md 存在，服务端以 Markdown 为准并丢弃 body_html，详情读取时再渲染 HTML。",
         "x-i18n": {
           "en-US": {
             "summary": "Ingest one report with idempotent upsert, optionally with tracking items",
-            "description": "Deduplication is derived server-side from symbol|date|subtype; thematic reports without symbol use title|date|subtype. A client-supplied id is not accepted and kind is not part of identity. Re-ingesting the same identity overwrites the row. The `created` response field distinguishes create vs overwrite, and `id` is the report's numeric id. Body size limit is 16 MB. If `body_md` is present, Markdown is authoritative and `body_html` is discarded; HTML is rendered again on detail reads.",
+            "description": "Deduplication is derived server-side from symbol|date|subtype|title. Title always participates, so two different topics of the same subtype on one day stay separate reports rather than overwriting each other; a thematic report without a symbol is identified by its title. A client-supplied id is not accepted and kind is not part of identity. Re-ingesting the same identity overwrites the row. The `created` response field distinguishes create vs overwrite, and `id` is the report's numeric id. Body size limit is 16 MB. If `body_md` is present, Markdown is authoritative and `body_html` is discarded; HTML is rendered again on detail reads.",
             "responses": {
               "200": {
                 "description": "Ingest succeeded"
@@ -517,7 +517,7 @@
           },
           "zh-TW": {
             "summary": "入庫（冪等 upsert）一篇報告，可附帶 tracking 假設項",
-            "description": "去重身份由服務端按 symbol|date|subtype 判定；無 symbol 的專題報告按 title|date|subtype 判定（不接受客戶端 id，不含 kind）。再次入庫同一身份會整行覆蓋。響應 created 區分新建/覆蓋，id 是該報告的數字 id。正文上限 16MB。若 body_md 存在，服務端以 Markdown 為準並丟棄 body_html，詳情讀取時再渲染 HTML。",
+            "description": "去重身份由服務端按 symbol|date|subtype|title 判定（不接受客戶端 id，不含 kind）。title 恆參與，所以同一天同類型的不同選題各自成篇、互不覆蓋；無 symbol 的專題報告靠 title 立身。再次入庫同一身份會整行覆蓋。響應 created 區分新建/覆蓋，id 是該報告的數字 id。正文上限 16MB。若 body_md 存在，服務端以 Markdown 為準並丟棄 body_html，詳情讀取時再渲染 HTML。",
             "responses": {
               "200": {
                 "description": "入庫成功"
