@@ -210,7 +210,28 @@ export default function BatchAdminPage() {
         </Space>
       ),
     },
-    { title: t('batch.admin.inputs'), render: (_: unknown, tg: BatchTarget) => (tg.inputs || []).map((i) => <Tag key={i.key}>{i.key}</Tag>) },
+    {
+      title: t('batch.admin.inputs'),
+      // The API already sends label + required for every input; rendering only `key` threw
+      // both away and left a row of identical grey chips. `symbol` reads fine, but `n`,
+      // `query` and `rumor` do not — and nothing said which ones the run form will demand.
+      render: (_: unknown, tg: BatchTarget) => {
+        const inputs = tg.inputs || []
+        if (!inputs.length) return <Typography.Text type="secondary">—</Typography.Text>
+        return (
+          <Space size={4} wrap>
+            {inputs.map((i) => (
+              <Tooltip key={i.key} title={i.label && i.label !== i.key ? i.label : undefined}>
+                <Tag color={i.required ? 'blue' : undefined} style={{ marginInlineEnd: 0 }}>
+                  <code style={{ fontSize: 12 }}>{i.key}</code>
+                  {i.required && <span style={{ marginLeft: 3 }}>*</span>}
+                </Tag>
+              </Tooltip>
+            ))}
+          </Space>
+        )
+      },
+    },
     {
       title: t('batch.admin.surfaces'),
       width: 230,
