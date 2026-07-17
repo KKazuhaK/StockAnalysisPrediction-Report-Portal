@@ -6,7 +6,7 @@ import { api } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
 import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
-import { BASE_MAX } from '../lib/batchUi'
+import { BASE_MAX, visibleOn } from '../lib/batchUi'
 import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
 import RunScheduleControls from '../components/RunScheduleControls'
 import QueueTable from '../components/QueueTable'
@@ -28,7 +28,7 @@ export default function BatchConsole() {
   const [submitting, setSubmitting] = useState(false)
 
   const loadTargets = () =>
-    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || []))
+    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(visibleOn(r.targets || [], 'batch')))
   const loadTickets = () => api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
 
   useEffect(() => {

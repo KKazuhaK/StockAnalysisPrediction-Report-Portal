@@ -59,7 +59,16 @@ export interface BatchTarget {
   created_at: string
   mode?: string // Dify app mode: "" / "workflow" / "chat"
   inputs?: PluginInput[]
+  // Surfaces an admin allows this target on. The API always sends the resolved list, so an
+  // unset target arrives as all four rather than as an empty array the UI would have to
+  // special-case.
+  surfaces?: Surface[]
 }
+
+// A place a target can be picked. The run queue is not one: it lists jobs that already
+// exist and never chooses a target.
+export type Surface = 'run' | 'batch' | 'recurring' | 'chat'
+export const ALL_SURFACES: Surface[] = ['run', 'batch', 'recurring', 'chat']
 
 // A Dify target's editable config, returned by GET /api/admin/batch/dify/targets/{id}.
 // The api_key is never sent back — has_key only reports whether one is stored.

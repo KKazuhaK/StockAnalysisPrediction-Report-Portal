@@ -4,7 +4,7 @@ import { PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
-import { difyModeKind } from '../lib/batchUi'
+import { visibleOn } from '../lib/batchUi'
 import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
 import RunScheduleControls from './RunScheduleControls'
 import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
@@ -57,9 +57,11 @@ export default function RunAnalysisModal({
       .catch(() => {})
   }, [open])
 
-  // 运行分析 generates a report (Dify ingests it). Agent (agent-chat) apps are conversational and
-  // don't post a report to the portal, so they're excluded here — they belong in the 助手 chat page.
-  const runnable = useMemo(() => targets.filter((tg) => difyModeKind(tg.mode) !== 'agent'), [targets])
+  // 运行分析 generates a report (Dify ingests it). visibleOn applies both rules: agent apps
+  // are conversational and post no report (capability), and an admin may restrict a target
+  // to other surfaces (policy). The capability half used to be an inline filter here — it
+  // moved to batchUi so the four surfaces cannot drift apart.
+  const runnable = useMemo(() => visibleOn(targets, 'run'), [targets])
   const enabledPresets = useMemo(() => presets.filter((p) => p.enabled), [presets])
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputs = target?.inputs || []

@@ -3,6 +3,7 @@ import { App, Button, Card, Drawer, Input, InputNumber, Modal, Select, Space, Sw
 import { ClockCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, HistoryOutlined, PlayCircleOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
+import { visibleOn } from '../lib/batchUi'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, RecurringDetail, RecurringRun, RecurringTask, RecurringTasksResp } from '../api/types'
@@ -47,7 +48,8 @@ export default function RecurringConsole() {
 
   const [history, setHistory] = useState<{ task: RecurringTask; runs: RecurringRun[] } | null>(null)
 
-  const loadTargets = () => api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || []))
+  const loadTargets = () =>
+    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(visibleOn(r.targets || [], 'recurring')))
   const loadTasks = () => {
     setLoading(true)
     return api

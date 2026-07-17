@@ -303,8 +303,15 @@ func (s *Store) baseSchemaStmts() []string {
 			enabled INTEGER DEFAULT 1, source TEXT DEFAULT 'imported', imported_at TEXT)`, pk),
 		// batch_targets. ord: admin drag-to-sort display position (folded from the former
 		// target_order side table; NULL = unordered, sorts after ordered ones, newest-first).
+		// surfaces: comma-separated allow-list of the places a target may be offered in
+		// ("run", "batch", "recurring", "chat"); '' means every surface, so pre-existing
+		// targets keep behaving exactly as before. This is portal POLICY and deliberately
+		// not part of `config`, which holds the Dify connection (base_url/api_key) — mixing
+		// the two would leave no answer to "where does the next setting go?". Existing
+		// databases pick the column up via ensureColumns; no migration step.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_targets(
-			id %s, plugin_slug TEXT, name TEXT, config TEXT, created_at TEXT, ord INTEGER)`, pk),
+			id %s, plugin_slug TEXT, name TEXT, config TEXT, created_at TEXT, ord INTEGER,
+			surfaces TEXT DEFAULT '')`, pk),
 		// batch_jobs. priority (run-queue level, folded from the former job_queue side table;
 		// default 'normal') and run_at (one-shot scheduled start, folded from job_schedule;
 		// default '' = run ASAP) — see docs/adr/0013-v2-schema-consolidation.md. run_preset (default

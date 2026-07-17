@@ -29,6 +29,57 @@ type Plugin struct {
 type BatchTarget struct {
 	ID                                int64
 	PluginSlug, Name, Config, Created string
+	// Surfaces is the admin's allow-list of places this target may be offered, as a
+	// comma-separated list of surfaceKind values. Empty means "every surface" — the
+	// pre-existing behaviour, which is what every target created before this field had.
+	//
+	// This is policy, not capability: an agent-chat app can never produce a report, so it
+	// stays out of 运行分析 regardless of what is ticked here. Effective visibility is
+	// capability AND policy; see surfaceKind.
+	Surfaces string
+}
+
+// surfaceKind enumerates the places a target can be offered. Each corresponds to a real
+// selection UI; the run queue is not one — it lists jobs that already exist and never picks
+// a target.
+const (
+	SurfaceRun       = "run"       // 运行分析 — one manual run
+	SurfaceBatch     = "batch"     // 批量执行 — CSV fan-out
+	SurfaceRecurring = "recurring" // 计划任务 — scheduled
+	SurfaceChat      = "chat"      // 助手 — conversational
+)
+
+// TargetSurfaces returns the surfaces a target is allowed on. An empty column means all of
+// them, so targets predating the setting keep working untouched.
+func TargetSurfaces(surfaces string) []string {
+	all := []string{SurfaceRun, SurfaceBatch, SurfaceRecurring, SurfaceChat}
+	trimmed := strings.TrimSpace(surfaces)
+	if trimmed == "" {
+		return all
+	}
+	valid := map[string]bool{}
+	for _, s := range all {
+		valid[s] = true
+	}
+	var out []string
+	for _, part := range strings.Split(trimmed, ",") {
+		part = strings.TrimSpace(part)
+		if valid[part] {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// AllowsSurface reports whether policy permits this target on the given surface. It says
+// nothing about capability — the caller still applies that (an agent app cannot run).
+func AllowsSurface(surfaces, surface string) bool {
+	for _, s := range TargetSurfaces(surfaces) {
+		if s == surface {
+			return true
+		}
+	}
+	return false
 }
 
 type BatchJob struct {
@@ -807,7 +858,7 @@ func (s *Store) CreateTarget(pluginSlug, name, config string) (int64, error) {
 func (s *Store) ListTargets() []BatchTarget {
 	// Admin drag-order first (batch_targets.ord), then any not-yet-ordered target newest-first
 	// — the pre-ordering default. 2147483647 = "unordered, sort last".
-	rows, err := s.query(`SELECT b.id, b.plugin_slug, b.name, b.config, b.created_at
+	rows, err := s.query(`SELECT b.id, b.plugin_slug, b.name, b.config, b.created_at, b.surfaces
 		FROM batch_targets b
 		ORDER BY COALESCE(b.ord, 2147483647) ASC, b.id DESC`)
 	if err != nil {
@@ -817,9 +868,10 @@ func (s *Store) ListTargets() []BatchTarget {
 	var out []BatchTarget
 	for rows.Next() {
 		var t BatchTarget
-		var slug, name, config, created sql.NullString
-		rows.Scan(&t.ID, &slug, &name, &config, &created)
+		var slug, name, config, created, surfaces sql.NullString
+		rows.Scan(&t.ID, &slug, &name, &config, &created, &surfaces)
 		t.PluginSlug, t.Name, t.Config, t.Created = slug.String, name.String, config.String, created.String
+		t.Surfaces = surfaces.String
 		out = append(out, t)
 	}
 	return out
@@ -835,18 +887,33 @@ func (s *Store) SetTargetOrder(id int64, ord int) error {
 
 func (s *Store) GetTarget(id int64) (BatchTarget, bool) {
 	var t BatchTarget
-	var slug, name, config, created sql.NullString
-	err := s.queryRow(`SELECT id,plugin_slug,name,config,created_at FROM batch_targets WHERE id=?`, id).
-		Scan(&t.ID, &slug, &name, &config, &created)
+	var slug, name, config, created, surfaces sql.NullString
+	err := s.queryRow(`SELECT id,plugin_slug,name,config,created_at,surfaces FROM batch_targets WHERE id=?`, id).
+		Scan(&t.ID, &slug, &name, &config, &created, &surfaces)
 	if err != nil {
 		return BatchTarget{}, false
 	}
 	t.PluginSlug, t.Name, t.Config, t.Created = slug.String, name.String, config.String, created.String
+	t.Surfaces = surfaces.String
 	return t, true
 }
 
 func (s *Store) UpdateTarget(id int64, name, config string) error {
 	_, err := s.exec(`UPDATE batch_targets SET name=?, config=? WHERE id=?`, name, config, id)
+	return err
+}
+
+// SetTargetSurfaces stores the admin's allow-list. Values are normalised through
+// TargetSurfaces, so an unknown surface is dropped rather than persisted and silently
+// filtered forever after. Passing every surface stores '' — the same as "unset", which
+// keeps one representation for "no restriction" instead of two.
+func (s *Store) SetTargetSurfaces(id int64, surfaces []string) error {
+	valid := TargetSurfaces(strings.Join(surfaces, ","))
+	stored := strings.Join(valid, ",")
+	if len(valid) == 4 {
+		stored = ""
+	}
+	_, err := s.exec(`UPDATE batch_targets SET surfaces=? WHERE id=?`, stored, id)
 	return err
 }
 

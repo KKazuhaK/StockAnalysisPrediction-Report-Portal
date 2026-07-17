@@ -2,6 +2,9 @@ import { Tag, Tooltip, Typography } from 'antd'
 import type { CSSProperties } from 'react'
 import type { TFunction } from 'i18next'
 
+import { ALL_SURFACES } from '../api/types'
+import type { BatchTarget, Surface } from '../api/types'
+
 // Shared presentation for run/queue views. Priority is a Slurm-style number now, not a
 // tier: a run stores "urgent" or a base number 0..100 (docs/adr/0008-multifactor-priority.md).
 
@@ -119,4 +122,41 @@ export function difyModeTag(t: TFunction, mode?: string) {
   const kind = difyModeKind(mode)
   const color = kind === 'agent' ? 'purple' : kind === 'chat' ? 'geekblue' : 'cyan'
   return <Tag color={color}>{t(`batch.dify.${kind}Tag`)}</Tag>
+}
+
+// ---------------------------------------------------------------------------
+// Surface visibility
+// ---------------------------------------------------------------------------
+// Two independent rules decide whether a target appears on a surface, and keeping them
+// apart is the point:
+//
+//   capability — what the app CAN do. An agent-chat app holds a conversation and never
+//                posts a report, so it can never serve 运行分析/批量执行 no matter what an
+//                admin ticks. A workflow app is not conversational, so it cannot serve 助手.
+//   policy     — what the admin WANTS. "Only offer this one on 计划任务."
+//
+// Effective visibility is capability AND policy. Merging them into one flag would mean an
+// admin could tick a box that silently does nothing, or that adding a Dify app mode would
+// have to rewrite everyone's saved policy.
+//
+// Defined once here because five call sites read it (RunAnalysisModal, BatchConsole,
+// RecurringConsole, ChatPage, BatchAdminPage). The previous single rule lived inline in
+// RunAnalysisModal; a second copy would drift the first time a mode is added.
+
+export function surfaceSupportsMode(surface: Surface, mode?: string): boolean {
+  const kind = difyModeKind(mode)
+  if (surface === 'chat') return kind !== 'workflow'
+  return kind !== 'agent'
+}
+
+// The admin's allow-list. The API resolves "unset" to all four before sending, so a missing
+// field here means an old client/response shape — treat it as unrestricted, never as hidden:
+// failing closed would make every target vanish from every surface on a version skew.
+export function policyAllows(tg: BatchTarget, surface: Surface): boolean {
+  const list = tg.surfaces && tg.surfaces.length ? tg.surfaces : ALL_SURFACES
+  return list.includes(surface)
+}
+
+export function visibleOn(targets: BatchTarget[], surface: Surface): BatchTarget[] {
+  return targets.filter((tg) => surfaceSupportsMode(surface, tg.mode) && policyAllows(tg, surface))
 }

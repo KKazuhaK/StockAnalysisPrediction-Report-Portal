@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, App, Button, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Typography, Upload } from 'antd'
+import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { ApiOutlined, DeleteOutlined, EditOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
+import { ApiOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import { difyModeTag } from '../../lib/batchUi'
+import { difyModeTag, surfaceSupportsMode } from '../../lib/batchUi'
+import { ALL_SURFACES } from '../../api/types'
+import type { Surface } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
 import type { BatchPlugin, BatchTarget, DifyInput, DifyTargetEdit } from '../../api/types'
 
@@ -162,6 +164,27 @@ export default function BatchAdminPage() {
     await api.del(`/api/admin/batch/plugins/${encodeURIComponent(slug)}`)
     loadPlugins()
   }
+  // Visibility editing. Kept out of the Dify edit modal on purpose: that one edits the
+  // workflow CONNECTION (base_url/api_key) and only exists for dify targets, while
+  // visibility is portal policy that applies to every target kind.
+  const [surfaceFor, setSurfaceFor] = useState<BatchTarget | null>(null)
+  const [surfaceSel, setSurfaceSel] = useState<Surface[]>([])
+
+  const openSurfaces = (tg: BatchTarget) => {
+    setSurfaceSel(tg.surfaces && tg.surfaces.length ? tg.surfaces : ALL_SURFACES)
+    setSurfaceFor(tg)
+  }
+  const saveSurfaces = async () => {
+    if (!surfaceFor) return
+    if (surfaceSel.length === 0) {
+      message.warning(t('batch.admin.surfacesEmpty'))
+      return
+    }
+    await api.put(`/api/admin/batch/targets/${surfaceFor.id}/surfaces`, { surfaces: surfaceSel })
+    setSurfaceFor(null)
+    loadTargets()
+  }
+
   const deleteTarget = async (id: number) => {
     await api.del(`/api/admin/batch/targets/${id}`)
     loadTargets()
@@ -188,12 +211,35 @@ export default function BatchAdminPage() {
       ),
     },
     { title: t('batch.admin.inputs'), render: (_: unknown, tg: BatchTarget) => (tg.inputs || []).map((i) => <Tag key={i.key}>{i.key}</Tag>) },
+    {
+      title: t('batch.admin.surfaces'),
+      width: 230,
+      render: (_: unknown, tg: BatchTarget) => {
+        const list = tg.surfaces && tg.surfaces.length ? tg.surfaces : ALL_SURFACES
+        // Only the surfaces this app kind can actually serve are worth showing: an agent
+        // app tagged "运行分析" would be a promise the capability rule breaks.
+        const usable = list.filter((sf) => surfaceSupportsMode(sf, tg.mode))
+        if (usable.length === ALL_SURFACES.filter((sf) => surfaceSupportsMode(sf, tg.mode)).length) {
+          return <Tag>{t('batch.surface.all')}</Tag>
+        }
+        return (
+          <Space size={4} wrap>
+            {usable.map((sf) => (
+              <Tag key={sf} color="blue">
+                {t(`batch.surface.${sf}`)}
+              </Tag>
+            ))}
+          </Space>
+        )
+      },
+    },
     { title: t('batch.admin.createdAt'), dataIndex: 'created_at', width: 170 },
     {
       title: t('batch.col.actions'),
-      width: 100,
+      width: 132,
       render: (_: unknown, tg: BatchTarget) => (
         <Space size={4}>
+          <Button size="small" icon={<EyeOutlined />} title={t('batch.admin.surfacesTitle')} onClick={() => openSurfaces(tg)} />
           {tg.plugin_slug === 'dify' && (
             <Button size="small" icon={<EditOutlined />} title={t('common.edit')} onClick={() => openEdit(tg)} />
           )}
@@ -222,6 +268,46 @@ export default function BatchAdminPage() {
 
   return (
     <>
+      <Modal
+        title={surfaceFor ? `${t('batch.admin.surfacesTitle')} — ${surfaceFor.name}` : t('batch.admin.surfacesTitle')}
+        open={!!surfaceFor}
+        onCancel={() => setSurfaceFor(null)}
+        onOk={saveSurfaces}
+        okButtonProps={{ disabled: surfaceSel.length === 0 }}
+        width={460}
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+          {t('batch.admin.surfacesHint')}
+        </Typography.Paragraph>
+        <Space orientation="vertical" size={14} style={{ width: '100%' }}>
+          {ALL_SURFACES.map((sf) => {
+            // A surface the app kind cannot serve is disabled, not merely unhelpful: an
+            // admin who ticks it would otherwise save a box that silently does nothing,
+            // because capability is ANDed with policy at read time.
+            const supported = surfaceSupportsMode(sf, surfaceFor?.mode)
+            const box = (
+              <Checkbox
+                key={sf}
+                disabled={!supported}
+                checked={supported && surfaceSel.includes(sf)}
+                onChange={(e) =>
+                  setSurfaceSel((prev) => (e.target.checked ? [...prev, sf] : prev.filter((x) => x !== sf)))
+                }
+              >
+                {t(`batch.surface.${sf}`)}
+              </Checkbox>
+            )
+            if (supported) return <div key={sf}>{box}</div>
+            const why = sf === 'chat' ? 'batch.admin.surfacesWorkflowHint' : 'batch.admin.surfacesAgentHint'
+            return (
+              <Tooltip key={sf} title={t(why)}>
+                <div>{box}</div>
+              </Tooltip>
+            )
+          })}
+        </Space>
+      </Modal>
       <Tabs
         defaultActiveKey="targets"
         items={[

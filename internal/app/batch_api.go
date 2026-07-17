@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
@@ -198,7 +199,10 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 // it surfaces only what the UI needs, including the plugin's declared inputs so the
 // job-create form can render the right fields.
 func (s *Server) targetJSON(t BatchTarget) map[string]any {
-	m := map[string]any{"id": t.ID, "plugin_slug": t.PluginSlug, "name": t.Name, "created_at": t.Created}
+	// Surfaces must be set before the dify early-return below — every target is a Dify
+	// workflow today, so putting it after would ship the field to nobody.
+	m := map[string]any{"id": t.ID, "plugin_slug": t.PluginSlug, "name": t.Name, "created_at": t.Created,
+		"surfaces": TargetSurfaces(t.Surfaces)}
 	// Dify-native target: inputs come from the workflow's discovered fields, not a
 	// manifest (docs/adr/0006-dify-native.md).
 	if t.PluginSlug == difyPluginSlug {
@@ -237,6 +241,38 @@ func (s *Server) apiBatchTargetReorder(w http.ResponseWriter, r *http.Request, u
 	}
 	for i, id := range in.IDs {
 		s.st.SetTargetOrder(id, i)
+	}
+	writeJSON(w, okJSON)
+}
+
+// apiBatchTargetSurfaces sets where a target may be offered. Admin-only: it is governance,
+// not execution — a PermRunBatch holder may run a target but must not widen where it appears.
+func (s *Server) apiBatchTargetSurfaces(w http.ResponseWriter, r *http.Request, user string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var in struct {
+		Surfaces []string `json:"surfaces"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if _, ok := s.st.GetTarget(id); !ok {
+		jsonError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	// Reject an empty selection rather than storing it: [] would normalise to '' and mean
+	// "every surface", the exact opposite of what an admin who unticked everything meant.
+	if len(TargetSurfaces(strings.Join(in.Surfaces, ","))) == 0 {
+		jsonError(w, http.StatusBadRequest, "select at least one surface")
+		return
+	}
+	if err := s.st.SetTargetSurfaces(id, in.Surfaces); err != nil {
+		jsonError(w, http.StatusInternalServerError, "save failed")
+		return
 	}
 	writeJSON(w, okJSON)
 }
