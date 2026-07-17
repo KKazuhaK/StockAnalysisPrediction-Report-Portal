@@ -934,7 +934,7 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) 
 		fmt.Fprint(w, `<div style="font-family:sans-serif;max-width:520px;margin:12vh auto;text-align:center;color:#334">`+
 			`<h2 style="color:#0c447c">PDF 暂不可用</h2>`+
 			`<p>本机未安装 <code>wkhtmltopdf</code>，无法在本地生成 PDF。</p>`+
-			`<p><b>Docker 部署已内置</b>，线上正常。想本地用可装：<br><code>brew install --cask wkhtmltopdf</code></p>`+
+			`<p><b>Docker 部署已内置</b>。Homebrew 已不再提供 wkhtmltopdf，本机可改用 Docker 部署。</p>`+
 			`<p>也可先用 <b>⬇ MD</b> 导出。</p>`+
 			`<p><a href="#" onclick="window.close();return false;">关闭此页</a> · <a href="/">返回首页</a></p></div>`)
 		return

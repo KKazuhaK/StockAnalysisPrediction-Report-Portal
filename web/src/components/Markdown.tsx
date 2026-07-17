@@ -1,16 +1,24 @@
+import { isValidElement, type ReactElement, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import DOMPurify from 'dompurify'
 import { Typography } from 'antd'
+import MermaidBlock from './MermaidBlock'
 import 'katex/dist/katex.min.css'
 
 type MarkdownAstNode = {
   type?: string
   value?: unknown
+  lang?: string
+  position?: {
+    start?: { offset?: number }
+    end?: { offset?: number }
+  }
   data?: {
     hChildren?: MarkdownAstNode[]
+    hProperties?: Record<string, unknown>
   }
   children?: MarkdownAstNode[]
 }
@@ -71,16 +79,58 @@ function replaceTextChildren(nodes: MarkdownAstNode[] | undefined, value: string
   })
 }
 
+function remarkMermaidFenceState(source: string) {
+  return (tree: MarkdownAstNode) => {
+    const visit = (node: MarkdownAstNode) => {
+      if (node.type === 'code' && node.lang?.toLowerCase() === 'mermaid') {
+        const start = node.position?.start?.offset
+        const end = node.position?.end?.offset
+        const raw =
+          typeof start === 'number' && typeof end === 'number'
+            ? source.slice(start, end).replace(/[\r\n]+$/, '')
+            : ''
+        const lines = raw.split(/\r?\n/)
+        const opening = lines[0]?.match(/^\s*(`{3,}|~{3,})/)
+        const marker = opening?.[1]
+        const closing = marker ? new RegExp(`^\\s*${marker[0]}{${marker.length},}\\s*$`) : null
+        node.data ??= {}
+        node.data.hProperties ??= {}
+        node.data.hProperties['data-mermaid-closed'] = Boolean(closing?.test(lines[lines.length - 1] ?? ''))
+      }
+      node.children?.forEach(visit)
+    }
+    visit(tree)
+  }
+}
+
+type CodeElementProps = {
+  className?: string
+  children?: ReactNode
+  'data-mermaid-closed'?: boolean | string
+}
+
+function MarkdownPre({ children, ...props }: { children?: ReactNode }) {
+  const code = isValidElement(children) ? (children as ReactElement<CodeElementProps>) : null
+  const closed = code?.props['data-mermaid-closed'] === true || code?.props['data-mermaid-closed'] === 'true'
+  if (closed && code?.props.className?.split(/\s+/).includes('language-mermaid')) {
+    const source = String(code.props.children ?? '').replace(/\n$/, '')
+    return <MermaidBlock source={source} />
+  }
+  return <pre {...props}>{children}</pre>
+}
+
 // Report body rendering: prefer markdown (react-markdown + GFM); fall back to direct rendering when an old report only has HTML.
 export default function Markdown({ md, html }: { md?: string; html?: string }) {
   if (md && md.trim()) {
+    const normalized = normalizeDisplayMath(md)
     return (
       <Typography>
         <div className="md-body">
           <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath, remarkReportMathCompat]}
+            remarkPlugins={[remarkGfm, remarkMath, [remarkMermaidFenceState, normalized], remarkReportMathCompat]}
             rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false }]]}
             components={{
+              pre: MarkdownPre,
               // Wrap tables so a wide one scrolls sideways instead of squishing columns
               // (which forces CJK headers to wrap one character per line, reading vertical).
               table: ({ node: _node, ...props }) => (
@@ -90,7 +140,7 @@ export default function Markdown({ md, html }: { md?: string; html?: string }) {
               ),
             }}
           >
-            {normalizeDisplayMath(md)}
+            {normalized}
           </ReactMarkdown>
         </div>
       </Typography>

@@ -153,6 +153,16 @@ body {
 .md-body img {
   max-width: 100%;
 }
+.md-mermaid {
+  margin: 1em 0;
+  overflow-x: auto;
+  text-align: center;
+}
+.md-mermaid svg {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+}
 
 /* Announcement banner/preview: antd top-aligns the icon when a description is present,
    which leaves it floating in the top-left. Center it against the title+text block. */
