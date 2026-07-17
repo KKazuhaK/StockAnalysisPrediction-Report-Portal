@@ -845,18 +845,10 @@ func (s *Server) tokenOK(r *http.Request, need string) bool {
 	return s.st.TokenValid(got, need)
 }
 
-
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(v)
 }
-
-
-
-
-
-
-
 
 // apiSymbols lists stocks that have reports / autocomplete. GET /api/symbols?q=300&limit=50
 func (s *Server) apiSymbols(w http.ResponseWriter, r *http.Request) {
@@ -877,7 +869,6 @@ func (s *Server) apiSymbols(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"count": len(out), "symbols": out})
 }
-
 
 func repInList(reps []Rep, id int64) bool {
 	for _, r := range reps {
@@ -973,9 +964,10 @@ var kindOrder = []string{"重组决策", "投资决策", "深度研究", "技术
 // ---------- Account management ----------
 
 // ---------- System settings ----------
-// Old-portal credentials are stored in the DB and set via System Settings; the
-// one-shot importer (report-portal import-legacy) reads them. There is no live
-// sync/read-through anymore — legacy data is migrated into the reports table.
+// Old-portal credentials are stored in the DB and set via System Settings. Nothing
+// reads them anymore: the live read-through and the one-shot importer that used them
+// are both gone, and the old portal's reports already live in the reports table. The
+// settings survive only so an admin can still see what was configured.
 
 func uniqSorted(in []string) []string {
 	seen := map[string]bool{}

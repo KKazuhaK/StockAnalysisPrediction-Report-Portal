@@ -1,8 +1,8 @@
 // Package app is the application core of report-portal: it loads config, opens the store,
 // bootstraps first-run state, wires every HTTP route onto one net/http ServeMux, and serves the
 // embedded React SPA. The reusable domain logic lives in sibling packages (internal/batch,
-// internal/queue, internal/dify, internal/webhook, internal/mail, internal/legacy,
-// internal/config); this package is the HTTP-handler + persistence + wiring layer that glues them
+// internal/queue, internal/dify, internal/webhook, internal/mail, internal/config); this
+// package is the HTTP-handler + persistence + wiring layer that glues them
 // to the Server and Store. It is intentionally ONE package — Go favors cohesive packages over
 // many tiny ones, and a type's methods must live in its own package — so files are grouped by a
 // name-prefix convention (batch_*, chat_*, apps_*, webhook_*, user_*, dify_*) with a consistent
@@ -22,14 +22,16 @@
 //   - apiui.go   browser SPA API — cookie session (rp_session), requireUserJSON
 //   - apiv1.go   versioned machine API /api/v1 — Bearer token (ADR 0002)
 //   - openapi.go the OpenAPI 3.1 spec served for the v1 API
-//     (v1 is the entire machine surface: the pre-v1 /api/reports… token API it grew out of
-//     was retired once Dify's tool schemas spoke only v1. /api/symbols, the omnibox's
-//     autocomplete, is all that stayed behind in server.go — and it is a browser route.)
+//     (v1 is the machine surface: the pre-v1 /api/reports… token API it grew out of was
+//     retired once Dify's tool schemas spoke only v1. All that stayed behind in server.go
+//     is /api/symbols — the omnibox's autocomplete. It is gated by canQuery, so a Bearer
+//     query token reaches it too, but the omnibox's cookie session is what drives it.)
 //
 // Store & schema (dual-driver SQLite/Postgres, no ORM)
-//   - store.go            the Store type, base schema (baseSchemaStmts), dialect helpers
-//   - migrate.go          migration machinery + ensureColumns (additive-column reconcile)
-//   - migrate_v1_to_v2.go the disposable v0.1→v0.2 fold step (deleted at the next major)
+//   - store.go   the Store type, base schema (baseSchemaStmts), dialect helpers
+//   - migrate.go schemaBaseline + requireSchemaBaseline (the major-boundary upgrade gate)
+//     and ensureColumns (additive-column reconcile). The v0.1→v0.2 fold step that used to
+//     sit beside it was folded into the base schema at the v0.3 boundary, per CLAUDE.md.
 //
 // Reports: grouping, reading, export
 //   - group.go      collapse a run (symbol+date) into one card
