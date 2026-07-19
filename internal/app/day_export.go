@@ -123,7 +123,7 @@ func (s *Server) reportDayZip(w http.ResponseWriter, r *http.Request, user strin
 			continue
 		}
 		rep := e.rep
-		html, err := s.renderPDFHTML(&rep)
+		html, err := s.renderPDFHTML(&rep, user)
 		if err != nil {
 			log.Printf("day-export render %d: %v", e.rep.ID, err)
 			continue

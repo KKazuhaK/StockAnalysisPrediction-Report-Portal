@@ -8,6 +8,8 @@ import {
 import DOMPurify from 'dompurify'
 import { useTranslation } from 'react-i18next'
 import { loadMermaid } from '../lib/mermaid'
+import { flattenMermaidSVG } from '../lib/flattenSvg'
+import { cacheMermaidSVG } from '../lib/mermaidCache'
 
 let nextChartID = 0
 const MAX_MERMAID_SOURCE_SIZE = 50_000
@@ -22,13 +24,29 @@ interface ChartView {
   y: number
 }
 
-interface DragState {
+interface PointerPoint {
+  x: number
+  y: number
+}
+
+interface DragGesture {
+  kind: 'drag'
   pointerID: number
   startX: number
   startY: number
   originX: number
   originY: number
 }
+
+interface PinchGesture {
+  kind: 'pinch'
+  pointerIDs: [number, number]
+  startDistance: number
+  startCenter: PointerPoint
+  startView: ChartView
+}
+
+type ChartGesture = DragGesture | PinchGesture
 
 const DEFAULT_VIEW: ChartView = { scale: 1, x: 0, y: 0 }
 
@@ -68,13 +86,25 @@ export default function MermaidBlock({ source }: { source: string }) {
   const theme = useDocumentTheme()
   const id = useRef(`rp-mermaid-${(nextChartID += 1)}`)
   const viewportRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<DragState | null>(null)
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<ChartView>(DEFAULT_VIEW)
+  const pointersRef = useRef(new Map<number, PointerPoint>())
+  const gestureRef = useRef<ChartGesture | null>(null)
+
+  const updateView = (updater: ChartView | ((current: ChartView) => ChartView)) => {
+    setView((current) => {
+      const next = typeof updater === 'function' ? updater(current) : updater
+      viewRef.current = next
+      return next
+    })
+  }
 
   useEffect(() => {
     let active = true
     setSVG('')
-    setView(DEFAULT_VIEW)
-    dragRef.current = null
+    updateView(DEFAULT_VIEW)
+    pointersRef.current.clear()
+    gestureRef.current = null
     setDragging(false)
 
     if (source.length > MAX_MERMAID_SOURCE_SIZE) return () => undefined
@@ -119,12 +149,19 @@ export default function MermaidBlock({ source }: { source: string }) {
     }
   }, [source, theme])
 
+  useEffect(() => {
+    if (!svg) return
+    const renderedSVG = canvasRef.current?.querySelector('svg')
+    if (!(renderedSVG instanceof SVGSVGElement)) return
+    void cacheMermaidSVG(source, flattenMermaidSVG(renderedSVG), theme)
+  }, [source, svg, theme])
+
   const changeScale = (nextScale: (current: number) => number, originX?: number, originY?: number) => {
     const rect = viewportRef.current?.getBoundingClientRect()
     const pivotX = originX ?? (rect?.width ?? 0) / 2
     const pivotY = originY ?? (rect?.height ?? 0) / 2
 
-    setView((current) => {
+    updateView((current) => {
       const scale = clampScale(nextScale(current.scale))
       const ratio = scale / current.scale
       return {
@@ -135,6 +172,25 @@ export default function MermaidBlock({ source }: { source: string }) {
     })
   }
 
+  const localPoint = (event: ReactPointerEvent<HTMLDivElement>): PointerPoint => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+  }
+
+  const pointerPair = (ids: [number, number]): [PointerPoint, PointerPoint] | null => {
+    const first = pointersRef.current.get(ids[0])
+    const second = pointersRef.current.get(ids[1])
+    return first && second ? [first, second] : null
+  }
+
+  const pointDistance = (first: PointerPoint, second: PointerPoint) =>
+    Math.hypot(second.x - first.x, second.y - first.y)
+
+  const pointCenter = (first: PointerPoint, second: PointerPoint): PointerPoint => ({
+    x: (first.x + second.x) / 2,
+    y: (first.y + second.y) / 2,
+  })
+
   const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
     event.preventDefault()
     const rect = event.currentTarget.getBoundingClientRect()
@@ -144,33 +200,87 @@ export default function MermaidBlock({ source }: { source: string }) {
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
-    dragRef.current = {
-      pointerID: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: view.x,
-      originY: view.y,
-    }
+    const point = localPoint(event)
+    pointersRef.current.set(event.pointerId, point)
     event.currentTarget.setPointerCapture?.(event.pointerId)
     setDragging(true)
+
+    const ids = Array.from(pointersRef.current.keys())
+    if (ids.length >= 2) {
+      const pointerIDs: [number, number] = [ids[0], ids[1]]
+      const pair = pointerPair(pointerIDs)
+      if (!pair) return
+      gestureRef.current = {
+        kind: 'pinch',
+        pointerIDs,
+        startDistance: Math.max(1, pointDistance(pair[0], pair[1])),
+        startCenter: pointCenter(pair[0], pair[1]),
+        startView: viewRef.current,
+      }
+      return
+    }
+
+    gestureRef.current = {
+      kind: 'drag',
+      pointerID: event.pointerId,
+      startX: point.x,
+      startY: point.y,
+      originX: viewRef.current.x,
+      originY: viewRef.current.y,
+    }
   }
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerID !== event.pointerId) return
-    setView((current) => ({
+    if (!pointersRef.current.has(event.pointerId)) return
+    const point = localPoint(event)
+    pointersRef.current.set(event.pointerId, point)
+    const gesture = gestureRef.current
+    if (!gesture) return
+
+    if (gesture.kind === 'pinch') {
+      const pair = pointerPair(gesture.pointerIDs)
+      if (!pair) return
+      const center = pointCenter(pair[0], pair[1])
+      const scale = clampScale(
+        gesture.startView.scale * (pointDistance(pair[0], pair[1]) / gesture.startDistance),
+      )
+      const chartX = (gesture.startCenter.x - gesture.startView.x) / gesture.startView.scale
+      const chartY = (gesture.startCenter.y - gesture.startView.y) / gesture.startView.scale
+      updateView({
+        scale,
+        x: center.x - chartX * scale,
+        y: center.y - chartY * scale,
+      })
+      return
+    }
+
+    if (gesture.pointerID !== event.pointerId) return
+    updateView((current) => ({
       ...current,
-      x: drag.originX + event.clientX - drag.startX,
-      y: drag.originY + event.clientY - drag.startY,
+      x: gesture.originX + point.x - gesture.startX,
+      y: gesture.originY + point.y - gesture.startY,
     }))
   }
 
   const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerID !== event.pointerId) return
-    dragRef.current = null
+    pointersRef.current.delete(event.pointerId)
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
+    const remaining = Array.from(pointersRef.current.entries())
+    if (remaining.length === 1) {
+      const [pointerID, point] = remaining[0]
+      gestureRef.current = {
+        kind: 'drag',
+        pointerID,
+        startX: point.x,
+        startY: point.y,
+        originX: viewRef.current.x,
+        originY: viewRef.current.y,
+      }
+      return
+    }
+    gestureRef.current = null
     setDragging(false)
   }
 
@@ -207,7 +317,7 @@ export default function MermaidBlock({ source }: { source: string }) {
           className="md-mermaid-control md-mermaid-reset"
           aria-label={t('mermaid.reset')}
           title={t('mermaid.reset')}
-          onClick={() => setView(DEFAULT_VIEW)}
+          onClick={() => updateView(DEFAULT_VIEW)}
         >
           <span aria-hidden>1:1</span>
         </button>
@@ -225,6 +335,7 @@ export default function MermaidBlock({ source }: { source: string }) {
         onLostPointerCapture={endDrag}
       >
         <div
+          ref={canvasRef}
           className="md-mermaid-canvas"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
           dangerouslySetInnerHTML={{ __html: svg }}

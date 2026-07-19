@@ -81,8 +81,16 @@ body {
 /* A wide table scrolls sideways within its own strip instead of squishing the page
    (the md path wraps tables in this; see Markdown.tsx). */
 .md-table-wrap {
+  max-width: 100%;
   overflow-x: auto;
   margin: 1em 0;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.md-table-wrap:focus-visible {
+  outline: 2px solid var(--ant-color-primary, #1677ff);
+  outline-offset: 2px;
 }
 .md-body table {
   border-collapse: collapse;
@@ -110,6 +118,51 @@ body {
 }
 .md-body tbody tr:nth-child(even) td {
   background: var(--ant-color-fill-quaternary, rgba(128, 128, 128, 0.04));
+}
+@media (max-width: 575px) {
+  .md-table-wrap {
+    border: 1px solid var(--ant-color-border-secondary, rgba(128, 128, 128, 0.3));
+    border-radius: 8px;
+    box-shadow: inset -10px 0 12px -14px rgba(0, 0, 0, 0.45);
+  }
+  .md-table-wrap > table {
+    width: max-content;
+    min-width: 100%;
+    border: 0;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .md-table-wrap th,
+  .md-table-wrap td {
+    min-width: 7.5rem;
+    max-width: 18rem;
+    padding: 6px 8px;
+    overflow-wrap: anywhere;
+  }
+  .md-table-wrap th {
+    white-space: normal;
+  }
+  .md-table-wrap th:first-child,
+  .md-table-wrap td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    min-width: 6.5rem;
+    max-width: 42vw;
+    box-shadow: 5px 0 8px -8px rgba(0, 0, 0, 0.55);
+  }
+  .md-table-wrap th:first-child {
+    z-index: 2;
+    background: var(--ant-color-primary-bg, #eef6ff);
+  }
+  .md-table-wrap td:first-child {
+    background: var(--ant-color-bg-container, #fff);
+  }
+  .md-table-wrap tbody tr:nth-child(even) td:first-child {
+    background: var(--ant-color-fill-quaternary, #fafafa);
+  }
 }
 .md-body code {
   color: var(--ant-color-primary-text, #1677ff);

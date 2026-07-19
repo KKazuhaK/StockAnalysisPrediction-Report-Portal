@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import DOMPurify from 'dompurify'
 import { Typography } from 'antd'
+import { useTranslation } from 'react-i18next'
 import MermaidBlock from './MermaidBlock'
 import 'katex/dist/katex.min.css'
 
@@ -121,6 +122,7 @@ function MarkdownPre({ children, ...props }: { children?: ReactNode }) {
 
 // Report body rendering: prefer markdown (react-markdown + GFM); fall back to direct rendering when an old report only has HTML.
 export default function Markdown({ md, html }: { md?: string; html?: string }) {
+  const { t } = useTranslation()
   if (md && md.trim()) {
     const normalized = normalizeDisplayMath(md)
     return (
@@ -134,7 +136,7 @@ export default function Markdown({ md, html }: { md?: string; html?: string }) {
               // Wrap tables so a wide one scrolls sideways instead of squishing columns
               // (which forces CJK headers to wrap one character per line, reading vertical).
               table: ({ node: _node, ...props }) => (
-                <div className="md-table-wrap">
+                <div className="md-table-wrap" role="region" aria-label={t('markdown.table')} tabIndex={0}>
                   <table {...props} />
                 </div>
               ),

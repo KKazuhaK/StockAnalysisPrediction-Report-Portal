@@ -1,8 +1,7 @@
 # ADR 0020 — Chart rendering (mermaid on the reading page + PDF via client-render, server-splice)
 
-**Status: accepted, partially implemented.** Reading-page rendering is implemented and browser-verified.
-The PDF portion remains gated on the production wkhtmltopdf SVG probe described below; no SVG upload,
-cache, sanitizer, or splice is merged until that probe passes.
+**Status: accepted and implemented.** Reading-page rendering, browser-side SVG flattening, the
+user-scoped cache, server-side re-serialization, and both PDF splice paths are implemented and verified.
 
 ## Context
 
@@ -64,7 +63,7 @@ Design constraints that eliminated the obvious alternatives (all measured, not a
 2. **PDF gets the *same* mermaid output, rendered once in the browser and spliced in server-side.** When
    `MermaidBlock` renders, it flattens its SVG to cascade-free geometry (computed styles inlined,
    `<style>`/`class`/`<foreignObject>` removed — `web/src/lib/flattenSvg.ts`) and POSTs it to a
-   server-side cache keyed by `sha256(user \x00 mermaidVersion \x00 fenceSource)`. On PDF render,
+   server-side cache keyed by `sha256(user \x00 mermaidVersion \x00 theme \x00 fenceSource)`. On PDF render,
    `renderPDFHTML` (`internal/app/server.go:911` — the **single** choke point both `/report/{id}/pdf` and
    `day_export.go:126` flow through) replaces the fence with the cached, re-sanitized inline SVG. Both PDF
    surfaces are therefore **structurally incapable of diverging**, and the PDF chart is byte-for-byte the
@@ -78,13 +77,17 @@ Design constraints that eliminated the obvious alternatives (all measured, not a
    verbatim. A body containing literal placeholder-looking text cannot forge a slot (the nonce is
    per-render and server-minted).
 
-4. **The SVG is sanitized by *re-serialization*, not filtering — `svgsan.go`, deny-by-default.** Untrusted
+4. **The SVG is sanitized by *re-serialization*, not filtering — `mermaid_pdf.go`, deny-by-default.** Untrusted
    client-POSTed SVG is parsed to a tree and **our own bytes are re-emitted** from an allowlist of shape
    elements (`g`/`rect`/`path`/`line`/`text`/`polyline`/`circle`/`tspan`/…) and non-URL geometric/paint
-   attributes only. The allowlist contains **zero URL-bearing attributes** — no `href`/`xlink:href`,
-   `style`, `<use>`, `<image>`, `<foreignObject>`, `<filter>`, `<pattern>`, `on*`, or `url(...)`. Any
-   denied token fails **closed** (the chart degrades to a code block; it never emits attacker bytes). DoS
-   caps bound series/point count and output size; `NaN`/`Inf`/float values are clamped. Keys are
+   attributes only. The browser converts Mermaid marker arrows to ordinary polygons before upload, then
+   removes `<defs>`, markers, filters, gradients, and clip paths. This conversion is also required for
+   reliability: Qt 4.8 WebKit hangs on Mermaid's marker definitions. The server allowlist contains
+   **zero URL-bearing attributes** — no `href`/`xlink:href`, `style`, `<use>`, `<image>`,
+   `<foreignObject>`, `<filter>`, `<pattern>`, `on*`, or `url(...)`. Any
+   denied token fails **closed** (the chart degrades to a labelled code block; it never emits attacker
+   bytes). DoS caps bound source bytes, SVG bytes, XML depth, node count, attribute size, cache entries,
+   and total cache bytes. Keys are
    **user-scoped**, so the worst case of a novel bypass is an attacker corrupting *their own* PDF.
 
 5. **The cache is per-process in-memory (LRU) for v1 — no schema change.** The client handshake refills
@@ -97,7 +100,7 @@ Design constraints that eliminated the obvious alternatives (all measured, not a
    to warm misses, and building client-side pre-warming for it (~30–60 s of un-Workerable main-thread
    mermaid for a 100-chart day) would be **throwaway** once ADR 0021's server-side renderer lands — which
    is the correct home for "all-server-side day.zip." So a report whose charts were never viewed exports
-   with a **labelled** code block (an i18n `t()` string, not a silent drop). The single-report and
+   with a **labelled** code block, not a silent drop. The single-report and
    `day.zip` paths still produce byte-identical body HTML for the same warmed report.
 
 7. **Chart rendering is host-core — an explicit, one-time exception to ADR 0002's "never code-in."** ADR
@@ -117,7 +120,7 @@ Design constraints that eliminated the obvious alternatives (all measured, not a
 
 ## Consequences
 
-- When the gated PDF phase is complete, both halves of the ask are met on the existing architecture:
+- Both halves of the ask are met on the existing architecture:
   live themed charts on every reading surface, and real (not re-drawn) charts in the single-report PDF
   for any report that was viewed. Image +0 MB, +0 containers, and the PDF integration remains confined
   to the existing `renderPDFHTML` choke point.
@@ -125,22 +128,19 @@ Design constraints that eliminated the obvious alternatives (all measured, not a
   the cache. Every non-browser consumer (machine `/api/v1` clients, and any future webhook / scheduled-
   email export) gets code blocks by construction. This is an **accepted trade of the incremental path**,
   and the reason ADR 0021 exists; it is named here so it is not mistaken for a bug.
-- `svgsan.go` is new, hand-rolled attack surface parsing untrusted-derived input for an EOL engine that
+- The SVG re-serializer in `mermaid_pdf.go` is new, hand-rolled attack surface parsing
+  untrusted-derived input for an EOL engine that
   upstream forbids feeding untrusted HTML. Mitigated by deny-by-default re-serialization, user-scoped
   keys, fail-closed, and a URL-free allowlist — but bespoke SVG sanitizers are historically bypass-prone
   (mXSS, namespace confusion, Go-xml-vs-QtWebKit parser differential). It gets the hardest review, and a
   QtWebKit SVG parser bug reachable by an allowlist-conformant `<path d=...>` is a residual an allowlist
   cannot fully rule out — a standing argument for the ADR 0021 migration.
-- **One go/no-go probe remains before PDF implementation.** wkhtmltopdf is absent locally, Homebrew
-  removed the formula, and no Docker/Podman/VM runtime is installed:
-  - **wk-svg probe** — does Qt 4.8 WebKit actually paint an inline `<svg>` with CJK `<text>` under
-    `pdf.go:84`'s exact flags? Inference is strong (`--no-images` gates only `AutoLoadImages`; xychart
-    emits no `foreignObject`) but unobserved. Run it in a `Dockerfile.release` build **before** Phase 2.
-    A reproducible probe is checked in: `docker build -f scripts/Dockerfile.wkhtmltopdf-svg-probe .`.
-    It installs the exact release `.deb`, renders SVG and blank controls through the production flags,
-    rasterizes both PDFs, and fails if their pixels are identical.
-    If it fails, the PDF half is not viable on wkhtmltopdf and both PDF surfaces degrade uniformly to code
-    blocks until ADR 0021 lands.
+- **wk-svg probe — PASSED (2026-07-19).** The official wkhtmltopdf 0.12.6 patched-Qt binary painted an
+  inline SVG with CJK text under `pdf.go`'s exact production flags. The checked-in
+  `scripts/probe-wkhtmltopdf-svg.sh` rendered SVG and blank controls, rasterized both, and confirmed that
+  their pixels differ. A second end-to-end probe rendered a real dark-theme flowchart and xychart through
+  the browser cache and server export; Poppler inspection confirmed labels, arrows, axes, ticks, and line
+  geometry across the resulting two-page PDF, with no Mermaid source fallback.
   - **mermaid-eval probe — PASSED (2026-07-17).** Mermaid 11.16.0 rendered a real `xychart-beta` in a
     production Vite build under `spa.go:122`'s exact `script-src 'self'` with no `unsafe-eval`; the chart
     had a `700×500` viewBox, axis title, and expected half-point ticks. Changing `data-theme` re-rendered
@@ -152,6 +152,6 @@ Design constraints that eliminated the obvious alternatives (all measured, not a
   Report authors should express such overlays as two stacked xychart fences sharing an x-axis, or a single
   normalized-scale plot. This is a Dify-authoring decision, documented so it is not mistaken for a
   rendering bug.
-- The flatten pass discards mermaid's `<style>` block; xychart carries inline `fill=`/`stroke=`, but any
-  appearance living only in that block shifts between screen and PDF. Requires a visual diff on a real
-  K-line before shipping, not a code review.
+- The flatten pass discards Mermaid's `<style>` block after copying computed presentation values to plain
+  attributes. The end-to-end visual probe covers both flowchart class-driven styling and xychart inline
+  geometry; future Mermaid upgrades still require the same visual regression check.

@@ -2,7 +2,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Markdown from './Markdown'
 
-const { renderMermaid, parseMermaid, initializeMermaid, loadMermaid } = vi.hoisted(() => {
+const { renderMermaid, parseMermaid, initializeMermaid, loadMermaid, cacheMermaidSVG } = vi.hoisted(() => {
   const renderMermaid = vi.fn(async (id: string) => ({ svg: `<svg data-chart-id="${id}"><text>chart</text></svg>` }))
   const parseMermaid = vi.fn(async () => true)
   const initializeMermaid = vi.fn()
@@ -13,11 +13,20 @@ const { renderMermaid, parseMermaid, initializeMermaid, loadMermaid } = vi.hoist
       render: renderMermaid,
     },
   }))
-  return { renderMermaid, parseMermaid, initializeMermaid, loadMermaid }
+  const cacheMermaidSVG = vi.fn(async () => undefined)
+  return { renderMermaid, parseMermaid, initializeMermaid, loadMermaid, cacheMermaidSVG }
 })
 
 vi.mock('../lib/mermaid', () => ({
   loadMermaid,
+}))
+
+vi.mock('../lib/mermaidCache', () => ({
+  cacheMermaidSVG,
+}))
+
+vi.mock('../lib/flattenSvg', () => ({
+  flattenMermaidSVG: () => '<svg><text>flattened</text></svg>',
 }))
 
 describe('Markdown', () => {
@@ -28,6 +37,7 @@ describe('Markdown', () => {
     parseMermaid.mockResolvedValue(true)
     initializeMermaid.mockClear()
     loadMermaid.mockClear()
+    cacheMermaidSVG.mockClear()
   })
 
   it('renders report math blocks with KaTeX', () => {
@@ -64,6 +74,11 @@ describe('Markdown', () => {
         secure: expect.arrayContaining(['htmlLabels']),
       }),
     )
+    expect(cacheMermaidSVG).toHaveBeenCalledWith(
+      expect.stringContaining('xychart-beta'),
+      '<svg><text>flattened</text></svg>',
+      'light',
+    )
   })
 
   it('zooms, pans, and resets a rendered mermaid chart', async () => {
@@ -88,6 +103,29 @@ describe('Markdown', () => {
 
     fireEvent.wheel(viewport, { deltaY: -100, clientX: 0, clientY: 0 })
     expect(canvas.style.transform).toBe('translate(0px, 0px) scale(1.1)')
+  })
+
+  it('pinch-zooms a rendered mermaid chart on touch devices', async () => {
+    const { container } = render(<Markdown md={'```mermaid\nflowchart LR\nA --> B\n```'} />)
+
+    await waitFor(() => expect(container.querySelector('.md-mermaid svg')).not.toBeNull())
+    const viewport = container.querySelector<HTMLElement>('.md-mermaid-viewport')!
+    const canvas = container.querySelector<HTMLElement>('.md-mermaid-canvas')!
+
+    fireEvent.pointerDown(viewport, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 0, clientY: 0 })
+    fireEvent.pointerDown(viewport, { pointerId: 2, pointerType: 'touch', button: 0, clientX: 100, clientY: 0 })
+    fireEvent.pointerMove(viewport, { pointerId: 2, pointerType: 'touch', clientX: 200, clientY: 0 })
+
+    expect(canvas.style.transform).toBe('translate(0px, 0px) scale(2)')
+  })
+
+  it('exposes wide tables as keyboard-scrollable regions', () => {
+    const { container } = render(<Markdown md={'| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |'} />)
+
+    const wrap = container.querySelector<HTMLElement>('.md-table-wrap')!
+    expect(wrap.getAttribute('role')).toBe('region')
+    expect(wrap.getAttribute('tabindex')).toBe('0')
+    expect(wrap.querySelector('table')).not.toBeNull()
   })
 
   it('renders ordinary code fences unchanged', () => {

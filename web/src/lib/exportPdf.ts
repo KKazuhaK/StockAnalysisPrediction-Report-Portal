@@ -2,6 +2,8 @@
 // download); if it's unavailable (e.g. not installed locally), fall back to the
 // browser's native print / "Save as PDF" — zero dependency, works everywhere.
 
+import { flushMermaidSVGCache } from './mermaidCache'
+
 export interface ReportForPrint {
   title: string
   date?: string
@@ -92,6 +94,7 @@ export async function exportReportPdf(
   report: ReportForPrint,
   signal?: AbortSignal,
 ): Promise<PdfExportResult> {
+  await flushMermaidSVGCache()
   try {
     const res = await fetch(`/report/${id}/pdf`, { credentials: 'same-origin', signal })
     if (shouldDownloadPdf({ ok: res.ok, contentType: res.headers.get('content-type') })) {
@@ -123,6 +126,7 @@ export class DayExportEmptyError extends Error {
 // while awaiting. Pass an AbortSignal to make it cancelable (aborting rejects with an
 // AbortError). Throws DayExportEmptyError on 404, or a generic Error otherwise.
 export async function exportDayZip(symbol: string, date: string, name?: string, signal?: AbortSignal): Promise<void> {
+  await flushMermaidSVGCache()
   const res = await fetch(`/report/day.zip?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(date)}`, {
     credentials: 'same-origin',
     signal,

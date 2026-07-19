@@ -57,7 +57,7 @@ func TestRenderPDFHTMLFoldsCompanyNameIntoHeading(t *testing.T) {
 	s := &Server{}
 	s.parseTemplates()
 
-	out, err := s.renderPDFHTML(&Rep{Title: "001696 投资决策建议", Symbol: "001696", Name: "宗申动力", MD: "# body"})
+	out, err := s.renderPDFHTML(&Rep{Title: "001696 投资决策建议", Symbol: "001696", Name: "宗申动力", MD: "# body"}, "alice")
 	if err != nil {
 		t.Fatalf("renderPDFHTML: %v", err)
 	}

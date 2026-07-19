@@ -36,23 +36,24 @@ var tplFS embed.FS
 const cookieName = "rp_session"
 
 type Server struct {
-	cfg         *config.Config
-	st          *Store
-	names       *Names
-	pdf         *template.Template
-	jobRuns     sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
-	itemCancels sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
-	jobNotify   sync.Map                                                                   // jobID -> bool; opt-in to email the submitter when the job finishes
-	buildProv   func(BatchJob, func(runID, convID, taskID string)) (batch.Provider, error) // test seam for the run-item provider; nil → real buildProvider
-	schedMu     sync.Mutex                                                                 // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
-	mailFn      func(to []string, subject, htmlBody string) error                          // test seam; nil → real SMTP send
-	appTok      *appTokens                                                                 // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
-	chatMu      sync.Mutex                                                                 // guards chatLive/chatSeq
-	chatLive    map[int64]*chatTurn                                                        // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
-	chatSeq     int64                                                                      // monotonic in-flight chat-turn id
-	cleanupMu   sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
-	loginThr    *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
-	trustedNets []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
+	cfg           *config.Config
+	st            *Store
+	names         *Names
+	pdf           *template.Template
+	jobRuns       sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
+	itemCancels   sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
+	jobNotify     sync.Map                                                                   // jobID -> bool; opt-in to email the submitter when the job finishes
+	buildProv     func(BatchJob, func(runID, convID, taskID string)) (batch.Provider, error) // test seam for the run-item provider; nil → real buildProvider
+	schedMu       sync.Mutex                                                                 // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
+	mailFn        func(to []string, subject, htmlBody string) error                          // test seam; nil → real SMTP send
+	appTok        *appTokens                                                                 // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
+	chatMu        sync.Mutex                                                                 // guards chatLive/chatSeq
+	chatLive      map[int64]*chatTurn                                                        // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
+	chatSeq       int64                                                                      // monotonic in-flight chat-turn id
+	cleanupMu     sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
+	loginThr      *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
+	trustedNets   []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
+	mermaidCharts mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -176,6 +177,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/stock/{symbol}", s.requireUserJSON(s.apiStock))
 	mux.HandleFunc("GET /api/run/{key}", s.requireUserJSON(s.apiRun))
 	mux.HandleFunc("GET /api/repbody", s.requireUserJSON(s.apiRepBody))
+	mux.HandleFunc("POST /api/mermaid-cache", s.requireUserJSON(s.apiMermaidCache))
 
 	// ---- Admin API: session + admin ----
 	mux.HandleFunc("GET /api/admin/links", s.requireAdminJSON(s.apiAdminLinks))
@@ -905,10 +907,14 @@ func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
 
 // renderPDFHTML executes the PDF template for rep, deriving HTML from MD (htmlOf) when
 // the HTML column wasn't persisted — md-only reports don't store a redundant copy.
-func (s *Server) renderPDFHTML(rep *Rep) (string, error) {
+func (s *Server) renderPDFHTML(rep *Rep, user string) (string, error) {
 	data := *rep
 	data.Title = s.repDisplayTitle(rep) // fold the company name into the <h1>
-	data.HTML = sanitizePDFBody(htmlOf(data))
+	if data.MD != "" {
+		data.HTML = s.renderPDFMarkdown(user, data.MD)
+	} else {
+		data.HTML = sanitizePDFBody(htmlOf(data))
+	}
 	var buf strings.Builder
 	if err := s.pdf.ExecuteTemplate(&buf, "pdf.html", data); err != nil {
 		return "", err
@@ -922,7 +928,7 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) 
 		http.Error(w, "报告不存在", 404)
 		return
 	}
-	renderedHTML, err := s.renderPDFHTML(rep)
+	renderedHTML, err := s.renderPDFHTML(rep, user)
 	if err != nil {
 		http.Error(w, "render", 500)
 		return
