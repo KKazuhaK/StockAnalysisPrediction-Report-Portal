@@ -155,13 +155,79 @@ body {
 }
 .md-mermaid {
   margin: 1em 0;
-  overflow-x: auto;
+}
+.md-mermaid-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.md-mermaid-hint {
+  margin-right: auto;
+  color: var(--ant-color-text-secondary, rgba(0, 0, 0, 0.45));
+  font-size: 12px;
+}
+.md-mermaid-control {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--ant-color-border, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  color: var(--ant-color-text, inherit);
+  background: var(--ant-color-bg-container, #fff);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+.md-mermaid-control:hover:not(:disabled) {
+  border-color: var(--ant-color-primary, #1677ff);
+  color: var(--ant-color-primary, #1677ff);
+}
+.md-mermaid-control:focus-visible,
+.md-mermaid-viewport:focus-visible {
+  outline: 2px solid var(--ant-color-primary, #1677ff);
+  outline-offset: 2px;
+}
+.md-mermaid-control:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.md-mermaid-scale {
+  min-width: 44px;
+  color: var(--ant-color-text-secondary, rgba(0, 0, 0, 0.45));
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.md-mermaid svg {
+.md-mermaid-viewport {
+  max-height: 72vh;
+  overflow: hidden;
+  border: 1px solid var(--ant-color-border-secondary, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.md-mermaid-viewport.is-dragging {
+  cursor: grabbing;
+}
+.md-mermaid-canvas {
+  width: 100%;
+  transform-origin: 0 0;
+  text-align: center;
+  will-change: transform;
+}
+.md-mermaid-canvas svg {
   display: inline-block;
   max-width: 100%;
   height: auto;
+  pointer-events: none;
+}
+@media (max-width: 575px) {
+  .md-mermaid-hint {
+    display: none;
+  }
 }
 
 /* Announcement banner/preview: antd top-aligns the icon when a description is present,
