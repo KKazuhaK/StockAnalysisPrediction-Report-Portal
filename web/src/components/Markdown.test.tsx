@@ -81,6 +81,13 @@ describe('Markdown', () => {
     )
   })
 
+  it('uses parser-normalized source as the cache key for an indented mermaid fence', async () => {
+    render(<Markdown md={'  ```mermaid\n  flowchart LR\n  A --> B\n  ```'} />)
+
+    await waitFor(() => expect(cacheMermaidSVG).toHaveBeenCalled())
+    expect(cacheMermaidSVG).toHaveBeenCalledWith('flowchart LR\nA --> B', expect.any(String), 'light')
+  })
+
   it('zooms, pans, and resets a rendered mermaid chart', async () => {
     const { container } = render(<Markdown md={'```mermaid\nflowchart LR\nA --> B\n```'} />)
 
