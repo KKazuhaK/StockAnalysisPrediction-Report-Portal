@@ -290,7 +290,14 @@ type mermaidPDFSlot struct {
 	source string
 }
 
-var mermaidFenceOpen = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})[ \\t]*[Mm][Ee][Rr][Mm][Aa][Ii][Dd](?:[ \\t].*)?$")
+var mermaidFenceOpen = regexp.MustCompile("^( {0,3})(`{3,}|~{3,})[ \\t]*[Mm][Ee][Rr][Mm][Aa][Ii][Dd](?:[ \\t].*)?$")
+
+func stripMermaidFenceIndent(line string, indent int) string {
+	for removed := 0; removed < indent && strings.HasPrefix(line, " "); removed++ {
+		line = line[1:]
+	}
+	return line
+}
 
 func mermaidPDFSlots(md, nonce string) (string, []mermaidPDFSlot) {
 	lines := strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n")
@@ -302,7 +309,8 @@ func mermaidPDFSlots(md, nonce string) (string, []mermaidPDFSlot) {
 			out = append(out, lines[index])
 			continue
 		}
-		marker := match[1]
+		indent := len(match[1])
+		marker := match[2]
 		closePattern := regexp.MustCompile(fmt.Sprintf(`^ {0,3}%c{%d,}[ \t]*$`, marker[0], len(marker)))
 		end := index + 1
 		for end < len(lines) && !closePattern.MatchString(lines[end]) {
@@ -312,7 +320,11 @@ func mermaidPDFSlots(md, nonce string) (string, []mermaidPDFSlot) {
 			out = append(out, lines[index])
 			continue
 		}
-		source := strings.Join(lines[index+1:end], "\n")
+		sourceLines := make([]string, end-index-1)
+		for sourceIndex, line := range lines[index+1 : end] {
+			sourceLines[sourceIndex] = stripMermaidFenceIndent(line, indent)
+		}
+		source := strings.Join(sourceLines, "\n")
 		token := fmt.Sprintf("RP_MERMAID_%s_%d", nonce, len(slots))
 		out = append(out, "", token, "")
 		slots = append(slots, mermaidPDFSlot{token: token, source: source})

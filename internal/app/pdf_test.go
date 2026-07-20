@@ -70,6 +70,25 @@ func TestRenderPDFHTMLSplicesUserScopedMermaidSVG(t *testing.T) {
 	}
 }
 
+func TestRenderPDFHTMLMatchesMermaidCacheForIndentedFence(t *testing.T) {
+	s := &Server{}
+	s.parseTemplates()
+	source := "flowchart LR\nA[Start] --> B[End]"
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80"><rect x="1" y="1" width="198" height="78" fill="#fff"/><text x="20" y="40" font-size="16">Start</text></svg>`
+	if err := s.putMermaidChart("alice", source, "light", svg); err != nil {
+		t.Fatalf("putMermaidChart: %v", err)
+	}
+
+	md := "  ```mermaid\n  flowchart LR\n  A[Start] --> B[End]\n  ```"
+	out, err := s.renderPDFHTML(&Rep{Title: "t", MD: md}, "alice")
+	if err != nil {
+		t.Fatalf("renderPDFHTML: %v", err)
+	}
+	if !strings.Contains(out, "<svg") || strings.Contains(out, "Mermaid chart was not cached") {
+		t.Fatalf("indented Mermaid fence did not match the browser cache key: %s", out)
+	}
+}
+
 func TestSanitizeMermaidSVGRejectsFetchAndExecutableContent(t *testing.T) {
 	bad := []string{
 		`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
