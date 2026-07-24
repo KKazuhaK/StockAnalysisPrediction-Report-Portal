@@ -11,6 +11,7 @@ type User struct {
 	Email        string  //
 	Active       bool    // false = disabled; disabled accounts cannot log in
 	LastLogin    string  // timestamp of the last successful login ("" = never)
+	ExpiresAt    string  // account validity cutoff as a panel-tz civil date "YYYY-MM-DD" ("" = never); see Server.accountExpired (ADR 0022 R4)
 	SessionRev   int64   // incremented on password changes; signed sessions carry this revision
 	Groups       []int64 // vestigial (group model B uses a single primary group_id); unused
 }

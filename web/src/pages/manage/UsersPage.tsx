@@ -4,6 +4,7 @@ import {
   Avatar,
   Button,
   Card,
+  DatePicker,
   Dropdown,
   Empty,
   Form,
@@ -20,6 +21,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd'
+import dayjs from 'dayjs'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ClockCircleOutlined,
@@ -115,7 +117,7 @@ export default function UsersPage() {
 
   const openEdit = (u: UserRow | 'new') => {
     setEditUser(u)
-    if (u === 'new') form.setFieldsValue({ username: '', display_name: '', email: '', role: 'user', primary_group: undefined, password: '' })
+    if (u === 'new') form.setFieldsValue({ username: '', display_name: '', email: '', role: 'user', primary_group: undefined, password: '', expires_at: null })
     else
       form.setFieldsValue({
         username: u.username,
@@ -124,11 +126,13 @@ export default function UsersPage() {
         role: u.role,
         primary_group: u.primary_group || undefined,
         password: '',
+        expires_at: u.expires_at ? dayjs(u.expires_at) : null,
       })
   }
   const saveEdit = async () => {
     const v = await form.validateFields()
     const primaryGroup = v.primary_group ?? 0
+    const expiresAt = v.expires_at ? v.expires_at.format('YYYY-MM-DD') : ''
     try {
       if (editUser === 'new') {
         await api.post('/api/admin/users', {
@@ -138,6 +142,7 @@ export default function UsersPage() {
           display_name: v.display_name || '',
           email: v.email || '',
           primary_group: primaryGroup,
+          expires_at: expiresAt,
         })
       } else {
         await patch((editUser as UserRow).username, {
@@ -145,6 +150,7 @@ export default function UsersPage() {
           display_name: v.display_name || '',
           email: v.email || '',
           primary_group: primaryGroup,
+          expires_at: expiresAt,
           ...(v.password ? { password: v.password } : {}),
         })
       }
@@ -220,6 +226,23 @@ export default function UsersPage() {
               onChange={(checked) => patch(u.username, { active: checked })}
             />
           </Tooltip>
+        )
+      },
+    },
+    {
+      title: t('users.expires'),
+      dataIndex: 'expires_at',
+      width: 130,
+      render: (v: string) => {
+        if (!v) return <Typography.Text type="secondary">{t('users.expiresNever')}</Typography.Text>
+        const expired = dayjs(v).endOf('day').isBefore(dayjs())
+        return (
+          <Space size={4}>
+            <Typography.Text style={{ fontSize: 12 }} type={expired ? 'danger' : undefined}>
+              {v}
+            </Typography.Text>
+            {expired && <Tag color="red">{t('users.expired')}</Tag>}
+          </Space>
         )
       },
     },
@@ -362,6 +385,9 @@ export default function UsersPage() {
               placeholder={t('users.inheritDefault')}
               options={groups.map((g) => ({ value: g.id, label: g.is_default ? `${g.name} · ${t('users.defaultGroupTag')}` : g.name }))}
             />
+          </Form.Item>
+          <Form.Item name="expires_at" label={t('users.expires')} extra={t('users.expiresHint')}>
+            <DatePicker style={{ width: '100%' }} placeholder={t('users.expiresNever')} />
           </Form.Item>
         </Form>
       </Modal>

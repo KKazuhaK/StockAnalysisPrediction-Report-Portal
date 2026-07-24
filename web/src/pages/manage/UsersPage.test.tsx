@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { App } from 'antd'
 import UsersPage from './UsersPage'
 
@@ -27,5 +27,17 @@ describe('UsersPage — accounts / groups sub-tabs', () => {
     )
     expect(await screen.findByText('users.tabAccounts')).toBeTruthy()
     expect(await screen.findByText('users.tabGroups')).toBeTruthy()
+  })
+
+  it('offers an account-validity field in the add-user form', async () => {
+    render(
+      <App>
+        <UsersPage />
+      </App>,
+    )
+    fireEvent.click(await screen.findByText('users.add'))
+    // The add/edit modal must carry the account expiry (有效期) control (ADR 0022 R4). Assert on the
+    // form-only hint so it can't be satisfied by the same-labelled table column header.
+    expect(await screen.findByText('users.expiresHint')).toBeTruthy()
   })
 })

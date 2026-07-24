@@ -55,6 +55,17 @@ func (s *Store) SetUserActive(username string, active bool) error {
 	return err
 }
 
+// SetUserExpiry sets a user's account validity cutoff (a panel-tz civil date "YYYY-MM-DD"); an
+// empty string stores NULL = never expires. The caller validates/normalizes the date format.
+func (s *Store) SetUserExpiry(username, expiresAt string) error {
+	var v any = expiresAt
+	if expiresAt == "" {
+		v = nil // NULL = never
+	}
+	_, err := s.exec(`UPDATE users SET expires_at=? WHERE username=?`, v, username)
+	return err
+}
+
 // TouchLastLogin stamps the user's last successful login time.
 func (s *Store) TouchLastLogin(username string) error {
 	_, err := s.exec(`UPDATE users SET last_login=? WHERE username=?`, nowStr(), username)
@@ -253,31 +264,35 @@ func (s *Store) AllPrimaryGroups() map[string]int64 {
 	return m
 }
 
-// GroupSettings is a user's fully-resolved run governance (group model B).
+// GroupSettings is a user's fully-resolved run governance (group model B / OU tree, ADR 0022).
 type GroupSettings struct {
 	Weight          int    // urgent tickets granted per period
 	UrgentUnlimited bool   // may run urgent without spending tickets
 	AllowUrgent     bool   // may use the urgent lane at all
 	MaxQueued       int    // cap on active (queued+running) jobs per user; 0 = unlimited
 	RunWindow       string // "" = any hour, else "startHour-endHour" (panel timezone)
+	Restricted      bool   // external OU: owner-scoped reads + run allow-list apply (sticky down the tree)
+	DailyRunQuota   int    // cap on runs/day for a restricted user; 0 = unlimited
 }
 
 // rawGroupSettings holds one group's un-coalesced governance columns (NULL = unset).
 type rawGroupSettings struct {
-	weight, urgent, allowUrgent, maxQueued sql.NullInt64
-	runWindow                              sql.NullString
+	weight, urgent, allowUrgent, maxQueued, restricted, dailyQuota sql.NullInt64
+	runWindow                                                      sql.NullString
 }
 
 func (s *Store) rawGroupSettings(id int64) rawGroupSettings {
 	var g rawGroupSettings
-	s.queryRow("SELECT weight, urgent_unlimited, allow_urgent, max_queued, run_window FROM user_groups WHERE id=?", id).
-		Scan(&g.weight, &g.urgent, &g.allowUrgent, &g.maxQueued, &g.runWindow)
+	s.queryRow("SELECT weight, urgent_unlimited, allow_urgent, max_queued, run_window, restricted, daily_run_quota FROM user_groups WHERE id=?", id).
+		Scan(&g.weight, &g.urgent, &g.allowUrgent, &g.maxQueued, &g.runWindow, &g.restricted, &g.dailyQuota)
 	return g
 }
 
-// EffectiveGroupSettings resolves a user's run governance by layering, in order: the
-// permissive baseline, the Default group's set fields, then the primary group's overrides
-// (each set field wins over the layer below; NULL = inherit).
+// EffectiveGroupSettings resolves a user's run governance by layering along the OU tree, in order:
+// the permissive baseline, then each OU from the root (Default) down to the user's primary group,
+// so a set field on a nearer (deeper) OU wins over its ancestors (NULL = inherit). `restricted` is
+// STICKY rather than last-wins: a restricted ancestor restricts its whole subtree, and a descendant
+// can never un-restrict itself (ADR 0022).
 func (s *Store) EffectiveGroupSettings(username string) GroupSettings {
 	res := GroupSettings{AllowUrgent: true} // permissive baseline: no cap, any hour, urgent ok
 	apply := func(g rawGroupSettings) {
@@ -296,15 +311,73 @@ func (s *Store) EffectiveGroupSettings(username string) GroupSettings {
 		if g.runWindow.Valid {
 			res.RunWindow = g.runWindow.String
 		}
+		if g.restricted.Valid && g.restricted.Int64 != 0 {
+			res.Restricted = true // sticky OR: never un-set by a descendant
+		}
+		if g.dailyQuota.Valid {
+			res.DailyRunQuota = int(g.dailyQuota.Int64)
+		}
 	}
-	defID := s.DefaultGroupID()
-	if defID != 0 {
-		apply(s.rawGroupSettings(defID))
-	}
-	if gid := s.PrimaryGroupOf(username); gid != 0 && gid != defID {
+	for _, gid := range s.groupChain(username) {
 		apply(s.rawGroupSettings(gid))
 	}
 	return res
+}
+
+// groupParent returns a group's parent OU id, or 0 for a root (NULL parent_id) or missing group.
+func (s *Store) groupParent(id int64) int64 {
+	var p sql.NullInt64
+	s.queryRow("SELECT parent_id FROM user_groups WHERE id=?", id).Scan(&p)
+	return p.Int64
+}
+
+// groupChain returns the OU ancestry a user's settings resolve through, ordered root→leaf so the
+// caller applies ancestors first and the leaf (the user's primary group, or the Default group when
+// unassigned) last. The Default/root baseline is always included even if a broken parent_id chain
+// never reaches it. Cycle- and depth-guarded.
+func (s *Store) groupChain(username string) []int64 {
+	def := s.DefaultGroupID()
+	leaf := s.PrimaryGroupOf(username)
+	if leaf == 0 {
+		leaf = def
+	}
+	var up []int64
+	seen := map[int64]bool{}
+	for gid := leaf; gid != 0 && !seen[gid] && len(up) < 64; gid = s.groupParent(gid) {
+		seen[gid] = true
+		up = append(up, gid)
+	}
+	if def != 0 && !seen[def] {
+		up = append(up, def) // guarantee the baseline is applied even off an orphaned chain
+	}
+	for i, j := 0, len(up)-1; i < j; i, j = i+1, j-1 {
+		up[i], up[j] = up[j], up[i] // reverse to root→leaf
+	}
+	return up
+}
+
+// SetGroupParent moves an OU under a parent (0 = make it a root; NULL parent_id). No cycle check
+// here — the admin API guards that before calling; groupChain is itself cycle-guarded at read time.
+func (s *Store) SetGroupParent(id, parent int64) error {
+	var v any = parent
+	if parent == 0 {
+		v = nil
+	}
+	_, err := s.exec(`UPDATE user_groups SET parent_id=? WHERE id=?`, v, id)
+	return err
+}
+
+// SetGroupRestricted flags (or clears) an OU as external/restricted. Restriction is sticky down the
+// tree at resolution time, so clearing it here only affects OUs with no restricted ancestor.
+func (s *Store) SetGroupRestricted(id int64, restricted bool) error {
+	_, err := s.exec(`UPDATE user_groups SET restricted=? WHERE id=?`, boolInt(restricted), id)
+	return err
+}
+
+// SetGroupDailyQuota sets an OU's per-day run cap; nil stores NULL (inherit the parent), 0 = unlimited.
+func (s *Store) SetGroupDailyQuota(id int64, quota *int) error {
+	_, err := s.exec(`UPDATE user_groups SET daily_run_quota=? WHERE id=?`, nullInt(quota), id)
+	return err
 }
 
 // SetGroupGovernance writes a group's allow-urgent / max-queued / run-window overrides.

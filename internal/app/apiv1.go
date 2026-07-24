@@ -140,19 +140,20 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		RunID    string `json:"run_id"`
-		Symbol   string `json:"symbol"`
-		Name     string `json:"name"`
-		Date     string `json:"date"`
-		Kind     string `json:"kind"`
-		Subtype  string `json:"subtype"`
-		RType    string `json:"rtype"`
-		Title    string `json:"title"`
-		Source   string `json:"source"`
-		Time     string `json:"time"`
-		BodyMD   string `json:"body_md"`
-		BodyHTML string `json:"body_html"`
-		Tracking []struct {
+		RunID      string `json:"run_id"`
+		OwnerToken string `json:"owner_token"` // signed OU-attribution token echoed from the run inputs (ADR 0022 R1)
+		Symbol     string `json:"symbol"`
+		Name       string `json:"name"`
+		Date       string `json:"date"`
+		Kind       string `json:"kind"`
+		Subtype    string `json:"subtype"`
+		RType      string `json:"rtype"`
+		Title      string `json:"title"`
+		Source     string `json:"source"`
+		Time       string `json:"time"`
+		BodyMD     string `json:"body_md"`
+		BodyHTML   string `json:"body_html"`
+		Tracking   []struct {
 			IType       string `json:"itype"`
 			Content     string `json:"content"`
 			Status      string `json:"status"`
@@ -203,6 +204,14 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		log.Printf("v1 ingest db error: %v", err)
 		v1err(w, http.StatusInternalServerError, "db_error", "database error")
 		return
+	}
+	// Stamp the generating OU first-writer-wins from the signed owner_token (ADR 0022 R1). A missing
+	// or invalid token leaves owner_group NULL (internal/unattributed), which fails closed for
+	// restricted viewers. Ownership is never taken from a plain client-supplied field.
+	if ou, ok := s.ownerFromToken(in.OwnerToken); ok {
+		if _, err := s.st.StampReportOwner(id, ou); err != nil {
+			log.Printf("v1 ingest stamp owner id=%d ou=%d: %v", id, ou, err)
+		}
 	}
 	if len(in.Tracking) > 0 {
 		items := make([]TrackingItem, 0, len(in.Tracking))

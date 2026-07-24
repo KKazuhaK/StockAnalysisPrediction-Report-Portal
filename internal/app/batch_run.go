@@ -686,7 +686,9 @@ func (s *Server) startItem(job BatchJob, item batch.Item) {
 			s.st.FinishItem(item.ID, batch.Failed, 1, "", err.Error())
 			return
 		}
-		res, attempts := batch.RunItem(itemCtx, prov, item.Inputs, job.MaxRetries, nil, log.Printf)
+		// A restricted OU's run gets a signed owner-attribution token injected into its inputs (ADR
+		// 0022 R1); internal runs pass through unchanged, so this is a no-op for existing usage.
+		res, attempts := batch.RunItem(itemCtx, prov, s.runInputs(job, item.Inputs), job.MaxRetries, nil, log.Printf)
 		// A cancelled run (this row or its whole job) is recorded as 'cancelled', not
 		// 'failed' — the operator stopped it on purpose. A run that actually finished
 		// keeps its real outcome even if a cancel raced in just after.
