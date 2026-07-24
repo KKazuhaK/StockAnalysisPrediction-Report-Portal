@@ -8,6 +8,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -199,6 +200,10 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !u.Active {
 		jsonError(w, http.StatusForbidden, "账号已停用")
+		return
+	}
+	if s.accountExpired(u) {
+		jsonError(w, http.StatusForbidden, "账号已过期")
 		return
 	}
 	if thr != nil {
@@ -772,6 +777,7 @@ func userJSON(u User, primaryGroup int64) map[string]any {
 	return map[string]any{
 		"username": u.Username, "role": u.EffRole(), "display_name": u.DisplayName,
 		"email": u.Email, "active": u.Active, "last_login": u.LastLogin, "primary_group": primaryGroup,
+		"expires_at": u.ExpiresAt,
 	}
 }
 
@@ -789,6 +795,19 @@ func (s *Server) apiAdminUsers(w http.ResponseWriter, r *http.Request, user stri
 	writeJSON(w, map[string]any{"users": out, "me": user, "roles": roles, "groups": userGroupsJSON(s.st.ListUserGroups())})
 }
 
+// parseExpiry validates an account-validity date from the admin UI: "" clears it (never expires),
+// otherwise it must be a "YYYY-MM-DD" panel-tz civil date. Returns the normalized value to store.
+func parseExpiry(raw string) (string, error) {
+	exp := strings.TrimSpace(raw)
+	if exp == "" {
+		return "", nil
+	}
+	if _, err := time.Parse("2006-01-02", exp); err != nil {
+		return "", fmt.Errorf("expires_at must be a YYYY-MM-DD date")
+	}
+	return exp, nil
+}
+
 func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		Username     string `json:"username"`
@@ -797,6 +816,7 @@ func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string)
 		DisplayName  string `json:"display_name"`
 		Email        string `json:"email"`
 		PrimaryGroup int64  `json:"primary_group"`
+		ExpiresAt    string `json:"expires_at"`
 	}
 	readJSON(r, &in)
 	name := strings.TrimSpace(in.Username)
@@ -805,6 +825,11 @@ func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string)
 		return
 	}
 	if err := validateNewPassword(in.Password); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	expiry, err := parseExpiry(in.ExpiresAt)
+	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -820,6 +845,9 @@ func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string)
 	s.st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: validRole(in.Role)})
 	s.st.SetUserProfile(name, strings.TrimSpace(in.DisplayName), strings.TrimSpace(in.Email))
 	s.st.SetPrimaryGroup(name, in.PrimaryGroup)
+	if expiry != "" {
+		s.st.SetUserExpiry(name, expiry)
+	}
 	writeJSON(w, okJSON)
 }
 
@@ -839,6 +867,7 @@ func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string
 		Email        *string `json:"email"`
 		Active       *bool   `json:"active"`
 		PrimaryGroup *int64  `json:"primary_group"`
+		ExpiresAt    *string `json:"expires_at"`
 	}
 	readJSON(r, &in)
 	if in.Role != nil {
@@ -879,6 +908,23 @@ func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string
 			active = true // can't disable yourself or the last admin
 		}
 		s.st.SetUserActive(name, active)
+	}
+	if in.ExpiresAt != nil {
+		expiry, err := parseExpiry(*in.ExpiresAt)
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// An already-passed cutoff would lock the account out immediately; refuse it for your own
+		// account and the last admin, mirroring the self-disable / last-admin guard above.
+		if expiry != "" {
+			today := time.Now().In(s.panelLocation()).Format("2006-01-02")
+			if today > expiry && (name == user || (u.IsAdmin() && s.st.CountAdmins() <= 1)) {
+				jsonError(w, http.StatusBadRequest, "cannot set an already-passed expiry on your own or the last admin account")
+				return
+			}
+		}
+		s.st.SetUserExpiry(name, expiry)
 	}
 	if in.PrimaryGroup != nil {
 		s.st.SetPrimaryGroup(name, *in.PrimaryGroup)

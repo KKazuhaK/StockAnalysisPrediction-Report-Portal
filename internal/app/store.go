@@ -234,10 +234,14 @@ const reportIdentIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_ident ON
 func (s *Store) baseSchemaStmts() []string {
 	pk := s.pkAuto()
 	return []string{
+		// owner_group (ADR 0022): the OU that generated this report, stamped once at ingest
+		// (first-writer-wins). NULL = internal/legacy/unattributed. NOT part of report identity
+		// (idx_reports_ident below), so two OUs requesting the same symbol|date|subtype|title still
+		// share one upserted row. Additive nullable column; picked up on existing DBs by ensureColumns.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS reports(
 			id %s,
 			title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
-			kind TEXT, run_id TEXT,
+			kind TEXT, run_id TEXT, owner_group BIGINT,
 			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT)`, pk),
 		// These two carry every lookup by code or date. Single-column idx_reports_sym(symbol) and
 		// idx_reports_date(rdate) used to sit beside them and are gone: a B-tree already serves its
@@ -254,6 +258,9 @@ func (s *Store) baseSchemaStmts() []string {
 		// a subtype in the registry must never fork a report into two rows. run_id is only a
 		// batch label and likewise stays out.
 		reportIdentIndex,
+		// idx_reports_owner (ADR 0022) serves the restricted-viewer read filter and the same-day
+		// reuse lookup: both scope reports by owner_group, and the today-clause also by rdate.
+		`CREATE INDEX IF NOT EXISTS idx_reports_owner ON reports(owner_group, rdate)`,
 		// Entry buttons. group_id: the link group it belongs to (0 = ungrouped/top-level, shown inline).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
 			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1,
@@ -274,10 +281,12 @@ func (s *Store) baseSchemaStmts() []string {
 		// (display_name/email/active/last_login) and the single primary group_id (NULL = the Default
 		// group) are columns here, folded from the former user_profiles + user_primary_group side
 		// tables (docs/adr/0013-v2-schema-consolidation.md). active defaults to 1 (enabled).
+		// expires_at (ADR 0022): account validity cutoff as a panel-tz civil date "YYYY-MM-DD" (NULL =
+		// never), orthogonal to active — valid THROUGH that whole day; see Server.accountExpired. Additive.
 		`CREATE TABLE IF NOT EXISTS users(
 			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user',
 			display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT, group_id BIGINT,
-			session_rev BIGINT DEFAULT 0)`,
+			session_rev BIGINT DEFAULT 0, expires_at TEXT)`,
 		// API tokens (multiple, with note/scope/validity period/last used). scope: all|ingest|query.
 		// Existing plaintext token values stay untouched and remain valid. New writes leave token
 		// NULL and authenticate through token_hash; token_prefix is safe display metadata.
@@ -393,10 +402,23 @@ func (s *Store) baseSchemaStmts() []string {
 		// concrete baselines. allow_urgent / max_queued / run_window are per-group governance:
 		// NULL on a non-default group means "inherit the Default group"; the Default group's NULL
 		// means the permissive baseline (urgent allowed, no queue cap, any hour).
+		// parent_id/restricted/daily_run_quota (ADR 0022) promote the group into the OU tree:
+		// parent_id (NULL = root) builds the tenant hierarchy; restricted flags an external OU
+		// (inherited down the tree); daily_run_quota is the R2 per-day run cap (NULL = inherit,
+		// 0 = unlimited). Additive nullable/defaulted columns; picked up on existing DBs by ensureColumns.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS user_groups(
 			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER,
 			urgent_unlimited INTEGER, is_default INTEGER DEFAULT 0,
-			allow_urgent INTEGER, max_queued INTEGER, run_window TEXT, priority TEXT)`, pk),
+			allow_urgent INTEGER, max_queued INTEGER, run_window TEXT, priority TEXT,
+			parent_id BIGINT, restricted INTEGER DEFAULT 0, daily_run_quota INTEGER)`, pk),
+		// group_targets (ADR 0022): a restricted OU's default-deny allow-list of which batch_targets it
+		// may run and on which surfaces. A row = "this OU MAY run this target"; surfaces is the OU's
+		// subset of run|batch|recurring|chat ('' = inherit the target's own batch_targets.surfaces).
+		// Resolved up the OU tree (nearest ancestor with rows wins); unrestricted OUs ignore it. Additive
+		// side table with a composite key (no surrogate id, like app_files); created by createBaseTables.
+		`CREATE TABLE IF NOT EXISTS group_targets(
+			group_id BIGINT, target_id BIGINT, surfaces TEXT DEFAULT '',
+			PRIMARY KEY(group_id, target_id))`,
 		// Priority "次票": a per-user quota of 加急 runs, allocated by group weight and
 		// refilled each period. State is lazy (no cron): a period rollover is detected
 		// from period_start on access. See docs/adr/0005-priority-tickets.md.
@@ -490,18 +512,19 @@ func (s *Store) execBaseSchema(indexes bool) error {
 // ADR 0013): a NULL display_name/email/last_login reads as ” and a NULL active reads as 1.
 const userCols = `u.username,u.password_hash,u.role,
 	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,''),
-	COALESCE(u.session_rev,0)`
+	COALESCE(u.session_rev,0),COALESCE(u.expires_at,'')`
 
 func scanUser(scan func(...any) error) (User, error) {
 	var u User
-	var role, dn, email, last sql.NullString
+	var role, dn, email, last, expires sql.NullString
 	var active, sessionRev sql.NullInt64
-	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev); err != nil {
+	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev, &expires); err != nil {
 		return User{}, err
 	}
 	u.Role, u.DisplayName, u.Email, u.LastLogin = role.String, dn.String, email.String, last.String
 	u.Active = !active.Valid || active.Int64 != 0
 	u.SessionRev = sessionRev.Int64
+	u.ExpiresAt = expires.String
 	return u, nil
 }
 

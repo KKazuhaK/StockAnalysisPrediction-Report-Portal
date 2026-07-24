@@ -553,6 +553,53 @@ func (s *Server) verify(cookie string) (string, int64) {
 	return msg[len("v1|"):revSep], rev
 }
 
+// ownerTokenPrefix tags the report-attribution token so it can never be confused with a session
+// cookie ("v1|") signed by the same secret.
+const ownerTokenPrefix = "ot1"
+
+// mintOwnerToken produces a signed, opaque owner-attribution token carrying the OU to stamp. It is
+// injected into a restricted OU's Dify run inputs and echoed back at ingest, so a report's owner is
+// decided by the portal's secret_key, never by a client-supplied field (ADR 0022 R1). "" if ou is 0.
+func (s *Server) mintOwnerToken(ou int64) string {
+	if ou == 0 {
+		return ""
+	}
+	exp := time.Now().Add(7 * 24 * time.Hour).Unix()
+	msg := fmt.Sprintf("%s|%d|%d", ownerTokenPrefix, ou, exp)
+	return encodeSessionMessage(msg) + "." + s.hmac(msg)
+}
+
+// ownerFromToken verifies an owner token and returns the OU it carries. ok=false for an empty,
+// malformed, tampered, expired, or foreign (wrong-prefix) token — the caller then leaves the report
+// unattributed (NULL owner), which fails closed for restricted viewers.
+func (s *Server) ownerFromToken(tok string) (int64, bool) {
+	parts := strings.SplitN(tok, ".", 2)
+	if len(parts) != 2 {
+		return 0, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return 0, false
+	}
+	msg := string(raw)
+	if !hmac.Equal([]byte(s.hmac(msg)), []byte(parts[1])) {
+		return 0, false
+	}
+	f := strings.Split(msg, "|")
+	if len(f) != 3 || f[0] != ownerTokenPrefix {
+		return 0, false
+	}
+	exp, err := strconv.ParseInt(f[2], 10, 64)
+	if err != nil || time.Now().Unix() > exp {
+		return 0, false
+	}
+	ou, err := strconv.ParseInt(f[1], 10, 64)
+	if err != nil || ou <= 0 {
+		return 0, false
+	}
+	return ou, true
+}
+
 // currentActiveUser returns the logged-in user only if the account still exists and
 // is enabled, so disabling an account takes effect immediately — even for a session
 // whose cookie is still valid.
@@ -566,10 +613,22 @@ func (s *Server) currentActiveUser(r *http.Request) string {
 		return ""
 	}
 	usr := s.st.GetUser(user)
-	if usr == nil || !usr.Active || usr.SessionRev != rev {
+	if usr == nil || !usr.Active || s.accountExpired(usr) || usr.SessionRev != rev {
 		return ""
 	}
 	return user
+}
+
+// accountExpired reports whether a user's validity cutoff has passed. The cutoff is a panel-tz
+// civil date and the account stays valid THROUGH that whole day, so it is expired only once the
+// panel-tz civil date is strictly after it (ISO dates compare lexicographically = chronologically).
+// "" = never expires. Enforced at login (apiLogin) and on every request here (ADR 0022 R4).
+func (s *Server) accountExpired(u *User) bool {
+	if u == nil || u.ExpiresAt == "" {
+		return false
+	}
+	today := time.Now().In(s.panelLocation()).Format("2006-01-02")
+	return today > u.ExpiresAt
 }
 
 func (s *Server) isAdmin(user string) bool {
