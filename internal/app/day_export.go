@@ -84,19 +84,20 @@ func (s *Server) reportDayZip(w http.ResponseWriter, r *http.Request, user strin
 		http.Error(w, "symbol and date required", http.StatusBadRequest)
 		return
 	}
-	meta, err := s.st.NewBySymbol(symbol)
+	meta, err := s.st.NewBySymbol(symbol, s.viewerScope(user))
 	if err != nil {
 		log.Printf("day-export db error: %v", err)
 		http.Error(w, "database error", http.StatusInternalServerError)
 		return
 	}
-	// NewBySymbol returns metadata only; load each matching row's body for rendering.
+	// NewBySymbol returns metadata only; load each matching row's body for rendering. Both layers are
+	// owner-scoped, so a restricted viewer's ZIP membership, filenames and bodies stay within scope.
 	var reps []Rep
 	for _, m := range meta {
 		if m.Date != date {
 			continue
 		}
-		if full := s.loadRep(m.ID); full != nil {
+		if full := s.loadRep(user, m.ID); full != nil {
 			reps = append(reps, *full)
 		}
 	}

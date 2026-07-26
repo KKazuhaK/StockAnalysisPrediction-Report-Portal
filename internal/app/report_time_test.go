@@ -69,7 +69,7 @@ func TestSameDayOrderingByInstant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reps, _, err := st.QueryReports(ReportQuery{Symbol: "600160"})
+	reps, _, err := st.QueryReports(ReportQuery{Symbol: "600160"}, nil)
 	if err != nil || len(reps) != 2 {
 		t.Fatalf("query: len=%d err=%v", len(reps), err)
 	}

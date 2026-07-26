@@ -55,7 +55,7 @@ func TestPostgresQueries(t *testing.T) {
 		t.Fatalf("insert 2: %v", err)
 	}
 	// ListRuns must fold both subtypes into one run (STRING_AGG must not error).
-	runs := st.ListRuns("600160", "")
+	runs := st.ListRuns("600160", "", nil)
 	if len(runs) != 1 {
 		t.Fatalf("ListRuns len = %d, want 1", len(runs))
 	}
@@ -66,7 +66,7 @@ func TestPostgresQueries(t *testing.T) {
 	if _, err := st.exec("INSERT INTO stocks(code,name,updated_at) VALUES(?,?,?)", "600160", "Apple Inc", nowStr()); err != nil {
 		t.Fatalf("insert stock: %v", err)
 	}
-	reps, err := st.SearchNew(Filters{Q: "apple"})
+	reps, err := st.SearchNew(Filters{Q: "apple"}, nil)
 	if err != nil {
 		t.Fatalf("SearchNew: %v", err)
 	}

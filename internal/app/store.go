@@ -761,7 +761,7 @@ func dir(sort string) string {
 // newReportFilter builds the shared reports predicate used by the full search and
 // the home-feed search. Keeping it in one place prevents their filter semantics
 // from drifting.
-func (s *Store) newReportFilter(f Filters) (string, []any) {
+func (s *Store) newReportFilter(f Filters, sc *ownerScope) (string, []any) {
 	var where []string
 	var args []any
 	op := s.likeOp()
@@ -797,15 +797,20 @@ func (s *Store) newReportFilter(f Filters) (string, []any) {
 		where = append(where, "r.rdate <= ?")
 		args = append(args, f.DateTo)
 	}
+	if frag, fargs := sc.where("r."); frag != "" {
+		where = append(where, frag)
+		args = append(args, fargs...)
+	}
 	if len(where) == 0 {
 		return "", args
 	}
 	return " WHERE " + strings.Join(where, " AND "), args
 }
 
-// SearchNew returns matching new reports (without body).
-func (s *Store) SearchNew(f Filters) ([]Rep, error) {
-	where, args := s.newReportFilter(f)
+// SearchNew returns matching new reports (without body). sc scopes the result to a restricted
+// viewer's own OU + same-day internal pool (nil = no restriction; see ownerScope).
+func (s *Store) SearchNew(f Filters, sc *ownerScope) ([]Rep, error) {
+	where, args := s.newReportFilter(f, sc)
 	q := "SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
 	q += where
 	q += fmt.Sprintf(" ORDER BY r.rdate %s, r.sent_at %s", dir(f.Sort), dir(f.Sort))
@@ -825,8 +830,8 @@ func (s *Store) SearchNew(f Filters) ([]Rep, error) {
 // report plus every member on the latest matching date for each stock. It also
 // returns the count before that collapse. Doing the history collapse in SQL avoids
 // transferring and retaining every historical report merely to discard it in Go.
-func (s *Store) SearchNewLatest(f Filters) ([]Rep, int, error) {
-	where, args := s.newReportFilter(f)
+func (s *Store) SearchNewLatest(f Filters, sc *ownerScope) ([]Rep, int, error) {
+	where, args := s.newReportFilter(f, sc)
 	q := `WITH filtered AS (
 		SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,
 			COUNT(*) OVER() AS filtered_total
@@ -959,8 +964,8 @@ func (s *Store) TokenValid(token, need string) bool {
 }
 
 // Manifest builds a "what reports exist" listing for a given symbol (so Dify can probe before fetching): total count, each date (with categories), and all categories/subtypes.
-func (s *Store) Manifest(symbol string) map[string]any {
-	reps, _ := s.NewBySymbol(symbol)
+func (s *Store) Manifest(symbol string, sc *ownerScope) map[string]any {
+	reps, _ := s.NewBySymbol(symbol, sc) // sc nil for a machine (Dify) probe; scoped for a restricted cookie caller
 	type dateInfo struct {
 		Date  string   `json:"date"`
 		Count int      `json:"count"`
@@ -1020,7 +1025,7 @@ type ReportQuery struct {
 
 // QueryReports searches new reports and returns the page plus the TOTAL match
 // count (for pagination). Keyword q matches title, code, current name, or body.
-func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
+func (s *Store) QueryReports(f ReportQuery, sc *ownerScope) ([]Rep, int, error) {
 	var where []string
 	var args []any
 	if f.Symbol != "" {
@@ -1055,6 +1060,10 @@ func (s *Store) QueryReports(f ReportQuery) ([]Rep, int, error) {
 	if f.Until != "" {
 		where = append(where, "r.rdate<=?")
 		args = append(args, f.Until)
+	}
+	if frag, fargs := sc.where("r."); frag != "" {
+		where = append(where, frag)
+		args = append(args, fargs...)
 	}
 	limit := f.Limit
 	if limit <= 0 || limit > 200 {
@@ -1122,7 +1131,7 @@ func (s *Store) SetTracking(reportID int64, symbol string, items []TrackingItem)
 }
 
 // QueryTracking queries a symbol's assumption/tracking items (optionally filtered by status, newest first by default).
-func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
+func (s *Store) QueryTracking(symbol, status string, limit int, sc *ownerScope) []TrackingItem {
 	where := []string{"t.symbol=?"}
 	args := []any{symbol}
 	if status != "" {
@@ -1132,9 +1141,17 @@ func (s *Store) QueryTracking(symbol, status string, limit int) []TrackingItem {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	// tracking_items has no owner_group: scope a restricted viewer by joining to the owning report,
+	// so only tracking for a report the viewer may see comes back (unattributable items fail closed).
+	join := ""
+	if frag, fargs := sc.where("r."); frag != "" {
+		join = " JOIN reports r ON r.id = t.report_id"
+		where = append(where, frag)
+		args = append(args, fargs...)
+	}
 	rows, err := s.query(fmt.Sprintf(`SELECT t.id,t.report_id,t.symbol,t.itype,t.content,t.status,t.review_point,t.created_at
-		FROM tracking_items t
-		WHERE %s ORDER BY t.created_at DESC, t.id DESC LIMIT %d`, strings.Join(where, " AND "), limit), args...)
+		FROM tracking_items t%s
+		WHERE %s ORDER BY t.created_at DESC, t.id DESC LIMIT %d`, join, strings.Join(where, " AND "), limit), args...)
 	if err != nil {
 		return nil
 	}
@@ -1208,10 +1225,17 @@ func (s *Store) StockName(code string) string {
 }
 
 // ListSymbols lists stocks that have reports (q matches code or name, empty means all), ordered by report count descending.
-func (s *Store) ListSymbols(q string, limit int) []SymbolInfo {
+func (s *Store) ListSymbols(q string, limit int, sc *ownerScope) []SymbolInfo {
 	// Only real stocks (skip reports with no code — those aren't a symbol).
 	where := "WHERE t.sym != ''"
 	var args []any
+	// The owner-scope predicate must go INSIDE the per-symbol aggregate, so a restricted viewer's
+	// counts/latest recompute over only its visible reports and wholly-other-OU symbols drop out.
+	innerWhere := ""
+	if frag, fargs := sc.where(""); frag != "" {
+		innerWhere = " WHERE " + frag
+		args = append(args, fargs...) // inner placeholders precede the outer LIKE ones in the SQL
+	}
 	if q != "" {
 		// Match the stock code OR its current name (from the stocks table), so a
 		// name fragment or a code fragment both work — even for legacy reports,
@@ -1226,10 +1250,10 @@ func (s *Store) ListSymbols(q string, limit int) []SymbolInfo {
 	// reports were migrated in), then resolve the display name from stocks.
 	rows, err := s.query(fmt.Sprintf(`SELECT t.sym, s.name, SUM(t.cnt) AS c, MAX(t.latest) AS latest
 		FROM (
-			SELECT symbol AS sym, COUNT(*) AS cnt, MAX(rdate) AS latest FROM reports GROUP BY symbol
+			SELECT symbol AS sym, COUNT(*) AS cnt, MAX(rdate) AS latest FROM reports%s GROUP BY symbol
 		) t LEFT JOIN stocks s ON s.code = t.sym
 		%s
-		GROUP BY t.sym, s.name ORDER BY c DESC, t.sym LIMIT %d`, where, limit), args...)
+		GROUP BY t.sym, s.name ORDER BY c DESC, t.sym LIMIT %d`, innerWhere, where, limit), args...)
 	if err != nil {
 		return nil
 	}
@@ -1253,12 +1277,16 @@ type RunInfo struct {
 }
 
 // ListRuns lists a symbol's report groups (optionally for a specific day), ordered by date descending.
-func (s *Store) ListRuns(symbol, date string) []RunInfo {
+func (s *Store) ListRuns(symbol, date string, sc *ownerScope) []RunInfo {
 	where := []string{"symbol=?"}
 	args := []any{symbol}
 	if date != "" {
 		where = append(where, "rdate=?")
 		args = append(args, date)
+	}
+	if frag, fargs := sc.where(""); frag != "" {
+		where = append(where, frag)
+		args = append(args, fargs...)
 	}
 	rows, err := s.query(fmt.Sprintf(`SELECT symbol,rdate,kind,MAX(run_id),
 		%s, COUNT(*) FROM reports WHERE %s
@@ -1282,9 +1310,15 @@ func (s *Store) ListRuns(symbol, date string) []RunInfo {
 }
 
 // NewBySymbol fetches all new reports for a symbol (without body, date descending), for the per-stock timeline detail view.
-func (s *Store) NewBySymbol(symbol string) ([]Rep, error) {
-	rows, err := s.query(`SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at
-		FROM reports WHERE symbol=? ORDER BY rdate DESC, sent_at ASC`, symbol)
+func (s *Store) NewBySymbol(symbol string, sc *ownerScope) ([]Rep, error) {
+	q := `SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at FROM reports WHERE symbol=?`
+	args := []any{symbol}
+	if frag, fargs := sc.where(""); frag != "" {
+		q += " AND " + frag
+		args = append(args, fargs...)
+	}
+	q += ` ORDER BY rdate DESC, sent_at ASC`
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1296,10 +1330,18 @@ func (s *Store) NewBySymbol(symbol string) ([]Rep, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) GetNew(rowid int64) (*Rep, error) {
+// GetNew fetches a report (with body) by id. sc scopes the fetch: for a restricted viewer an
+// out-of-scope id returns (nil, nil), so every by-id read path fails closed at the SQL layer and its
+// existing "nil → 404" handling keeps another OU's report unreachable by id enumeration (ADR 0022 R1).
+func (s *Store) GetNew(rowid int64, sc *ownerScope) (*Rep, error) {
 	var title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
-	err := s.queryRow(
-		"SELECT title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE id=?", rowid).
+	q := "SELECT title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE id=?"
+	args := []any{rowid}
+	if frag, fargs := sc.where(""); frag != "" {
+		q += " AND " + frag
+		args = append(args, fargs...)
+	}
+	err := s.queryRow(q, args...).
 		Scan(&title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1445,14 +1487,26 @@ func (s *Store) RecomputeKinds() (int, error) {
 	return len(ups), nil
 }
 
-func (s *Store) NewTypes() []string {
-	return s.distinct("SELECT DISTINCT rtype FROM reports WHERE rtype<>'' ORDER BY rtype")
+// NewTypes lists the distinct subtypes present across reports (home subtype filter). sc scopes it so
+// a restricted viewer's filter never reveals another OU's subtypes.
+func (s *Store) NewTypes(sc *ownerScope) []string {
+	q := "SELECT DISTINCT rtype FROM reports WHERE rtype<>''"
+	frag, args := sc.where("")
+	if frag != "" {
+		q += " AND " + frag
+	}
+	return s.distinct(q+" ORDER BY rtype", args...)
 }
 
-// ReportKinds returns the distinct 大类 (top-level categories) present across
-// reports — used to populate the home 大类 filter.
-func (s *Store) ReportKinds() []string {
-	return s.distinct("SELECT DISTINCT kind FROM reports WHERE kind<>'' ORDER BY kind")
+// ReportKinds returns the distinct 大类 (top-level categories) present across reports — used to
+// populate the home 大类 filter. sc scopes it (see NewTypes).
+func (s *Store) ReportKinds(sc *ownerScope) []string {
+	q := "SELECT DISTINCT kind FROM reports WHERE kind<>''"
+	frag, args := sc.where("")
+	if frag != "" {
+		q += " AND " + frag
+	}
+	return s.distinct(q+" ORDER BY kind", args...)
 }
 
 // FreezeReportNames snapshots the current stocks-cache name onto each report that has no
@@ -1555,8 +1609,8 @@ func (s *Store) DeleteLinkGroup(id int64) error {
 	return err
 }
 
-func (s *Store) distinct(q string) []string {
-	rows, err := s.query(q)
+func (s *Store) distinct(q string, args ...any) []string {
+	rows, err := s.query(q, args...)
 	if err != nil {
 		return nil
 	}

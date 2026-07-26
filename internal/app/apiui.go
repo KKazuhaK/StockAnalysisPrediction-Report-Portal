@@ -242,10 +242,11 @@ func requestIsHTTPS(r *http.Request, trusted []*net.IPNet) bool {
 
 func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 	f, src, size, page := s.filtersFrom(r)
+	sc := s.viewerScope(user) // restricted external viewer → own-OU + same-day internal pool; else nil
 	var reps []Rep
 	var newTotal, oldTotal int
 	if src == "all" || src == "new" {
-		nn, total, _ := s.st.SearchNewLatest(f)
+		nn, total, _ := s.st.SearchNewLatest(f, sc)
 		newTotal = total
 		reps = append(reps, nn...)
 	}
@@ -265,11 +266,12 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 	if hi > len(groups) {
 		hi = len(groups)
 	}
-	types := uniqSorted(s.st.NewTypes())
+	types := uniqSorted(s.st.NewTypes(sc))
 	// 大类 filter options: the categories actually present, in the canonical
 	// pipeline order (kindOrder), with any non-standard kinds appended.
 	present := map[string]bool{}
-	for _, k := range s.st.ReportKinds() {
+	kindsPresent := s.st.ReportKinds(sc)
+	for _, k := range kindsPresent {
 		present[k] = true
 	}
 	kinds := make([]string, 0)
@@ -279,7 +281,7 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 			delete(present, k)
 		}
 	}
-	for _, k := range s.st.ReportKinds() {
+	for _, k := range kindsPresent {
 		if present[k] {
 			kinds = append(kinds, k)
 		}
@@ -315,7 +317,7 @@ func groupsJSON(gs []Group) []map[string]any {
 
 func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	symbol := r.PathValue("symbol")
-	all, _ := s.st.NewBySymbol(symbol)
+	all, _ := s.st.NewBySymbol(symbol, s.viewerScope(user))
 	if len(all) == 0 {
 		jsonError(w, http.StatusNotFound, "该标的暂无报告")
 		return
@@ -373,7 +375,7 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	if !repInList(kindReps, selID) {
 		selID = defID
 	}
-	rep := s.loadRep(selID)
+	rep := s.loadRep(user, selID)
 	timeline := make([]map[string]any, 0, len(order)) // newest to oldest
 	for _, d := range order {
 		timeline = append(timeline, map[string]any{"date": d, "n": len(byDate[d])})
@@ -393,7 +395,7 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 // apiRun reads a report group (legacy report card / single report): member tabs + selected body.
 func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 	key := r.PathValue("key")
-	members := s.runMembers(key)
+	members := s.runMembers(user, key)
 	if len(members) == 0 {
 		jsonError(w, http.StatusNotFound, "未找到该 run")
 		return
@@ -403,7 +405,7 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 	if !repInList(members, selID) {
 		selID = defID
 	}
-	rep := s.loadRep(selID)
+	rep := s.loadRep(user, selID)
 	tabs := make([]map[string]any, 0, len(members))
 	for _, m := range members {
 		tabs = append(tabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType})
@@ -418,7 +420,7 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 // apiRepBody fetches a single report body by id (frontend lazy-loads on tab switch, avoiding a full-page refetch).
 func (s *Server) apiRepBody(w http.ResponseWriter, r *http.Request, user string) {
 	id, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
-	rep := s.loadRep(id)
+	rep := s.loadRep(user, id)
 	if rep == nil {
 		jsonError(w, http.StatusNotFound, "报告不存在")
 		return

@@ -17,7 +17,7 @@ func TestSearchNewLatestCollapsesStockHistoryInSQL(t *testing.T) {
 		}
 	}
 
-	reps, total, err := st.SearchNewLatest(Filters{})
+	reps, total, err := st.SearchNewLatest(Filters{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
