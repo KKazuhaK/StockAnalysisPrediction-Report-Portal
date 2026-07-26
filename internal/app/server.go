@@ -683,7 +683,7 @@ func (s *Server) filtersFrom(r *http.Request) (Filters, string, int, int) {
 
 // ---------- run detail ----------
 
-func (s *Server) runMembers(key string) []Rep {
+func (s *Server) runMembers(user, key string) []Rep {
 	var members []Rep
 	if !strings.Contains(key, "|") {
 		// A "|"-less key is a thematic report's group key, which gkey() renders as its bare id.
@@ -691,13 +691,13 @@ func (s *Server) runMembers(key string) []Rep {
 		if err != nil {
 			return nil
 		}
-		if rep := s.loadRep(id); rep != nil {
+		if rep := s.loadRep(user, id); rep != nil {
 			members = []Rep{*rep}
 		}
 	} else {
 		parts := strings.SplitN(key, "|", 2)
 		symbol, date := parts[0], parts[1]
-		nn, _ := s.st.SearchNew(Filters{DateFrom: date, DateTo: date, Sort: "date_asc"})
+		nn, _ := s.st.SearchNew(Filters{DateFrom: date, DateTo: date, Sort: "date_asc"}, s.viewerScope(user))
 		for _, m := range nn {
 			if m.Symbol == symbol {
 				members = append(members, m)
@@ -920,7 +920,9 @@ func (s *Server) apiSymbols(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	list := s.st.ListSymbols(strings.TrimSpace(q.Get("q")), limit)
+	// A browser session is owner-scoped to the viewer; a machine Bearer(query) caller has no session
+	// so currentActiveUser is "" → viewerScope nil → unscoped (internal machine surface).
+	list := s.st.ListSymbols(strings.TrimSpace(q.Get("q")), limit, s.viewerScope(s.currentActiveUser(r)))
 	out := make([]map[string]any, 0, len(list))
 	for _, si := range list {
 		name := si.Name // name from the DB (stocks); fall back to the in-memory map if absent
@@ -941,19 +943,21 @@ func repInList(reps []Rep, id int64) bool {
 	return false
 }
 
-// loadRep fetches a report including its body by id.
-func (s *Server) loadRep(id int64) *Rep {
+// loadRep fetches a report including its body by id, SCOPED to the viewer: for a restricted user an
+// out-of-scope id returns nil (the callers' nil→404 then fails closed), so this is the single
+// viewer-aware chokepoint for every by-id read path (deep-link, run/stock body, md/pdf/zip export).
+func (s *Server) loadRep(user string, id int64) *Rep {
 	if id <= 0 {
 		return nil
 	}
-	rep, _ := s.st.GetNew(id)
+	rep, _ := s.st.GetNew(id, s.viewerScope(user))
 	return rep
 }
 
 // ---------- Export ----------
 
 func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
-	rep := s.loadRep(pathID(r, "id"))
+	rep := s.loadRep(user, pathID(r, "id"))
 	if rep == nil {
 		http.Error(w, "报告不存在", 404)
 		return
@@ -982,7 +986,7 @@ func (s *Server) renderPDFHTML(rep *Rep, user string) (string, error) {
 }
 
 func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) {
-	rep := s.loadRep(pathID(r, "id"))
+	rep := s.loadRep(user, pathID(r, "id"))
 	if rep == nil {
 		http.Error(w, "报告不存在", 404)
 		return

@@ -94,21 +94,43 @@ unattributed). A payload-supplied owner is never trusted. (The `run_id → batch
 batch_jobs.created_by` chain remains an optional best-effort fallback, deferred — the token is the
 authoritative path and internal-as-NULL is acceptable, see Read scoping.)
 
-**Read scoping.** For restricted viewers only, AND this into the WHERE of every read path
-(`apiHome`/`apiStock`/`apiRun`/`apiRepBody`, `/api/symbols`, PDF export; v1 read endpoints stay
-internal machine surfaces):
+**Read scoping (P2, shipped).** For restricted viewers only (`viewerScope(user)` — nil for admins,
+internal users, and machine/Bearer callers), AND this fragment into the WHERE of every read path:
 
 ```
-owner_group = :myOU
-  OR (rdate = :panelToday AND rtype IN :allowedSubtypes
-      AND (owner_group IS NULL OR owner_group IN :internalOUs))
+owner_group = :myOU  OR  (rdate = :panelToday AND owner_group IS NULL)
 ```
 
-The same-day branch's `owner_group IS NULL OR owner_group IN :internalOUs` is the internal pool: since
-internal runs are intentionally left NULL (no token injected), NULL counts as internal here, so a
-restricted OU can reuse an entitled report generated **today** by internal staff — but never one owned
-by *another restricted* OU. `:internalOUs` = OU ids whose effective `restricted=0` (the root subtree;
-small, cached). Unrestricted viewers get **no** predicate; NULL-owner reports stay fully visible to them.
+Why so simple: the internal same-day pool is exactly `owner_group IS NULL`, not an `IN :internalOUs`
+list. Because the owner token is injected for **restricted OUs only** (`runInputs`), an internal run
+never stamps an owner — every internal report is NULL-owner and every non-NULL owner is a *restricted*
+OU. So `owner_group IN :internalOUs` would always be empty; the term (and the `InternalGroupIDs`
+resolver + cache it would need) collapses away. A restricted OU thus sees: its own OU's reports (any
+date) + today's internal (NULL-owner) reports; another restricted OU's reports are non-NULL ≠ myOU and
+never match. Unrestricted viewers get **no** predicate. The `rtype IN :allowedSubtypes` intersection
+(narrow the same-day pool to the group's entitled subtypes) is **deferred to P4** with `group_targets`;
+until then the same-day pool is all of today's internal reports.
+
+Completeness is compile-forced, not convention: the scoped store methods (`newReportFilter`/`SearchNew`/
+`SearchNewLatest`, `NewBySymbol`, `GetNew`, `ListSymbols`, `NewTypes`, `ReportKinds`, `QueryReports`,
+`ListRuns`, `QueryTracking`, `Manifest`) each **require** an `*ownerScope` arg, and the single by-id
+chokepoint `Server.loadRep(user, id)` scopes every deep-link / export path, so a new read path cannot
+silently skip scoping. `ListSymbols`' predicate goes **inside** the per-symbol aggregate so counts/latest
+don't leak; `GetNew` fails closed (out-of-scope id → nil → the existing 404); `QueryTracking` joins
+`reports` to scope tracking items (unattributable items fail closed). Covered cookie-SPA paths: `apiHome`
+(feed + newTotal + subtype/kind filters), `apiStock` (timeline + subtabs + body), `apiRun` (both branches
++ tabs + body), `apiRepBody`, `/api/symbols` (omnibox), `/report/{id}/md`, `/report/{id}/pdf`,
+`/report/day.zip`.
+
+**The `/api/v1` read surface is NOT machine-only** — a lesson from the adversarial review. `canQuery`
+admits *both* a Bearer(query) token *and* a browser cookie session, so a restricted user's own cookie
+reaches `/api/v1/reports`, `/reports/{id}`, `/reports/manifest`, `/runs`, `/symbols`, `/tracking`. Each of
+those handlers therefore scopes via `Server.queryScope(r) = viewerScope(currentActiveUser(r))`: a
+Bearer/machine caller has no session (`""` → nil → **unscoped, byte-identical**), a restricted cookie
+caller is scoped. Ingest/delete/update (`tokenOK("ingest")`) stay Bearer-only and unchanged. One more
+channel is closed at the source: `apiAppToken` drops the `query` scope for a restricted caller, so a
+restricted user cannot mint an app-bridge Bearer token and replay it cookieless against `/api/v1` (that
+token is not OU-bound; revisit when app tokens carry an OU).
 
 **Same-day rule (unambiguous).** "Same request" = `(symbol, subtype)` on the panel-tz civil date —
 **title excluded** (title is generator output the requester can't predict); this is exactly the key the

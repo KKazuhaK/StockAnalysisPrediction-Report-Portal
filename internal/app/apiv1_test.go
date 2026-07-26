@@ -20,7 +20,7 @@ func repByIdent(t *testing.T, st *Store, symbol, date, rtype string) *Rep {
 	if err := st.queryRow("SELECT id FROM reports WHERE symbol=? AND rdate=? AND rtype=? ORDER BY id", symbol, date, rtype).Scan(&id); err != nil {
 		return nil
 	}
-	rep, err := st.GetNew(id)
+	rep, err := st.GetNew(id, nil)
 	if err != nil {
 		t.Fatalf("GetNew(%d): %v", id, err)
 	}

@@ -126,6 +126,13 @@ func (s *Server) apiAppToken(w http.ResponseWriter, r *http.Request, user string
 	if !s.isAdmin(user) {
 		scopes = dropScope(scopes, "ingest")
 	}
+	// A restricted (external) user must not obtain an app-bridge query token: that Bearer token is not
+	// OU-bound, so replaying it against /api/v1 (no cookie → no viewerScope) would read cross-OU and
+	// bypass P2 read-scoping (ADR 0022 R1). Fail closed — drop query too. (Revisit when app tokens are
+	// OU-bound so restricted external users can safely run read-only apps.)
+	if s.viewerScope(user) != nil {
+		scopes = dropScope(scopes, "query")
+	}
 	token := s.appTok.mint(scopes, time.Now())
 	writeJSON(w, map[string]any{
 		"app": appJSON(app), "token": token, "scopes": scopes, "expires_in": int(appTokenTTL / time.Second),

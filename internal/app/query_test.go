@@ -17,28 +17,28 @@ func TestQueryReportsPaginationAndFilters(t *testing.T) {
 	}
 
 	// pagination + total
-	p1, total, err := st.QueryReports(ReportQuery{Symbol: "300750", Limit: 2, Offset: 0})
+	p1, total, err := st.QueryReports(ReportQuery{Symbol: "300750", Limit: 2, Offset: 0}, nil)
 	if err != nil || total != 3 || len(p1) != 2 {
 		t.Fatalf("page1: total=%d len=%d err=%v (want total=3 len=2)", total, len(p1), err)
 	}
-	p2, _, _ := st.QueryReports(ReportQuery{Symbol: "300750", Limit: 2, Offset: 2})
+	p2, _, _ := st.QueryReports(ReportQuery{Symbol: "300750", Limit: 2, Offset: 2}, nil)
 	if len(p2) != 1 || p2[0].ID == p1[0].ID {
 		t.Fatalf("page2 len=%d overlap=%v", len(p2), p2[0].ID == p1[0].ID)
 	}
 
 	// keyword now matches company name and code (not just title/body)
-	if _, n, _ := st.QueryReports(ReportQuery{Q: "宁德时代"}); n != 3 {
+	if _, n, _ := st.QueryReports(ReportQuery{Q: "宁德时代"}, nil); n != 3 {
 		t.Errorf("q=名字 total=%d, want 3", n)
 	}
-	if _, n, _ := st.QueryReports(ReportQuery{Q: "300750"}); n != 3 {
+	if _, n, _ := st.QueryReports(ReportQuery{Q: "300750"}, nil); n != 3 {
 		t.Errorf("q=code total=%d, want 3", n)
 	}
 
 	// source + run_id filters
-	if _, n, _ := st.QueryReports(ReportQuery{Symbol: "300750", Source: "dify"}); n != 3 {
+	if _, n, _ := st.QueryReports(ReportQuery{Symbol: "300750", Source: "dify"}, nil); n != 3 {
 		t.Errorf("source filter total=%d, want 3", n)
 	}
-	if _, n, _ := st.QueryReports(ReportQuery{RunID: "run-2026-02-01"}); n != 1 {
+	if _, n, _ := st.QueryReports(ReportQuery{RunID: "run-2026-02-01"}, nil); n != 1 {
 		t.Errorf("run_id filter total=%d, want 1", n)
 	}
 }
@@ -74,7 +74,7 @@ func TestUpdateTrackingStatus(t *testing.T) {
 	if err := st.SetTracking(id, "300750", []TrackingItem{{IType: "assumption", Content: "c1", Status: "pending"}}); err != nil {
 		t.Fatal(err)
 	}
-	items := st.QueryTracking("300750", "", 100)
+	items := st.QueryTracking("300750", "", 100, nil)
 	if len(items) != 1 {
 		t.Fatalf("want 1 item, got %d", len(items))
 	}
@@ -82,7 +82,7 @@ func TestUpdateTrackingStatus(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("update ok=%v err=%v, want ok=true", ok, err)
 	}
-	items = st.QueryTracking("300750", "", 100)
+	items = st.QueryTracking("300750", "", 100, nil)
 	if items[0].Status != "confirmed" || items[0].ReviewPoint != "复核完成" {
 		t.Errorf("after update = %+v", items[0])
 	}
@@ -104,10 +104,10 @@ func TestDeleteReport(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("delete n=%d err=%v, want 1", n, err)
 	}
-	if _, total, _ := st.QueryReports(ReportQuery{Symbol: "300750"}); total != 0 {
+	if _, total, _ := st.QueryReports(ReportQuery{Symbol: "300750"}, nil); total != 0 {
 		t.Errorf("after delete total=%d, want 0", total)
 	}
-	if len(st.QueryTracking("300750", "", 100)) != 0 {
+	if len(st.QueryTracking("300750", "", 100, nil)) != 0 {
 		t.Errorf("tracking items should be cascade-deleted")
 	}
 	// idempotent retry

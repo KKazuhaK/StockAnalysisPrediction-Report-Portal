@@ -169,7 +169,7 @@ func TestDeleteReportsIngestedBefore(t *testing.T) {
 		t.Errorf("tracking_items should have cascaded to 0, got %d", countRows(t, st, "tracking_items"))
 	}
 	gone := func(name string) bool {
-		rep, _ := st.GetNew(ids[name])
+		rep, _ := st.GetNew(ids[name], nil)
 		return rep == nil
 	}
 	if !gone("old-z") || !gone("old-frac") {
@@ -199,7 +199,7 @@ func TestDeleteReportChunk_ReingestSkipped(t *testing.T) {
 	if n, err := st.deleteReportChunk([]reportKey{{id: id, sent: old}}); err != nil || n != 0 {
 		t.Fatalf("stale-key delete = %d,%v; want 0", n, err)
 	}
-	if rep, _ := st.GetNew(id); rep == nil {
+	if rep, _ := st.GetNew(id, nil); rep == nil {
 		t.Fatal("re-ingested report was wrongly deleted")
 	}
 	if countRows(t, st, "tracking_items") != 1 {
@@ -209,7 +209,7 @@ func TestDeleteReportChunk_ReingestSkipped(t *testing.T) {
 	if n, err := st.deleteReportChunk([]reportKey{{id: id, sent: fresh}}); err != nil || n != 1 {
 		t.Fatalf("matching-key delete = %d,%v; want 1", n, err)
 	}
-	if rep, _ := st.GetNew(id); rep != nil || countRows(t, st, "tracking_items") != 0 {
+	if rep, _ := st.GetNew(id, nil); rep != nil || countRows(t, st, "tracking_items") != 0 {
 		t.Errorf("matching delete should remove report + cascade tracking_items")
 	}
 }

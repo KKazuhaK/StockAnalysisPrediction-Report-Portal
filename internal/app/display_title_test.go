@@ -96,7 +96,7 @@ func TestReportMDDownloadFilenameFoldsCompanyName(t *testing.T) {
 		t.Fatalf("ingest status=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	reps, err := s.st.NewBySymbol("001696")
+	reps, err := s.st.NewBySymbol("001696", nil)
 	if err != nil || len(reps) == 0 {
 		t.Fatalf("NewBySymbol: err=%v n=%d", err, len(reps))
 	}

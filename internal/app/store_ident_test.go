@@ -84,7 +84,7 @@ func TestUpsertReportDedupsOnIdentity(t *testing.T) {
 			t.Fatalf("report count = %d, want 1 (re-ingest duplicated the row)", n)
 		}
 
-		got, err := st.GetNew(id1)
+		got, err := st.GetNew(id1, nil)
 		if err != nil || got == nil {
 			t.Fatalf("GetNew(%d) = %v, %v", id1, got, err)
 		}
@@ -123,7 +123,7 @@ func TestUpsertReportTitleIsPartOfIdentity(t *testing.T) {
 		if n := countReports(t, st); n != 2 {
 			t.Fatalf("report count = %d, want 2 (different titles were merged into one report)", n)
 		}
-		gotA, _ := st.GetNew(idA)
+		gotA, _ := st.GetNew(idA, nil)
 		if gotA == nil || gotA.MD != "a" {
 			t.Errorf("first report = %v, want body a intact (it was overwritten by the second)", gotA)
 		}
@@ -254,8 +254,8 @@ func TestUpsertReportReturnsWrittenID(t *testing.T) {
 		if created || idA2 != idA {
 			t.Errorf("overwrite returned id=%d created=%v, want id=%d created=false", idA2, created, idA)
 		}
-		gotA, _ := st.GetNew(idA)
-		gotB, _ := st.GetNew(idB)
+		gotA, _ := st.GetNew(idA, nil)
+		gotB, _ := st.GetNew(idB, nil)
 		if gotA == nil || gotA.MD != "a2" {
 			t.Errorf("A body = %v, want a2", gotA)
 		}

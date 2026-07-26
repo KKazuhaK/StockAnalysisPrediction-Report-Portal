@@ -33,14 +33,16 @@ func validReportDate(s string) bool {
 	return err == nil
 }
 
-// v1ReportByPathID resolves a v1 report {id} path value to its stored report.
-// Returns nil if the value is not a positive integer or there is no such report.
-func (s *Server) v1ReportByPathID(id string) *Rep {
+// v1ReportByPathID resolves a v1 report {id} path value to its stored report, scoped to sc.
+// Returns nil if the value is not a positive integer or there is no report visible to sc — so a
+// restricted cookie caller cannot read another OU's report by id enumeration (sc nil = machine/
+// internal, unscoped).
+func (s *Server) v1ReportByPathID(id string, sc *ownerScope) *Rep {
 	rowid, err := strconv.ParseInt(id, 10, 64)
 	if err != nil || rowid <= 0 {
 		return nil
 	}
-	rep, _ := s.st.GetNew(rowid)
+	rep, _ := s.st.GetNew(rowid, sc)
 	return rep
 }
 
@@ -228,6 +230,15 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "id": id, "created": created})
 }
 
+// queryScope resolves the owner-scope for a canQuery-admitted v1 READ. canQuery admits BOTH a machine
+// Bearer(query) token AND a browser cookie session, so a restricted external user's own cookie reaches
+// these otherwise-"machine" endpoints — they MUST be scoped exactly like the cookie SPA API, or the
+// whole P2 isolation is bypassable by hitting /api/v1 directly. A Bearer/machine caller has no session
+// (currentActiveUser==""), so viewerScope returns nil and the machine surface stays byte-identical.
+func (s *Server) queryScope(r *http.Request) *ownerScope {
+	return s.viewerScope(s.currentActiveUser(r))
+}
+
 // GET /api/v1/reports — search. scope query.
 func (s *Server) v1QueryReports(w http.ResponseWriter, r *http.Request) {
 	if !s.canQuery(r) {
@@ -275,7 +286,7 @@ func (s *Server) v1QueryReports(w http.ResponseWriter, r *http.Request) {
 		Symbol: symbol, Q: kw, Kind: q.Get("kind"), RType: subtype,
 		Source: strings.TrimSpace(q.Get("source")), RunID: runID, Since: since, Until: until,
 		Limit: limit, Offset: offset, WithBody: withBody,
-	})
+	}, s.queryScope(r))
 	if err != nil {
 		log.Printf("v1 query db error: %v", err)
 		v1err(w, http.StatusInternalServerError, "db_error", "database error")
@@ -294,7 +305,7 @@ func (s *Server) v1GetReport(w http.ResponseWriter, r *http.Request) {
 		v1err(w, http.StatusUnauthorized, "unauthorized", "missing or invalid query credentials")
 		return
 	}
-	rep := s.v1ReportByPathID(r.PathValue("id"))
+	rep := s.v1ReportByPathID(r.PathValue("id"), s.queryScope(r))
 	if rep == nil {
 		v1err(w, http.StatusNotFound, "not_found", "no report with that id")
 		return
@@ -338,7 +349,7 @@ func (s *Server) v1Manifest(w http.ResponseWriter, r *http.Request) {
 		v1err(w, http.StatusBadRequest, "missing_param", "symbol is required")
 		return
 	}
-	m := s.st.Manifest(symbol)
+	m := s.st.Manifest(symbol, s.queryScope(r))
 	m["ok"] = true
 	m["name"] = s.names.Get(symbol)
 	writeJSON(w, m)
@@ -355,7 +366,7 @@ func (s *Server) v1Runs(w http.ResponseWriter, r *http.Request) {
 		v1err(w, http.StatusBadRequest, "missing_param", "symbol is required")
 		return
 	}
-	runs := s.st.ListRuns(symbol, strings.TrimSpace(r.URL.Query().Get("date")))
+	runs := s.st.ListRuns(symbol, strings.TrimSpace(r.URL.Query().Get("date")), s.queryScope(r))
 	items := make([]map[string]any, 0, len(runs))
 	for _, rn := range runs {
 		items = append(items, map[string]any{"symbol": rn.Symbol, "date": rn.Date, "kind": rn.Kind,
@@ -373,7 +384,7 @@ func (s *Server) v1Symbols(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	list := s.st.ListSymbols(strings.TrimSpace(q.Get("q")), limit)
+	list := s.st.ListSymbols(strings.TrimSpace(q.Get("q")), limit, s.queryScope(r))
 	items := make([]map[string]any, 0, len(list))
 	for _, si := range list {
 		name := si.Name
@@ -398,7 +409,7 @@ func (s *Server) v1Tracking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	items := s.st.QueryTracking(symbol, strings.TrimSpace(q.Get("status")), limit)
+	items := s.st.QueryTracking(symbol, strings.TrimSpace(q.Get("status")), limit, s.queryScope(r))
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		out = append(out, map[string]any{"id": it.ID, "report_id": it.ReportID, "itype": it.IType,
