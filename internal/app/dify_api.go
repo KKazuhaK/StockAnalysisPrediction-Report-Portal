@@ -115,6 +115,7 @@ func (s *Server) apiBatchDifyTargetGet(w http.ResponseWriter, r *http.Request, u
 	writeJSON(w, map[string]any{
 		"id": tgt.ID, "name": tgt.Name, "base_url": cfg.BaseURL, "mode": cfg.Mode,
 		"inputs": inputs, "has_key": cfg.APIKey != "",
+		"output_subtype": cfg.OutputSubtype, "symbol_input": cfg.SymbolInput,
 	})
 }
 
@@ -133,6 +134,10 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 		APIKey  string       `json:"api_key"`
 		Mode    string       `json:"mode"`
 		Inputs  []dify.Input `json:"inputs"`
+		// Pointers so an omitted field keeps the stored value (an ordinary rename must never wipe
+		// them and silently disable same-day reuse), while an explicit "" clears it.
+		OutputSubtype *string `json:"output_subtype"`
+		SymbolInput   *string `json:"symbol_input"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -145,6 +150,13 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 	}
 	var cur difyTargetConfig
 	json.Unmarshal([]byte(tgt.Config), &cur)
+	subtype, symbolInput := cur.OutputSubtype, cur.SymbolInput
+	if in.OutputSubtype != nil {
+		subtype = strings.TrimSpace(*in.OutputSubtype)
+	}
+	if in.SymbolInput != nil {
+		symbolInput = strings.TrimSpace(*in.SymbolInput)
+	}
 	if key == "" {
 		key = cur.APIKey // blank → keep the stored key
 	}
@@ -156,7 +168,8 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 	if mode == "" {
 		mode = cur.Mode // blank → keep the stored mode
 	}
-	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Mode: mode, Inputs: in.Inputs})
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Mode: mode, Inputs: in.Inputs,
+		OutputSubtype: subtype, SymbolInput: symbolInput})
 	if err := s.st.UpdateTarget(tgt.ID, name, string(cfg)); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

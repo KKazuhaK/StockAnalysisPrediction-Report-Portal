@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -69,7 +69,13 @@ export default function BatchAdminPage() {
     try {
       const d = await api.get<DifyTargetEdit>(`/api/admin/batch/dify/targets/${tg.id}`)
       resetModal()
-      form.setFieldsValue({ name: d.name, base_url: d.base_url, api_key: '' })
+      form.setFieldsValue({
+        name: d.name,
+        base_url: d.base_url,
+        api_key: '',
+        output_subtype: d.output_subtype || '',
+        symbol_input: d.symbol_input || '',
+      })
       setInputs(d.inputs || [])
       setMode(d.mode || '')
       setEditingId(tg.id)
@@ -119,7 +125,7 @@ export default function BatchAdminPage() {
     // the rule is optional, so a blank keeps the stored key while a typed value rotates it.
     let v
     try {
-      v = await form.validateFields(['name', 'base_url', 'api_key'])
+      v = await form.validateFields(['name', 'base_url', 'api_key', 'output_subtype', 'symbol_input'])
     } catch {
       return
     }
@@ -129,7 +135,15 @@ export default function BatchAdminPage() {
     }
     setSaving(true)
     try {
-      const body = { name: v.name, base_url: v.base_url, api_key: v.api_key || '', mode, inputs }
+      const body = {
+        name: v.name,
+        base_url: v.base_url,
+        api_key: v.api_key || '',
+        mode,
+        inputs,
+        output_subtype: v.output_subtype || '',
+        symbol_input: v.symbol_input || '',
+      }
       if (editing) {
         await api.put(`/api/admin/batch/dify/targets/${editingId}`, body)
         message.success(t('batch.admin.msgTargetUpdated'))
@@ -437,6 +451,26 @@ export default function BatchAdminPage() {
                 <Input placeholder={t('batch.dify.addInputPlaceholder')} value={newVar} onChange={(e) => setNewVar(e.target.value)} onPressEnter={addInput} />
                 <Button onClick={addInput}>{t('common.add')}</Button>
               </Space.Compact>
+
+              {/* External-tenancy declarations (ADR 0022). Both are needed before the portal will
+                  reuse an existing same-day report instead of running this workflow again. */}
+              <Form.Item
+                name="output_subtype"
+                label={t('batch.dify.outputSubtype')}
+                extra={t('batch.dify.outputSubtypeHint')}
+                style={{ marginTop: 14, marginBottom: 12 }}
+              >
+                <Input placeholder={t('batch.dify.outputSubtypePlaceholder')} />
+              </Form.Item>
+              <Form.Item name="symbol_input" label={t('batch.dify.symbolInput')} extra={t('batch.dify.symbolInputHint')}>
+                {/* Chosen from the discovered inputs — a free-text key that does not exist would
+                    silently disable reuse, and a wrong one could match another company. */}
+                <Select
+                  allowClear
+                  placeholder={t('batch.dify.symbolInputNone')}
+                  options={inputs.map((i) => ({ value: i.variable, label: i.variable }))}
+                />
+              </Form.Item>
             </div>
           )}
         </Form>
