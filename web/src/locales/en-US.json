@@ -546,6 +546,7 @@
   "run.month": "Month",
   "run.noInputs": "This workflow takes no inputs.",
   "run.quotaRemaining": "{{remaining}} of {{limit}} runs left today",
+  "run.reusedToday": "This report was already generated today — opening it (no run used).",
   "run.noPresets": "No preset windows configured",
   "run.noTargets": "No workflows configured yet. Add one under Manage → Batch.",
   "run.noTickets": "No urgent tickets left",

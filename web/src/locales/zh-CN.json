@@ -546,6 +546,7 @@
   "run.month": "月",
   "run.noInputs": "该工作流无需输入参数。",
   "run.quotaRemaining": "今日剩余 {{remaining}}/{{limit}} 次运行",
+  "run.reusedToday": "该报告今日已生成，直接为您打开（不消耗运行次数）。",
   "run.noPresets": "管理员未配置预设时段",
   "run.noTargets": "还没有配置工作流。请到 管理 → 批量任务 添加。",
   "run.noTickets": "加急次票已用完",

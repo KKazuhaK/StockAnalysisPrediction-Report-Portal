@@ -99,6 +99,55 @@ func targetOutputSubtype(config string) string {
 	return strings.TrimSpace(m.OutputSubtype)
 }
 
+// targetSymbolInput names the input key that carries the stock code for this target. Input keys are
+// target-defined (code / symbol / …), so the same-day reuse gate cannot guess: it is declared beside
+// output_subtype in the target's config JSON. Guessing here would risk handing back a DIFFERENT
+// company's report, so an undeclared target simply never reuses (see reuseSameDayReport).
+func targetSymbolInput(config string) string {
+	var m struct {
+		SymbolInput string `json:"symbol_input"`
+	}
+	json.Unmarshal([]byte(config), &m)
+	return strings.TrimSpace(m.SymbolInput)
+}
+
+// reuseSameDayReport implements R1's "already generated today → show it directly" rule: it reports
+// the id of an existing same-day report that satisfies this submit, so the caller can be handed it
+// instead of running (costing no quota).
+//
+// It applies to RESTRICTED callers only — an internal user re-running is a legitimate refresh — and
+// only to a single-row submit, the one-report-per-click shape the rule describes. It is deliberately
+// fail-safe: a target that has not declared BOTH what it produces (output_subtype) and which input
+// carries the stock code (symbol_input) never reuses, because guessing could hand back a different
+// company's report. A symbol-less (thematic) request never reuses either (D5) — its identity is the
+// generated title, which the requester cannot predict.
+// It returns the report id plus its group key (the gkey the /run/{key} view is addressed by), so the
+// caller can be sent straight to the existing report without the client having to re-derive it.
+func (s *Server) reuseSameDayReport(user string, targetID int64, rows []map[string]string) (int64, string, bool) {
+	sc := s.viewerScope(user)
+	if sc == nil || len(rows) != 1 {
+		return 0, "", false
+	}
+	t, ok := s.st.GetTarget(targetID)
+	if !ok {
+		return 0, "", false
+	}
+	subtype, symbolKey := targetOutputSubtype(t.Config), targetSymbolInput(t.Config)
+	if subtype == "" || symbolKey == "" {
+		return 0, "", false
+	}
+	symbol := strings.TrimSpace(rows[0][symbolKey])
+	if symbol == "" {
+		return 0, "", false
+	}
+	id, found := s.st.FindSameDayReport(symbol, subtype, sc.panelToday, sc)
+	if !found {
+		return 0, "", false
+	}
+	// The report was matched on symbol+rdate, so its group key is exactly this pair (see gkey).
+	return id, symbol + "|" + sc.panelToday, true
+}
+
 // allowedSubtypes lists the report subtypes a restricted user's OU is entitled to. nil means "no
 // restriction" — an internal user/admin, or a restricted OU with no allow-list at all (nothing to
 // narrow by). Restricted callers share entitledSubtypes with the read filter, so "what you may run"

@@ -35,6 +35,26 @@ func (s *Store) StampReportOwner(id, ou int64) (bool, error) {
 	return n > 0, nil
 }
 
+// FindSameDayReport looks for a report already generated today for a (symbol, subtype) request,
+// scoped to the caller (ADR 0022 R1). It powers "if it was already generated today, show it instead
+// of running". sc keeps the lookup honest: a restricted caller can only ever be handed a report it
+// may actually read, never another OU's. The newest match wins (D4) — two same-day reports for one
+// (symbol, subtype) differ only by title, which is generator output the requester cannot predict.
+func (s *Store) FindSameDayReport(symbol, subtype, panelToday string, sc *ownerScope) (int64, bool) {
+	q := `SELECT id FROM reports WHERE symbol=? AND rtype=? AND rdate=?`
+	args := []any{symbol, subtype, panelToday}
+	if frag, fargs := sc.where(""); frag != "" {
+		q += " AND " + frag
+		args = append(args, fargs...)
+	}
+	q += ` ORDER BY id DESC LIMIT 1`
+	var id int64
+	if err := s.queryRow(q, args...).Scan(&id); err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
 // ownerTokenInput is the reserved Dify input key that carries the owner-attribution token into a
 // restricted OU's run. The instrumented workflow passes it straight through into its
 // /api/v1/reports payload as owner_token. Injected ONLY for restricted OUs, so internal runs and

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Typography } from 'antd'
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
@@ -27,6 +28,7 @@ export default function RunAnalysisModal({
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { email, mailEnabled } = useAuth()
+  const navigate = useNavigate()
   const [form] = Form.useForm()
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [targetId, setTargetId] = useState<number | undefined>()
@@ -119,16 +121,36 @@ export default function RunAnalysisModal({
         row[i.key] = String(vals[i.key] ?? '').trim()
       })
       const sp = schedulePayload(schedule)
-      const res = await api.post<{ job_id: number; downgraded?: boolean; run_at?: string }>('/api/admin/batch/jobs', {
-        target_id: targetId,
-        concurrency: 1,
-        max_retries: retries, // default 0 (no auto-retry); user can opt into failure retries, same as batch
-        priority: sp.priority, // "urgent" | "idle" | "" (backend resolves the "" default)
-        run_at: sp.run_at,
-        preset_id: sp.preset_id,
-        notify,
-        rows: [row],
-      })
+      const res = await api.post<{
+        job_id: number
+        downgraded?: boolean
+        run_at?: string
+        reused?: boolean
+        report_id?: number
+        key?: string
+      }>(
+        '/api/admin/batch/jobs',
+        {
+          target_id: targetId,
+          concurrency: 1,
+          max_retries: retries, // default 0 (no auto-retry); user can opt into failure retries, same as batch
+          priority: sp.priority, // "urgent" | "idle" | "" (backend resolves the "" default)
+          run_at: sp.run_at,
+          preset_id: sp.preset_id,
+          surface: 'run',
+          notify,
+          rows: [row],
+        },
+      )
+      // Already generated today (ADR 0022 R1): no run happened — open the existing report instead
+      // of reporting a job that does not exist.
+      if (res.reused && res.report_id && res.key) {
+        message.success(t('run.reusedToday'))
+        reset()
+        onClose()
+        navigate(`/run/${encodeURIComponent(res.key)}?r=${res.report_id}`)
+        return
+      }
       if (res.run_at) message.success(t('run.scheduledOk', { at: res.run_at }))
       else message.success(t('run.startedOk', { id: res.job_id }))
       if (res.downgraded) message.warning(t('batch.ticketDowngraded'))
