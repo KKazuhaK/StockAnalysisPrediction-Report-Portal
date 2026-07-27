@@ -344,6 +344,21 @@ export interface UserGroupRow {
   run_window?: string | null // '' = any hour, else 'H1-H2' (panel timezone)
   priority?: string // base run priority 0..100 override ('' / undefined = inherit the system default; ADR 0008)
   members: number // primary-member count
+  // External-user tenancy (ADR 0022). restricted is this OU's own flag; restricted_effective also
+  // accounts for a restricted ancestor (restriction is sticky down the OU tree).
+  restricted?: boolean
+  restricted_effective?: boolean
+  daily_run_quota?: number | null // runs/day cap for members; null = inherit the parent OU, 0 = unlimited
+}
+
+// Daily run-quota balance for the run form (ADR 0022 R2). limited=false for internal users,
+// admins, and restricted OUs with no cap — the UI then omits the chip entirely.
+export interface RunQuota {
+  limited: boolean
+  limit?: number
+  used?: number
+  remaining?: number
+  resets_at?: string // next reset as a UTC instant; localized client-side
 }
 
 // Storage-cleanup console (docs/adr/0017-storage-cleanup.md). Config + last-run summary; retention

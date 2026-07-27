@@ -33,11 +33,19 @@ func userGroupsJSON(gs []UserGroup) []map[string]any {
 		if g.RunWindowInherit {
 			runWindow = nil
 		}
+		var dailyQuota any = g.DailyRunQuota
+		if g.DailyQuotaInherit {
+			dailyQuota = nil
+		}
 		out = append(out, map[string]any{
 			"id": g.ID, "name": g.Name, "description": g.Description,
 			"is_default": g.IsDefault, "weight": weight, "urgent_unlimited": urgent,
 			"allow_urgent": allowUrgent, "max_queued": maxQueued, "run_window": runWindow,
 			"priority": g.Priority, "members": g.Members,
+			// External-user tenancy (ADR 0022): restricted is this group's OWN flag, while
+			// restricted_effective also accounts for a restricted ancestor (sticky down the tree).
+			"restricted": g.Restricted, "restricted_effective": g.RestrictedEffective,
+			"daily_run_quota": dailyQuota,
 		})
 	}
 	return out
@@ -58,6 +66,31 @@ type groupInput struct {
 	MaxQueued       *int    `json:"max_queued"`
 	RunWindow       *string `json:"run_window"`
 	Priority        string  `json:"priority"`
+	// External-user tenancy (ADR 0022). Restricted is a plain flag (absent = leave as-is);
+	// DailyRunQuota is a pointer so null means "inherit the parent OU" and 0 means unlimited.
+	Restricted    *bool `json:"restricted"`
+	DailyRunQuota *int  `json:"daily_run_quota"`
+}
+
+// tenancy normalizes the external-tenancy fields for storage: a negative quota is clamped to 0
+// (unlimited), and the Default group (the root baseline) can neither be restricted nor inherit.
+func (in groupInput) tenancy(isDefault bool) (*bool, *int) {
+	restricted, quota := in.Restricted, in.DailyRunQuota
+	if quota != nil && *quota < 0 {
+		zero := 0
+		quota = &zero
+	}
+	if isDefault {
+		if restricted == nil || *restricted {
+			no := false
+			restricted = &no // the root OU is the internal baseline; never restricted
+		}
+		if quota == nil {
+			zero := 0
+			quota = &zero
+		}
+	}
+	return restricted, quota
 }
 
 // overrides normalizes the input's inherit/override fields for storage. The Default
@@ -141,6 +174,14 @@ func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string
 	allow, mq, rw := in.governance(false)
 	s.st.SetGroupGovernance(id, allow, mq, rw)
 	s.st.SetGroupPriority(id, s.groupPriorityValid(in.Priority))
+	if restricted, quota := in.tenancy(false); restricted != nil || quota != nil {
+		if restricted != nil {
+			s.st.SetGroupRestricted(id, *restricted)
+		}
+		if quota != nil {
+			s.st.SetGroupDailyQuota(id, quota)
+		}
+	}
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -168,6 +209,11 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 	} else {
 		s.st.SetGroupPriority(id, s.groupPriorityValid(in.Priority))
 	}
+	restricted, quota := in.tenancy(isDefault)
+	if restricted != nil {
+		s.st.SetGroupRestricted(id, *restricted)
+	}
+	s.st.SetGroupDailyQuota(id, quota) // nil = inherit the parent OU
 	writeJSON(w, okJSON)
 }
 

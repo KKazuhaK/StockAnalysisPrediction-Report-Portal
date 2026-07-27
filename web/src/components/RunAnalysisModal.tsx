@@ -7,7 +7,7 @@ import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
 import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
 import RunScheduleControls from './RunScheduleControls'
-import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
+import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPresetsResp, RunQuota } from '../api/types'
 
 // The home-page run-analysis modal (docs/adr/0007 + 0014): pick a Dify workflow, fill its
 // discovered inputs, choose when to run (now / a preset low-peak window / an explicit 定时 time)
@@ -31,6 +31,7 @@ export default function RunAnalysisModal({
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [targetId, setTargetId] = useState<number | undefined>()
   const [tickets, setTickets] = useState<BatchTickets | null>(null)
+  const [quota, setQuota] = useState<RunQuota | null>(null)
   const [queue, setQueue] = useState<BatchQueueSummary | null>(null)
   const [presets, setPresets] = useState<RunPreset[]>([])
   const [schedule, setSchedule] = useState<RunSchedule>(emptySchedule)
@@ -42,6 +43,7 @@ export default function RunAnalysisModal({
     if (!open) return
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
     api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
+    api.get<RunQuota>('/api/admin/batch/run-quota').then(setQuota).catch(() => {})
     api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
     // Presets + the admin-set run-form defaults (default mode button + idle pre-check).
     api
@@ -199,6 +201,14 @@ export default function RunAnalysisModal({
             ))}
             {inputs.length === 0 && <Typography.Text type="secondary">{t('run.noInputs')}</Typography.Text>}
           </Form>
+        )}
+
+        {/* Daily run quota (ADR 0022 R2): shown only to a capped (external) member, so internal
+            users and admins see the form exactly as before. */}
+        {quota?.limited && (
+          <Typography.Text type={(quota.remaining ?? 0) <= 0 ? 'danger' : 'secondary'}>
+            {t('run.quotaRemaining', { remaining: quota.remaining ?? 0, limit: quota.limit ?? 0 })}
+          </Typography.Text>
         )}
 
         <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} />

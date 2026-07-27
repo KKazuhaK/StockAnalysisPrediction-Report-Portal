@@ -436,6 +436,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const urgentPolicy = Form.useWatch('urgent_policy', form)
   const maxqInherit = Form.useWatch('maxq_inherit', form)
   const windowInherit = Form.useWatch('window_inherit', form)
+  const quotaInherit = Form.useWatch('quota_inherit', form)
   const defaultGroup = useMemo(() => groups.find((g) => g.is_default), [groups])
 
   // The urgent lane + ticket config is GLOBAL (not per-group), but it belongs with the
@@ -484,6 +485,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
       form.setFieldsValue({
         name: '', description: '', urgent_inherit: true, urgent_policy: 'ticket', weight: 0,
         maxq_inherit: true, max_queued: 0, window_inherit: true, run_window: '', priority: undefined,
+        restricted: false, quota_inherit: true, daily_run_quota: 0,
       })
     else
       form.setFieldsValue({
@@ -499,6 +501,9 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
         window_inherit: !g.is_default && g.run_window == null,
         run_window: g.run_window ?? '',
         priority: g.priority ? Number(g.priority) : undefined,
+        restricted: !!g.restricted,
+        quota_inherit: !g.is_default && g.daily_run_quota == null,
+        daily_run_quota: g.daily_run_quota ?? 0,
       })
   }
   const save = async () => {
@@ -518,6 +523,10 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
       max_queued: !isDef && v.maxq_inherit ? null : (v.max_queued ?? 0),
       run_window: !isDef && v.window_inherit ? null : (v.run_window || ''),
       priority: v.priority == null || v.priority === '' ? '' : String(v.priority),
+      // External-user tenancy (ADR 0022): the root/Default OU is always internal; a quota of
+      // null inherits the parent OU and 0 means unlimited.
+      restricted: isDef ? false : !!v.restricted,
+      daily_run_quota: !isDef && v.quota_inherit ? null : (v.daily_run_quota ?? 0),
     }
     try {
       if (edit === 'new') await api.post('/api/admin/groups', body)
@@ -613,6 +622,15 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
                     <Space size={6} wrap>
                       <Typography.Text strong>{g.name}</Typography.Text>
                       {g.is_default && <Tag color="green">{t('users.defaultGroupTag')}</Tag>}
+                      {g.restricted_effective && (
+                        <Tag color="volcano">
+                          {t('users.restrictedTag')}
+                          {!g.restricted && <span style={{ opacity: 0.6 }}> · {t('users.inheritedTag')}</span>}
+                        </Tag>
+                      )}
+                      {g.restricted_effective && (g.daily_run_quota ?? 0) > 0 && (
+                        <Tag color="cyan">{t('users.dailyQuotaTag', { n: g.daily_run_quota })}</Tag>
+                      )}
                       <Tag>{t('users.groupMembers', { n: g.members })}</Tag>
                       {w > 0 && (
                         <Tag color="gold" icon={<ThunderboltOutlined />}>
@@ -721,6 +739,22 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
             <Form.Item name="priority" label={t('users.priority')} extra={t('users.priorityHint')}>
               <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder={t('users.prioritySystemDefault')} />
             </Form.Item>
+          )}
+
+          {/* External tenancy (ADR 0022): the root/Default OU is always internal, so these only
+              appear on a non-default OU. Restriction is sticky down the OU tree. */}
+          {!isDefault && (
+            <>
+              <Form.Item name="restricted" valuePropName="checked" label={t('users.restricted')} extra={t('users.restrictedHint')}>
+                <Switch size="small" />
+              </Form.Item>
+              <Form.Item name="quota_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
+                <Switch size="small" />
+              </Form.Item>
+              <Form.Item name="daily_run_quota" label={t('users.dailyRunQuota')} extra={t('users.dailyRunQuotaHint')}>
+                <InputNumber min={0} max={999} style={{ width: '100%' }} disabled={quotaInherit} />
+              </Form.Item>
+            </>
           )}
         </Form>
       </Modal>

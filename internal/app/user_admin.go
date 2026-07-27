@@ -37,6 +37,13 @@ type UserGroup struct {
 	MaxQueuedInherit   bool
 	RunWindow          string // "" = any hour, else "H1-H2" (panel timezone)
 	RunWindowInherit   bool
+	// External-user tenancy (ADR 0022). Restricted marks an external OU (owner-scoped reads +
+	// run allow-list); it is sticky down the OU tree, so RestrictedEffective reports whether an
+	// ancestor already restricts this group even when its own flag is off.
+	Restricted          bool
+	RestrictedEffective bool
+	DailyRunQuota       int // runs/day cap for members; 0 = unlimited
+	DailyQuotaInherit   bool
 }
 
 // ---------- profile ----------
@@ -183,24 +190,26 @@ func (s *Store) EnsureDefaultGroup() int64 {
 func (s *Store) ListUserGroups() []UserGroup {
 	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''),
 			COALESCE(g.is_default,0), g.weight, g.urgent_unlimited, g.allow_urgent, g.max_queued, g.run_window,
-			COALESCE(g.priority,''), COUNT(u.username)
+			COALESCE(g.priority,''), COALESCE(g.restricted,0), g.daily_run_quota, g.parent_id, COUNT(u.username)
 		FROM user_groups g
 		LEFT JOIN users u ON u.group_id=g.id
 		GROUP BY g.id, g.name, g.description, g.created_at, g.is_default, g.weight, g.urgent_unlimited,
-			g.allow_urgent, g.max_queued, g.run_window, g.priority
+			g.allow_urgent, g.max_queued, g.run_window, g.priority, g.restricted, g.daily_run_quota, g.parent_id
 		ORDER BY g.is_default DESC, g.name`)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 	var out []UserGroup
+	parents := map[int64]int64{}
+	restrictedOwn := map[int64]bool{}
 	for rows.Next() {
 		var g UserGroup
-		var isDefault int
-		var weight, urgent, allowUrgent, maxQueued sql.NullInt64
+		var isDefault, restricted int
+		var weight, urgent, allowUrgent, maxQueued, dailyQuota, parent sql.NullInt64
 		var runWindow sql.NullString
 		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &isDefault, &weight, &urgent,
-			&allowUrgent, &maxQueued, &runWindow, &g.Priority, &g.Members); err != nil {
+			&allowUrgent, &maxQueued, &runWindow, &g.Priority, &restricted, &dailyQuota, &parent, &g.Members); err != nil {
 			continue
 		}
 		g.IsDefault = isDefault != 0
@@ -210,7 +219,22 @@ func (s *Store) ListUserGroups() []UserGroup {
 		g.AllowUrgent, g.AllowUrgentInherit = !allowUrgent.Valid || allowUrgent.Int64 != 0, !allowUrgent.Valid && !g.IsDefault
 		g.MaxQueued, g.MaxQueuedInherit = int(maxQueued.Int64), !maxQueued.Valid && !g.IsDefault
 		g.RunWindow, g.RunWindowInherit = runWindow.String, !runWindow.Valid && !g.IsDefault
+		g.Restricted = restricted != 0
+		g.DailyRunQuota, g.DailyQuotaInherit = int(dailyQuota.Int64), !dailyQuota.Valid && !g.IsDefault
+		parents[g.ID], restrictedOwn[g.ID] = parent.Int64, g.Restricted
 		out = append(out, g)
+	}
+	// Restriction is sticky down the OU tree, so a group is effectively restricted when it or ANY
+	// ancestor sets the flag — this is what the admin UI shows as "inherited from the parent OU".
+	for i := range out {
+		seen := map[int64]bool{}
+		for id := out[i].ID; id != 0 && !seen[id]; id = parents[id] {
+			seen[id] = true
+			if restrictedOwn[id] {
+				out[i].RestrictedEffective = true
+				break
+			}
+		}
 	}
 	return out
 }

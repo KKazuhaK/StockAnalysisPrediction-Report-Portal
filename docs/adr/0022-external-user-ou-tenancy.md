@@ -148,15 +148,27 @@ Dify app already dedups on. `:subtype` is the target's declared `output_subtype`
 pattern:
 
 ```
-RunsToday(user) = SUM(total) FROM batch_jobs WHERE created_by=:user AND created_at >= :panelMidnightUTC
+RunsToday(user, since) = SUM(total) FROM batch_jobs WHERE created_by=:user AND created_at >= :since
 ```
 
-Rows, not jobs, are counted (a multi-row job can't dodge the cap; restricted users are held to one-row
-submits). Enforced in `apiBatchJobCreate`'s existing `if !isAdmin` block, **after** the R1 reuse
-short-circuit and the R3 allow-check, **before** enqueue: `q>0 && RunsToday+len(rows) > q → 429`.
-Counted at submit (a later failure still costs the quota; abuse-resistant). Reset = panel-tz civil
-midnight, implicit in the sliding window. `429` body `{error:"rate_limited", limit, used, resets_at}`;
-the run modal shows a remaining-runs chip via a small `GET` endpoint; all copy through `t()`.
+Rows, not jobs, are counted, so a multi-row submit can't dodge the cap. `:since` is
+`Server.panelMidnight(now)` — today's civil midnight resolved **in the panel timezone** and then
+converted back to the local wall-clock form `batch_jobs.created_at` is stored in (`nowStr`), so the
+comparison matches the stored format and the reset lands on the business day boundary (DST-safe,
+because it goes through a real instant rather than string surgery).
+
+Enforced in `apiBatchJobCreate`'s existing `if !isAdmin(user)` block, beside the run-window and
+MaxQueued checks (MaxQueued caps *concurrency*, which clears as runs finish; this caps daily
+*volume*): `runQuotaCheck(user, len(rows))` → `429 {error:"rate_limited", limit, used, resets_at}`.
+The gate short-circuits on `viewerScope(user) == nil`, so internal users and admins are never
+rate-limited and an effective quota of 0 means unlimited. Counted at submit, so a later failure still
+costs the quota (deliberate, abuse-resistant). `GET /api/admin/batch/run-quota` serves the run form's
+remaining-runs chip (`limited:false` for uncapped callers, so the UI omits it); the group editor
+exposes `restricted` + `daily_run_quota` (null = inherit the parent OU) with a restricted/quota tag on
+the group card. All copy through `t()` in zh-CN/zh-TW/en.
+
+Once R3 lands, the quota check must sit **after** the R1 same-day reuse short-circuit, so a reused
+report never consumes quota.
 
 ### R3 — runnable reports + where they appear
 

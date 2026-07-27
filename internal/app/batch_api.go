@@ -468,6 +468,19 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 			jsonError(w, http.StatusConflict, "you already have the maximum number of active runs; wait for one to finish")
 			return
 		}
+		// Daily run quota for a restricted OU (ADR 0022 R2). MaxQueued above caps CONCURRENCY (it
+		// clears as runs finish); this caps daily VOLUME. Rows are counted, so a multi-row submit
+		// can't dodge it, and the window resets at the panel-tz civil midnight.
+		if limit, used, ok := s.runQuotaCheck(user, len(in.Rows)); !ok {
+			// Same "error" key every other handler uses (the SPA surfaces it), plus the numbers the
+			// run form needs to render "used/limit today, resets at ...".
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "rate_limited", "limit": limit, "used": used, "resets_at": s.quotaResetsAt(time.Now()),
+			})
+			return
+		}
 	}
 	tgt, ok := s.st.GetTarget(in.TargetID)
 	if !ok {
@@ -524,6 +537,23 @@ func (s *Server) apiBatchTickets(w http.ResponseWriter, r *http.Request, user st
 	alloc := s.st.UserTicketAllocation(user)
 	remaining := s.st.TicketStatus(user, alloc, s.ticketPeriodDays(), time.Now())
 	writeJSON(w, map[string]any{"unlimited": false, "remaining": remaining, "allocation": alloc, "period_days": s.ticketPeriodDays(), "urgent_enabled": enabled})
+}
+
+// apiRunQuota reports the caller's daily run-quota balance for the run form (ADR 0022 R2). An
+// unlimited caller (internal user, admin, or a restricted OU with quota 0) reports limited=false,
+// so the UI simply omits the chip.
+func (s *Server) apiRunQuota(w http.ResponseWriter, r *http.Request, user string) {
+	limit, used, _ := s.runQuotaCheck(user, 0)
+	if limit <= 0 {
+		writeJSON(w, map[string]any{"limited": false})
+		return
+	}
+	remaining := limit - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	writeJSON(w, map[string]any{"limited": true, "limit": limit, "used": used,
+		"remaining": remaining, "resets_at": s.quotaResetsAt(time.Now())})
 }
 
 func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user string) {
