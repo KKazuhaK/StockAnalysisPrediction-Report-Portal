@@ -36,6 +36,13 @@ type difyTargetConfig struct {
 	APIKey  string       `json:"api_key"`
 	Mode    string       `json:"mode,omitempty"`
 	Inputs  []dify.Input `json:"inputs"`
+	// External-tenancy declarations (ADR 0022). OutputSubtype is the report type this workflow
+	// produces; SymbolInput names the input key carrying the stock code. Together they enable the
+	// same-day reuse gate and the restricted read filter's subtype narrowing. They live here so the
+	// target editor round-trips them — re-marshalling the config without them would silently wipe
+	// them and disable reuse.
+	OutputSubtype string `json:"output_subtype,omitempty"`
+	SymbolInput   string `json:"symbol_input,omitempty"`
 }
 
 // difyModeChat reports whether a probed app mode is a chat/agent app (anything that

@@ -79,6 +79,10 @@ export interface DifyTargetEdit {
   mode?: string // "" / "workflow" / "chat"
   inputs: DifyInput[]
   has_key: boolean
+  // External-tenancy declarations (ADR 0022): the report type this workflow produces, and which
+  // input key carries the stock code. Both are required for same-day reuse to apply.
+  output_subtype?: string
+  symbol_input?: string
 }
 
 // Queue summary for the home banner + drawer (docs/adr/0007-run-analysis-and-scheduling.md).
