@@ -222,11 +222,45 @@ func (s *Server) targetJSON(t BatchTarget) map[string]any {
 }
 
 func (s *Server) apiBatchTargets(w http.ResponseWriter, r *http.Request, user string) {
+	// A restricted OU only ever sees the workflows its allow-list grants, with the surfaces
+	// intersected — so the run form cannot offer something the submit gate would refuse
+	// (ADR 0022 R3). Unrestricted callers get the full list exactly as before.
+	allowed := map[int64]string{}
+	restricted := s.viewerScope(user) != nil
+	if restricted {
+		for _, g := range s.st.resolveGroupTargets(user) {
+			allowed[g.TargetID] = g.Surfaces
+		}
+	}
 	out := make([]map[string]any, 0)
 	for _, t := range s.st.ListTargets() {
+		if restricted {
+			sub, ok := allowed[t.ID]
+			if !ok {
+				continue
+			}
+			if sub != "" {
+				t.Surfaces = intersectSurfaces(t.Surfaces, sub)
+			}
+		}
 		out = append(out, s.targetJSON(t))
 	}
 	writeJSON(w, map[string]any{"targets": out})
+}
+
+// intersectSurfaces narrows a target's own surfaces to the OU's granted subset, so the UI is told
+// exactly what the submit gate will accept.
+func intersectSurfaces(target, granted string) string {
+	var out []string
+	for _, s := range TargetSurfaces(target) {
+		if AllowsSurface(granted, s) {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return "none" // no valid surface → TargetSurfaces yields an empty list, not "all"
+	}
+	return strings.Join(out, ",")
 }
 
 // apiBatchTargetReorder persists the admin's drag-to-sort order of targets: it stores each
@@ -397,6 +431,10 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		PresetID    int64               `json:"preset_id"` // preset low-peak window to schedule into (ADR 0014); 0 = none
 		Notify      bool                `json:"notify"`    // email the submitter when the job finishes
 		Rows        []map[string]string `json:"rows"`
+		// Surface this submit came from (run|batch|recurring|chat); "" = run. It is what the
+		// per-OU allow-list checks against, so a restricted group can be granted a workflow on
+		// one surface only (ADR 0022 R3).
+		Surface string `json:"surface"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -466,6 +504,13 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		}
 		if cap := s.st.EffectiveGroupSettings(user).MaxQueued; cap > 0 && s.st.ActiveJobCount(user) >= cap {
 			jsonError(w, http.StatusConflict, "you already have the maximum number of active runs; wait for one to finish")
+			return
+		}
+		// Per-OU run allow-list (ADR 0022 R3). Default-deny for a restricted OU, and the surface
+		// must be permitted too — this is the authoritative server-side gate, so a crafted request
+		// cannot reach a workflow the UI never offered.
+		if !s.runAllowed(user, in.TargetID, firstNonEmpty(in.Surface, SurfaceRun)) {
+			jsonError(w, http.StatusForbidden, "this workflow is not available to your group")
 			return
 		}
 		// Daily run quota for a restricted OU (ADR 0022 R2). MaxQueued above caps CONCURRENCY (it

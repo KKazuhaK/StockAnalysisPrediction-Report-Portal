@@ -351,6 +351,12 @@ export interface UserGroupRow {
   daily_run_quota?: number | null // runs/day cap for members; null = inherit the parent OU, 0 = unlimited
 }
 
+// Per-OU run allow-list matrix (ADR 0022 R3): which workflows a group may run, on which surfaces.
+export interface GroupTargetsResp {
+  granted: { target_id: number; surfaces: string[] }[]
+  targets: { id: number; name: string; surfaces: string[]; output_subtype?: string }[]
+}
+
 // Daily run-quota balance for the run form (ADR 0022 R2). limited=false for internal users,
 // admins, and restricted OUs with no cap — the UI then omits the chip entirely.
 export interface RunQuota {

@@ -107,9 +107,11 @@ never stamps an owner — every internal report is NULL-owner and every non-NULL
 OU. So `owner_group IN :internalOUs` would always be empty; the term (and the `InternalGroupIDs`
 resolver + cache it would need) collapses away. A restricted OU thus sees: its own OU's reports (any
 date) + today's internal (NULL-owner) reports; another restricted OU's reports are non-NULL ≠ myOU and
-never match. Unrestricted viewers get **no** predicate. The `rtype IN :allowedSubtypes` intersection
-(narrow the same-day pool to the group's entitled subtypes) is **deferred to P4** with `group_targets`;
-until then the same-day pool is all of today's internal reports.
+never match. Unrestricted viewers get **no** predicate. The `rtype IN :allowedSubtypes` intersection now ships with P4: `ownerScope.subtypes` narrows the
+same-day branch to the subtypes the OU is entitled to run (nil = the OU has no allow-list, so the pool
+is not narrowed; a non-nil empty slice closes the same-day pool entirely). It is derived from the same
+`entitledSubtypes(user)` the allow-list uses, so "what you may run" and "what you may see today" cannot
+drift apart.
 
 Completeness is compile-forced, not convention: the scoped store methods (`newReportFilter`/`SearchNew`/
 `SearchNewLatest`, `NewBySymbol`, `GetNew`, `ListSymbols`, `NewTypes`, `ReportKinds`, `QueryReports`,
@@ -182,8 +184,16 @@ rows wins). Unrestricted OUs ignore the table.
   `AllowsSurface` its authoritative server-side call site, closing the client-only bypass. The submit
   payload gains an explicit `surface` field; every run-adjacent route shares this gate.
 - **Display-time**: `GET /api/admin/batch/targets` returns only the caller's allowed targets (surfaces
-  intersected), so the run modal only offers permitted workflows; run-shortcut entry buttons are derived
-  from `group_targets`. Feed/stock row visibility is already handled by R1's owner+subtype predicate.
+  intersected via `intersectSurfaces`), so the run modal can never offer something the submit gate would
+  refuse. Feed/stock row visibility is handled by R1's owner+subtype predicate.
+- **Resolution**: `resolveGroupTargets(user)` walks the OU chain leaf→root and the **nearest OU that
+  defines a list wins outright** — an override, not a union, so a sub-team can be narrowed without
+  touching its parent. No list anywhere on the chain ⇒ default-deny for a restricted user.
+- **Admin UI**: `GET/PUT /api/admin/groups/{id}/targets` back an "OU × workflow × surface" matrix
+  (`GroupTargetsModal`), offered on restricted group cards. A save replaces the whole list in one
+  transaction; an all-surfaces selection is stored as `''` so the row keeps tracking the target's own
+  surfaces if an admin later narrows them. A target's produced `output_subtype` lives in the existing
+  `batch_targets.config` JSON (no schema change) and feeds both this matrix and R1's subtype narrowing.
 
 ### R4 — account validity
 

@@ -125,6 +125,9 @@ func TestApiBatchJobCreateEnforcesQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The OU must be allowed to run this target at all (ADR 0022 R3 is default-deny), otherwise the
+	// allow-list gate would 403 before the quota gate under test is ever reached.
+	st.SetGroupTargets(ou, []GroupTarget{{TargetID: tgt, Surfaces: ""}})
 	body := fmt.Sprintf(`{"target_id":%d,"rows":[{"code":"600000"}]}`, tgt)
 	submit := func(user string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()

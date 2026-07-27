@@ -206,6 +206,9 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/groups", s.requireAdminJSON(s.apiGroupAdd))
 	mux.HandleFunc("PUT /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupSave))
 	mux.HandleFunc("DELETE /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupDelete))
+	// Per-OU run allow-list matrix (ADR 0022 R3): which workflows an OU may run, on which surfaces.
+	mux.HandleFunc("GET /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargets))
+	mux.HandleFunc("PUT /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargetsSave))
 	mux.HandleFunc("GET /api/admin/settings", s.requireAdminJSON(s.apiAdminSettings))
 	mux.HandleFunc("POST /api/admin/settings", s.requireAdminJSON(s.apiSettingsSave))
 	mux.HandleFunc("GET /api/admin/email", s.requireAdminJSON(s.apiEmailGet))

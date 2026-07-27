@@ -24,6 +24,7 @@ import {
 import dayjs from 'dayjs'
 import type { ColumnsType } from 'antd/es/table'
 import {
+  AppstoreOutlined,
   ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -36,7 +37,109 @@ import {
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import { priorityNum } from '../../lib/batchUi'
-import type { BatchConfig, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
+import type { BatchConfig, GroupTargetsResp, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
+
+const RUN_SURFACES = ['run', 'batch', 'recurring', 'chat'] as const
+
+// GroupTargetsModal is the "OU × workflow × surface" allow-list matrix (ADR 0022 R3). A restricted
+// OU is default-deny: no row here means its members can run nothing, so the empty state says so.
+function GroupTargetsModal({ group, onClose }: { group: UserGroupRow | null; onClose: () => void }) {
+  const { t } = useTranslation()
+  const { message } = App.useApp()
+  const [data, setData] = useState<GroupTargetsResp | null>(null)
+  const [granted, setGranted] = useState<Record<number, string[]>>({})
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!group) return
+    setData(null)
+    api
+      .get<GroupTargetsResp>(`/api/admin/groups/${group.id}/targets`)
+      .then((r) => {
+        setData(r)
+        const m: Record<number, string[]> = {}
+        for (const g of r.granted || []) m[g.target_id] = g.surfaces
+        setGranted(m)
+      })
+      .catch((e) => message.error((e as Error).message))
+  }, [group])
+
+  const toggleTarget = (id: number, on: boolean, allSurfaces: string[]) =>
+    setGranted((g) => {
+      const next = { ...g }
+      if (on) next[id] = allSurfaces
+      else delete next[id]
+      return next
+    })
+  const toggleSurface = (id: number, surface: string, on: boolean) =>
+    setGranted((g) => {
+      const cur = g[id] || []
+      const next = on ? [...cur, surface] : cur.filter((s) => s !== surface)
+      return { ...g, [id]: next }
+    })
+
+  const save = async () => {
+    if (!group) return
+    setSaving(true)
+    try {
+      await api.put(`/api/admin/groups/${group.id}/targets`, {
+        granted: Object.entries(granted).map(([id, surfaces]) => ({ target_id: Number(id), surfaces })),
+      })
+      message.success(t('common.saved'))
+      onClose()
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={!!group}
+      title={`${t('users.groupTargets')} — ${group?.name ?? ''}`}
+      onOk={save}
+      confirmLoading={saving}
+      onCancel={onClose}
+      okText={t('common.save')}
+      cancelText={t('common.cancel')}
+      width={640}
+      destroyOnHidden
+    >
+      <Typography.Paragraph type="secondary">{t('users.groupTargetsHint')}</Typography.Paragraph>
+      {data && data.targets.length === 0 && <Empty description={t('users.groupTargetsNoTargets')} />}
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        {(data?.targets || []).map((tg) => {
+          const on = granted[tg.id] != null
+          return (
+            <Card key={tg.id} size="small">
+              <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                <Space wrap>
+                  <Switch size="small" checked={on} onChange={(v) => toggleTarget(tg.id, v, tg.surfaces)} />
+                  <Typography.Text strong>{tg.name}</Typography.Text>
+                  {tg.output_subtype && <Tag color="blue">{tg.output_subtype}</Tag>}
+                </Space>
+                {on && (
+                  <Space wrap style={{ paddingLeft: 34 }}>
+                    {RUN_SURFACES.filter((sf) => tg.surfaces.includes(sf)).map((sf) => (
+                      <Tag.CheckableTag
+                        key={sf}
+                        checked={(granted[tg.id] || []).includes(sf)}
+                        onChange={(v) => toggleSurface(tg.id, sf, v)}
+                      >
+                        {t(`users.surface.${sf}`)}
+                      </Tag.CheckableTag>
+                    ))}
+                  </Space>
+                )}
+              </Space>
+            </Card>
+          )
+        })}
+      </Space>
+    </Modal>
+  )
+}
 
 // A deterministic avatar colour from a name, so each user reads distinctly.
 const ROLE_COLOR: Record<string, string> = { admin: 'gold', operator: 'blue', user: 'default' }
@@ -430,6 +533,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [edit, setEdit] = useState<UserGroupRow | 'new' | null>(null)
+  const [targetsFor, setTargetsFor] = useState<UserGroupRow | null>(null)
   const [form] = Form.useForm()
   const isDefault = edit !== 'new' && !!edit?.is_default
   const urgentInherit = Form.useWatch('urgent_inherit', form)
@@ -660,6 +764,12 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
                     </div>
                   </div>
                   <Space>
+                    {/* The allow-list only governs restricted OUs, so the matrix is offered there. */}
+                    {g.restricted_effective && (
+                      <Tooltip title={t('users.groupTargets')}>
+                        <Button size="small" icon={<AppstoreOutlined />} onClick={() => setTargetsFor(g)} />
+                      </Tooltip>
+                    )}
                     <Button size="small" icon={<EditOutlined />} onClick={() => openForm(g)} />
                     {!g.is_default && (
                       <Popconfirm title={t('users.deleteGroupConfirm')} onConfirm={() => remove(g.id)}>
@@ -758,6 +868,8 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
           )}
         </Form>
       </Modal>
+
+      <GroupTargetsModal group={targetsFor} onClose={() => setTargetsFor(null)} />
     </Space>
   )
 }
