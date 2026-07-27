@@ -513,6 +513,13 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 			jsonError(w, http.StatusForbidden, "this workflow is not available to your group")
 			return
 		}
+		// Same-day reuse (ADR 0022 R1): if this exact request already produced a report today, hand
+		// it back instead of running. Deliberately BEFORE the quota check, so a reuse costs the
+		// caller nothing — that is the point of the rule.
+		if id, key, ok := s.reuseSameDayReport(user, in.TargetID, in.Rows); ok {
+			writeJSON(w, map[string]any{"ok": true, "reused": true, "report_id": id, "key": key})
+			return
+		}
 		// Daily run quota for a restricted OU (ADR 0022 R2). MaxQueued above caps CONCURRENCY (it
 		// clears as runs finish); this caps daily VOLUME. Rows are counted, so a multi-row submit
 		// can't dodge it, and the window resets at the panel-tz civil midnight.
