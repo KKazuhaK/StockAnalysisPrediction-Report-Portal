@@ -1,6 +1,10 @@
 package app
 
-import "time"
+import (
+	"sort"
+	"strings"
+	"time"
+)
 
 // Report ownership (ADR 0022 R1). A report is stamped with the OU that generated it so a restricted
 // external viewer sees only its own OU's reports (plus the same-day internal pool). Ownership is
@@ -67,6 +71,10 @@ func (s *Server) runInputs(job BatchJob, inputs map[string]string) map[string]st
 type ownerScope struct {
 	myOU       int64
 	panelToday string // panel-tz civil date "YYYY-MM-DD"
+	// subtypes narrows the SAME-DAY internal pool to the report types this OU is entitled to run
+	// (ADR 0022 R3). nil = no allow-list resolved, so the pool is not narrowed; a non-nil empty
+	// slice means "entitled to nothing", which closes the same-day pool entirely.
+	subtypes []string
 }
 
 // where returns an AND-joinable boolean fragment (no WHERE keyword) that scopes reports to the
@@ -76,8 +84,21 @@ func (sc *ownerScope) where(prefix string) (string, []any) {
 	if sc == nil {
 		return "", nil
 	}
-	frag := "(" + prefix + "owner_group = ? OR (" + prefix + "rdate = ? AND " + prefix + "owner_group IS NULL))"
-	return frag, []any{sc.myOU, sc.panelToday}
+	args := []any{sc.myOU, sc.panelToday}
+	sameDay := prefix + "rdate = ? AND " + prefix + "owner_group IS NULL"
+	if sc.subtypes != nil {
+		if len(sc.subtypes) == 0 {
+			// Entitled to nothing: the same-day pool is closed (own-OU reports still show).
+			return "(" + prefix + "owner_group = ?)", []any{sc.myOU}
+		}
+		ph := make([]string, len(sc.subtypes))
+		for i, st := range sc.subtypes {
+			ph[i] = "?"
+			args = append(args, st)
+		}
+		sameDay += " AND " + prefix + "rtype IN (" + strings.Join(ph, ",") + ")"
+	}
+	return "(" + prefix + "owner_group = ? OR (" + sameDay + "))", args
 }
 
 // viewerScope resolves the read scope for a browser (cookie-session) user. It returns nil — no
@@ -94,5 +115,29 @@ func (s *Server) viewerScope(user string) *ownerScope {
 	return &ownerScope{
 		myOU:       s.st.OwnerGroupOf(user),
 		panelToday: time.Now().In(s.panelLocation()).Format("2006-01-02"),
+		subtypes:   s.entitledSubtypes(user),
 	}
+}
+
+// entitledSubtypes narrows the same-day pool to the report types the user's OU may run. It returns
+// nil when the OU has no allow-list at all (nothing to narrow by — the pool stays open, matching
+// pre-P4 behavior), and a non-nil (possibly empty) slice once a list exists.
+func (s *Server) entitledSubtypes(user string) []string {
+	if len(s.st.resolveGroupTargets(user)) == 0 {
+		return nil
+	}
+	subs := []string{}
+	seen := map[string]bool{}
+	for _, g := range s.st.resolveGroupTargets(user) {
+		t, ok := s.st.GetTarget(g.TargetID)
+		if !ok {
+			continue
+		}
+		if sub := targetOutputSubtype(t.Config); sub != "" && !seen[sub] {
+			seen[sub] = true
+			subs = append(subs, sub)
+		}
+	}
+	sort.Strings(subs) // stable order keeps the generated SQL (and its query plan) deterministic
+	return subs
 }

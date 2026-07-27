@@ -217,6 +217,52 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 	writeJSON(w, okJSON)
 }
 
+// apiGroupTargets returns one OU's run allow-list (ADR 0022 R3) alongside every target, so the
+// admin matrix can render "which workflows may this OU run, and on which surfaces".
+func (s *Server) apiGroupTargets(w http.ResponseWriter, r *http.Request, user string) {
+	id := pathID(r, "id")
+	granted := make([]map[string]any, 0)
+	for _, g := range s.st.GroupTargets(id) {
+		granted = append(granted, map[string]any{"target_id": g.TargetID, "surfaces": TargetSurfaces(g.Surfaces)})
+	}
+	targets := make([]map[string]any, 0)
+	for _, t := range s.st.ListTargets() {
+		targets = append(targets, map[string]any{"id": t.ID, "name": t.Name,
+			"surfaces": TargetSurfaces(t.Surfaces), "output_subtype": targetOutputSubtype(t.Config)})
+	}
+	writeJSON(w, map[string]any{"granted": granted, "targets": targets})
+}
+
+// apiGroupTargetsSave replaces an OU's allow-list atomically. An empty list means "this OU may run
+// nothing" — default-deny is the point, so it is a legitimate save, not an error.
+func (s *Server) apiGroupTargetsSave(w http.ResponseWriter, r *http.Request, user string) {
+	var in struct {
+		Granted []struct {
+			TargetID int64    `json:"target_id"`
+			Surfaces []string `json:"surfaces"`
+		} `json:"granted"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	rows := make([]GroupTarget, 0, len(in.Granted))
+	for _, g := range in.Granted {
+		// An all-surfaces selection is stored as "" so the row keeps tracking the target's own
+		// surfaces if an admin later narrows them.
+		sub := strings.Join(g.Surfaces, ",")
+		if len(TargetSurfaces(sub)) == len(TargetSurfaces("")) {
+			sub = ""
+		}
+		rows = append(rows, GroupTarget{TargetID: g.TargetID, Surfaces: sub})
+	}
+	if err := s.st.SetGroupTargets(pathID(r, "id"), rows); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, okJSON)
+}
+
 // clampWeight keeps a group's urgent-ticket allowance in a sane range.
 func clampWeight(w int) int {
 	if w < 0 {
