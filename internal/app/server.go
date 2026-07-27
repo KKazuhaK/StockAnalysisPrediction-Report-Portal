@@ -234,6 +234,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("PUT /api/admin/batch/dify/targets/{id}", s.requireAdminJSON(s.apiBatchDifyTargetUpdate))
 	mux.HandleFunc("DELETE /api/admin/batch/targets/{id}", s.requireAdminJSON(s.apiBatchTargetDelete))
 	mux.HandleFunc("GET /api/admin/batch/tickets", s.requirePermJSON(PermRunBatch, s.apiBatchTickets))
+	mux.HandleFunc("GET /api/admin/batch/run-quota", s.requirePermJSON(PermRunBatch, s.apiRunQuota)) // daily run quota (ADR 0022 R2)
 	mux.HandleFunc("GET /api/admin/batch/queue", s.requirePermJSON(PermRunBatch, s.apiBatchQueue))
 	mux.HandleFunc("GET /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobs))
 	mux.HandleFunc("POST /api/admin/batch/jobs", s.requirePermJSON(PermRunBatch, s.apiBatchJobCreate))
