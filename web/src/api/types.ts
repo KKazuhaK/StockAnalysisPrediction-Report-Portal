@@ -639,3 +639,11 @@ export interface RecurringDetail extends RecurringTask {
 export interface RecurringTasksResp {
   tasks: RecurringTask[]
 }
+
+// A login-page SSO button (ADR 0023). Deliberately minimal — the public endpoint exposes no
+// issuer, client id or configuration, only what is needed to render and start a sign-in.
+export interface SSOProviderInfo {
+  slug: string
+  kind: 'saml' | 'oidc'
+  name: string
+}
