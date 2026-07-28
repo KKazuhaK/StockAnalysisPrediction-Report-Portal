@@ -138,3 +138,36 @@ func TestShadowedReportsUnreachableRules(t *testing.T) {
 		t.Errorf("shadowed = %v, want just rule 2", got)
 	}
 }
+
+// TestPrivilegedRoleNeedsTheOptInOnEveryPath proves the admin-elevation guard is a property of the
+// engine, not of one branch. The role can arrive from a matched rule, from the provider default on a
+// brand-new account, or from the provider default filling a rule that named only an OU — and a
+// privileged role must be dropped on all three unless the provider opted in.
+func TestPrivilegedRoleNeedsTheOptInOnEveryPath(t *testing.T) {
+	priv := map[string]bool{"admin": true}
+	ouOnly := []Rule{{ID: 1, Enabled: true, Value: "staff", TargetGroup: 7}}
+	roleRule := []Rule{{ID: 2, Enabled: true, Value: "staff", TargetRole: "admin", TargetGroup: 7}}
+	member := Facts{Groups: []string{"staff"}}
+
+	for _, tc := range []struct {
+		name  string
+		rules []Rule
+		facts Facts
+		cur   Current
+	}{
+		{"from a matched rule", roleRule, member, Current{}},
+		{"from the default on a new account", nil, Facts{}, Current{}},
+		{"from the default filling a rule that set only the OU", ouOnly, member, Current{}},
+	} {
+		d := Defaults{Role: "admin", Group: 9, PrivilegedRoles: priv}
+		if out := Resolve(tc.rules, tc.facts, tc.cur, d); out.Role == "admin" {
+			t.Errorf("%s: granted admin with allow_admin_role off", tc.name)
+		} else if !out.AdminBlocked {
+			t.Errorf("%s: the blocked elevation must be reported so it can be logged", tc.name)
+		}
+		d.AllowAdminRole = true
+		if out := Resolve(tc.rules, tc.facts, tc.cur, d); out.Role != "admin" {
+			t.Errorf("%s: with the opt-in on, admin must be granted, got %q", tc.name, out.Role)
+		}
+	}
+}

@@ -66,8 +66,7 @@ func (s *Server) apiPasskeyRegisterBegin(w http.ResponseWriter, r *http.Request,
 	// Step-up: a live session alone must not be enough to add a credential. Otherwise a stolen
 	// cookie becomes permanent access — the attacker registers their own authenticator and keeps
 	// getting in after the cookie is revoked and the password changed.
-	if !s.stepUpOK(r, user) {
-		jsonError(w, http.StatusForbidden, "confirm with your password or a current code first")
+	if !s.requireStepUp(w, r, user) {
 		return
 	}
 	wa, err := s.webAuthn()
@@ -234,6 +233,12 @@ func (s *Server) apiPasskeyList(w http.ResponseWriter, r *http.Request, user str
 
 // DELETE /api/me/passkeys/{id}
 func (s *Server) apiPasskeyDelete(w http.ResponseWriter, r *http.Request, user string) {
+	// Revoking a credential is a credential change too. Without step-up, a stolen cookie strips the
+	// owner's authenticators — locking them out of the very factor that would have evicted the
+	// attacker.
+	if !s.requireStepUp(w, r, user) {
+		return
+	}
 	if err := s.st.DeletePasskey(user, pathID(r, "id")); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -532,8 +532,17 @@ func (s *Server) sign(user string) string {
 	return s.signUser(*u)
 }
 
-func (s *Server) signUser(u User) string {
-	exp := time.Now().Add(7 * 24 * time.Hour).Unix()
+// sessionTTL is how long a portal session lasts by default. An SSO provider may shorten it
+// (session_hours), which is why signing takes a duration at all.
+const sessionTTL = 7 * 24 * time.Hour
+
+func (s *Server) signUser(u User) string { return s.signUserFor(u, sessionTTL) }
+
+func (s *Server) signUserFor(u User, ttl time.Duration) string {
+	if ttl <= 0 {
+		ttl = sessionTTL
+	}
+	exp := time.Now().Add(ttl).Unix()
 	msg := fmt.Sprintf("v1|%s|%d|%d", u.Username, u.SessionRev, exp)
 	sig := s.hmac(msg)
 	return encodeSessionMessage(msg) + "." + sig

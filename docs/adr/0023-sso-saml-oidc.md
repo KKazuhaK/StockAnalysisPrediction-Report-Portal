@@ -51,8 +51,11 @@ concrete risk closed**, because the reference panel is safe today only by accide
 reached v1.6.0 as an *indirect* dependency pulled up by an unrelated part of its much larger graph,
 which a `go mod tidy` could undo. Therefore:
 
-1. `goxmldsig` v1.6.0 and `etree` v1.7.0 are **explicit direct requires** here, pinned on purpose
-   rather than inherited by luck.
+1. `goxmldsig` v1.6.0 and `etree` v1.7.0 are pinned on purpose rather than inherited by luck.
+   `goxmldsig` is an **explicit direct require** — we import it for the signature-algorithm allowlist.
+   `etree` has no direct call site, so it is an indirect requirement at our version; the pin holds
+   because MVS takes the maximum, and `TestSecurityCriticalDependencyFloors` fails the build if either
+   version regresses. A comment in `go.mod` cannot enforce that; a test can.
 2. **`govulncheck ./...` becomes a hard CI gate**, alongside build/vet/test.
 3. Only the low-level `ServiceProvider` API is used, so switching to gosaml2 later is a contained
    change if crewjam stays unmaintained.
@@ -190,12 +193,23 @@ single-use, must survive a restart and work across instances), and it grants not
 existing login throttle covers the second step keyed by account, so the code cannot be brute-forced.
 
 **Step-up**: changing a password, managing 2FA/passkeys, and minting API tokens re-require a factor
-even inside a valid session, so a stolen cookie cannot be escalated into permanent access.
+even inside a valid session, so a stolen cookie cannot be escalated into permanent access. The proof
+travels in an `X-Step-Up-Proof` **header**, never the query string — it is a password or a live code,
+and a query string lands in every proxy access log, in browser history, and in the `Referer` of any
+subresource. Step-up shares the login throttle, keyed `stepup:<account>`: it is the same online
+guessing oracle as the login form, the attacker merely starts from a stolen session. Enrolling a
+factor is gated as well as removing one — an attacker who turns 2FA **on** with their own
+authenticator locks the owner out of their own account with no self-service way back.
 
 ### Passkeys (WebAuthn)
 
-Registered per user, multiple allowed, each with a label and a last-used timestamp so an admin or the
-user can see and revoke them. The Relying Party ID derives from the same `public_url` used everywhere
+A passkey here is a **second factor, not a passwordless login**: the ceremony requires the single-use
+pending token from a completed password leg. Credentials are registered with user verification
+`preferred`, so one may be possession-only, and accepting that as the sole credential would be weaker
+than the password it replaced. (Reading the pending token does not consume it — a slow authenticator
+must not throw the user back to the password screen; the claim happens once, at the point of no
+return.) Registered per user, multiple allowed, each with a label and a last-used timestamp so an
+admin or the user can see and revoke them. The Relying Party ID derives from the same `public_url` used everywhere
 else — a mismatch silently breaks every credential, so it must come from the one shared function.
 
 The credential's **sign counter is verified and stored**: a counter that goes backwards means a cloned
@@ -209,7 +223,9 @@ challenge — never a client-supplied one.
 
 ### What we deliberately do NOT build
 
-Encrypted SAML assertions (a decryption-oracle surface TLS already covers on the Web SSO profile);
+Encrypted SAML assertions (a decryption-oracle surface TLS already covers on the Web SSO profile) —
+and because crewjam looks for an `EncryptedAssertion` *first* and would hand it to the SP private key,
+this non-goal is an explicit **refusal** in the ACS, not merely an absence of support;
 implicit/hybrid flows; ROPC; refresh tokens and token storage (we need authentication, not API
 access); HS*/`none`/JWE ID tokens; distributed-claims resolution; front-channel logout (it would force
 `SameSite=None` on `rp_session`); RP-initiated logout in v1. Each is attack surface bought for nothing
@@ -255,7 +271,10 @@ removes the one non-reconciler step the earlier draft needed (`ensureUserUIDs`).
   IdP cannot poison another's ID space.
 - **`sso_keyring`** — one row: salt + wrapped DEK.
 
-The two TTL tables are swept by the **existing** `cleanupLoop` (ADR 0017) — no new ticker.
+The two TTL tables are swept by `authSweepLoop`, its **own** always-on 15-minute tick. Riding on the
+storage-retention pass (ADR 0017) was the original plan and was wrong: that pass only runs when an
+admin has configured retention, so in the shipped default configuration both tables would grow
+forever. Expiring ephemeral rows is hygiene nobody opts into.
 `ensureUserUIDs()` fills `uid` for pre-existing rows at init: idempotent, self-healing, moves and
 reshapes nothing — the same class as the existing `EnsureDefaultGroup()`.
 
@@ -274,7 +293,11 @@ Full checklist in the implementation plan; the items that most commonly go wrong
    AND must match" (the `if n != "" && n != want` form passes on an absent nonce).
 5. Extract claims **only** from the element the signature verifier returns, never the bytes off the
    wire; keep the XML round-trip validator in the path; reject DTDs.
-6. Enforce our own signature-algorithm allowlist — Go's `CheckSignature` accepts SHA-1.
+6. Enforce our own signature-algorithm **allowlist** (SHA-256/384/512, RSA or ECDSA) over every
+   `SignatureMethod` and `DigestMethod` in the document, before parsing. goxmldsig maps `rsa-sha1`
+   straight to `x509.SHA1WithRSA` and applies no policy, and an unknown algorithm must be refused
+   rather than accepted by omission. Checking every occurrence, not just the outermost, is the point:
+   a strong response signature must not vouch for a SHA-1 assertion signature.
 7. Reject multiple assertions, duplicate attribute names (attribute pollution aimed at a tenancy
    boundary), and transient NameID as a link key.
 8. **SSRF-guard every outbound fetch** (metadata, discovery, JWKS, token, userinfo) with a dial-time
@@ -326,6 +349,14 @@ exactly once, and a consumed pending token cannot be replayed.
 - **Rotating `secret_key` requires re-entering SSO secrets** unless `rotate-kek` is run first. Must be
   in the release notes.
 - **Deprovisioning lags until SCIM.** An IdP-side disable is invisible to us for the session lifetime;
-  admin-side disable is already instant. Mitigated by a shorter default session for SSO-created users.
+  admin-side disable is already instant. Mitigated by a shorter session for SSO users (`session_hours`),
+  which is stamped into the **signed token**, not only the cookie's `MaxAge` — `MaxAge` is a hint the
+  holder of a stolen cookie simply ignores, so a limit expressed only there would not limit the one
+  thing it exists for.
+- **Per-provider SAML clock skew is not applied.** crewjam exposes `MaxClockSkew` only as a package
+  global, so writing it per request would race concurrent logins and leak one provider's tolerance into
+  another's verification. The column stays, unused, until upstream makes it per-SP; the library default
+  is used. The assertion replay entry is sized to `NotOnOrAfter + MaxClockSkew` for the same reason —
+  an entry that lapsed before the acceptance window closed would reopen the replay it exists to close.
 - We take on an XML signature verifier. That is why the library choice is evidence-based, why
   `govulncheck` becomes a gate, and why the verification checklist is tested first.

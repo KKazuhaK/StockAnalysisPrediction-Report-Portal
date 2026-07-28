@@ -24,6 +24,19 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 		return
 	}
 
+	// A refusal from here on must not leave a just-created account behind. A leftover row is not
+	// inert: the next attempt adopts it as pre-existing, so the engine takes the keep-on-miss branch
+	// instead of the new-user branch and the very deny that protected the first attempt no longer
+	// applies. Provisioning is therefore all-or-nothing across the whole decision.
+	refuse := func(reason string) {
+		if created {
+			if err := s.st.DeleteUser(username); err != nil {
+				log.Printf("sso: could not roll back the provisioned account %q: %v", username, err)
+			}
+		}
+		s.ssoFail(w, r, reason)
+	}
+
 	// Rules decide the role AND the OU. In this portal the OU carries report visibility, the run
 	// allow-list and the daily quota (ADR 0022), so this is the actual permission decision.
 	//
@@ -46,7 +59,7 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 	})
 	if out.Deny {
 		log.Printf("sso: %s/%s denied %q: %s", p.Kind, p.Slug, username, out.DenyReason)
-		s.ssoFail(w, r, "not_provisioned")
+		refuse("not_provisioned")
 		return
 	}
 	if out.AdminBlocked {
@@ -54,7 +67,7 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 	}
 	if err := s.applyAssignment(username, out.Role, out.Group); err != nil {
 		log.Printf("sso: %s/%s could not apply the assignment for %q: %v", p.Kind, p.Slug, username, err)
-		s.ssoFail(w, r, "internal")
+		refuse("internal")
 		return
 	}
 
@@ -62,7 +75,7 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 	// Re-check the account gates AFTER assignment, so a rule that just deactivated or re-scoped
 	// someone cannot be outrun by this very login.
 	if u == nil || !u.Active || s.accountExpired(u) {
-		s.ssoFail(w, r, "not_provisioned")
+		refuse("not_provisioned")
 		return
 	}
 	if err := s.st.LinkIdentity(Identity{
@@ -106,7 +119,11 @@ func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (username stri
 	if existing := s.st.GetUser(name); existing != nil {
 		return "", false, errUsernameTaken
 	}
-	if err := s.st.UpsertUser(User{Username: name, PasswordHash: "", Role: firstNonEmpty(p.DefaultRole, "user")}); err != nil {
+	// Created with the baseline role, NOT the provider default. The default is a privileged role in
+	// some configurations, and the rule engine is the one place allowed to grant one — it drops the
+	// elevation when allow_admin_role is off. Writing the default here would hand out admin behind
+	// the engine's back; the assignment a few lines later sets the real role either way.
+	if err := s.st.UpsertUser(User{Username: name, PasswordHash: "", Role: "user"}); err != nil {
 		return "", false, err
 	}
 	s.st.SetUserProfile(name, id.claim(p.AttrDisplay), id.claim(p.AttrEmail))
@@ -125,15 +142,18 @@ func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (username stri
 // path as password login so expiry and session_rev invalidation behave identically. A provider may
 // shorten the lifetime: until SCIM exists an IdP-side disable is invisible to us, so a shorter
 // session is the honest partial answer to deprovisioning.
+// The shortened lifetime is stamped into the SIGNED token, not only into the cookie's MaxAge.
+// MaxAge is a browser-side hint that anyone actually holding the cookie value simply ignores, so a
+// limit expressed only there would be no limit at all against the threat it exists for.
 func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, u User, p SSOProvider) {
-	maxAge := 7 * 24 * 3600
+	ttl := sessionTTL
 	if p.SessionHours > 0 {
-		maxAge = p.SessionHours * 3600
+		ttl = time.Duration(p.SessionHours) * time.Hour
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.signUser(u), Path: "/",
+		Name: cookieName, Value: s.signUserFor(u, ttl), Path: "/",
 		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets),
-		SameSite: http.SameSiteLaxMode, MaxAge: maxAge,
+		SameSite: http.SameSiteLaxMode, MaxAge: int(ttl.Seconds()),
 	})
 }
 

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // SAML 2.0 Service Provider (ADR 0023), built on crewjam's low-level ServiceProvider — never
@@ -274,6 +275,18 @@ func (s *Server) samlACS(w http.ResponseWriter, r *http.Request) {
 		s.ssoFail(w, r, "bad_response")
 		return
 	}
+	// Algorithm policy and the encryption refusal both run BEFORE parsing: a signature must never be
+	// accepted on the strength of SHA-1, and the SP private key must never be handed a ciphertext.
+	if err := rejectWeakSignatureAlgs(raw); err != nil {
+		log.Printf("sso: saml %s signature algorithm: %v", slug, err)
+		s.ssoFail(w, r, "bad_response")
+		return
+	}
+	if err := rejectEncryptedAssertion(raw); err != nil {
+		log.Printf("sso: saml %s: %v", slug, err)
+		s.ssoFail(w, r, "bad_response")
+		return
+	}
 	sp, err := s.samlSP(p)
 	if err != nil {
 		s.ssoFail(w, r, "provider_unavailable")
@@ -328,6 +341,88 @@ func requireDestination(raw []byte, want string) error {
 		return fmt.Errorf("response Destination %q is not this ACS URL", probe.Destination)
 	}
 	return nil
+}
+
+// The signature-algorithm policy. goxmldsig's default validation context maps rsa-sha1 straight to
+// x509.SHA1WithRSA and applies no policy of its own, so without this the portal's entire
+// authentication would rest on SHA-1 whenever the IdP is configured that way — and that is the ADFS
+// and legacy-Keycloak default. SHA-1 collisions are practical.
+//
+// An ALLOWLIST, not a denylist: an algorithm nobody here has considered must be refused, not
+// accepted by omission. The identifiers come from goxmldsig's own constants (also why it is a direct
+// require) so a library rename cannot silently widen the policy. Deliberately not configurable —
+// there is no deployment for which accepting SHA-1 is the right answer.
+var (
+	allowedSignatureMethods = map[string]bool{
+		dsig.RSASHA256SignatureMethod:   true,
+		dsig.RSASHA384SignatureMethod:   true,
+		dsig.RSASHA512SignatureMethod:   true,
+		dsig.ECDSASHA256SignatureMethod: true,
+		dsig.ECDSASHA384SignatureMethod: true,
+		dsig.ECDSASHA512SignatureMethod: true,
+	}
+	// The matching digests. goxmldsig does not export these, so they are the W3C identifiers.
+	allowedDigestMethods = map[string]bool{
+		"http://www.w3.org/2001/04/xmlenc#sha256":       true,
+		"http://www.w3.org/2001/04/xmldsig-more#sha384": true,
+		"http://www.w3.org/2001/04/xmlenc#sha512":       true,
+	}
+)
+
+// rejectWeakSignatureAlgs refuses a response unless every signature and digest algorithm it declares
+// is on the allowlist. It reads the raw XML because crewjam exposes no hook into the validation
+// context, and it runs BEFORE parsing so no signature is ever accepted on the strength of SHA-1.
+// Every SignatureMethod and DigestMethod in the document is examined — the response signature, the
+// assertion signature, and each Reference digest — so a strong outer signature cannot vouch for a
+// SHA-1 inner one.
+func rejectWeakSignatureAlgs(raw []byte) error {
+	// Scanned token by token rather than unmarshalled into a struct: these elements appear at
+	// several depths and a fixed path would silently miss the inner ones.
+	dec := xml.NewDecoder(strings.NewReader(string(raw)))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break // malformed XML is the parser's business to report, not ours
+		}
+		el, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		var allowed map[string]bool
+		switch el.Name.Local {
+		case dsig.SignatureMethodTag:
+			allowed = allowedSignatureMethods
+		case dsig.DigestMethodTag:
+			allowed = allowedDigestMethods
+		default:
+			continue
+		}
+		for _, a := range el.Attr {
+			if a.Name.Local == dsig.AlgorithmAttr && !allowed[a.Value] {
+				return fmt.Errorf("%s %q is not accepted; configure the IdP for SHA-256 or better",
+					el.Name.Local, a.Value)
+			}
+		}
+	}
+	return nil
+}
+
+// rejectEncryptedAssertion refuses a response carrying an EncryptedAssertion. ADR 0023 lists
+// encrypted assertions under what we deliberately do not build: on the Web SSO profile TLS already
+// covers the transport, and decryption is a padding-oracle surface. crewjam looks for an encrypted
+// assertion FIRST and would feed it to the SP private key, so declining it is an explicit refusal
+// here rather than an absence of support.
+func rejectEncryptedAssertion(raw []byte) error {
+	dec := xml.NewDecoder(strings.NewReader(string(raw)))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		if el, ok := tok.(xml.StartElement); ok && el.Name.Local == "EncryptedAssertion" {
+			return fmt.Errorf("encrypted assertions are not supported; disable assertion encryption for this SP")
+		}
+	}
 }
 
 // samlSubject extracts the NameID, refusing formats that cannot serve as a stable account key. A
@@ -391,16 +486,41 @@ func toAnySlice(in []string) []any {
 
 // assertionExpiry is how long the replay entry must outlive the assertion, clamped so a hostile
 // NotOnOrAfter cannot pin a row forever.
+//
+// The entry must outlive the window crewjam will ACCEPT the assertion in, which is NotOnOrAfter plus
+// MaxClockSkew — not NotOnOrAfter alone. An entry that lapsed first would reopen the replay it
+// exists to close, so the library's own skew is added to every branch, including the clamp.
 func assertionExpiry(a *saml.Assertion) time.Time {
+	margin := saml.MaxClockSkew + time.Minute
 	latest := time.Now().Add(5 * time.Minute)
 	// Conditions is optional in the schema, so it is a pointer and may legitimately be nil.
 	if a.Conditions != nil && !a.Conditions.NotOnOrAfter.IsZero() && a.Conditions.NotOnOrAfter.After(latest) {
 		latest = a.Conditions.NotOnOrAfter
 	}
+	// SubjectConfirmationData carries its own NotOnOrAfter, and crewjam checks that one too, so the
+	// later of the two is what the acceptance window actually is.
+	for _, sc := range subjectConfirmationExpiries(a) {
+		if sc.After(latest) {
+			latest = sc
+		}
+	}
 	if max := time.Now().Add(30 * time.Minute); latest.After(max) {
 		latest = max
 	}
-	return latest.Add(time.Minute)
+	return latest.Add(margin)
+}
+
+func subjectConfirmationExpiries(a *saml.Assertion) []time.Time {
+	if a.Subject == nil {
+		return nil
+	}
+	var out []time.Time
+	for _, sc := range a.Subject.SubjectConfirmations {
+		if sc.SubjectConfirmationData != nil && !sc.SubjectConfirmationData.NotOnOrAfter.IsZero() {
+			out = append(out, sc.SubjectConfirmationData.NotOnOrAfter)
+		}
+	}
+	return out
 }
 
 // samlFlowCookie binds an in-flight login to this browser. SameSite=None because the ACS is a

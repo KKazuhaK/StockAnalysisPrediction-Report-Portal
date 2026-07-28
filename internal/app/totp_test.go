@@ -29,10 +29,21 @@ func postAs(t *testing.T, h handler, user, body string) *httptest.ResponseRecord
 	return rec
 }
 
+// postStepUp is postAs with a valid step-up proof, for the credential-changing routes. The test
+// account's password is the proof while no second factor is enrolled yet.
+func postStepUp(t *testing.T, h handler, user, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body))
+	r.Header.Set(stepUpHeader, "correct-horse-battery")
+	h(rec, r, user)
+	return rec
+}
+
 // enrol runs setup + enable and returns the TOTP secret and the recovery codes.
 func enrol(t *testing.T, s *Server, user string) (secret string, recovery []string) {
 	t.Helper()
-	rec := postAs(t, s.apiTOTPSetup, user, `{}`)
+	rec := postStepUp(t, s.apiTOTPSetup, user, `{}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup → %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -60,7 +71,7 @@ func enrol(t *testing.T, s *Server, user string) (secret string, recovery []stri
 // 2FA only comes into force once a correct code has been proven.
 func TestTOTPEnrolmentIsConfirmBeforeEnable(t *testing.T) {
 	s := totpServer(t)
-	rec := postAs(t, s.apiTOTPSetup, "alice", `{}`)
+	rec := postStepUp(t, s.apiTOTPSetup, "alice", `{}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup → %d", rec.Code)
 	}
@@ -203,7 +214,7 @@ func TestRecoveryCodeIsSingleUse(t *testing.T) {
 func TestTOTPUnavailableForFederatedAccounts(t *testing.T) {
 	s := totpServer(t)
 	s.st.SetUserSource("alice", "jit", "acme")
-	if rec := postAs(t, s.apiTOTPSetup, "alice", `{}`); rec.Code == http.StatusOK {
+	if rec := postStepUp(t, s.apiTOTPSetup, "alice", `{}`); rec.Code == http.StatusOK {
 		t.Error("a federated account must not enrol a local second factor")
 	}
 }
