@@ -218,6 +218,12 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		thr.reset(ipKey)
 		thr.reset(userKey)
 	}
+	// With 2FA on, the password is only the first leg: park the login behind a single-use pending
+	// token and issue no session until a code is proven (ADR 0023).
+	if u.TOTPEnabled {
+		s.beginTOTPChallenge(w, u.Username)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: s.signUser(*u), Path: "/",
 		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets), SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,

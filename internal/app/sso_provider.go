@@ -29,14 +29,17 @@ type SSOProvider struct {
 	DiscoveryFetched string
 
 	// SAML
-	IdPMetadataURL string
-	IdPMetadataXML string
-	IdPEntityID    string
-	IdPCertPEM     string
-	SPCertPEM      string
-	SPKeyEnc       string
-	AllowIdPInit   bool
-	ClockSkewSec   int
+	IdPMetadataURL     string
+	IdPMetadataXML     string
+	IdPMetadataFetched string
+	IdPMetadataError   string
+	IdPEntityID        string
+	IdPCertPEM         string
+	SPCertPEM          string
+	SPCertNotAfter     string
+	SPKeyEnc           string
+	AllowIdPInit       bool
+	ClockSkewSec       int
 
 	// Attribute mapping
 	AttrUPN, AttrEmail, AttrDisplay, AttrGroups, AttrExternalID string
@@ -65,8 +68,8 @@ const ssoProviderCols = `id,kind,slug,COALESCE(name,''),COALESCE(enabled,0),COAL
 	COALESCE(default_group,0),COALESCE(default_role,'user'),COALESCE(default_expiry_days,0),COALESCE(allow_admin_role,0),
 	COALESCE(issuer,''),COALESCE(client_id,''),COALESCE(client_secret_enc,''),COALESCE(scopes,''),
 	COALESCE(discovery_json,''),COALESCE(discovery_fetched_at,''),
-	COALESCE(idp_metadata_url,''),COALESCE(idp_metadata_xml,''),COALESCE(idp_entity_id,''),COALESCE(idp_cert_pem,''),
-	COALESCE(sp_cert_pem,''),COALESCE(sp_key_enc,''),COALESCE(allow_idp_initiated,0),COALESCE(clock_skew_sec,60),
+	COALESCE(idp_metadata_url,''),COALESCE(idp_metadata_xml,''),COALESCE(idp_metadata_fetched_at,''),COALESCE(idp_metadata_error,''),COALESCE(idp_entity_id,''),COALESCE(idp_cert_pem,''),
+	COALESCE(sp_cert_pem,''),COALESCE(sp_cert_not_after,''),COALESCE(sp_key_enc,''),COALESCE(allow_idp_initiated,0),COALESCE(clock_skew_sec,60),
 	COALESCE(attr_upn,''),COALESCE(attr_email,''),COALESCE(attr_display,''),COALESCE(attr_groups,''),COALESCE(attr_external_id,''),
 	COALESCE(session_hours,0)`
 
@@ -76,8 +79,8 @@ func scanProvider(scan func(...any) error) (SSOProvider, error) {
 	err := scan(&p.ID, &p.Kind, &p.Slug, &p.Name, &enabled, &p.Provisioning,
 		&p.DefaultGroup, &p.DefaultRole, &p.DefaultExpiryDays, &allowAdmin,
 		&p.Issuer, &p.ClientID, &p.ClientSecretEnc, &p.Scopes, &p.DiscoveryJSON, &p.DiscoveryFetched,
-		&p.IdPMetadataURL, &p.IdPMetadataXML, &p.IdPEntityID, &p.IdPCertPEM,
-		&p.SPCertPEM, &p.SPKeyEnc, &allowIdPInit, &p.ClockSkewSec,
+		&p.IdPMetadataURL, &p.IdPMetadataXML, &p.IdPMetadataFetched, &p.IdPMetadataError, &p.IdPEntityID, &p.IdPCertPEM,
+		&p.SPCertPEM, &p.SPCertNotAfter, &p.SPKeyEnc, &allowIdPInit, &p.ClockSkewSec,
 		&p.AttrUPN, &p.AttrEmail, &p.AttrDisplay, &p.AttrGroups, &p.AttrExternalID, &p.SessionHours)
 	if err != nil {
 		return SSOProvider{}, err
@@ -131,15 +134,15 @@ func (s *Store) SaveSSOProvider(p SSOProvider) (int64, error) {
 		_, err := s.exec(`UPDATE sso_providers SET kind=?,name=?,enabled=?,provisioning=?,
 			default_group=?,default_role=?,default_expiry_days=?,allow_admin_role=?,
 			issuer=?,client_id=?,client_secret_enc=?,scopes=?,discovery_json=?,discovery_fetched_at=?,
-			idp_metadata_url=?,idp_metadata_xml=?,idp_entity_id=?,idp_cert_pem=?,
-			sp_cert_pem=?,sp_key_enc=?,allow_idp_initiated=?,clock_skew_sec=?,
+			idp_metadata_url=?,idp_metadata_xml=?,idp_metadata_fetched_at=?,idp_metadata_error=?,idp_entity_id=?,idp_cert_pem=?,
+			sp_cert_pem=?,sp_cert_not_after=?,sp_key_enc=?,allow_idp_initiated=?,clock_skew_sec=?,
 			attr_upn=?,attr_email=?,attr_display=?,attr_groups=?,attr_external_id=?,session_hours=?,updated_at=?
 			WHERE id=?`,
 			p.Kind, p.Name, boolInt(p.Enabled), p.Provisioning,
 			nullZero(p.DefaultGroup), p.DefaultRole, p.DefaultExpiryDays, boolInt(p.AllowAdminRole),
 			p.Issuer, p.ClientID, p.ClientSecretEnc, p.Scopes, p.DiscoveryJSON, p.DiscoveryFetched,
-			p.IdPMetadataURL, p.IdPMetadataXML, p.IdPEntityID, p.IdPCertPEM,
-			p.SPCertPEM, p.SPKeyEnc, boolInt(p.AllowIdPInit), p.ClockSkewSec,
+			p.IdPMetadataURL, p.IdPMetadataXML, p.IdPMetadataFetched, p.IdPMetadataError, p.IdPEntityID, p.IdPCertPEM,
+			p.SPCertPEM, p.SPCertNotAfter, p.SPKeyEnc, boolInt(p.AllowIdPInit), p.ClockSkewSec,
 			p.AttrUPN, p.AttrEmail, p.AttrDisplay, p.AttrGroups, p.AttrExternalID, p.SessionHours,
 			nowStr(), p.ID)
 		return p.ID, err
@@ -147,15 +150,15 @@ func (s *Store) SaveSSOProvider(p SSOProvider) (int64, error) {
 	return s.insertID(`INSERT INTO sso_providers(kind,slug,name,enabled,provisioning,
 		default_group,default_role,default_expiry_days,allow_admin_role,
 		issuer,client_id,client_secret_enc,scopes,discovery_json,discovery_fetched_at,
-		idp_metadata_url,idp_metadata_xml,idp_entity_id,idp_cert_pem,
-		sp_cert_pem,sp_key_enc,allow_idp_initiated,clock_skew_sec,
+		idp_metadata_url,idp_metadata_xml,idp_metadata_fetched_at,idp_metadata_error,idp_entity_id,idp_cert_pem,
+		sp_cert_pem,sp_cert_not_after,sp_key_enc,allow_idp_initiated,clock_skew_sec,
 		attr_upn,attr_email,attr_display,attr_groups,attr_external_id,session_hours,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.Kind, p.Slug, p.Name, boolInt(p.Enabled), p.Provisioning,
 		nullZero(p.DefaultGroup), p.DefaultRole, p.DefaultExpiryDays, boolInt(p.AllowAdminRole),
 		p.Issuer, p.ClientID, p.ClientSecretEnc, p.Scopes, p.DiscoveryJSON, p.DiscoveryFetched,
-		p.IdPMetadataURL, p.IdPMetadataXML, p.IdPEntityID, p.IdPCertPEM,
-		p.SPCertPEM, p.SPKeyEnc, boolInt(p.AllowIdPInit), p.ClockSkewSec,
+		p.IdPMetadataURL, p.IdPMetadataXML, p.IdPMetadataFetched, p.IdPMetadataError, p.IdPEntityID, p.IdPCertPEM,
+		p.SPCertPEM, p.SPCertNotAfter, p.SPKeyEnc, boolInt(p.AllowIdPInit), p.ClockSkewSec,
 		p.AttrUPN, p.AttrEmail, p.AttrDisplay, p.AttrGroups, p.AttrExternalID, p.SessionHours,
 		nowStr(), nowStr())
 }
@@ -177,4 +180,12 @@ func nullZero(v int64) any {
 		return nil
 	}
 	return v
+}
+
+// NoteSSOMetadataError records why a metadata refresh failed WITHOUT touching the cached document.
+// Failing closed to last-known-good is deliberate: blanking the trust anchor on a failed fetch
+// would take every login down, and an attacker who can break the fetch should not be able to
+// induce that.
+func (s *Store) NoteSSOMetadataError(id int64, msg string) {
+	s.exec(`UPDATE sso_providers SET idp_metadata_error=?, updated_at=? WHERE id=?`, msg, nowStr(), id)
 }
