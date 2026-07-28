@@ -189,3 +189,10 @@ func nullZero(v int64) any {
 func (s *Store) NoteSSOMetadataError(id int64, msg string) {
 	s.exec(`UPDATE sso_providers SET idp_metadata_error=?, updated_at=? WHERE id=?`, msg, nowStr(), id)
 }
+
+// SaveOIDCDiscovery caches a fetched discovery document so later logins do not wait on the IdP's
+// well-known endpoint, and a briefly-unreachable IdP does not take sign-in down.
+func (s *Store) SaveOIDCDiscovery(id int64, doc string) {
+	s.exec(`UPDATE sso_providers SET discovery_json=?, discovery_fetched_at=?, updated_at=? WHERE id=?`,
+		doc, nowStr(), nowStr(), id)
+}

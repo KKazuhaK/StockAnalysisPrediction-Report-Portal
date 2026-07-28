@@ -63,7 +63,7 @@ func (s *Server) oidcRuntimeFor(ctx context.Context, p SSOProvider) (*oidcRuntim
 	if err != nil {
 		return nil, fmt.Errorf("client secret unavailable: %w", err)
 	}
-	prov, err := oidc.NewProvider(s.ssoContext(ctx), p.Issuer)
+	prov, err := s.oidcDiscover(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +77,33 @@ func (s *Server) oidcRuntimeFor(ctx context.Context, p SSOProvider) (*oidcRuntim
 			RedirectURL: s.oidcRedirectURL(p.Slug), Scopes: p.EffectiveScopes(),
 		},
 	}, nil
+}
+
+// oidcDiscover resolves the provider from the CACHED discovery document when we have one, and only
+// talks to the IdP when we do not. Two reasons this matters: a login should not wait on a
+// round-trip to the IdP's well-known endpoint, and a slow or briefly-unreachable IdP should not
+// take sign-in down when nothing about its configuration has changed. A fresh fetch is stored back,
+// so the first login after configuring a provider populates the cache.
+//
+// The cached document is only ever one WE fetched through the SSRF-guarded client, and go-oidc
+// still verifies the ID token against the JWKS the document names, so this trades no verification.
+func (s *Server) oidcDiscover(ctx context.Context, p SSOProvider) (*oidc.Provider, error) {
+	if p.DiscoveryJSON != "" {
+		var pc oidc.ProviderConfig
+		if err := json.Unmarshal([]byte(p.DiscoveryJSON), &pc); err == nil && pc.IssuerURL != "" {
+			return pc.NewProvider(ctx), nil
+		}
+		log.Printf("sso: oidc %s cached discovery is unusable; refetching", p.Slug)
+	}
+	prov, err := oidc.NewProvider(s.ssoContext(ctx), p.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	var raw json.RawMessage
+	if prov.Claims(&raw) == nil {
+		s.st.SaveOIDCDiscovery(p.ID, string(raw))
+	}
+	return prov, nil
 }
 
 // oidcRedirectURL derives the callback from the configured public URL — never from the request
