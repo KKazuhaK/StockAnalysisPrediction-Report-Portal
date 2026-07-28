@@ -158,6 +158,10 @@ func RunServer(cfgPath string) {
 	// addressed provider is missing or disabled, so a portal with SSO off is indistinguishable
 	// from one that never had the feature.
 	mux.HandleFunc("GET /api/sso/providers", s.apiSSOProviders)
+	mux.HandleFunc("POST /api/login/2fa", s.apiLoginTOTP) // second leg of a password login
+	mux.HandleFunc("POST /api/me/2fa/setup", s.requireUserJSON(s.apiTOTPSetup))
+	mux.HandleFunc("POST /api/me/2fa/enable", s.requireUserJSON(s.apiTOTPEnable))
+	mux.HandleFunc("POST /api/me/2fa/disable", s.requireUserJSON(s.apiTOTPDisable))
 	mux.HandleFunc("GET /api/auth/oidc/{slug}/start", s.oidcStart)
 	mux.HandleFunc("GET /api/auth/oidc/{slug}/callback", s.oidcCallback)
 	mux.HandleFunc("GET /api/auth/saml/{slug}/start", s.samlStart)
@@ -218,6 +222,13 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("PUT /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupSave))
 	mux.HandleFunc("DELETE /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupDelete))
 	// Per-OU run allow-list matrix (ADR 0022 R3): which workflows an OU may run, on which surfaces.
+	// SSO administration (ADR 0023). Admin-only; a secret is never returned by any of these.
+	mux.HandleFunc("GET /api/admin/sso/providers", s.requireAdminJSON(s.apiAdminSSOProviders))
+	mux.HandleFunc("POST /api/admin/sso/providers", s.requireAdminJSON(s.apiAdminSSOSave))
+	mux.HandleFunc("DELETE /api/admin/sso/providers/{id}", s.requireAdminJSON(s.apiAdminSSODelete))
+	mux.HandleFunc("POST /api/admin/sso/providers/{slug}/metadata", s.requireAdminJSON(s.apiAdminSSOFetchMetadata))
+	mux.HandleFunc("GET /api/admin/sso/rules", s.requireAdminJSON(s.apiAdminSSORules))
+	mux.HandleFunc("PUT /api/admin/sso/rules", s.requireAdminJSON(s.apiAdminSSORulesSave))
 	mux.HandleFunc("GET /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargets))
 	mux.HandleFunc("PUT /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargetsSave))
 	mux.HandleFunc("GET /api/admin/settings", s.requireAdminJSON(s.apiAdminSettings))
