@@ -160,6 +160,9 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/sso/providers", s.apiSSOProviders)
 	mux.HandleFunc("GET /api/auth/oidc/{slug}/start", s.oidcStart)
 	mux.HandleFunc("GET /api/auth/oidc/{slug}/callback", s.oidcCallback)
+	mux.HandleFunc("GET /api/auth/saml/{slug}/start", s.samlStart)
+	mux.HandleFunc("POST /api/auth/saml/{slug}/acs", s.samlACS)
+	mux.HandleFunc("GET /api/auth/saml/{slug}/metadata", s.samlMetadata)
 	mux.HandleFunc("GET /api/symbols", s.apiSymbols) // stock list / autocomplete (omnibox)
 
 	// ---- Dify machine API v1: clean contract (JSON errors, portal-derived identity, envelopes) ----
