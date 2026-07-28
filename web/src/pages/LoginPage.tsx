@@ -7,13 +7,14 @@ import { useAuth } from '../auth'
 import type { SSOProviderInfo } from '../api/types'
 import { usePrefs } from '../prefs'
 import { api, ApiError } from '../api/client'
+import { passkeySupported } from '../lib/webauthn'
 import { SiteLogo, useSite } from '../site'
 import { AutoIcon, MoonIcon, SunIcon } from '../components/icons'
 
 export default function LoginPage() {
   const { t } = useTranslation()
   const { title } = useSite()
-  const { user, loading, login, loginTOTP } = useAuth()
+  const { user, loading, login, loginTOTP, loginPasskey } = useAuth()
   const { mode, setMode, lang, setLang, langs } = usePrefs()
   const { token } = theme.useToken()
   const navigate = useNavigate()
@@ -75,6 +76,26 @@ export default function LoginPage() {
     setTotpToken('')
     setTotpCode('')
     setErr('')
+  }
+
+  // A passkey is the SECOND factor of this same password leg — it consumes the pending token the
+  // password issued, exactly as a code does. It is deliberately not offered on the password screen:
+  // these credentials are registered with user verification "preferred", so one may be
+  // possession-only, and the server refuses a passkey presented on its own.
+  const submitPasskey = async () => {
+    setErr('')
+    setBusy(true)
+    try {
+      await loginPasskey(totpToken)
+      navigate('/')
+    } catch (e) {
+      // A dismissed browser prompt is a change of mind, not a failure worth an error banner — and
+      // it must not clear the pending token, or the user would have to type their password again.
+      if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return
+      setErr(e instanceof ApiError ? e.message : t('login.error'))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const onFinish = async (v: { username: string; password: string }) => {
@@ -156,6 +177,11 @@ export default function LoginPage() {
                 <Button type="primary" size="large" htmlType="submit" block loading={busy}>
                   {t('login.totpVerify')}
                 </Button>
+                {passkeySupported() && (
+                  <Button size="large" block onClick={submitPasskey} loading={busy} style={{ marginTop: 8 }}>
+                    {t('login.passkeyUse')}
+                  </Button>
+                )}
                 <Button type="link" size="small" block onClick={cancelTOTP}>
                   {t('common.cancel')}
                 </Button>

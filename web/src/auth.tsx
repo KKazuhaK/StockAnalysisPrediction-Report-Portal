@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, ApiError } from './api/client'
 import type { Me } from './api/types'
+import { getCredential } from './lib/webauthn'
 
 interface AuthCtx {
   user: string | null
@@ -19,6 +20,9 @@ interface AuthCtx {
   // session, and the caller must then complete loginTOTP (ADR 0023).
   login: (username: string, password: string) => Promise<{ totpToken?: string }>
   loginTOTP: (token: string, code: string) => Promise<void>
+  // A passkey is the second factor of that same password leg, not a way past it: it consumes the
+  // pending token, exactly like a code does.
+  loginPasskey: (token: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -70,6 +74,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       loginTOTP: async (token, code) => {
         const res = await api.post<Me>('/api/login/2fa', { token, code })
+        setMe(res)
+      },
+      loginPasskey: async (token) => {
+        const begin = await api.post<{ token: string; pending: string; options: { publicKey?: unknown } }>(
+          '/api/login/passkey/begin',
+          { token },
+        )
+        const opts = (begin.options as { publicKey?: unknown }).publicKey ?? begin.options
+        const assertion = await getCredential(opts)
+        const res = await api.post<Me>(
+          `/api/login/passkey/finish?token=${encodeURIComponent(begin.token)}&pending=${encodeURIComponent(begin.pending)}`,
+          assertion,
+        )
         setMe(res)
       },
       logout: async () => {
