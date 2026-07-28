@@ -283,18 +283,39 @@ Full checklist in the implementation plan; the items that most commonly go wrong
    last-known-good, mark stale, and show the cert-set diff so a swapped trust anchor is visible.
 10. Bump `session_rev` whenever an SSO user is deactivated, unlinked, or has their role or OU changed.
 
-## Rollout
+## Rollout — delivered
 
-**P0** schema + envelope crypto + SSRF-guarded client + `govulncheck` in CI (dormant, no routes) →
-**P1** the pure rule evaluator and shared identity/session path (no HTTP) → **P2** OIDC end to end
-(fewer footguns, smaller verification surface — first) → **P3** SAML end to end → **P4** admin UI incl.
-the "show received attributes" probe, so mappings are configured from reality rather than guesswork →
-**P5** TOTP 2FA (enrol/verify/recovery/step-up) → **P6** passkeys → **P7** hardening, Postgres matrix,
-pilot with JIT **off** → **later, separate ADRs** multi-provider UI and SCIM 2.0.
+All phases are implemented on `feat/auth-sso`, each with tests written first:
 
-2FA and passkeys sit after SSO because they share its envelope crypto, its pending-request table and
-its step-up plumbing; doing them first would mean building those twice. They are independent of each
-other, so either can be dropped or resequenced without disturbing the rest.
+| | What landed |
+| --- | --- |
+| P0 | Schema (9 `users` columns, 7 tables), envelope crypto, expiry sweep, `govulncheck` as a CI gate |
+| P1 | `internal/ssorules` (dependency closure: `strings`), identity linking, JIT username sanitizer, federated accounts refused before bcrypt |
+| P2 | SSRF-guarded fetching, the single-use pending-request store, OIDC end to end |
+| P3 | SAML end to end |
+| P4 | SSO admin API + admin page |
+| P5 | TOTP 2FA |
+| P6 | Passkeys |
+| P7 | Adversarial review, live verification |
+
+Two ordering notes worth keeping: OIDC came before SAML because its verification surface is smaller
+and its footguns fewer, so the shared `completeSSOLogin` tail was exercised by the easier protocol
+first. 2FA and passkeys came after SSO because they reuse its envelope crypto, its pending-request
+table and its step-up plumbing — building them first would have meant building those twice.
+
+**Still deferred, deliberately:** multi-provider admin UI (the tables and routes already carry a
+slug, so it is a UI change with no schema movement) and SCIM 2.0 (its own ADR; `external_id`,
+`source` and `source_ref` are already recorded so accounts will join up when it arrives).
+
+### What live verification actually proved
+
+Beyond the unit tests, against a running server: with SSO off the public list is empty and every
+`/api/auth/*` route 404s; enabling a provider without a public URL, or SAML over plain http, is
+refused with a reason; saving a SAML provider mints its SP keypair and derives the entity id and ACS
+URL; a metadata fetch aimed at `169.254.169.254` is refused by the SSRF guard, and a failed fetch
+leaves the previous document in place; no admin response contains a private key or a sealed secret;
+and 2FA behaves end to end — the password leg issues no session, a recovery code completes the login
+exactly once, and a consumed pending token cannot be replayed.
 
 ## Consequences
 
