@@ -128,6 +128,8 @@ func (s *Server) v1RepJSON(r Rep, withBody bool) map[string]any {
 		"id": r.ID, "run_id": r.RunID, "symbol": r.Symbol,
 		"name": firstNonEmpty(r.Name, s.names.Get(r.Symbol)),
 		"date": r.Date, "time": r.Time, "kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source,
+		// version (ADR 0024) so a consumer can tell which written form it received, and label it.
+		"version": r.Version,
 	}
 	if withBody {
 		m["body_md"] = r.MD
@@ -150,6 +152,10 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		Kind       string `json:"kind"`
 		Subtype    string `json:"subtype"`
 		RType      string `json:"rtype"`
+		// Version (ADR 0024): which written form of this analysis the workflow just produced.
+		// Omitted means the default version — exactly what every existing producer means today —
+		// so a workflow that has never heard of versions keeps overwriting its own row in place.
+		Version string `json:"version"`
 		Title      string `json:"title"`
 		Source     string `json:"source"`
 		Time       string `json:"time"`
@@ -195,12 +201,13 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = s.names.Resolve(in.Symbol)
 	}
-	// Identity is resolved by the store's unique index (code-or-title + date + subtype),
-	// so a re-ingest overwrites in place and hands back the same id.
+	// Identity is resolved by the store's unique index (code-or-title + date + subtype + version),
+	// so a re-ingest overwrites in place and hands back the same id, while a different version is a
+	// row of its own rather than an overwrite of the analysis it was derived from.
 	id, created, err := s.st.UpsertReport(Rep{
 		RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
 		RType: rtype, Title: in.Title, Source: in.Source, Time: ingestInstant(in.Time),
-		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML),
+		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML), Version: in.Version,
 	})
 	if err != nil {
 		log.Printf("v1 ingest db error: %v", err)
