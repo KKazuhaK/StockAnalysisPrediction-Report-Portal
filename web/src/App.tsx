@@ -14,6 +14,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage'
 // from a stale chunk — the dist is wiped clean on every build, so a tab left open
 // across a deploy can 404 on a route it hasn't loaded yet; see lib/lazyRetry.ts.
 const HomePage = lazyRetry(() => import('./pages/HomePage'))
+const AccountPage = lazyRetry(() => import('./pages/AccountPage'))
 const StockPage = lazyRetry(() => import('./pages/StockPage'))
 const RunPage = lazyRetry(() => import('./pages/RunPage'))
 const ManageLayout = lazyRetry(() => import('./pages/manage/ManageLayout'))
@@ -79,6 +80,7 @@ function AppRoutes() {
         }
       >
         <Route path="/" element={<HomePage />} />
+        <Route path="/account" element={<AccountPage />} />
         <Route path="/stock/:symbol" element={<StockPage />} />
         <Route path="/run/:key" element={<RunPage />} />
         {/* The apps hub and installed iframe apps are open to any logged-in user;

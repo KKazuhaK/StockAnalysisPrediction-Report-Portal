@@ -155,12 +155,18 @@ func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
 // mail_enabled drive the "email me when done" opt-in).
 func (s *Server) meJSON(user string) map[string]any {
 	role, name, email := "", user, ""
+	federated, totpEnabled := false, false
 	if usr := s.st.GetUser(user); usr != nil {
 		role, name, email = usr.EffRole(), usr.Name(), usr.Email
+		federated, totpEnabled = usr.IsFederated(), usr.TOTPEnabled
 	}
 	return map[string]any{
 		"user": user, "name": name, "admin": s.isAdmin(user), "role": role, "perms": permsOf(role),
 		"email": email, "mail_enabled": s.emailEnabled(),
+		// Security state, so the account page can branch before the user submits: offering a
+		// password change to a federated account, or enrolment to someone already enrolled, is a
+		// dead end they would otherwise only discover on failure.
+		"federated": federated, "totp_enabled": totpEnabled, "passkeys": len(s.st.PasskeyList(user)),
 	}
 }
 
@@ -224,10 +230,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		s.beginTOTPChallenge(w, u.Username)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.signUser(*u), Path: "/",
-		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets), SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
-	})
+	s.setSessionCookie(w, r, *u)
 	s.st.TouchLastLogin(u.Username)
 	log.Printf("login %s", u.Username)
 	writeJSON(w, s.meJSON(u.Username))

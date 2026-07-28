@@ -168,11 +168,7 @@ func (s *Server) apiLoginTOTP(w http.ResponseWriter, r *http.Request) {
 	if s.loginThr != nil {
 		s.loginThr.reset(key)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.signUser(*u), Path: "/",
-		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets),
-		SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
-	})
+	s.setSessionCookie(w, r, *u)
 	s.st.TouchLastLogin(u.Username)
 	log.Printf("login %s (2fa)", u.Username)
 	writeJSON(w, s.meJSON(u.Username))

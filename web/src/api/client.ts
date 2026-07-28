@@ -9,10 +9,12 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, url: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  const headers: Record<string, string> = { ...(extraHeaders ?? {}) }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(url, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
   })
@@ -55,6 +57,11 @@ export const api = {
   post: <T = any>(url: string, body?: unknown) => request<T>('POST', url, body ?? {}),
   put: <T = any>(url: string, body?: unknown) => request<T>('PUT', url, body ?? {}),
   del: <T = any>(url: string) => request<T>('DELETE', url),
+  // Step-up: a credential change re-proves a factor inside the session. The proof travels in a
+  // header — never the query string, which lands in proxy logs, browser history and the Referer of
+  // every subresource.
+  stepUp: <T = any>(method: 'POST' | 'DELETE', url: string, proof: string, body?: unknown) =>
+    request<T>(method, url, method === 'POST' ? (body ?? {}) : body, { 'X-Step-Up-Proof': proof }),
   upload: <T = any>(url: string, body: FormData) => requestForm<T>('POST', url, body),
 }
 

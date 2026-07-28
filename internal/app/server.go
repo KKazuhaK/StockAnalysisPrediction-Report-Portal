@@ -160,6 +160,7 @@ func RunServer(cfgPath string) {
 	// from one that never had the feature.
 	mux.HandleFunc("GET /api/sso/providers", s.apiSSOProviders)
 	mux.HandleFunc("POST /api/login/2fa", s.apiLoginTOTP) // second leg of a password login
+	mux.HandleFunc("POST /api/me/password", s.requireUserJSON(s.apiChangePassword))
 	mux.HandleFunc("POST /api/me/2fa/setup", s.requireUserJSON(s.apiTOTPSetup))
 	mux.HandleFunc("POST /api/me/2fa/enable", s.requireUserJSON(s.apiTOTPEnable))
 	mux.HandleFunc("POST /api/me/2fa/disable", s.requireUserJSON(s.apiTOTPDisable))
@@ -535,6 +536,24 @@ func (s *Server) sign(user string) string {
 // sessionTTL is how long a portal session lasts by default. An SSO provider may shorten it
 // (session_hours), which is why signing takes a duration at all.
 const sessionTTL = 7 * 24 * time.Hour
+
+// setSessionCookie is the ONE place a portal session cookie is minted. Four call sites used to spell
+// the flags out by hand — password login, the 2FA second leg, the passkey second leg and SSO — and a
+// single one of them forgetting HttpOnly or Secure is a session-theft bug that no test would notice.
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, u User) {
+	s.setSessionCookieFor(w, r, u, sessionTTL)
+}
+
+func (s *Server) setSessionCookieFor(w http.ResponseWriter, r *http.Request, u User, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = sessionTTL
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: cookieName, Value: s.signUserFor(u, ttl), Path: "/",
+		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets),
+		SameSite: http.SameSiteLaxMode, MaxAge: int(ttl.Seconds()),
+	})
+}
 
 func (s *Server) signUser(u User) string { return s.signUserFor(u, sessionTTL) }
 

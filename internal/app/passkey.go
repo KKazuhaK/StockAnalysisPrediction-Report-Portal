@@ -216,11 +216,7 @@ func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.st.TouchPasskey(cred.ID, cred.Authenticator.SignCount)
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.signUser(*u), Path: "/",
-		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets),
-		SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
-	})
+	s.setSessionCookie(w, r, *u)
 	s.st.TouchLastLogin(username)
 	log.Printf("login %s (passkey)", username)
 	writeJSON(w, s.meJSON(username))
