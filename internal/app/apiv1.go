@@ -65,6 +65,12 @@ func ingestInstant(clientTime string) string {
 // back to the process/system zone when unset or unparseable. This is the business
 // timezone: date-only values (report date, date=today, /now's date) resolve here,
 // while instant timestamps travel as UTC and are localized for display client-side.
+// panelToday is the civil date in the business timezone — the date reports are filed under and
+// every day-boundary rule is measured against.
+func (s *Server) panelToday() string {
+	return time.Now().In(s.panelLocation()).Format("2006-01-02")
+}
+
 func (s *Server) panelLocation() *time.Location {
 	name := s.st.GetSetting("timezone", "")
 	if name == "" {

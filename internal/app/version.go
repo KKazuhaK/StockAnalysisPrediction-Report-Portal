@@ -334,3 +334,25 @@ func (s *Server) isRestricted(username string) bool {
 	}
 	return s.st.EffectiveGroupSettings(username).Restricted
 }
+
+// AddReportViewer records that someone asked for a report. It is what "only my own reports" is made
+// of, and it is additive by design: when a same-day request is served from an existing report the
+// requester JOINS its viewer list instead of triggering a second run, so strict per-person isolation
+// costs no duplicate generation. Two people can each see "their" report and neither learns of the
+// other.
+//
+// Both principals are recorded — the person and, when there is one, their OU — so a version whose
+// visibility is later widened from owner to group needs no backfill.
+func (s *Store) AddReportViewer(reportID int64, rdate, username string, ou int64) error {
+	principals := []string{userPrincipal(username)}
+	if ou != 0 {
+		principals = append(principals, groupPrincipal(ou))
+	}
+	for _, p := range principals {
+		if _, err := s.exec(`INSERT INTO report_viewers(principal,rdate,report_id) VALUES(?,?,?)
+			ON CONFLICT(principal,rdate,report_id) DO NOTHING`, p, rdate, reportID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
