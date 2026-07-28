@@ -230,3 +230,48 @@ func TestOwnRunBecomesReadable(t *testing.T) {
 		t.Error("owner visibility must not extend to a colleague who did not ask")
 	}
 }
+
+// TestVersionSwitcherListsOnlyGeneratedAndPermittedForms backs the reading page. It groups by
+// (symbol, date, subtype) and NOT by title on purpose: each form comes from its own run of its own
+// workflow, so two forms of one analysis will almost never carry a byte-identical title, and
+// requiring that would make the switcher silently fail to group exactly the reports it exists for.
+func TestVersionSwitcherListsOnlyGeneratedAndPermittedForms(t *testing.T) {
+	s := tenancyServer(t)
+	root := s.st.EnsureDefaultGroup()
+	ou, _ := s.st.CreateUserGroup("client-A", "", 0)
+	s.st.SetGroupParent(ou, root)
+	s.st.SetGroupRestricted(ou, true)
+	s.st.UpsertUser(User{Username: "alice", PasswordHash: "h", Role: "user"})
+	s.st.SetPrimaryGroup("alice", ou)
+	s.st.SaveVersion(ReportVersion{Name: "对外版", Ord: 1, Visibility: VisibilityGroup})
+	s.st.SaveVersion(ReportVersion{Name: "客户版", Ord: 2, Visibility: VisibilityGroup}) // registered, never run
+
+	today := s.panelToday()
+	mk := func(version, title string) int64 {
+		id, _, _ := s.st.UpsertReport(Rep{Symbol: "600519", Date: today, RType: "投资决策",
+			Title: title, Version: version, MD: "body"})
+		s.st.AddReportViewer(id, today, "alice", ou)
+		return id
+	}
+	// Deliberately DIFFERENT titles: two workflows, two generations.
+	internal := mk(s.st.DefaultVersion(), "贵州茅台投资决策分析")
+	public := mk("对外版", "茅台：投资决策结论")
+
+	// An internal reader sees both forms grouped as one report despite the titles differing.
+	all := s.st.VersionsOfReport(Rep{Symbol: "600519", Date: today, RType: "投资决策"}, nil)
+	if len(all) != 2 {
+		t.Fatalf("internal switcher = %d forms, want 2 despite the differing titles: %+v", len(all), all)
+	}
+	if all[0].Version != s.st.DefaultVersion() || all[1].Version != "对外版" {
+		t.Errorf("switcher order = %q,%q, want registry order", all[0].Version, all[1].Version)
+	}
+
+	// alice is granted only the published form, so that is all her switcher offers — the internal
+	// one must not even be advertised as existing.
+	s.st.SetVersionGrants("对外版", []string{groupPrincipal(ou)})
+	got := s.st.VersionsOfReport(Rep{Symbol: "600519", Date: today, RType: "投资决策"}, s.viewerScope("alice"))
+	if len(got) != 1 || got[0].ID != public {
+		t.Errorf("scoped switcher = %+v, want only the published form", got)
+	}
+	_ = internal
+}
