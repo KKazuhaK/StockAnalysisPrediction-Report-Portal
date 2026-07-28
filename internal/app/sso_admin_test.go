@@ -171,3 +171,53 @@ func TestSSORulesRoundTripPreservesOrder(t *testing.T) {
 		t.Errorf("after replacing, got %d rules, want 1", len(resp.Rules))
 	}
 }
+
+// TestSSOLastSeenShowsRealClaimNames covers the probe that makes attribute mapping configurable
+// from reality: IdPs disagree wildly on claim names, and a wrong guess fails as "not provisioned"
+// with nothing to go on. It must return the NAMES and only a truncated preview of each value — an
+// assertion carries personal data an admin has no reason to read in bulk.
+func TestSSOLastSeenShowsRealClaimNames(t *testing.T) {
+	s := adminSSOServer(t)
+	saveProvider(t, s, `{"kind":"oidc","slug":"acme","issuer":"https://idp.example","client_id":"c","client_secret":"s"}`)
+
+	probe := func() map[string]any {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/sso/providers/acme/last-seen", nil)
+		req.SetPathValue("slug", "acme")
+		s.apiAdminSSOLastSeen(rec, req, "admin")
+		var out map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+	if probe()["seen"] != false {
+		t.Error("before anyone signs in there is nothing to show")
+	}
+
+	s.st.UpsertUser(User{Username: "alice", PasswordHash: "h", Role: "user"})
+	long := strings.Repeat("x", 200)
+	s.st.LinkIdentity(Identity{
+		Provider: "oidc", Issuer: "https://idp.example", Subject: "sub-1", Username: "alice", ProviderSlug: "acme",
+		Attrs: `{"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn":"alice@acme.example",
+			"groups":["analysts","admins"],"bio":"` + long + `"}`,
+	})
+	got := probe()
+	if got["seen"] != true {
+		t.Fatalf("after a sign-in the claims must be shown: %v", got)
+	}
+	claims, _ := got["claims"].([]any)
+	byName := map[string]string{}
+	for _, c := range claims {
+		m := c.(map[string]any)
+		byName[m["name"].(string)] = m["preview"].(string)
+	}
+	// The long URN form is exactly what an admin cannot guess and most needs to see.
+	if _, ok := byName["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn"]; !ok {
+		t.Errorf("the real claim names must be listed: %v", byName)
+	}
+	if byName["groups"] != "analysts, admins" {
+		t.Errorf("a multi-valued claim should read naturally, got %q", byName["groups"])
+	}
+	if len([]rune(byName["bio"])) > 61 {
+		t.Errorf("a long value must be truncated, got %d runes", len([]rune(byName["bio"])))
+	}
+}
