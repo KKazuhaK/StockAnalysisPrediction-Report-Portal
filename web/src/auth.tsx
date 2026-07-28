@@ -8,6 +8,10 @@ interface AuthCtx {
   admin: boolean
   email: string | null // the user's email, or null
   mailEnabled: boolean // SMTP configured → email opt-ins can be offered
+  federated: boolean // credentials are the IdP's: local password / 2FA controls do not apply
+  totpEnabled: boolean
+  passkeyCount: number
+  refresh: () => Promise<void> // re-read /api/me after a credential change
   perms: Record<string, boolean>
   can: (perm: string) => boolean
   loading: boolean
@@ -42,6 +46,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       admin: me?.admin ?? false,
       email: me?.email || null,
       mailEnabled: me?.mail_enabled ?? false,
+      federated: me?.federated ?? false,
+      totpEnabled: me?.totp_enabled ?? false,
+      passkeyCount: me?.passkeys ?? 0,
+      refresh: async () => {
+        try {
+          setMe(await api.get<Me>('/api/me'))
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 401)) console.error(e)
+        }
+      },
       perms: me?.perms ?? {},
       can: (perm: string) => (me?.admin ?? false) || !!me?.perms?.[perm],
       loading,

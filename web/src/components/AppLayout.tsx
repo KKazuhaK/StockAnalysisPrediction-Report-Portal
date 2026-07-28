@@ -266,6 +266,21 @@ export default function AppLayout() {
             styles={{ container: { padding: 8 } }}
             content={
               <div style={{ width: 240, maxWidth: '80vw' }}>
+                {/* Account security (password, 2FA, passkeys) is reachable at every width — it is
+                    not part of the primary nav, so it must not fold away with it. */}
+                <Button
+                  type="text"
+                  block
+                  icon={<UserOutlined />}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
+                  onClick={() => {
+                    setAccountOpen(false)
+                    navigate('/account')
+                  }}
+                >
+                  {t('nav.account')}
+                </Button>
+                <Divider style={{ margin: '8px 0' }} />
                 {/* On mobile the primary nav folds in here (the header buttons are hidden). */}
                 {compact && (
                   <>

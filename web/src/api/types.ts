@@ -8,6 +8,10 @@ export interface Me {
   perms?: Record<string, boolean>
   email?: string // the user's email (for the "email me when done" opt-in)
   mail_enabled?: boolean // whether SMTP is configured, so email features can be offered
+  // Security state, so the account page can branch before the user submits (ADR 0023).
+  federated?: boolean // credentials live at the IdP: no local password, no local second factor
+  totp_enabled?: boolean
+  passkeys?: number
 }
 
 // ---- Batch-run feature ----

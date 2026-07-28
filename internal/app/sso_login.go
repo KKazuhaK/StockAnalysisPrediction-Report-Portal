@@ -150,11 +150,7 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, u User, p 
 	if p.SessionHours > 0 {
 		ttl = time.Duration(p.SessionHours) * time.Hour
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.signUserFor(u, ttl), Path: "/",
-		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets),
-		SameSite: http.SameSiteLaxMode, MaxAge: int(ttl.Seconds()),
-	})
+	s.setSessionCookieFor(w, r, u, ttl)
 }
 
 // Current snapshots the account as the rule engine needs to see it.
