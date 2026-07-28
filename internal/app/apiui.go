@@ -184,6 +184,14 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	// The password is checked FIRST: a correct password always succeeds (and clears the counters), so
 	// the per-account limit below can never lock a real owner out of their own account.
 	u := s.st.GetUser(uname)
+	// A federated account has no local password, so the password path must refuse it BEFORE bcrypt
+	// (ADR 0023). Today an SSO row would happen to fail on an empty hash, but that is a property of
+	// bcrypt rather than a stated invariant — and running bcrypt at all would leave the row exposed
+	// to guessing and to CPU burn. The response is the generic one, so this is not an oracle for
+	// which accounts are federated.
+	if u != nil && u.IsFederated() {
+		u = nil
+	}
 	if u == nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(in.Password)) != nil {
 		if thr != nil {
 			thr.record(ipKey, now)
