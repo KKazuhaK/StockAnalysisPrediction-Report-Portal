@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"unicode"
 )
@@ -176,6 +177,13 @@ func (s *Server) applyAssignment(username, role string, group int64) error {
 		changed = true
 	}
 	if group != 0 && group != s.st.PrimaryGroupOf(username) {
+		// A group id that no longer exists (a deleted OU, a typo in a rule) must NOT be applied:
+		// SetPrimaryGroup treats an unknown id as "clear", which would drop the user into the
+		// unrestricted Default group — turning a misconfiguration into a silent privilege
+		// escalation. Refuse instead, so the login fails visibly and the rule gets fixed.
+		if !s.st.GroupExists(group) {
+			return fmt.Errorf("rule targets group %d, which does not exist", group)
+		}
 		if err := s.st.SetPrimaryGroup(username, group); err != nil {
 			return err
 		}
@@ -195,4 +203,15 @@ func (s *Store) LastSeenAttrs(providerSlug string) string {
 	s.queryRow(`SELECT attrs FROM user_identities WHERE provider_slug=? AND attrs<>''
 		ORDER BY last_login_at DESC LIMIT 1`, providerSlug).Scan(&v)
 	return v.String
+}
+
+// GroupExists reports whether an OU id is real. Used before applying a rule's target, so a dangling
+// reference fails the login rather than silently clearing the user's group.
+func (s *Store) GroupExists(id int64) bool {
+	if id == 0 {
+		return false
+	}
+	var n int
+	s.queryRow(`SELECT COUNT(*) FROM user_groups WHERE id=?`, id).Scan(&n)
+	return n > 0
 }

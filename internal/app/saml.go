@@ -362,10 +362,11 @@ func samlClaims(a *saml.Assertion) (map[string]any, error) {
 			for _, v := range attr.Values {
 				vals = append(vals, v.Value)
 			}
-			for _, key := range []string{attr.Name, attr.FriendlyName} {
-				if key == "" {
-					continue
-				}
+			// Name and FriendlyName are frequently the SAME string (Okta and Keycloak commonly send
+			// e.g. both as "groups"). That is one attribute indexed twice, not a duplicate, so the
+			// keys are deduplicated within the attribute before the collision check — otherwise a
+			// perfectly ordinary assertion would be rejected.
+			for _, key := range dedupe(attr.Name, attr.FriendlyName) {
 				if seen[key] {
 					return nil, fmt.Errorf("duplicate attribute %q in the assertion", key)
 				}
@@ -412,4 +413,18 @@ func (s *Server) samlFlowCookie(slug, value string, maxAge int) *http.Cookie {
 		Path:     "/api/auth/saml/" + url.PathEscape(slug) + "/acs",
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteNoneMode, MaxAge: maxAge,
 	}
+}
+
+// dedupe returns the distinct non-empty keys among its arguments, preserving order.
+func dedupe(keys ...string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, k := range keys {
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out
 }
