@@ -283,10 +283,83 @@ func (s *Store) baseSchemaStmts() []string {
 		// tables (docs/adr/0013-v2-schema-consolidation.md). active defaults to 1 (enabled).
 		// expires_at (ADR 0022): account validity cutoff as a panel-tz civil date "YYYY-MM-DD" (NULL =
 		// never), orthogonal to active — valid THROUGH that whole day; see Server.accountExpired. Additive.
+		// Authentication columns (ADR 0023). source/source_ref record WHERE an account came from
+		// (local | jit | scim) so a future sync only ever owns its own rows; external_id is the IdP's
+		// immutable object id and the SSO<->SCIM join key — it must be recorded during the SSO era
+		// because it cannot be reconstructed later. The SCIM-only columns (uid, login_name,
+		// deactivated_at, deleted_at, last_sync_at) are deliberately deferred to the SCIM change:
+		// ensureColumns adds columns for free here, so reserving them early buys nothing.
+		// totp_* / recovery_codes back TOTP 2FA; the secret is sealed (never plaintext) and the
+		// recovery codes are stored HASHED and single-use, because they are password-equivalents.
 		`CREATE TABLE IF NOT EXISTS users(
 			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user',
 			display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT, group_id BIGINT,
-			session_rev BIGINT DEFAULT 0, expires_at TEXT)`,
+			session_rev BIGINT DEFAULT 0, expires_at TEXT,
+			external_id TEXT, source TEXT DEFAULT 'local', source_ref TEXT DEFAULT '',
+			created_at TEXT, updated_at TEXT,
+			totp_secret_enc TEXT, totp_enabled INTEGER DEFAULT 0, totp_confirmed_at TEXT,
+			recovery_codes TEXT)`,
+		// An account is linked to an external identity ONLY by (provider, issuer, subject) — never by
+		// email, which is the nOAuth account-takeover class (an admin of any other tenant can set an
+		// unverified email claim to your user's address). sub is unique only WITHIN an issuer, hence
+		// the composite key. A side table rather than columns on users because one human may hold both
+		// a SAML and an OIDC identity, and an IdP migration needs both links live during the overlap.
+		`CREATE TABLE IF NOT EXISTS user_identities(
+			provider TEXT NOT NULL, issuer TEXT NOT NULL, subject TEXT NOT NULL,
+			username TEXT NOT NULL, provider_slug TEXT DEFAULT '', nameid_format TEXT DEFAULT '',
+			attrs TEXT DEFAULT '', created_at TEXT DEFAULT '', last_login_at TEXT DEFAULT '',
+			PRIMARY KEY(provider, issuer, subject))`,
+		// One row per IdP. Row-shaped (not a meta blob) so multiple providers are later a UI change
+		// with no schema movement; v1 manages one saml row and one oidc row. Secrets (SP private key,
+		// OIDC client secret) are sealed under the sso_keyring DEK and never returned by any API.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS sso_providers(
+			id %s, kind TEXT, slug TEXT, name TEXT,
+			enabled INTEGER DEFAULT 0, provisioning TEXT DEFAULT 'off',
+			default_group BIGINT, default_role TEXT DEFAULT 'user',
+			default_expiry_days INTEGER, allow_admin_role INTEGER DEFAULT 0,
+			idp_metadata_url TEXT, idp_metadata_xml TEXT, idp_metadata_fetched_at TEXT,
+			idp_metadata_error TEXT, idp_entity_id TEXT, idp_cert_pem TEXT,
+			allow_idp_initiated INTEGER DEFAULT 0, clock_skew_sec INTEGER DEFAULT 60,
+			sp_cert_pem TEXT, sp_cert_not_after TEXT, sp_key_enc TEXT,
+			sp_cert_prev_pem TEXT, sp_key_prev_enc TEXT,
+			issuer TEXT, client_id TEXT, client_secret_enc TEXT,
+			scopes TEXT DEFAULT 'openid profile email', discovery_json TEXT, discovery_fetched_at TEXT,
+			attr_upn TEXT, attr_email TEXT, attr_display TEXT, attr_groups TEXT, attr_external_id TEXT,
+			session_hours INTEGER, created_at TEXT, updated_at TEXT)`, pk),
+		// Ordered IdP-group -> (role, OU) rules. Rows, never a JSON blob, so a future sync job can
+		// query and re-evaluate them. A rule targets BOTH a role and an OU because in this codebase
+		// the OU carries the real permissions (ADR 0022: restricted, quota, allow-list, visibility) —
+		// a role alone would leave a JIT-created external user with no entitlements.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS sso_group_rules(
+			id %s, provider_id BIGINT, ord INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1,
+			attr TEXT, value TEXT, target_role TEXT DEFAULT '', target_group BIGINT,
+			keep_on_miss INTEGER DEFAULT 0, ci INTEGER DEFAULT 0, note TEXT DEFAULT '')`, pk),
+		// Short-lived single-use state for EVERY interactive auth ceremony: the SAML AuthnRequest id,
+		// the OIDC nonce + PKCE verifier, the 2FA pending-login step and the WebAuthn challenge. They
+		// are one problem (single-use, restart-safe, cross-instance), so they get one table, one
+		// sweeper, and one consumption rule: a conditional DELETE requiring RowsAffected()==1, which
+		// no cookie can provide and which two concurrent callbacks cannot both win.
+		`CREATE TABLE IF NOT EXISTS sso_auth_requests(
+			token TEXT PRIMARY KEY, provider_id BIGINT, kind TEXT,
+			req_id TEXT DEFAULT '', nonce TEXT DEFAULT '', verifier TEXT DEFAULT '',
+			username TEXT DEFAULT '', target TEXT DEFAULT '',
+			created_at BIGINT, expires_at BIGINT)`,
+		// SAML assertion replay cache (a Web SSO profile MUST). Keyed on the HASH of entity id +
+		// assertion id so one IdP cannot pre-poison another's ID space; a DB table rather than an
+		// in-memory map because production runs several instances against shared Postgres and a
+		// restart must not reopen the replay window.
+		`CREATE TABLE IF NOT EXISTS sso_assertion_seen(
+			seen_key TEXT PRIMARY KEY, expires_at BIGINT)`,
+		// One row. A random DEK wrapped under HKDF(secret_key, salt): rotating secret_key re-wraps
+		// this single row instead of re-encrypting every stored secret.
+		`CREATE TABLE IF NOT EXISTS sso_keyring(
+			id INTEGER PRIMARY KEY, salt TEXT, wrapped_dek TEXT, kek_version INTEGER DEFAULT 1, created_at TEXT)`,
+		// Passkeys. sign_count is stored because a counter that goes BACKWARDS is the one thing
+		// WebAuthn's counter exists to detect (a cloned authenticator).
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS webauthn_credentials(
+			id %s, credential_id TEXT, username TEXT, label TEXT DEFAULT '',
+			credential TEXT, sign_count BIGINT DEFAULT 0,
+			created_at TEXT, last_used_at TEXT)`, pk),
 		// API tokens (multiple, with note/scope/validity period/last used). scope: all|ingest|query.
 		// Existing plaintext token values stay untouched and remain valid. New writes leave token
 		// NULL and authenticate through token_hash; token_prefix is safe display metadata.
@@ -295,6 +368,19 @@ func (s *Store) baseSchemaStmts() []string {
 			name TEXT, scope TEXT DEFAULT 'all',
 			created_at TEXT, expires_at TEXT, last_used_at TEXT)`, pk),
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash) WHERE token_hash IS NOT NULL`,
+		// ADR 0023 indexes. Uniqueness on users is a PARTIAL index rather than a column constraint
+		// because SQLite cannot ALTER TABLE ADD COLUMN ... UNIQUE — the same shape as the token-hash
+		// index above. The `<> ''` clause keeps pre-existing rows (which reconcile to NULL/'') from
+		// colliding with each other.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id ON users(source_ref, external_id) WHERE external_id IS NOT NULL AND external_id <> ''`,
+		`CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(username)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_providers_slug ON sso_providers(slug)`,
+		`CREATE INDEX IF NOT EXISTS idx_sso_group_rules_ord ON sso_group_rules(provider_id, ord)`,
+		// The two TTL tables are swept by the existing cleanupLoop (ADR 0017), which scans by expiry.
+		`CREATE INDEX IF NOT EXISTS idx_sso_auth_requests_exp ON sso_auth_requests(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_sso_assertion_seen_exp ON sso_assertion_seen(expires_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_cred_id ON webauthn_credentials(credential_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_credentials(username)`,
 		// Structured "assumption/tracking items" for re-run review (common across report types). itype: assumption|tracking.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS tracking_items(
 			id %s, report_id BIGINT, symbol TEXT, itype TEXT, content TEXT,
@@ -512,19 +598,29 @@ func (s *Store) execBaseSchema(indexes bool) error {
 // ADR 0013): a NULL display_name/email/last_login reads as ” and a NULL active reads as 1.
 const userCols = `u.username,u.password_hash,u.role,
 	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,''),
-	COALESCE(u.session_rev,0),COALESCE(u.expires_at,'')`
+	COALESCE(u.session_rev,0),COALESCE(u.expires_at,''),
+	COALESCE(u.source,'local'),COALESCE(u.source_ref,''),COALESCE(u.external_id,''),COALESCE(u.totp_enabled,0)`
 
 func scanUser(scan func(...any) error) (User, error) {
 	var u User
-	var role, dn, email, last, expires sql.NullString
-	var active, sessionRev sql.NullInt64
-	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev, &expires); err != nil {
+	var role, dn, email, last, expires, source, sourceRef, externalID sql.NullString
+	var active, sessionRev, totp sql.NullInt64
+	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev, &expires,
+		&source, &sourceRef, &externalID, &totp); err != nil {
 		return User{}, err
 	}
 	u.Role, u.DisplayName, u.Email, u.LastLogin = role.String, dn.String, email.String, last.String
 	u.Active = !active.Valid || active.Int64 != 0
 	u.SessionRev = sessionRev.Int64
 	u.ExpiresAt = expires.String
+	// A NULL source (a row that predates ADR 0023) reads as "local": a pre-existing account must
+	// never be mistaken for a federated one, which would lock its owner out of password login.
+	u.Source = source.String
+	if u.Source == "" {
+		u.Source = "local"
+	}
+	u.SourceRef, u.ExternalID = sourceRef.String, externalID.String
+	u.TOTPEnabled = totp.Int64 != 0
 	return u, nil
 }
 
