@@ -20,6 +20,7 @@ const ManageLayout = lazyRetry(() => import('./pages/manage/ManageLayout'))
 const LinksPage = lazyRetry(() => import('./pages/manage/LinksPage'))
 const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
 const UsersPage = lazyRetry(() => import('./pages/manage/UsersPage'))
+const SSOPage = lazyRetry(() => import('./pages/manage/SSOPage'))
 const SiteSettingsPage = lazyRetry(() => import('./pages/manage/SiteSettingsPage'))
 const AnnouncementPage = lazyRetry(() => import('./pages/manage/AnnouncementPage'))
 const EmailPage = lazyRetry(() => import('./pages/manage/EmailPage'))
@@ -131,6 +132,7 @@ function AppRoutes() {
           <Route path="links" element={<LinksPage />} />
           <Route path="types" element={<TypesPage />} />
           <Route path="users" element={<UsersPage />} />
+          <Route path="sso" element={<SSOPage />} />
           <Route path="tokens" element={<TokensPage />} />
           <Route path="batch" element={<BatchAdminPage />} />
           <Route path="runqueue" element={<RunQueueSettingsPage />} />

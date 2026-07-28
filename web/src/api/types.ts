@@ -647,3 +647,44 @@ export interface SSOProviderInfo {
   kind: 'saml' | 'oidc'
   name: string
 }
+
+// Admin view of an SSO provider (ADR 0023). Note what is NOT here: no client secret, no SP
+// private key — the server reports only whether each is set.
+export interface SSOProviderAdmin {
+  id: number
+  kind: 'saml' | 'oidc'
+  slug: string
+  name: string
+  enabled: boolean
+  provisioning: 'off' | 'jit'
+  default_group: number
+  default_role: string
+  default_expiry_days: number
+  allow_admin_role: boolean
+  session_hours: number
+  issuer: string
+  client_id: string
+  scopes: string
+  has_client_secret: boolean
+  redirect_url: string // derived from the public URL; read-only
+  idp_metadata_url: string
+  idp_entity_id: string
+  has_idp_metadata: boolean
+  allow_idp_initiated: boolean
+  clock_skew_sec: number
+  sp_entity_id: string // derived; paste into the IdP
+  sp_acs_url: string // derived; paste into the IdP
+  sp_cert_pem: string
+  sp_cert_not_after: string
+  has_sp_key: boolean
+  attr_upn: string
+  attr_email: string
+  attr_display: string
+  attr_groups: string
+  attr_external_id: string
+}
+
+export interface SSOProvidersResp {
+  providers: SSOProviderAdmin[]
+  public_url: string
+}

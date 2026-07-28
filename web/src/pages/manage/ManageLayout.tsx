@@ -2,6 +2,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { Button, Drawer, Menu, Spin, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import {
+  SafetyOutlined,
   ApiOutlined,
   AppstoreAddOutlined,
   AppstoreOutlined,
@@ -111,6 +112,7 @@ export default function ManageLayout() {
       label: t('nav.group.access'),
       children: [
         { key: 'users', label: t('nav.users'), icon: <TeamOutlined /> },
+        { key: 'sso', label: t('nav.sso'), icon: <SafetyOutlined /> },
         { key: 'tokens', label: t('settings.tokens'), icon: <KeyOutlined /> },
       ],
     },
