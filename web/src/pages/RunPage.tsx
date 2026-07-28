@@ -4,9 +4,10 @@ import { ArrowLeftOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
-import type { RunResp } from '../api/types'
+import type { RunResp, SubTab } from '../api/types'
 import Markdown from '../components/Markdown'
 import ReaderControls from '../components/ReaderControls'
+import VersionSwitcher from '../components/VersionSwitcher'
 import { ExportPdfButton } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
 
@@ -59,6 +60,20 @@ export default function RunPage() {
   }
   if (!data) return null
   const rep = data.rep
+  // One entry per report TYPE, showing the form currently selected for it. The version axis is the
+  // switcher's job; collapsing here is what stops two forms of one analysis from looking like two
+  // identical tabs.
+  const typeTabs = Array.from(
+    data.tabs
+      .reduce((byType, tab) => {
+        // Keep the SELECTED form for its type, so the strip's value matches what is being read;
+        // otherwise the first one seen. Map preserves insertion order, so the strip keeps the
+        // server's ordering of types.
+        if (!byType.has(tab.rtype) || tab.id === data.selId) byType.set(tab.rtype, tab)
+        return byType
+      }, new Map<string, SubTab>())
+      .values(),
+  )
 
   return (
     <Spin spinning={loading}>
@@ -97,17 +112,22 @@ export default function RunPage() {
           )}
         </Space>
 
-        {data.tabs.length > 1 && (
+        {/* Two axes, two controls (ADR 0024). The strip is one entry per report TYPE; the
+            switcher below picks which written form of it to read. Without the collapse, two forms
+            of one analysis appear as two tabs with the same label, which reads as a duplicate
+            rather than as a choice. */}
+        {typeTabs.length > 1 && (
           // Report-type strip: a horizontal-scroll Segmented so it swipes smoothly on
           // mobile instead of dragging the whole page.
           <div style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
             <Segmented
               value={data.selId}
               onChange={(v) => setSp({ r: String(v) })}
-              options={data.tabs.map((s) => ({ label: s.label, value: s.id }))}
+              options={typeTabs.map((s) => ({ label: s.label, value: s.id }))}
             />
           </div>
         )}
+          {rep && <VersionSwitcher reportId={rep.id} onPick={(id) => setSp({ r: String(id) })} />}
           <Card className="rp-doc-card" title={rep?.displayTitle} extra={rep ? <ReaderControls /> : undefined} style={readerVars}>
             {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
           </Card>

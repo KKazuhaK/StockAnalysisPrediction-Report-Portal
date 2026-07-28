@@ -952,7 +952,7 @@ func (s *Store) newReportFilter(f Filters, sc *ownerScope) (string, []any) {
 // viewer's own OU + same-day internal pool (nil = no restriction; see ownerScope).
 func (s *Store) SearchNew(f Filters, sc *ownerScope) ([]Rep, error) {
 	where, args := s.newReportFilter(f, sc)
-	q := "SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
+	q := "SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,COALESCE(r.version,'') FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
 	q += where
 	q += fmt.Sprintf(" ORDER BY r.rdate %s, r.sent_at %s", dir(f.Sort), dir(f.Sort))
 	rows, err := s.query(q, args...)
@@ -974,7 +974,7 @@ func (s *Store) SearchNew(f Filters, sc *ownerScope) ([]Rep, error) {
 func (s *Store) SearchNewLatest(f Filters, sc *ownerScope) ([]Rep, int, error) {
 	where, args := s.newReportFilter(f, sc)
 	q := `WITH filtered AS (
-		SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,
+		SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,COALESCE(r.version,'') AS version,
 			COUNT(*) OVER() AS filtered_total
 		FROM reports r LEFT JOIN stocks s ON s.code = r.symbol` + where + `
 	), ranked AS (
@@ -1007,15 +1007,17 @@ func (s *Store) SearchNewLatest(f Filters, sc *ownerScope) ([]Rep, int, error) {
 	return out, total, rows.Err()
 }
 
-// scanNewRow scans one new-report row (without body). Fixed column order: id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at.
+// scanNewRow scans one new-report row (without body). Fixed column order:
+// id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,version — every caller's SELECT must
+// match it exactly, in that order.
 func scanNewRow(rows *sql.Rows) Rep {
 	var id int64
-	var title, sym, name, rt, rd, kind, runID, src, sent sql.NullString
-	rows.Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent)
+	var title, sym, name, rt, rd, kind, runID, src, sent, version sql.NullString
+	rows.Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &version)
 	return Rep{
 		ID: id, Title: title.String, Symbol: sym.String, Name: name.String,
 		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
-		Source: src.String, Time: sent.String,
+		Source: src.String, Time: sent.String, Version: version.String,
 	}
 }
 
@@ -1452,7 +1454,7 @@ func (s *Store) ListRuns(symbol, date string, sc *ownerScope) []RunInfo {
 
 // NewBySymbol fetches all new reports for a symbol (without body, date descending), for the per-stock timeline detail view.
 func (s *Store) NewBySymbol(symbol string, sc *ownerScope) ([]Rep, error) {
-	q := `SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at FROM reports WHERE symbol=?`
+	q := `SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,COALESCE(version,'') FROM reports WHERE symbol=?`
 	args := []any{symbol}
 	if frag, fargs := sc.where(""); frag != "" {
 		q += " AND " + frag
