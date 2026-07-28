@@ -11,7 +11,10 @@ interface AuthCtx {
   perms: Record<string, boolean>
   can: (perm: string) => boolean
   loading: boolean
-  login: (username: string, password: string) => Promise<void>
+  // Resolves to a pending token when the account has 2FA on: the password alone issues no
+  // session, and the caller must then complete loginTOTP (ADR 0023).
+  login: (username: string, password: string) => Promise<{ totpToken?: string }>
+  loginTOTP: (token: string, code: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -43,7 +46,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       can: (perm: string) => (me?.admin ?? false) || !!me?.perms?.[perm],
       loading,
       login: async (username, password) => {
-        const res = await api.post<Me>('/api/login', { username, password })
+        const res = await api.post<Me & { totp_required?: boolean; token?: string }>('/api/login', {
+          username,
+          password,
+        })
+        if (res.totp_required && res.token) return { totpToken: res.token }
+        setMe(res as Me)
+        return {}
+      },
+      loginTOTP: async (token, code) => {
+        const res = await api.post<Me>('/api/login/2fa', { token, code })
         setMe(res)
       },
       logout: async () => {
