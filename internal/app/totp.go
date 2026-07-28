@@ -39,7 +39,16 @@ func (s *Server) totpIssuer() string {
 }
 
 // POST /api/me/2fa/setup — mint a secret and return the provisioning URI. Nothing is in force yet.
+//
+// Step-up gates enrolment, not just removal. Turning 2FA ON is an attack in its own right: with a
+// stolen cookie an attacker enrols THEIR authenticator, and from then on the owner's correct
+// password is parked behind a second factor only the attacker holds — a lockout with no
+// self-service way back. The enable step below needs a secret that only a stepped-up setup ever
+// returns, so gating the mint gates the whole enrolment.
 func (s *Server) apiTOTPSetup(w http.ResponseWriter, r *http.Request, user string) {
+	// The preconditions come first so the caller gets the accurate message about their OWN account
+	// rather than a confusing "confirm with your password" for a state no proof could change. They
+	// leak nothing: the caller is already authenticated as this account.
 	u := s.st.GetUser(user)
 	if u == nil || u.IsFederated() {
 		jsonError(w, http.StatusBadRequest, "two-factor is managed by your identity provider")
@@ -47,6 +56,9 @@ func (s *Server) apiTOTPSetup(w http.ResponseWriter, r *http.Request, user strin
 	}
 	if u.TOTPEnabled {
 		jsonError(w, http.StatusConflict, "two-factor is already enabled; disable it first")
+		return
+	}
+	if !s.requireStepUp(w, r, user) {
 		return
 	}
 	key, err := totp.Generate(totp.GenerateOpts{Issuer: s.totpIssuer(), AccountName: user})
@@ -327,12 +339,23 @@ func (s *Store) SwapRecoveryCodes(username, from, to string) (bool, error) {
 	return n == 1, nil
 }
 
+// stepUpHeader carries the re-proved credential. A header, never the query string: the value is
+// either the account password or a live TOTP/recovery code, and a query string is written verbatim
+// into every reverse-proxy access log, kept in browser history, and sent in the Referer of any
+// subresource the page loads. None of that is true of a header.
+const stepUpHeader = "X-Step-Up-Proof"
+
 // stepUpOK re-proves a factor inside an already-authenticated session, for actions that would
-// otherwise let a stolen cookie become permanent access: registering a credential, or turning a
-// factor off. The caller supplies either the account password or a current 2FA/recovery code, so it
-// works whether or not the account has a second factor enrolled.
+// otherwise let a stolen cookie become permanent access: registering or revoking a credential, and
+// enrolling or turning off a factor. The caller supplies either the account password or a current
+// 2FA/recovery code, so it works whether or not the account has a second factor enrolled.
+//
+// This is an online guessing oracle in exactly the way the login form is — the difference is only
+// that the attacker already holds a session — so it shares the login form's lockout. Without that,
+// a stolen cookie buys unlimited guesses at the password itself (reusable elsewhere) or at the
+// ~3-in-10^6 live TOTP codes, which is hours of work, not an infeasible attack.
 func (s *Server) stepUpOK(r *http.Request, user string) bool {
-	proof := strings.TrimSpace(r.URL.Query().Get("proof"))
+	proof := strings.TrimSpace(r.Header.Get(stepUpHeader))
 	if proof == "" {
 		return false
 	}
@@ -340,9 +363,26 @@ func (s *Server) stepUpOK(r *http.Request, user string) bool {
 	if u == nil {
 		return false
 	}
+	now := time.Now()
+	key := "stepup:" + strings.ToLower(user)
+	if s.loginThr != nil && s.loginThr.blocked(key, now) {
+		return false
+	}
+	ok := s.stepUpProofValid(u, proof)
+	if s.loginThr != nil {
+		if ok {
+			s.loginThr.reset(key)
+		} else {
+			s.loginThr.record(key, now)
+		}
+	}
+	return ok
+}
+
+func (s *Server) stepUpProofValid(u *User, proof string) bool {
 	if u.TOTPEnabled {
-		secret, err := s.userTOTPSecret(user)
-		return err == nil && (s.totpValid(user, secret, proof) || s.consumeRecoveryCode(user, proof))
+		secret, err := s.userTOTPSecret(u.Username)
+		return err == nil && (s.totpValid(u.Username, secret, proof) || s.consumeRecoveryCode(u.Username, proof))
 	}
 	// No second factor enrolled yet: the password is the strongest thing the user has. A federated
 	// account has none, so it cannot step up this way and must not be able to add local credentials.
@@ -350,4 +390,14 @@ func (s *Server) stepUpOK(r *http.Request, user string) bool {
 		return false
 	}
 	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(proof)) == nil
+}
+
+// requireStepUp is the handler-side guard. Every credential change goes through it, so the list of
+// protected actions is visible in one place instead of being a property of whoever remembered.
+func (s *Server) requireStepUp(w http.ResponseWriter, r *http.Request, user string) bool {
+	if s.stepUpOK(r, user) {
+		return true
+	}
+	jsonError(w, http.StatusForbidden, "confirm with your password or a current code first")
+	return false
 }

@@ -102,6 +102,8 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 		SessionHours: in.SessionHours,
 		Issuer:       strings.TrimRight(strings.TrimSpace(in.Issuer), "/"),
 		ClientID:     strings.TrimSpace(in.ClientID), Scopes: in.Scopes,
+		// A cached discovery document belongs to the issuer it came from. Repointing the provider
+		// drops it so the next login refetches, rather than relying on the read-side guard alone.
 		DiscoveryJSON: prev.DiscoveryJSON, DiscoveryFetched: prev.DiscoveryFetched,
 		IdPMetadataURL: strings.TrimSpace(in.IdPMetadataURL),
 		IdPMetadataXML: firstNonEmpty(strings.TrimSpace(in.IdPMetadataXML), prev.IdPMetadataXML),
@@ -111,6 +113,9 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 		AttrUPN: in.AttrUPN, AttrEmail: in.AttrEmail, AttrDisplay: in.AttrDisplay,
 		AttrGroups: in.AttrGroups, AttrExternalID: in.AttrExternalID,
 		ClientSecretEnc: prev.ClientSecretEnc,
+	}
+	if existed && !sameIssuer(p.Issuer, prev.Issuer) {
+		p.DiscoveryJSON, p.DiscoveryFetched = "", ""
 	}
 	// A blank secret keeps the stored one; an explicit "" clears it.
 	if in.ClientSecret != nil {

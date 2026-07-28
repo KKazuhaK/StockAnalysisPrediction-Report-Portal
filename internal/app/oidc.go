@@ -87,13 +87,24 @@ func (s *Server) oidcRuntimeFor(ctx context.Context, p SSOProvider) (*oidcRuntim
 //
 // The cached document is only ever one WE fetched through the SSRF-guarded client, and go-oidc
 // still verifies the ID token against the JWKS the document names, so this trades no verification.
+//
+// The cache is BOUND to the issuer it was fetched from. oidc.NewProvider makes that comparison on a
+// live fetch and the cached path skips it, so without this check an admin who repoints a provider at
+// a new IdP changes nothing: the document supplies the authorization endpoint, the token endpoint,
+// the JWKS URI and the issuer the verifier enforces, so the decommissioned IdP would keep minting
+// sessions the portal accepts while the newly-configured one is never contacted.
 func (s *Server) oidcDiscover(ctx context.Context, p SSOProvider) (*oidc.Provider, error) {
 	if p.DiscoveryJSON != "" {
 		var pc oidc.ProviderConfig
-		if err := json.Unmarshal([]byte(p.DiscoveryJSON), &pc); err == nil && pc.IssuerURL != "" {
+		switch err := json.Unmarshal([]byte(p.DiscoveryJSON), &pc); {
+		case err == nil && sameIssuer(pc.IssuerURL, p.Issuer):
 			return pc.NewProvider(ctx), nil
+		case err == nil && pc.IssuerURL != "":
+			log.Printf("sso: oidc %s cached discovery is for %q but the provider is configured for %q; refetching",
+				p.Slug, pc.IssuerURL, p.Issuer)
+		default:
+			log.Printf("sso: oidc %s cached discovery is unusable; refetching", p.Slug)
 		}
-		log.Printf("sso: oidc %s cached discovery is unusable; refetching", p.Slug)
 	}
 	prov, err := oidc.NewProvider(s.ssoContext(ctx), p.Issuer)
 	if err != nil {
@@ -104,6 +115,13 @@ func (s *Server) oidcDiscover(ctx context.Context, p SSOProvider) (*oidc.Provide
 		s.st.SaveOIDCDiscovery(p.ID, string(raw))
 	}
 	return prov, nil
+}
+
+// sameIssuer compares two issuer identifiers. An issuer is a URL used as an identifier, so the only
+// normalisation applied is the trailing slash the admin field also strips — never case folding of
+// the path or anything else that would make two distinct issuers compare equal.
+func sameIssuer(a, b string) bool {
+	return a != "" && b != "" && strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
 }
 
 // oidcRedirectURL derives the callback from the configured public URL — never from the request

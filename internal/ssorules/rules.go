@@ -81,20 +81,32 @@ func Resolve(rules []Rule, f Facts, cur Current, d Defaults) Outcome {
 	if d.Group == 0 {
 		return Outcome{Deny: true, DenyReason: "no rule matched and this provider has no default group"}
 	}
-	return Outcome{Role: d.Role, Group: d.Group}
+	// The default role goes through the same elevation guard as a rule's. This is the path taken by
+	// every user the rules do not mention, so skipping it here would have been the wider hole.
+	return dropBlockedRole(Outcome{Role: d.Role, Group: d.Group}, d)
 }
 
 // apply turns a matched rule into an assignment, filling anything the rule left unset from the
 // current account (if any) and then the provider defaults, and enforcing the admin-elevation guard.
 func apply(r Rule, cur Current, d Defaults) Outcome {
 	out := Outcome{Matched: true, RuleID: r.ID, Role: r.TargetRole, Group: r.TargetGroup}
-	// A rule may only elevate to a privileged role when the provider explicitly allows it. The
-	// elevation is dropped rather than denying the login outright — a misconfigured rule should
-	// under-grant, never lock the user out — and is reported so the caller can log it.
+	out = dropBlockedRole(out, d)
+	return withDefaults(out, cur, d)
+}
+
+// dropBlockedRole enforces the admin-elevation guard: a privileged role may only be assigned when
+// the provider explicitly allows it. The elevation is dropped rather than denying the login outright
+// — a misconfigured provider should under-grant, never lock the user out — and is reported so the
+// caller can log it.
+//
+// It runs on the provider DEFAULT as well as on a matched rule. The default applies to every user
+// the rules do not speak about, which is the larger population, so guarding only the rule path left
+// the wider hole of the two.
+func dropBlockedRole(out Outcome, d Defaults) Outcome {
 	if out.Role != "" && d.PrivilegedRoles[out.Role] && !d.AllowAdminRole {
 		out.Role, out.AdminBlocked = "", true
 	}
-	return withDefaults(out, cur, d)
+	return out
 }
 
 // withDefaults fills unset fields: the account's current value first (so a rule that speaks only
@@ -105,6 +117,7 @@ func withDefaults(out Outcome, cur Current, d Defaults) Outcome {
 	}
 	if out.Role == "" {
 		out.Role = d.Role
+		out = dropBlockedRole(out, d)
 	}
 	if out.Group == 0 && cur.Exists {
 		out.Group = cur.Group
