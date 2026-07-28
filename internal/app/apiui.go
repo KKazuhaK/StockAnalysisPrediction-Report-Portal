@@ -423,9 +423,13 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 		selID = defID
 	}
 	rep := s.loadRep(user, selID)
+	// Tabs carry their version (ADR 0024) so the reader can collapse the two axes properly: one tab
+	// per report type, with a version switcher inside it. Without it, two written forms of one
+	// analysis appear as two tabs with the same label, which reads as a duplicate rather than as a
+	// choice.
 	tabs := make([]map[string]any, 0, len(members))
 	for _, m := range members {
-		tabs = append(tabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType})
+		tabs = append(tabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType, "version": m.Version})
 	}
 	first := members[0]
 	writeJSON(w, map[string]any{

@@ -6,6 +6,7 @@ import {
   ApiOutlined,
   AppstoreAddOutlined,
   AppstoreOutlined,
+  BranchesOutlined,
   ControlOutlined,
   DatabaseOutlined,
   FileTextOutlined,
@@ -105,7 +106,10 @@ export default function ManageLayout() {
     {
       type: 'group',
       label: t('nav.group.content'),
-      children: [{ key: 'types', label: t('nav.types'), icon: <AppstoreOutlined /> }],
+      children: [
+        { key: 'types', label: t('nav.types'), icon: <AppstoreOutlined /> },
+        { key: 'versions', label: t('nav.versions'), icon: <BranchesOutlined /> },
+      ],
     },
     {
       type: 'group',

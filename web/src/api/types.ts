@@ -254,6 +254,7 @@ export interface SubTab {
   id: number
   label: string
   rtype: string
+  version?: string // which written form this tab is (ADR 0024)
 }
 
 export interface StockResp {
