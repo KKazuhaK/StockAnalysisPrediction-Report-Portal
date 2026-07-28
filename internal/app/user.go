@@ -20,6 +20,9 @@ type User struct {
 	Source      string
 	SourceRef   string
 	ExternalID  string // the IdP's immutable object id; the SSO<->SCIM join key
+	// Restricted (ADR 0024) scopes this ACCOUNT's reads regardless of its OU, so a portal with no
+	// OU tree can still have external users. ORs with the OU's own restricted flag.
+	Restricted bool
 	TOTPEnabled bool   // whether TOTP 2FA is confirmed and in force for this (local) account
 }
 
