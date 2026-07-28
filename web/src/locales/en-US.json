@@ -403,6 +403,7 @@
   "login.forgotSend": "Send reset link",
   "login.forgotSent": "If that account exists, a reset link is on its way — check your email.",
   "login.forgotTitle": "Reset your password",
+  "login.passkeyUse": "Use a passkey instead",
   "login.password": "Password",
   "login.ssoDivider": "or continue with",
   "login.ssoWith": "Sign in with {{name}}",

@@ -403,6 +403,7 @@
   "login.forgotSend": "寄送重設連結",
   "login.forgotSent": "若該帳號存在，重設連結已寄出，請查收郵箱。",
   "login.forgotTitle": "重設密碼",
+  "login.passkeyUse": "改用通行金鑰",
   "login.password": "密碼",
   "login.ssoDivider": "或使用以下方式登入",
   "login.ssoWith": "使用 {{name}} 登入",
