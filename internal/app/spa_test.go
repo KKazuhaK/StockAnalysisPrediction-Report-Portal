@@ -138,7 +138,7 @@ func TestSpaInjectsBranding(t *testing.T) {
 			`<link rel="icon" type="image/svg+xml" href="/favicon.svg" />` +
 			`<link rel="apple-touch-icon" href="/pwa-icon" /></head>` +
 			`<body><div id="boot-splash"><!--RP_BOOT_LOGO_START--><svg>default</svg><!--RP_BOOT_LOGO_END-->` +
-				`<div id="boot-name"><!--RP_BOOT_NAME_START-->` + defaultSiteTitle + `<!--RP_BOOT_NAME_END--></div></div></body>`)},
+			`<div id="boot-name"><!--RP_BOOT_NAME_START-->` + defaultSiteTitle + `<!--RP_BOOT_NAME_END--></div></div></body>`)},
 	}
 	brand := func() (string, string) { return "MyPortal", "/site-assets/logo.png" }
 	h := spaHandlerFS(fsys, brand, "test")

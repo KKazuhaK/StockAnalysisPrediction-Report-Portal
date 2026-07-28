@@ -3,10 +3,12 @@ module github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal
 go 1.26.5
 
 require (
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/yuin/goldmark v1.8.4
 	golang.org/x/crypto v0.54.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/text v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.53.0
@@ -15,6 +17,7 @@ require (
 require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

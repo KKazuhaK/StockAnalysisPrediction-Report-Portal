@@ -216,7 +216,7 @@ func (s *Store) init() error {
 // title is load-bearing, not decoration: rtype is a coarse registry label ("股权分析",
 // "估值分析") and one code+date+subtype legitimately carries several different reports that
 // only their titles tell apart. Keying without it merges them and keeps only the last.
-// A thematic report has no code (symbol ''), and is likewise told apart by its title, so
+// A thematic report has no code (symbol ”), and is likewise told apart by its title, so
 // this one tuple covers both without a code-or-title fallback expression.
 const reportIdentExpr = `symbol, rdate, rtype, title`
 

@@ -245,7 +245,7 @@ func (s *Store) usageBytes(table, expr string) int64 {
 // usageSpan returns the oldest/newest non-empty value of a timestamp column, for the usage display.
 func (s *Store) usageSpan(table, col string) (oldest, newest string) {
 	var o, nw sql.NullString
-	s.queryRow("SELECT MIN(" + col + "), MAX(" + col + ") FROM " + table + " WHERE " + col + " IS NOT NULL AND " + col + " <> ''").Scan(&o, &nw)
+	s.queryRow("SELECT MIN("+col+"), MAX("+col+") FROM "+table+" WHERE "+col+" IS NOT NULL AND "+col+" <> ''").Scan(&o, &nw)
 	return o.String, nw.String
 }
 

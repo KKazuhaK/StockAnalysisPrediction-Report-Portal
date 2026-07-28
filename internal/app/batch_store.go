@@ -905,7 +905,7 @@ func (s *Store) UpdateTarget(id int64, name, config string) error {
 
 // SetTargetSurfaces stores the admin's allow-list. Values are normalised through
 // TargetSurfaces, so an unknown surface is dropped rather than persisted and silently
-// filtered forever after. Passing every surface stores '' — the same as "unset", which
+// filtered forever after. Passing every surface stores ” — the same as "unset", which
 // keeps one representation for "no restriction" instead of two.
 func (s *Store) SetTargetSurfaces(id int64, surfaces []string) error {
 	valid := TargetSurfaces(strings.Join(surfaces, ","))

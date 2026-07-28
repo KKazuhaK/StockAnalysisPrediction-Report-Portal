@@ -36,25 +36,26 @@ var tplFS embed.FS
 const cookieName = "rp_session"
 
 type Server struct {
-	cfg           *config.Config
-	st            *Store
-	names         *Names
-	pdf           *template.Template
-	jobRuns       sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
-	itemCancels   sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
-	jobNotify     sync.Map                                                                   // jobID -> bool; opt-in to email the submitter when the job finishes
-	buildProv     func(BatchJob, func(runID, convID, taskID string)) (batch.Provider, error) // test seam for the run-item provider; nil → real buildProvider
-	schedMu       sync.Mutex                                                                 // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
-	mailFn        func(to []string, subject, htmlBody string) error                          // test seam; nil → real SMTP send
-	appTok        *appTokens                                                                 // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
-	chatMu        sync.Mutex                                                                 // guards chatLive/chatSeq
-	chatLive      map[int64]*chatTurn                                                        // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
-	chatSeq       int64                                                                      // monotonic in-flight chat-turn id
-	cleanupMu     sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
-	loginThr      *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
-	trustedNets   []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
-	mermaidCharts mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
-	dekOnce       dekCache                                                                   // lazily unwrapped data key for stored auth secrets (ADR 0023)
+	cfg                *config.Config
+	st                 *Store
+	names              *Names
+	pdf                *template.Template
+	jobRuns            sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
+	itemCancels        sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
+	jobNotify          sync.Map                                                                   // jobID -> bool; opt-in to email the submitter when the job finishes
+	buildProv          func(BatchJob, func(runID, convID, taskID string)) (batch.Provider, error) // test seam for the run-item provider; nil → real buildProvider
+	schedMu            sync.Mutex                                                                 // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
+	mailFn             func(to []string, subject, htmlBody string) error                          // test seam; nil → real SMTP send
+	appTok             *appTokens                                                                 // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
+	chatMu             sync.Mutex                                                                 // guards chatLive/chatSeq
+	chatLive           map[int64]*chatTurn                                                        // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
+	chatSeq            int64                                                                      // monotonic in-flight chat-turn id
+	cleanupMu          sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
+	loginThr           *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
+	trustedNets        []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
+	mermaidCharts      mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
+	ssoInsecureForTest bool                                                                       // test-only: permit a plain-http loopback IdP (ADR 0023)
+	dekOnce            dekCache                                                                   // lazily unwrapped data key for stored auth secrets (ADR 0023)
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -153,6 +154,12 @@ func RunServer(cfgPath string) {
 	// The machine API is /api/v1/* (apiv1.go) — the pre-v1 routes that used to sit here were
 	// retired once Dify's tool schemas spoke only v1. This one is the remainder, and it is not
 	// a machine route at all: the omnibox's autocomplete, called from the browser.
+	// SSO (ADR 0023). Unauthenticated by necessity — they ARE the login. Each 404s when the
+	// addressed provider is missing or disabled, so a portal with SSO off is indistinguishable
+	// from one that never had the feature.
+	mux.HandleFunc("GET /api/sso/providers", s.apiSSOProviders)
+	mux.HandleFunc("GET /api/auth/oidc/{slug}/start", s.oidcStart)
+	mux.HandleFunc("GET /api/auth/oidc/{slug}/callback", s.oidcCallback)
 	mux.HandleFunc("GET /api/symbols", s.apiSymbols) // stock list / autocomplete (omnibox)
 
 	// ---- Dify machine API v1: clean contract (JSON errors, portal-derived identity, envelopes) ----
