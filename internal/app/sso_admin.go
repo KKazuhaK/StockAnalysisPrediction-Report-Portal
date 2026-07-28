@@ -163,8 +163,20 @@ func (s *Server) validateProviderForEnable(p *SSOProvider) error {
 	if base == "" {
 		return ssoError("set the Public URL (Manage → Email) before enabling SSO — the redirect and ACS URLs derive from it")
 	}
-	if p.Provisioning == "jit" && p.DefaultGroup == 0 {
-		return ssoError("choose a default group: a just-in-time account must land in a known group")
+	if p.Provisioning == "jit" {
+		if p.DefaultGroup == 0 {
+			return ssoError("choose a default group: a just-in-time account must land in a known group")
+		}
+		if !s.st.GroupExists(p.DefaultGroup) {
+			return ssoError("the default group no longer exists")
+		}
+		// The default group must be an EXTERNAL one. Landing a self-provisioned account in an
+		// unrestricted group would give whoever the IdP admits the run of the portal — the exact
+		// outcome the external-user model (ADR 0022) exists to prevent, reached by an easy
+		// misconfiguration rather than an attack.
+		if !s.st.GroupRestrictedEffective(p.DefaultGroup) {
+			return ssoError("the default group must be an external (restricted) group — otherwise a self-created account could see everything")
+		}
 	}
 	switch p.Kind {
 	case "oidc":

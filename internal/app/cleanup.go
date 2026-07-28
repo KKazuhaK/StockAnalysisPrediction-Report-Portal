@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"log"
 	"strconv"
 	"time"
 )
@@ -189,16 +188,6 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 		}
 		res.Reports, _ = n, err
 		res.note(err)
-	}
-
-	// Expired pending logins and SAML replay entries (ADR 0023) are swept on every real pass. They
-	// are not a selectable target and not part of the audit counts: unlike batch/token/report
-	// retention this is not a policy an operator tunes — the rows are meaningless once expired, and
-	// leaving them would let the replay cache grow without bound.
-	if !dryRun {
-		if _, _, err := s.st.PurgeExpiredAuthState(start); err != nil {
-			log.Printf("cleanup: purge expired auth state: %v", err)
-		}
 	}
 
 	res.At = start.UTC().Format(time.RFC3339)

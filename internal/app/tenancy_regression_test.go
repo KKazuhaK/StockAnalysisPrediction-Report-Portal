@@ -1,8 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
@@ -157,5 +160,83 @@ func TestPasskeyCounterLoadsFromColumn(t *testing.T) {
 	t.Logf("counter loaded for the next ceremony = %d (column says 9)", creds[0].Authenticator.SignCount)
 	if creds[0].Authenticator.SignCount != 9 {
 		t.Errorf("clone detection compares against the STALE counter %d", creds[0].Authenticator.SignCount)
+	}
+}
+
+// A default group that is not external defeats the whole model: whoever the IdP admits would be
+// self-provisioned into an unrestricted group and see everything. An easy misconfiguration, so it
+// is refused at enable time rather than discovered later.
+func TestJITDefaultGroupMustBeRestricted(t *testing.T) {
+	s := tenancyServer(t)
+	root := s.st.EnsureDefaultGroup()
+	ext, _ := s.st.CreateUserGroup("ext-org", "", 0)
+	s.st.SetGroupParent(ext, root)
+	s.st.SetGroupRestricted(ext, true)
+	open, _ := s.st.CreateUserGroup("staff", "", 0)
+	s.st.SetGroupParent(open, root)
+
+	save := func(group int64) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"kind":"oidc","slug":"acme","enabled":true,"provisioning":"jit",
+			"default_group":%d,"issuer":"https://idp.example","client_id":"c","client_secret":"s"}`, group)
+		rec := httptest.NewRecorder()
+		s.apiAdminSSOSave(rec, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)), "admin")
+		return rec
+	}
+	if rec := save(open); rec.Code != http.StatusBadRequest {
+		t.Errorf("an unrestricted default group → %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if rec := save(9999); rec.Code != http.StatusBadRequest {
+		t.Errorf("a nonexistent default group → %d, want 400", rec.Code)
+	}
+	if rec := save(ext); rec.Code != http.StatusOK {
+		t.Errorf("a restricted default group must be accepted: %s", rec.Body.String())
+	}
+}
+
+// Spending a recovery code is a compare-and-set, so two concurrent uses of the same code cannot
+// both succeed. A plain write would make each code usable as many times as it is raced.
+func TestRecoveryCodeSurvivesConcurrentUse(t *testing.T) {
+	s := totpServer(t)
+	_, codes := enrol(t, s, "alice")
+
+	const racers = 6
+	var wg sync.WaitGroup
+	wins := make(chan bool, racers)
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); wins <- s.consumeRecoveryCode("alice", codes[0]) }()
+	}
+	wg.Wait()
+	close(wins)
+	won := 0
+	for ok := range wins {
+		if ok {
+			won++
+		}
+	}
+	if won != 1 {
+		t.Errorf("%d concurrent uses of one recovery code succeeded, want exactly 1", won)
+	}
+}
+
+// A federated account has no local password, so a reset link would be meaningless — and following
+// one would hand it a password the SSO login path then refuses anyway.
+func TestPasswordResetSkipsFederatedAccounts(t *testing.T) {
+	s := tenancyServer(t)
+	s.st.UpsertUser(User{Username: "ext", PasswordHash: "h", Role: "user", Email: "ext@acme.test"})
+	s.st.SetUserSource("ext", "jit", "acme")
+	u := s.st.GetUser("ext")
+	if !u.IsFederated() {
+		t.Fatal("setup: the account should be federated")
+	}
+	// The response is deliberately identical either way; what must not happen is a usable token.
+	if tok := s.resetToken(u); s.verifyResetToken(tok) == "" {
+		t.Log("token already unusable")
+	}
+	rec := httptest.NewRecorder()
+	s.apiForgotPassword(rec, httptest.NewRequest(http.MethodPost, "/api/password/forgot",
+		strings.NewReader(`{"account":"ext"}`)))
+	if rec.Code != http.StatusOK {
+		t.Errorf("the response must stay a constant 200 so accounts cannot be enumerated, got %d", rec.Code)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // TOTP two-factor for LOCAL accounts (ADR 0023). A federated account's factors belong to its IdP:
@@ -246,8 +247,9 @@ func (s *Server) consumeRecoveryCode(user, code string) bool {
 	if strings.TrimSpace(code) == "" {
 		return false
 	}
+	raw := s.st.RecoveryCodes(user)
 	var hashes []string
-	if err := json.Unmarshal([]byte(s.st.RecoveryCodes(user)), &hashes); err != nil {
+	if err := json.Unmarshal([]byte(raw), &hashes); err != nil {
 		return false
 	}
 	want := hashRecoveryCode(code)
@@ -255,7 +257,11 @@ func (s *Server) consumeRecoveryCode(user, code string) bool {
 		if subtle.ConstantTimeCompare([]byte(h), []byte(want)) == 1 {
 			remaining := append(append([]string{}, hashes[:i]...), hashes[i+1:]...)
 			out, _ := json.Marshal(remaining)
-			if err := s.st.SetRecoveryCodes(user, string(out)); err != nil {
+			// Conditional on the value we READ, so two concurrent uses of one code cannot both
+			// win: the loser's compare-and-set finds the column already changed and fails. A
+			// plain write here would make each code usable as many times as it is raced.
+			ok, err := s.st.SwapRecoveryCodes(user, raw, string(out))
+			if err != nil || !ok {
 				return false
 			}
 			log.Printf("2fa recovery code used by %s (%d left)", user, len(remaining))
@@ -306,4 +312,42 @@ func (s *Store) RecoveryCodes(username string) string {
 func (s *Store) SetRecoveryCodes(username, hashedCodes string) error {
 	_, err := s.exec(`UPDATE users SET recovery_codes=?, updated_at=? WHERE username=?`, hashedCodes, nowStr(), username)
 	return err
+}
+
+// SwapRecoveryCodes replaces the code list only if it still holds the value the caller read. This
+// is what makes spending a code single-use under concurrency: the write is conditional on the
+// unchanged prior value, so of two racing attempts exactly one commits.
+func (s *Store) SwapRecoveryCodes(username, from, to string) (bool, error) {
+	res, err := s.exec(`UPDATE users SET recovery_codes=?, updated_at=? WHERE username=? AND COALESCE(recovery_codes,'[]')=?`,
+		to, nowStr(), username, from)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// stepUpOK re-proves a factor inside an already-authenticated session, for actions that would
+// otherwise let a stolen cookie become permanent access: registering a credential, or turning a
+// factor off. The caller supplies either the account password or a current 2FA/recovery code, so it
+// works whether or not the account has a second factor enrolled.
+func (s *Server) stepUpOK(r *http.Request, user string) bool {
+	proof := strings.TrimSpace(r.URL.Query().Get("proof"))
+	if proof == "" {
+		return false
+	}
+	u := s.st.GetUser(user)
+	if u == nil {
+		return false
+	}
+	if u.TOTPEnabled {
+		secret, err := s.userTOTPSecret(user)
+		return err == nil && (s.totpValid(user, secret, proof) || s.consumeRecoveryCode(user, proof))
+	}
+	// No second factor enrolled yet: the password is the strongest thing the user has. A federated
+	// account has none, so it cannot step up this way and must not be able to add local credentials.
+	if u.IsFederated() || u.PasswordHash == "" {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(proof)) == nil
 }

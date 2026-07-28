@@ -55,11 +55,10 @@ func (s *Server) samlSP(p SSOProvider) (*saml.ServiceProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	skew := time.Duration(p.ClockSkewSec) * time.Second
-	if skew <= 0 {
-		skew = time.Minute
-	}
-	saml.MaxClockSkew = skew
+	// crewjam exposes clock skew ONLY as a package-level variable, so it cannot be set per
+	// provider without racing concurrent logins and leaking one provider's tolerance into
+	// another's verification. It is therefore fixed once, at the library default, and the
+	// per-provider column is not applied. Making it configurable would need an upstream change.
 	return &saml.ServiceProvider{
 		Key:         key,
 		Certificate: cert,

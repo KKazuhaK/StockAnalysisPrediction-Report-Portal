@@ -25,10 +25,26 @@ func TestSafeFetchRejectsUnsafeTargets(t *testing.T) {
 		{"ipv6 ULA", "https://[fd00::1]/x"},
 		{"not a url", "::::"},
 		{"no host", "https:///x"},
+		{"loopback by another name", "https://localhost.localdomain/x"},
 	} {
 		if _, err := c.fetch(tc.url, 1<<20); err == nil {
 			t.Errorf("%s (%s) must be refused", tc.name, tc.url)
 		}
+	}
+}
+
+// TestSafeFetchDoesNotRequireDNSAtSaveTime proves an unresolvable name is not rejected up front:
+// this check is the friendly early one, the dial-time hook is authoritative, and failing here
+// would make saving configuration depend on DNS and on the IdP resolving from wherever the admin
+// is — which split-horizon deployments routinely do not.
+func TestSafeFetchDoesNotRequireDNSAtSaveTime(t *testing.T) {
+	c := newSafeClient(false)
+	if err := c.checkURL("https://idp.invalid-tld-that-does-not-resolve.example/x"); err != nil {
+		t.Errorf("an unresolvable host must not fail the pre-check: %v", err)
+	}
+	// A name that DOES resolve to something internal is still caught early.
+	if err := c.checkURL("https://127.0.0.1/x"); err == nil {
+		t.Error("a literal internal address must still be refused")
 	}
 }
 
