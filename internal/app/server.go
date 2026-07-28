@@ -54,6 +54,7 @@ type Server struct {
 	loginThr      *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
 	trustedNets   []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
 	mermaidCharts mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
+	dekOnce       dekCache                                                                   // lazily unwrapped data key for stored auth secrets (ADR 0023)
 }
 
 // statusRecorder records the response status code for use in request logging.
