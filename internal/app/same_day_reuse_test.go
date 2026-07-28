@@ -10,35 +10,63 @@ import (
 	"time"
 )
 
-// TestFindSameDayReportRespectsScope proves the reuse lookup only ever returns a report the viewer
-// may actually read: today's own-OU or internal report, never another OU's, never an older one.
-func TestFindSameDayReportRespectsScope(t *testing.T) {
-	st, s, _, ouA, _ := readScopeFixture(t)
+// TestFindSameDayReportIsAContentLookup pins the split ADR 0024 introduced. The store answers only
+// "does this analysis exist today" — symbol, subtype, version, date — and does NOT ask who may read
+// it. Scoping the lookup itself was the original mistake: under per-person visibility a first-time
+// requester is on no viewer list, so a scoped lookup found nothing for exactly the caller reuse
+// exists to serve, and every request ran for real. The entitlement check moved to the caller, which
+// is where TestReuseRefusesAnUngrantedVersion holds it.
+func TestFindSameDayReportIsAContentLookup(t *testing.T) {
+	st, s, _, _, _ := readScopeFixture(t)
 	today := time.Now().Format("2006-01-02")
-	sc := s.viewerScope("ext")
+	def := st.DefaultVersion()
 
-	// The fixture has, for 600000/val/today: own(ouA), internal(NULL) and another OU's report.
-	id, ok := st.FindSameDayReport("600000", "val", today, sc)
-	if !ok {
-		t.Fatal("a visible same-day report must be found")
+	// The fixture's own-OU report is on the published version; the internal ones are on the default.
+	if _, ok := st.FindSameDayReport("600000", "val", "对外版", today); !ok {
+		t.Error("a same-day report of that version must be found")
 	}
-	if r, _ := st.GetNew(id, sc); r == nil {
-		t.Error("the reused report must be readable by that same viewer")
+	if _, ok := st.FindSameDayReport("600000", "val", def, today); !ok {
+		t.Error("the internal report of the same symbol+subtype is a different version, and exists")
 	}
-	// A subtype only another OU has today must NOT be reusable.
-	if _, ok := st.FindSameDayReport("600000", "secret-type", today, sc); ok {
-		t.Error("another OU's same-day report must not be reusable")
+	// Version is part of the lookup: asking for a version nobody produced finds nothing, even though
+	// the symbol and subtype both exist today.
+	if _, ok := st.FindSameDayReport("600000", "val", "客户版", today); ok {
+		t.Error("a version that was never generated must not be found")
 	}
-	// Yesterday is not today.
+	// Pinned to the civil date.
 	yest := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-	if _, ok := st.FindSameDayReport("600000", "val", yest, sc); ok {
+	if _, ok := st.FindSameDayReport("600000", "val", "对外版", yest); ok {
 		t.Error("the lookup must be pinned to the given civil date")
 	}
-	// Unscoped (internal) callers can see the other OU's subtype.
-	if _, ok := st.FindSameDayReport("600000", "secret-type", today, nil); !ok {
-		t.Error("an unscoped lookup must find any same-day report")
+	_ = s
+}
+
+// TestReuseRefusesAnUngrantedVersion proves reuse skips the RUN, never the grant. Without this,
+// "already generated today" would become a way to receive a form of a report the caller was never
+// entitled to read — the run allow-list would gate generating it while reuse handed it over.
+func TestReuseRefusesAnUngrantedVersion(t *testing.T) {
+	s, org, _, tgtA, _ := ouFixture(t)
+	st := s.st
+	st.SaveVersion(ReportVersion{Name: "对外版", Ord: 1, Visibility: VisibilityOwner})
+	st.UpdateTarget(tgtA, "A", `{"output_subtype":"val","symbol_input":"code","output_version":"对外版"}`)
+	st.SetGroupTargets(org, []GroupTarget{{TargetID: tgtA, Surfaces: ""}})
+	today := s.panelToday()
+	st.UpsertReport(Rep{Symbol: "600000", Date: today, RType: "val", Title: "已生成", Version: "对外版"})
+
+	rows := []map[string]string{{"code": "600000"}}
+	if _, _, ok := s.reuseSameDayReport("ext", tgtA, rows); ok {
+		t.Error("a report of an ungranted version must not be handed back")
 	}
-	_ = ouA
+	// Granted: it is reused, and the requester joins its viewer list — which is what makes strict
+	// per-person visibility cost no duplicate generation.
+	st.SetVersionGrants("对外版", []string{groupPrincipal(org)})
+	id, _, ok := s.reuseSameDayReport("ext", tgtA, rows)
+	if !ok {
+		t.Fatal("a granted version's same-day report must be reused")
+	}
+	if r, _ := st.GetNew(id, s.viewerScope("ext")); r == nil {
+		t.Error("the reused report must be readable by the requester afterwards")
+	}
 }
 
 // TestApiBatchJobCreateReusesSameDayReport is the end-to-end contract for R1's reuse gate: when a
@@ -51,6 +79,9 @@ func TestApiBatchJobCreateReusesSameDayReport(t *testing.T) {
 	st.UpdateTarget(tgtA, "A", `{"output_subtype":"val","symbol_input":"code"}`)
 	st.SetGroupTargets(org, []GroupTarget{{TargetID: tgtA, Surfaces: ""}})
 	st.SetGroupDailyQuota(org, quotaPtr(2))
+	// The target declares no version, so it produces the default one — and reuse only hands back a
+	// version the requester is granted (ADR 0024), so the OU is granted it here.
+	st.SetVersionGrants(st.DefaultVersion(), []string{groupPrincipal(org)})
 
 	submit := func(user, symbol string) *httptest.ResponseRecorder {
 		body := fmt.Sprintf(`{"target_id":%d,"rows":[{"code":%q}]}`, tgtA, symbol)
@@ -115,6 +146,9 @@ func TestSameDayReuseNeedsDeclaredTargetFields(t *testing.T) {
 	s, org, _, tgtA, _ := ouFixture(t)
 	st := s.st
 	st.SetGroupTargets(org, []GroupTarget{{TargetID: tgtA, Surfaces: ""}})
+	// Reuse hands back only a granted version (ADR 0024); this test is about the target's DECLARED
+	// fields, so the grant is in place and the declarations are the variable under test.
+	st.SetVersionGrants(st.DefaultVersion(), []string{groupPrincipal(org)})
 	today := time.Now().Format("2006-01-02")
 	st.UpsertReport(Rep{Symbol: "600000", Date: today, RType: "val", Title: "已生成"})
 
