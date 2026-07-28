@@ -1,6 +1,10 @@
 package app
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +131,59 @@ func TestNewVersionDefaultsToTheNarrowestVisibility(t *testing.T) {
 			t.Errorf("a version saved with no visibility set = %q, want the narrowest (%q)",
 				v.Visibility, VisibilityOwner)
 		}
+	}
+}
+
+// TestV1IngestAcceptsVersion is the producer's side of the contract: a workflow declares which
+// written form it just generated. Omitting it stays exactly what it means today — the default
+// version — so every existing workflow keeps working untouched.
+func TestV1IngestAcceptsVersion(t *testing.T) {
+	s := newV1Server(t)
+	post := func(body string) map[string]any {
+		req := httptest.NewRequest("POST", "/api/v1/reports", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer tok-all")
+		rec := httptest.NewRecorder()
+		s.v1Ingest(rec, req)
+		var m map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &m)
+		if m["ok"] != true {
+			t.Fatalf("ingest failed: %s", rec.Body.String())
+		}
+		return m
+	}
+	const base = `{"symbol":"600519","date":"2026-07-28","subtype":"投资决策","title":"投资决策 600519"`
+	internal := int64(post(base + `,"body_md":"scoring table"}`)["id"].(float64))
+	public := int64(post(base + `,"version":"对外版","body_md":"conclusion only"}`)["id"].(float64))
+
+	if internal == public {
+		t.Fatal("a second version must be its own report, not an overwrite of the first")
+	}
+	got, _ := s.st.GetNew(internal, nil)
+	if got == nil || got.Version != s.st.DefaultVersion() {
+		t.Errorf("a version-less ingest = %q, want the default", got.Version)
+	}
+	if got.MD != "scoring table" {
+		t.Errorf("publishing the second version disturbed the first: %q", got.MD)
+	}
+	if got, _ = s.st.GetNew(public, nil); got == nil || got.Version != "对外版" {
+		t.Errorf("declared version = %q, want 对外版", got.Version)
+	}
+	// A version nobody registered is registered on sight, so a workflow's output is never lost
+	// behind a 400 nobody is watching — and it is granted to nobody, so it discloses nothing.
+	if v, ok := s.st.Version("对外版"); !ok {
+		t.Error("an unregistered version must be registered on sight")
+	} else if v.Visibility != VisibilityOwner {
+		t.Errorf("auto-registered visibility = %q, want the narrowest", v.Visibility)
+	}
+	// The report a reader gets back over the API carries its version, so the UI can label it.
+	req := httptest.NewRequest("GET", "/api/v1/reports/"+fmt.Sprint(public), nil)
+	req.Header.Set("Authorization", "Bearer tok-all")
+	req.SetPathValue("id", fmt.Sprint(public))
+	rec := httptest.NewRecorder()
+	s.v1GetReport(rec, req)
+	var out map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["version"] != "对外版" {
+		t.Errorf("v1 read response version = %v, want 对外版 so a consumer can label what it got", out["version"])
 	}
 }
