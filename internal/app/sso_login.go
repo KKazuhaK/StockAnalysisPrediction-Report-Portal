@@ -17,7 +17,7 @@ import (
 // provisioned, inactive, expired and no-rule-match must be indistinguishable, or the login page
 // becomes a user-enumeration oracle against the IdP.
 func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOProvider, id ssoIdentity, target string) {
-	username, err := s.resolveSSOAccount(p, id)
+	username, created, err := s.resolveSSOAccount(p, id)
 	if err != nil {
 		log.Printf("sso: %s/%s login refused for subject %q: %v", p.Kind, p.Slug, id.Subject, err)
 		s.ssoFail(w, r, "not_provisioned")
@@ -26,9 +26,20 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 
 	// Rules decide the role AND the OU. In this portal the OU carries report visibility, the run
 	// allow-list and the daily quota (ADR 0022), so this is the actual permission decision.
-	cur := Current(s, username)
+	//
+	// A just-created account must NOT look "existing" here. It was written to the users table a few
+	// lines ago with no group, so a keep-on-miss rule would otherwise take the leave-them-as-they-are
+	// branch and leave a brand-new external user in group 0 — i.e. unrestricted, seeing everything.
+	// A fresh account takes the new-user path: provider defaults, or deny.
+	cur := ssorules.Current{}
+	if !created {
+		cur = Current(s, username)
+	}
 	out := ssorules.Resolve(s.ssoRules(p.ID), ssorules.Facts{
 		Groups: id.groups(p.AttrGroups),
+		// Attribute-named rules match against this. Without it every rule naming an attribute
+		// would silently never fire, which looks to an admin like the rule was ignored.
+		Attrs: id.attrMap(),
 	}, cur, ssorules.Defaults{
 		Role: firstNonEmpty(p.DefaultRole, "user"), Group: p.DefaultGroup,
 		AllowAdminRole: p.AllowAdminRole, PrivilegedRoles: privilegedRoles(),
@@ -68,35 +79,35 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 
 // resolveSSOAccount finds — or, when the provider allows it, creates — the local account behind an
 // external identity. The order matters and is the whole of the linking policy.
-func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (string, error) {
+func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (username string, created bool, err error) {
 	// 1. An existing link. This is the only lookup that runs on every login, and it is keyed on
 	// (provider, issuer, subject) — never on email.
 	if u, ok := s.st.FindIdentity(id.Provider, id.Issuer, id.Subject); ok {
-		return u, nil
+		return u, false, nil
 	}
 	// 2. Adoption: an account an admin pre-created (or SCIM will later create) carrying this IdP's
 	// immutable object id. This is why external_id ships with SSO rather than with SCIM.
 	if ext := id.claim(p.AttrExternalID); ext != "" {
 		if u, ok := s.st.FindUserByExternalID(p.Slug, ext); ok {
-			return u, nil
+			return u, false, nil
 		}
 	}
 	// 3. Otherwise the account must be created — and only if this provider is allowed to.
 	if p.Provisioning != "jit" {
-		return "", errNotProvisioned
+		return "", false, errNotProvisioned
 	}
 	upn := firstNonEmpty(id.claim(p.AttrUPN), id.Subject)
 	name, ok := sanitizeSSOUsername(upn)
 	if !ok {
-		return "", errUnusableUsername
+		return "", false, errUnusableUsername
 	}
 	// A collision with a LOCAL account is never auto-linked: that would let anyone who can make
 	// their IdP assert a matching UPN take over a password account. It needs an admin.
 	if existing := s.st.GetUser(name); existing != nil {
-		return "", errUsernameTaken
+		return "", false, errUsernameTaken
 	}
 	if err := s.st.UpsertUser(User{Username: name, PasswordHash: "", Role: firstNonEmpty(p.DefaultRole, "user")}); err != nil {
-		return "", err
+		return "", false, err
 	}
 	s.st.SetUserProfile(name, id.claim(p.AttrDisplay), id.claim(p.AttrEmail))
 	s.st.SetUserSource(name, "jit", p.Slug)
@@ -107,7 +118,7 @@ func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (string, error
 		s.st.SetUserExpiry(name, time.Now().In(s.panelLocation()).
 			AddDate(0, 0, p.DefaultExpiryDays).Format("2006-01-02"))
 	}
-	return name, nil
+	return name, true, nil
 }
 
 // issueSession mints the portal session cookie for an SSO login, reusing the same signed-cookie

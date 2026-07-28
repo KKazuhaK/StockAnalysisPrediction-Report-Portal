@@ -265,7 +265,10 @@ func (s *Store) PasskeyCredentials(username string) ([]webauthn.Credential, erro
 	if username == "" {
 		return nil, nil
 	}
-	rows, err := s.query(`SELECT credential FROM webauthn_credentials WHERE username=? ORDER BY id`, username)
+	// sign_count is read from the COLUMN, not from the stored blob: the blob is written once at
+	// registration, so trusting it would compare every later ceremony against the registration-time
+	// counter and make clone detection permanently useless.
+	rows, err := s.query(`SELECT credential, COALESCE(sign_count,0) FROM webauthn_credentials WHERE username=? ORDER BY id`, username)
 	if err != nil {
 		return nil, err
 	}
@@ -273,11 +276,13 @@ func (s *Store) PasskeyCredentials(username string) ([]webauthn.Credential, erro
 	var out []webauthn.Credential
 	for rows.Next() {
 		var blob sql.NullString
-		if rows.Scan(&blob) != nil || blob.String == "" {
+		var signCount int64
+		if rows.Scan(&blob, &signCount) != nil || blob.String == "" {
 			continue
 		}
 		var c webauthn.Credential
 		if json.Unmarshal([]byte(blob.String), &c) == nil {
+			c.Authenticator.SignCount = uint32(signCount)
 			out = append(out, c)
 		}
 	}

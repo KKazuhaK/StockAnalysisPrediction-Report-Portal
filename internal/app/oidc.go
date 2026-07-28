@@ -361,6 +361,32 @@ func (id ssoIdentity) groups(name string) []string {
 	return nil
 }
 
+// attrMap exposes every claim as a multi-valued attribute, which is what an attribute-named rule
+// matches against. Values are normalized to slices so a rule does not have to care whether the IdP
+// sent one value or several — a difference IdPs are not consistent about even for the same claim.
+func (id ssoIdentity) attrMap() map[string][]string {
+	out := make(map[string][]string, len(id.Claims))
+	for k, v := range id.Claims {
+		switch t := v.(type) {
+		case string:
+			out[k] = []string{t}
+		case []string:
+			out[k] = t
+		case []any:
+			var vals []string
+			for _, e := range t {
+				if sv, ok := e.(string); ok {
+					vals = append(vals, sv)
+				}
+			}
+			out[k] = vals
+		case float64, bool:
+			out[k] = []string{fmt.Sprint(t)}
+		}
+	}
+	return out
+}
+
 // attrs serializes the claims for admin diagnostics ("what did the IdP actually send?").
 func (id ssoIdentity) attrs() string {
 	b, err := json.Marshal(id.Claims)
