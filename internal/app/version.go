@@ -213,3 +213,124 @@ func (s *Store) identIndexCoversVersion() bool {
 	}
 	return def != "" && strings.Contains(def, "version")
 }
+
+// ---------- who may read which version ----------
+
+// A grant names a PRINCIPAL, and one column holds both kinds: an OU ("g:<id>") or a single account
+// ("u:<name>"). Two tables — one for OUs, one for accounts — would mean the read path has two
+// shapes, and the read path is the last place that should have two ways of being right. It also
+// makes "no OU tree configured at all" a first-class case rather than a workaround: a lone external
+// account is granted directly.
+func groupPrincipal(id int64) string { return fmt.Sprintf("g:%d", id) }
+func userPrincipal(name string) string {
+	return "u:" + strings.ToLower(strings.TrimSpace(name))
+}
+
+// VersionGrants lists the principals granted one version.
+func (s *Store) VersionGrants(version string) []string {
+	rows, err := s.query("SELECT principal FROM version_grants WHERE version=? ORDER BY principal",
+		normalizeVersion(version))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// SetVersionGrants replaces one version's whole grant list in a transaction, so a save is atomic and
+// can never leave a version half-disclosed.
+func (s *Store) SetVersionGrants(version string, principals []string) error {
+	version = normalizeVersion(version)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(s.bind("DELETE FROM version_grants WHERE version=?"), version); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, p := range principals {
+		if p = strings.TrimSpace(p); p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		if _, err := tx.Exec(s.bind("INSERT INTO version_grants(version,principal) VALUES(?,?)"),
+			version, p); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// GrantedVersions resolves which versions a user may read: their account's own grants if it has
+// any, otherwise the NEAREST ancestor OU that has some. Empty means nothing — default-deny, so an
+// account nobody configured discloses nothing.
+//
+// Nearest-wins rather than union, and the reason is this project's tree shape: external OUs hang off
+// the Default OU, so a union would push whatever the root was granted down into every tenant, the
+// internal version included. Configuring a nearer principal is how an admin narrows.
+func (s *Store) GrantedVersions(username string) []string {
+	if v := s.principalVersions(userPrincipal(username)); len(v) > 0 {
+		return v
+	}
+	chain := s.groupChain(username) // root → leaf
+	for i := len(chain) - 1; i >= 0; i-- {
+		if v := s.principalVersions(groupPrincipal(chain[i])); len(v) > 0 {
+			return v
+		}
+	}
+	return nil
+}
+
+// principalVersions lists the versions one principal is granted directly, ordered by the registry so
+// the reading page's version switcher is stable rather than reordering itself per report.
+func (s *Store) principalVersions(principal string) []string {
+	rows, err := s.query(`SELECT g.version FROM version_grants g
+		LEFT JOIN report_versions v ON v.name = g.version
+		WHERE g.principal=? ORDER BY COALESCE(v.ord,0), g.version`, principal)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if rows.Scan(&v) == nil {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// SetUserRestricted throws the scoping switch on one ACCOUNT. Until now "restricted" was purely an
+// OU property, so a portal that never built an OU tree had no way to scope anybody — which is the
+// setup an external user is most likely to arrive into first.
+func (s *Store) SetUserRestricted(username string, restricted bool) error {
+	v := 0
+	if restricted {
+		v = 1
+	}
+	_, err := s.exec("UPDATE users SET restricted=? WHERE username=?", v, username)
+	return err
+}
+
+// isRestricted reports whether a user's reads are scoped at all. The account flag and the OU flag OR
+// together, so an OU-restricted member cannot be un-restricted by leaving their own flag off.
+// Admins are never scoped: someone has to be able to diagnose a tenancy problem.
+func (s *Server) isRestricted(username string) bool {
+	if username == "" || s.isAdmin(username) {
+		return false
+	}
+	if u := s.st.GetUser(username); u != nil && u.Restricted {
+		return true
+	}
+	return s.st.EffectiveGroupSettings(username).Restricted
+}

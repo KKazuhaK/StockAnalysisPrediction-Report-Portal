@@ -299,6 +299,9 @@ func (s *Store) baseSchemaStmts() []string {
 		// tables (docs/adr/0013-v2-schema-consolidation.md). active defaults to 1 (enabled).
 		// expires_at (ADR 0022): account validity cutoff as a panel-tz civil date "YYYY-MM-DD" (NULL =
 		// never), orthogonal to active — valid THROUGH that whole day; see Server.accountExpired. Additive.
+		// users.restricted (ADR 0024): scopes THIS account's reads regardless of its OU, so a portal
+		// with no OU tree can still have external users. ORs with the OU's own restricted flag.
+		//
 		// Authentication columns (ADR 0023). source/source_ref record WHERE an account came from
 		// (local | jit | scim) so a future sync only ever owns its own rows; external_id is the IdP's
 		// immutable object id and the SSO<->SCIM join key — it must be recorded during the SSO era
@@ -314,7 +317,7 @@ func (s *Store) baseSchemaStmts() []string {
 			external_id TEXT, source TEXT DEFAULT 'local', source_ref TEXT DEFAULT '',
 			created_at TEXT, updated_at TEXT,
 			totp_secret_enc TEXT, totp_enabled INTEGER DEFAULT 0, totp_confirmed_at TEXT,
-			recovery_codes TEXT)`,
+			recovery_codes TEXT, restricted INTEGER DEFAULT 0)`,
 		// An account is linked to an external identity ONLY by (provider, issuer, subject) — never by
 		// email, which is the nOAuth account-takeover class (an admin of any other tenant can set an
 		// unverified email claim to your user's address). sub is unique only WITHIN an issuer, hence
@@ -639,16 +642,18 @@ func (s *Store) execBaseSchema(indexes bool) error {
 const userCols = `u.username,u.password_hash,u.role,
 	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,''),
 	COALESCE(u.session_rev,0),COALESCE(u.expires_at,''),
-	COALESCE(u.source,'local'),COALESCE(u.source_ref,''),COALESCE(u.external_id,''),COALESCE(u.totp_enabled,0)`
+	COALESCE(u.source,'local'),COALESCE(u.source_ref,''),COALESCE(u.external_id,''),COALESCE(u.totp_enabled,0),
+	COALESCE(u.restricted,0)`
 
 func scanUser(scan func(...any) error) (User, error) {
 	var u User
 	var role, dn, email, last, expires, source, sourceRef, externalID sql.NullString
-	var active, sessionRev, totp sql.NullInt64
+	var active, sessionRev, totp, restricted sql.NullInt64
 	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev, &expires,
-		&source, &sourceRef, &externalID, &totp); err != nil {
+		&source, &sourceRef, &externalID, &totp, &restricted); err != nil {
 		return User{}, err
 	}
+	u.Restricted = restricted.Int64 != 0
 	u.Role, u.DisplayName, u.Email, u.LastLogin = role.String, dn.String, email.String, last.String
 	u.Active = !active.Valid || active.Int64 != 0
 	u.SessionRev = sessionRev.Int64
