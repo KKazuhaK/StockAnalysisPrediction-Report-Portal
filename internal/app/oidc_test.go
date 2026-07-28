@@ -41,9 +41,10 @@ func signRS256(t *testing.T, key *rsa.PrivateKey, header, claims map[string]any)
 // fakeOP is a minimal OpenID Provider: discovery, JWKS and a token endpoint that mints an ID token
 // we control field by field, so each verification step can be tested by breaking exactly one thing.
 type fakeOP struct {
-	srv    *httptest.Server
-	key    *rsa.PrivateKey
-	claims map[string]any // overrides applied to the next minted ID token
+	srv           *httptest.Server
+	key           *rsa.PrivateKey
+	claims        map[string]any // overrides applied to the next minted ID token
+	discoveryDown bool           // simulate an IdP whose well-known endpoint stops answering
 }
 
 func newFakeOP(t *testing.T) *fakeOP {
@@ -55,6 +56,10 @@ func newFakeOP(t *testing.T) *fakeOP {
 	op := &fakeOP{key: key, claims: map[string]any{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		if op.discoveryDown {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"issuer":                                op.srv.URL,
 			"authorization_endpoint":                op.srv.URL + "/auth",
@@ -331,5 +336,27 @@ func TestOIDCReturnPathMustBeRelative(t *testing.T) {
 		if got := safeReturnPath(ok); got != ok {
 			t.Errorf("safeReturnPath(%q) = %q, want it preserved", ok, got)
 		}
+	}
+}
+
+// TestOIDCDiscoveryIsCached proves a login does not depend on the IdP's well-known endpoint being
+// reachable every time: the document is cached on first use, and a later sign-in still works when
+// discovery has gone away. Without this, a slow or briefly-down IdP takes sign-in with it.
+func TestOIDCDiscoveryIsCached(t *testing.T) {
+	s, op := oidcFixture(t)
+	loc, ck := start(t, s, op, "acme")
+	if rec := callback(s, "acme", loc.Query().Get("state"), "c", ck); refused(rec) {
+		t.Fatalf("first login was refused: %s", rec.Header().Get("Location"))
+	}
+	p, _ := s.st.SSOProviderBySlug("acme")
+	if p.DiscoveryJSON == "" {
+		t.Fatal("the discovery document must be cached after the first use")
+	}
+
+	// Take the OP's discovery endpoint away entirely; everything else keeps working.
+	op.discoveryDown = true
+	loc, ck = start(t, s, op, "acme")
+	if rec := callback(s, "acme", loc.Query().Get("state"), "c", ck); refused(rec) {
+		t.Errorf("a login must survive discovery being unreachable once cached: %s", rec.Header().Get("Location"))
 	}
 }
