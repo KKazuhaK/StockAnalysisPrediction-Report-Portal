@@ -186,3 +186,13 @@ func (s *Server) applyAssignment(username, role string, group int64) error {
 	}
 	return s.st.BumpSessionRev(username)
 }
+
+// LastSeenAttrs returns the claims recorded on the most recent sign-in through a provider. It backs
+// the admin "what did the IdP actually send?" view, which is what makes attribute mapping a glance
+// rather than trial and error.
+func (s *Store) LastSeenAttrs(providerSlug string) string {
+	var v sql.NullString
+	s.queryRow(`SELECT attrs FROM user_identities WHERE provider_slug=? AND attrs<>''
+		ORDER BY last_login_at DESC LIMIT 1`, providerSlug).Scan(&v)
+	return v.String
+}

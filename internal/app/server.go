@@ -233,6 +233,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/sso/providers", s.requireAdminJSON(s.apiAdminSSOSave))
 	mux.HandleFunc("DELETE /api/admin/sso/providers/{id}", s.requireAdminJSON(s.apiAdminSSODelete))
 	mux.HandleFunc("POST /api/admin/sso/providers/{slug}/metadata", s.requireAdminJSON(s.apiAdminSSOFetchMetadata))
+	mux.HandleFunc("GET /api/admin/sso/providers/{slug}/last-seen", s.requireAdminJSON(s.apiAdminSSOLastSeen))
 	mux.HandleFunc("GET /api/admin/sso/rules", s.requireAdminJSON(s.apiAdminSSORules))
 	mux.HandleFunc("PUT /api/admin/sso/rules", s.requireAdminJSON(s.apiAdminSSORulesSave))
 	mux.HandleFunc("GET /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargets))

@@ -2,7 +2,9 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -224,6 +226,59 @@ func (s *Server) apiAdminSSOFetchMetadata(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{"ok": true, "entity_id": meta.EntityID, "fetched_at": p.IdPMetadataFetched})
 }
 
+// apiAdminSSOLastSeen returns the claims the IdP actually sent on the most recent sign-in through
+// this provider. Attribute mapping is otherwise configured by guesswork — IdPs disagree wildly on
+// claim names (ADFS and Entra send long URN forms, Okta and Keycloak short ones), and a wrong guess
+// fails as "not provisioned" with nothing to go on. Showing the real keys turns that into a glance.
+//
+// Only the CLAIM NAMES and a short preview of each value are returned, never the whole payload:
+// an assertion can carry personal data that an admin has no reason to read in bulk.
+func (s *Server) apiAdminSSOLastSeen(w http.ResponseWriter, r *http.Request, user string) {
+	p, ok := s.st.SSOProviderBySlug(r.PathValue("slug"))
+	if !ok {
+		jsonError(w, http.StatusNotFound, "no such provider")
+		return
+	}
+	raw := s.st.LastSeenAttrs(p.Slug)
+	if raw == "" {
+		writeJSON(w, map[string]any{"seen": false})
+		return
+	}
+	var claims map[string]any
+	if err := json.Unmarshal([]byte(raw), &claims); err != nil {
+		writeJSON(w, map[string]any{"seen": false})
+		return
+	}
+	out := make([]map[string]any, 0, len(claims))
+	for k, v := range claims {
+		out = append(out, map[string]any{"name": k, "preview": previewClaim(v)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
+	writeJSON(w, map[string]any{"seen": true, "claims": out})
+}
+
+// previewClaim renders a claim value compactly and truncated: enough to recognise which field is
+// which, not enough to be a data export.
+func previewClaim(v any) string {
+	var s string
+	switch t := v.(type) {
+	case string:
+		s = t
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, e := range t {
+			parts = append(parts, fmt.Sprint(e))
+		}
+		s = strings.Join(parts, ", ")
+	default:
+		s = fmt.Sprint(t)
+	}
+	if len([]rune(s)) > 60 {
+		s = string([]rune(s)[:60]) + "…"
+	}
+	return s
+}
+
 func (s *Server) apiAdminSSODelete(w http.ResponseWriter, r *http.Request, user string) {
 	if err := s.st.DeleteSSOProvider(pathID(r, "id")); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -304,5 +359,3 @@ func (s *Server) apiAdminSSORulesSave(w http.ResponseWriter, r *http.Request, us
 	}
 	writeJSON(w, okJSON)
 }
-
-var _ = json.Marshal
