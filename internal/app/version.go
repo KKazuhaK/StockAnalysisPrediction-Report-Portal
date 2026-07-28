@@ -180,17 +180,21 @@ func (s *Store) reconcileReportVersions() error {
 	if err := s.ensureDefaultVersion(); err != nil {
 		return err
 	}
+	// The index already covering version means step 2 ran to completion in an earlier boot — the
+	// index could not have been built otherwise. Returning here keeps startup off a full-table scan
+	// of reports forever after: measured at 200k rows, the unguarded backfill cost ~700ms on EVERY
+	// start, which is a migration quietly billing itself to every restart.
+	if s.identIndexCoversVersion() {
+		return nil
+	}
 	if _, err := s.exec(`UPDATE reports SET version=? WHERE version IS NULL OR version=''`,
 		defaultVersionName); err != nil {
 		return err
 	}
-	// Named rather than "if the shape changed": an IF EXISTS drop is idempotent, and the index is
-	// recreated from reportIdentIndex moments later, so this costs one rebuild on the upgrade run
-	// and nothing on every run after it.
-	if !s.identIndexCoversVersion() {
-		if _, err := s.exec(`DROP INDEX IF EXISTS idx_reports_ident`); err != nil {
-			return err
-		}
+	// The index is recreated from reportIdentIndex moments later, so dropping it here costs one
+	// rebuild on the upgrade run and nothing on any run after it.
+	if _, err := s.exec(`DROP INDEX IF EXISTS idx_reports_ident`); err != nil {
+		return err
 	}
 	return nil
 }
