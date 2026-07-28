@@ -326,6 +326,11 @@ and its footguns fewer, so the shared `completeSSOLogin` tail was exercised by t
 first. 2FA and passkeys came after SSO because they reuse its envelope crypto, its pending-request
 table and its step-up plumbing — building them first would have meant building those twice.
 
+The user-facing half shipped with it, because a factor nobody can reach protects nobody: an
+`/account` page (password change, TOTP enrolment with its one-time recovery codes, passkey
+registration and revocation) and the passkey button on the second-factor step of sign-in. Both were
+missing in the first cut — the endpoints existed, and enrolling was an admin errand.
+
 **Still deferred, deliberately:** multi-provider admin UI (the tables and routes already carry a
 slug, so it is a UI change with no schema movement) and SCIM 2.0 (its own ADR; `external_id`,
 `source` and `source_ref` are already recorded so accounts will join up when it arrives).
