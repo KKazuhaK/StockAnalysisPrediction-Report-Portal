@@ -40,12 +40,12 @@ func TestDeleteFinishedJobsBefore(t *testing.T) {
 	st := newTestStore(t)
 	cutoff := agoLocal(30)
 
-	keepRecent := seedJob(t, st, "finished", agoLocal(10)) // newer than cutoff → keep
+	keepRecent := seedJob(t, st, "finished", agoLocal(10))  // newer than cutoff → keep
 	delFinished := seedJob(t, st, "finished", agoLocal(40)) // older terminal → delete
 	delExpired := seedJob(t, st, "expired", agoLocal(40))   // 'expired' must be included
 	delCancelled := seedJob(t, st, "cancelled", agoLocal(40))
-	keepRunning := seedJob(t, st, "running", "")     // active → keep
-	keepEmpty := seedJob(t, st, "finished", "")      // terminal but no finished_at → keep
+	keepRunning := seedJob(t, st, "running", "")       // active → keep
+	keepEmpty := seedJob(t, st, "finished", "")        // terminal but no finished_at → keep
 	keepBoundary := seedJob(t, st, "finished", cutoff) // exactly == cutoff → keep (strict <)
 
 	if n, err := st.CountFinishedJobsBefore(cutoff); err != nil || n != 3 {
@@ -102,7 +102,7 @@ func TestDeleteFinishedJobsBefore_RaceSafe(t *testing.T) {
 // timezone-less microsecond form — plus defensive variants; date-only/empty carry no instant.
 func TestParseReportInstant(t *testing.T) {
 	ok := []struct{ in, wantUTC string }{
-		{"2026-07-02T18:51:21Z", "2026-07-02T18:51:21Z"},              // zoned, no fraction (v1 stamp)
+		{"2026-07-02T18:51:21Z", "2026-07-02T18:51:21Z"},             // zoned, no fraction (v1 stamp)
 		{"2026-01-08T15:05:39.575420", "2026-01-08T15:05:39.57542Z"}, // no zone + micros → UTC (bulk of prod)
 		{"2026-01-08T15:05:39", "2026-01-08T15:05:39Z"},              // no zone, no fraction → UTC
 		{"2026-07-02T10:00:00+08:00", "2026-07-02T02:00:00Z"},        // offset → normalized to UTC
@@ -140,7 +140,7 @@ func TestDeleteReportsIngestedBefore(t *testing.T) {
 		}
 		ids[name] = id
 	}
-	oldZ := time.Now().UTC().AddDate(0, 0, -800).Format(time.RFC3339)             // zoned Z
+	oldZ := time.Now().UTC().AddDate(0, 0, -800).Format(time.RFC3339)                    // zoned Z
 	oldFrac := time.Now().UTC().AddDate(0, 0, -800).Format("2006-01-02T15:04:05.000000") // no-zone micros
 	recentZ := time.Now().UTC().AddDate(0, 0, -10).Format(time.RFC3339)
 	recentFrac := time.Now().UTC().AddDate(0, 0, -10).Format("2006-01-02T15:04:05.000000")
@@ -218,10 +218,10 @@ func TestDeleteReportChunk_ReingestSkipped(t *testing.T) {
 // grace), and never-expiring (empty expires_at) tokens are kept.
 func TestDeleteExpiredTokensBefore(t *testing.T) {
 	st := newTestStore(t)
-	st.CreateToken("t-40", "n", "all", agoLocal(40))                                          // expired long ago → delete
-	st.CreateToken("t-5", "n", "all", agoLocal(5))                                            // expired recently → keep (within grace)
+	st.CreateToken("t-40", "n", "all", agoLocal(40))                                                   // expired long ago → delete
+	st.CreateToken("t-5", "n", "all", agoLocal(5))                                                     // expired recently → keep (within grace)
 	st.CreateToken("t-future", "n", "all", time.Now().AddDate(0, 0, 10).Format("2006-01-02 15:04:05")) // not expired → keep
-	st.CreateToken("t-never", "n", "all", "")                                                 // never expires → keep
+	st.CreateToken("t-never", "n", "all", "")                                                          // never expires → keep
 
 	cutoff := agoLocal(30) // grace 30 days
 	if n, err := st.CountExpiredTokensBefore(cutoff); err != nil || n != 1 {
