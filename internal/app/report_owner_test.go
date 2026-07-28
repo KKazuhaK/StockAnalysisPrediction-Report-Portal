@@ -70,25 +70,25 @@ func TestStampReportOwnerFirstWriterWins(t *testing.T) {
 // and a tampered / empty / foreign token is rejected so ownership can't be forged.
 func TestOwnerTokenRoundTrip(t *testing.T) {
 	s := &Server{cfg: &config.Config{SecretKey: "0123456789abcdef0123456789abcdef"}}
-	tok := s.mintOwnerToken(42)
+	tok := s.mintOwnerToken(42, "asker")
 	if tok == "" {
 		t.Fatal("mintOwnerToken returned empty")
 	}
-	if ou, ok := s.ownerFromToken(tok); !ok || ou != 42 {
+	if ou, who, ok := s.ownerFromToken(tok); !ok || ou != 42 || who != "asker" {
 		t.Fatalf("round-trip ou=%d ok=%v, want 42/true", ou, ok)
 	}
-	if _, ok := s.ownerFromToken(tok + "x"); ok {
+	if _, _, ok := s.ownerFromToken(tok + "x"); ok {
 		t.Fatal("tampered token accepted")
 	}
-	if _, ok := s.ownerFromToken(""); ok {
+	if _, _, ok := s.ownerFromToken(""); ok {
 		t.Fatal("empty token accepted")
 	}
 	// A session cookie must not be usable as an owner token (different prefix).
-	if _, ok := s.ownerFromToken(s.signUser(User{Username: "x"})); ok {
+	if _, _, ok := s.ownerFromToken(s.signUser(User{Username: "x"})); ok {
 		t.Fatal("a session token was accepted as an owner token")
 	}
 	// ou 0 mints nothing.
-	if s.mintOwnerToken(0) != "" {
+	if s.mintOwnerToken(0, "") != "" {
 		t.Fatal("ou 0 should mint no token")
 	}
 }
@@ -114,7 +114,7 @@ func TestV1IngestStampsOwnerFromToken(t *testing.T) {
 		return m.ID
 	}
 
-	tok := s.mintOwnerToken(55)
+	tok := s.mintOwnerToken(55, "asker")
 	rec := ingest(`{"symbol":"300750","date":"2026-07-24","subtype":"val","owner_token":"` + tok + `"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ingest with token: code %d (%s)", rec.Code, rec.Body.String())

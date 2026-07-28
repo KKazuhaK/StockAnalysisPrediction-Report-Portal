@@ -38,7 +38,7 @@ func TestRunInputsInjectsOwnerTokenForRestrictedOnly(t *testing.T) {
 	if tok == "" {
 		t.Fatal("restricted run must carry an owner token")
 	}
-	if ou, ok := s.ownerFromToken(tok); !ok || ou != org {
+	if ou, who, ok := s.ownerFromToken(tok); !ok || ou != org || who == "" {
 		t.Fatalf("injected token OU = %d (ok %v), want %d", ou, ok, org)
 	}
 	if got["symbol"] != "600519" {
