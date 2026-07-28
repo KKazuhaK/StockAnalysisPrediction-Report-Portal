@@ -66,10 +66,10 @@ const ownerTokenInput = "_rp_owner_token"
 // stamped to that OU at ingest (ADR 0022 R1). For every internal run it returns the caller's inputs
 // unchanged — the money-path stays byte-for-byte identical — and it never mutates the caller's map.
 func (s *Server) runInputs(job BatchJob, inputs map[string]string) map[string]string {
-	if !s.st.EffectiveGroupSettings(job.CreatedBy).Restricted {
+	if !s.isRestricted(job.CreatedBy) {
 		return inputs
 	}
-	tok := s.mintOwnerToken(s.st.OwnerGroupOf(job.CreatedBy))
+	tok := s.mintOwnerToken(s.st.OwnerGroupOf(job.CreatedBy), job.CreatedBy)
 	if tok == "" {
 		return inputs
 	}

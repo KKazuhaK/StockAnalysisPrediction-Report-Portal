@@ -223,9 +223,16 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	// Stamp the generating OU first-writer-wins from the signed owner_token (ADR 0022 R1). A missing
 	// or invalid token leaves owner_group NULL (internal/unattributed), which fails closed for
 	// restricted viewers. Ownership is never taken from a plain client-supplied field.
-	if ou, ok := s.ownerFromToken(in.OwnerToken); ok {
+	// Attribution (ADR 0022 R1) and the requester's place on the report's viewer list (ADR 0024) are
+	// both decided by the signed token, never by a client-supplied field. The viewer row is what
+	// makes the report readable by the person who paid for it under per-person visibility; stamping
+	// the OU alone would leave them unable to open their own result.
+	if ou, who, ok := s.ownerFromToken(in.OwnerToken); ok {
 		if _, err := s.st.StampReportOwner(id, ou); err != nil {
 			log.Printf("v1 ingest stamp owner id=%d ou=%d: %v", id, ou, err)
+		}
+		if err := s.st.AddReportViewer(id, in.Date, who, ou); err != nil {
+			log.Printf("v1 ingest record viewer id=%d user=%q: %v", id, who, err)
 		}
 	}
 	if len(in.Tracking) > 0 {

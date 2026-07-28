@@ -182,3 +182,51 @@ func TestAccountScopedWithNoOU(t *testing.T) {
 		t.Error("owner visibility must hold for a lone account too")
 	}
 }
+
+// TestOwnRunBecomesReadable closes the loop between generating and reading. A scoped user's own run
+// must leave them on the report's viewer list, or under owner visibility they cannot read the very
+// report they paid for. The attribution token therefore carries the PERSON, not only their OU —
+// under per-person visibility the OU alone is not enough to identify a reader.
+func TestOwnRunBecomesReadable(t *testing.T) {
+	s := tenancyServer(t)
+	root := s.st.EnsureDefaultGroup()
+	ou, _ := s.st.CreateUserGroup("client-A", "", 0)
+	s.st.SetGroupParent(ou, root)
+	s.st.SetGroupRestricted(ou, true)
+	s.st.UpsertUser(User{Username: "alice", PasswordHash: "h", Role: "user"})
+	s.st.SetPrimaryGroup("alice", ou)
+	s.st.UpsertUser(User{Username: "colleague", PasswordHash: "h", Role: "user"})
+	s.st.SetPrimaryGroup("colleague", ou)
+	s.st.SaveVersion(ReportVersion{Name: "对外版", Ord: 1, Visibility: VisibilityOwner})
+	s.st.SetVersionGrants("对外版", []string{groupPrincipal(ou)})
+
+	// The run: the portal injects a signed token naming who asked, the workflow echoes it back.
+	inputs := s.runInputs(BatchJob{CreatedBy: "alice"}, map[string]string{"code": "600519"})
+	token := inputs[ownerTokenInput]
+	if token == "" {
+		t.Fatal("a scoped user's run must carry an attribution token")
+	}
+	gotOU, gotUser, ok := s.ownerFromToken(token)
+	if !ok || gotOU != ou || gotUser != "alice" {
+		t.Fatalf("token carries (ou=%d user=%q ok=%v), want (%d, alice, true)", gotOU, gotUser, ok, ou)
+	}
+	// A tampered token attributes nothing rather than attributing wrongly.
+	if _, _, ok := s.ownerFromToken(token + "x"); ok {
+		t.Error("a tampered attribution token must be refused")
+	}
+
+	today := s.panelToday()
+	id, _, _ := s.st.UpsertReport(Rep{Symbol: "600519", Date: today, RType: "投资决策",
+		Title: "T", Version: "对外版", MD: "body"})
+	s.st.StampReportOwner(id, gotOU)
+	if err := s.st.AddReportViewer(id, today, gotUser, gotOU); err != nil {
+		t.Fatal(err)
+	}
+
+	if r, _ := s.st.GetNew(id, s.viewerScope("alice")); r == nil {
+		t.Error("the requester must be able to read the report their own run produced")
+	}
+	if r, _ := s.st.GetNew(id, s.viewerScope("colleague")); r != nil {
+		t.Error("owner visibility must not extend to a colleague who did not ask")
+	}
+}
