@@ -416,3 +416,14 @@ func (s *Store) SetGroupGovernance(id int64, allowUrgent *bool, maxQueued *int, 
 		nullBoolInt(allowUrgent), nullInt(maxQueued), rw, id)
 	return err
 }
+
+// GroupRestrictedEffective reports whether an OU is external once inheritance is applied — its own
+// flag, or any ancestor's, since restriction is sticky down the tree.
+func (s *Store) GroupRestrictedEffective(id int64) bool {
+	for _, g := range s.ListUserGroups() {
+		if g.ID == id {
+			return g.RestrictedEffective
+		}
+	}
+	return false
+}

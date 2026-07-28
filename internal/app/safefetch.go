@@ -83,9 +83,15 @@ func (c *safeClient) checkURL(raw string) error {
 	if host == "localhost" {
 		return fmt.Errorf("localhost is not allowed")
 	}
+	// A name that does not resolve right now is NOT rejected here. This check is the early,
+	// friendly one — the authoritative check is the dial-time hook, which sees the address the
+	// connection actually uses. Failing here on a lookup error would make saving configuration
+	// depend on DNS being available and on the IdP being resolvable from wherever the admin
+	// happens to be, which split-horizon setups routinely are not. A resolvable name is still
+	// checked, so an obviously-internal target is caught at save time.
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		return fmt.Errorf("cannot resolve %s", host)
+		return nil
 	}
 	for _, ip := range ips {
 		if err := c.checkIP(ip); err != nil {

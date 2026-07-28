@@ -63,6 +63,13 @@ func (s *Server) passkeyUser(username string) (passkeyUser, error) {
 
 // POST /api/me/passkeys/register/begin
 func (s *Server) apiPasskeyRegisterBegin(w http.ResponseWriter, r *http.Request, user string) {
+	// Step-up: a live session alone must not be enough to add a credential. Otherwise a stolen
+	// cookie becomes permanent access — the attacker registers their own authenticator and keeps
+	// getting in after the cookie is revoked and the password changed.
+	if !s.stepUpOK(r, user) {
+		jsonError(w, http.StatusForbidden, "confirm with your password or a current code first")
+		return
+	}
 	wa, err := s.webAuthn()
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -121,18 +128,31 @@ func (s *Server) apiPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request
 	writeJSON(w, okJSON)
 }
 
-// POST /api/login/passkey/begin — start a passkey sign-in for a named account.
+// POST /api/login/passkey/begin — offer a passkey as the SECOND factor of a password login.
+//
+// This is deliberately not a passwordless entry point. A passkey here is registered with user
+// verification "preferred", so it may be possession-only; accepting it as the sole credential would
+// be weaker than the password it replaced. The caller must therefore present the single-use token
+// from a completed password leg, exactly like the TOTP step. Passwordless is a later change, and it
+// needs discoverable credentials plus userVerification=required to be made deliberately.
 func (s *Server) apiPasskeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Username string `json:"username"`
+		Token string `json:"token"`
 	}
 	readJSON(r, &in)
+	// Peek at the pending login without consuming it — the ceremony below can still fail, and
+	// burning the token here would force the user back to the password screen every time.
+	pending, ok := s.st.PeekAuthRequest(in.Token, time.Now())
+	if !ok || pending.Kind != "2fa" || pending.Username == "" {
+		jsonError(w, http.StatusUnauthorized, "that sign-in attempt has expired; start again")
+		return
+	}
 	wa, err := s.webAuthn()
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	pu, err := s.passkeyUser(strings.TrimSpace(in.Username))
+	pu, err := s.passkeyUser(pending.Username)
 	// A user with no passkeys and an unknown user must look identical, or this becomes an
 	// account-enumeration oracle.
 	if err != nil || len(pu.creds) == 0 {
@@ -149,14 +169,21 @@ func (s *Server) apiPasskeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "token": token, "options": opts})
+	writeJSON(w, map[string]any{"ok": true, "token": token, "pending": in.Token, "options": opts})
 }
 
-// POST /api/login/passkey/finish
+// POST /api/login/passkey/finish — completes the second factor and consumes the password leg.
 func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	session, ok := s.takeCeremonyAny(token, "webauthn-login")
 	if !ok {
+		jsonError(w, http.StatusUnauthorized, "that sign-in attempt has expired; start again")
+		return
+	}
+	// Consume the password leg here, not at begin: this is the point of no return, and it must be
+	// single-use so a completed ceremony cannot be replayed into a second session.
+	pending, ok := s.st.ConsumeAuthRequest(r.URL.Query().Get("pending"), time.Now())
+	if !ok || pending.Kind != "2fa" || pending.Username != string(session.UserID) {
 		jsonError(w, http.StatusUnauthorized, "that sign-in attempt has expired; start again")
 		return
 	}

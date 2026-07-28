@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"log"
 	"time"
 )
 
@@ -81,6 +82,29 @@ func (s *Store) ConsumeAuthRequest(token string, now time.Time) (AuthRequest, bo
 	return r, true
 }
 
+// PeekAuthRequest reads a pending ceremony without claiming it. Used where a later step is still
+// allowed to fail — starting a WebAuthn ceremony, say — so a user is not thrown back to the
+// password screen because their authenticator was slow. The claim still happens exactly once, at
+// the point of no return.
+func (s *Store) PeekAuthRequest(token string, now time.Time) (AuthRequest, bool) {
+	if token == "" {
+		return AuthRequest{}, false
+	}
+	var r AuthRequest
+	var provID sql.NullInt64
+	var kind, reqID, nonce, verifier, username, target sql.NullString
+	err := s.queryRow(`SELECT provider_id,kind,req_id,nonce,verifier,username,target
+		FROM sso_auth_requests WHERE token=? AND expires_at>?`, token, now.Unix()).
+		Scan(&provID, &kind, &reqID, &nonce, &verifier, &username, &target)
+	if err != nil {
+		return AuthRequest{}, false
+	}
+	r.Token, r.ProviderID, r.Kind = token, provID.Int64, kind.String
+	r.ReqID, r.Nonce, r.Verifier = reqID.String, nonce.String, verifier.String
+	r.Username, r.Target = username.String, target.String
+	return r, true
+}
+
 // MarkAssertionSeen records a SAML assertion id and reports whether this is its FIRST sighting.
 // A false return means replay, and the caller must refuse before minting anything.
 //
@@ -99,4 +123,24 @@ func (s *Store) MarkAssertionSeen(idpEntityID, assertionID string, expires time.
 	}
 	n, _ := res.RowsAffected()
 	return n == 1
+}
+
+// authStateSweepInterval is how often expired pending logins and replay entries are dropped.
+const authStateSweepInterval = 15 * time.Minute
+
+// authSweepLoop drops expired auth state on its own always-on tick.
+//
+// This deliberately does NOT ride along with the storage-retention pass (ADR 0017): that pass only
+// runs when an admin has configured retention, so in the shipped default configuration the replay
+// cache and the pending-login table would grow without bound forever. Expiring ephemeral rows is
+// hygiene the operator never opted into and should not have to.
+func (s *Server) authSweepLoop() {
+	for {
+		if reqs, seen, err := s.st.PurgeExpiredAuthState(time.Now()); err != nil {
+			log.Printf("auth sweep: %v", err)
+		} else if reqs+seen > 0 {
+			log.Printf("auth sweep: dropped %d expired pending logins, %d replay entries", reqs, seen)
+		}
+		time.Sleep(authStateSweepInterval)
+	}
 }

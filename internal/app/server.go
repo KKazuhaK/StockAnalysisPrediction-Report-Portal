@@ -140,6 +140,7 @@ func RunServer(cfgPath string) {
 	go s.scheduleLoop()  // release one-shot 定时 jobs when their run_at passes (ADR 0007)
 	go s.cleanupLoop()   // run the admin-configured storage-retention pass on its cadence (ADR 0017)
 	go s.recurringLoop() // fire recurring tasks into the run queue on their cadence (ADR 0018)
+	go s.authSweepLoop() // drop expired pending logins + SAML replay entries (ADR 0023)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)

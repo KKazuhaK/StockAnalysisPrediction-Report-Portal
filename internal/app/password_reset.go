@@ -92,7 +92,10 @@ func (s *Server) apiForgotPassword(w http.ResponseWriter, r *http.Request) {
 		u = s.st.UserByEmail(acct)
 	}
 	base := s.resetLinkBase()
-	eligible := u != nil && u.Active && u.Email != "" && s.emailEnabled()
+	// A federated account has no local password, so a reset link would be meaningless — and
+	// following one would silently give it a password that the SSO login path then refuses. The
+	// response is unchanged either way, so this is not an oracle for which accounts are federated.
+	eligible := u != nil && u.Active && !u.IsFederated() && u.Email != "" && s.emailEnabled()
 	// Rate-limit per resolved account so a flood of POSTs can't spam a victim's inbox or pile up SMTP
 	// goroutines/sockets. Only a real, eligible account ever spawns a send, so a per-account cap fully
 	// bounds it; the response stays a constant okJSON either way (no account-existence leak).

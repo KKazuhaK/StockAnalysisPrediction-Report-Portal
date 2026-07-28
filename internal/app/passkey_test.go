@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -118,21 +119,57 @@ func TestPasskeyRelyingPartyComesFromPublicURL(t *testing.T) {
 	}
 }
 
-// TestPasskeyLoginBeginHidesUnknownAccounts proves the begin endpoint cannot be used to learn
-// which accounts exist or which have passkeys.
-func TestPasskeyLoginBeginHidesUnknownAccounts(t *testing.T) {
+// TestPasskeyLoginIsSecondFactorOnly proves the passkey endpoints are NOT a passwordless entry
+// point. A passkey here is registered with user verification "preferred", so it may be
+// possession-only; accepting it as the sole credential would be weaker than the password it
+// replaced. The caller must present the single-use token from a completed password leg.
+func TestPasskeyLoginIsSecondFactorOnly(t *testing.T) {
 	s := passkeyServer(t)
-	call := func(name string) *httptest.ResponseRecorder {
+	s.st.AddPasskey("alice", "A", fakeCred("cred-a", 0))
+	call := func(body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		s.apiPasskeyLoginBegin(rec, httptest.NewRequest(http.MethodPost, "/api/login/passkey/begin",
-			strings.NewReader(`{"username":"`+name+`"}`)))
+			strings.NewReader(body)))
 		return rec
 	}
-	noSuchUser := call("ghost")
-	realUserNoKey := call("alice")
-	if noSuchUser.Code != realUserNoKey.Code || noSuchUser.Body.String() != realUserNoKey.Body.String() {
-		t.Errorf("an unknown account (%d %s) and a real one with no passkey (%d %s) must be indistinguishable",
-			noSuchUser.Code, noSuchUser.Body.String(), realUserNoKey.Code, realUserNoKey.Body.String())
+	if rec := call(`{}`); rec.Code == http.StatusOK {
+		t.Error("a passkey ceremony must not start without a completed password leg")
+	}
+	if rec := call(`{"token":"made-up"}`); rec.Code == http.StatusOK {
+		t.Error("a forged pending token must not start a ceremony")
+	}
+	// A token from the WRONG kind of ceremony must not work either.
+	tok, _ := newAuthToken()
+	s.st.CreateAuthRequest(AuthRequest{Token: tok, Kind: "oidc", Username: "alice"}, time.Now().Add(time.Minute))
+	if rec := call(`{"token":"` + tok + `"}`); rec.Code == http.StatusOK {
+		t.Error("a non-2fa pending token must not start a passkey ceremony")
+	}
+	// With a real pending login it proceeds — and the pending token is NOT consumed yet, so a
+	// slow authenticator does not throw the user back to the password screen.
+	tok, _ = newAuthToken()
+	s.st.CreateAuthRequest(AuthRequest{Token: tok, Kind: "2fa", Username: "alice"}, time.Now().Add(time.Minute))
+	if rec := call(`{"token":"` + tok + `"}`); rec.Code != http.StatusOK {
+		t.Fatalf("a valid pending login must start the ceremony: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.st.PeekAuthRequest(tok, time.Now()); !ok {
+		t.Error("the pending login must survive starting the ceremony")
+	}
+}
+
+// TestPasskeyRegistrationRequiresStepUp proves a stolen session cookie cannot be turned into
+// permanent access by registering the attacker's own authenticator.
+func TestPasskeyRegistrationRequiresStepUp(t *testing.T) {
+	s := passkeyServer(t)
+	begin := func(q string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s.apiPasskeyRegisterBegin(rec, httptest.NewRequest(http.MethodPost, "/api/me/passkeys/register/begin"+q, nil), "alice")
+		return rec
+	}
+	if rec := begin(""); rec.Code != http.StatusForbidden {
+		t.Errorf("registering with only a session → %d, want 403", rec.Code)
+	}
+	if rec := begin("?proof=wrong-password"); rec.Code != http.StatusForbidden {
+		t.Errorf("a wrong proof → %d, want 403", rec.Code)
 	}
 }
 
