@@ -353,6 +353,7 @@ export interface UserGroupRow {
   run_window?: string | null // '' = any hour, else 'H1-H2' (panel timezone)
   priority?: string // base run priority 0..100 override ('' / undefined = inherit the system default; ADR 0008)
   members: number // primary-member count
+  parent_id?: number // where this OU sits in the tree; 0/absent = a root (ADR 0022)
   // External-user tenancy (ADR 0022). restricted is this OU's own flag; restricted_effective also
   // accounts for a restricted ancestor (restriction is sticky down the OU tree).
   restricted?: boolean
