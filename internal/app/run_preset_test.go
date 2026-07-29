@@ -151,7 +151,7 @@ func TestSamePeriod(t *testing.T) {
 	}{
 		{"daily", ut(2026, 7, 8, 1, 0), ut(2026, 7, 8, 23, 0), true},
 		{"daily", ut(2026, 7, 8, 23, 0), ut(2026, 7, 9, 1, 0), false},
-		{"weekly", ut(2026, 7, 6, 0, 0), ut(2026, 7, 12, 0, 0), true},  // Mon..Sun, same ISO week
+		{"weekly", ut(2026, 7, 6, 0, 0), ut(2026, 7, 12, 0, 0), true},   // Mon..Sun, same ISO week
 		{"weekly", ut(2026, 7, 12, 0, 0), ut(2026, 7, 13, 0, 0), false}, // Sun → next Mon
 		{"monthly", ut(2026, 7, 1, 0, 0), ut(2026, 7, 31, 0, 0), true},
 		{"monthly", ut(2026, 7, 31, 0, 0), ut(2026, 8, 1, 0, 0), false},

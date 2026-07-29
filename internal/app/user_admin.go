@@ -42,6 +42,7 @@ type UserGroup struct {
 	// ancestor already restricts this group even when its own flag is off.
 	Restricted          bool
 	RestrictedEffective bool
+	ParentID            int64 // 0 = a root OU; the tree the inherited settings resolve along
 	DailyRunQuota       int // runs/day cap for members; 0 = unlimited
 	DailyQuotaInherit   bool
 }
@@ -221,6 +222,7 @@ func (s *Store) ListUserGroups() []UserGroup {
 		g.RunWindow, g.RunWindowInherit = runWindow.String, !runWindow.Valid && !g.IsDefault
 		g.Restricted = restricted != 0
 		g.DailyRunQuota, g.DailyQuotaInherit = int(dailyQuota.Int64), !dailyQuota.Valid && !g.IsDefault
+		g.ParentID = parent.Int64
 		parents[g.ID], restrictedOwn[g.ID] = parent.Int64, g.Restricted
 		out = append(out, g)
 	}
@@ -415,4 +417,15 @@ func (s *Store) SetGroupGovernance(id int64, allowUrgent *bool, maxQueued *int, 
 	_, err := s.exec("UPDATE user_groups SET allow_urgent=?, max_queued=?, run_window=? WHERE id=?",
 		nullBoolInt(allowUrgent), nullInt(maxQueued), rw, id)
 	return err
+}
+
+// GroupRestrictedEffective reports whether an OU is external once inheritance is applied — its own
+// flag, or any ancestor's, since restriction is sticky down the tree.
+func (s *Store) GroupRestrictedEffective(id int64) bool {
+	for _, g := range s.ListUserGroups() {
+		if g.ID == id {
+			return g.RestrictedEffective
+		}
+	}
+	return false
 }

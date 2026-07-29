@@ -46,10 +46,10 @@ func TestAllowsSurface(t *testing.T) {
 		surfaces, surface string
 		want              bool
 	}{
-		{"", SurfaceRun, true},               // unset = everywhere
+		{"", SurfaceRun, true}, // unset = everywhere
 		{"", SurfaceChat, true},
 		{"recurring", SurfaceRecurring, true},
-		{"recurring", SurfaceRun, false},     // the user's case: scheduled-only
+		{"recurring", SurfaceRun, false}, // the user's case: scheduled-only
 		{"recurring", SurfaceBatch, false},
 		{"run,batch", SurfaceBatch, true},
 		{"run,batch", SurfaceRecurring, false},
@@ -115,7 +115,7 @@ func TestListTargetsCarriesSurfaces(t *testing.T) {
 	}
 }
 
-// Unticking everything must be rejected, not stored. An empty list normalises to '' which
+// Unticking everything must be rejected, not stored. An empty list normalises to ” which
 // means "every surface" — the exact opposite of what the admin just asked for. Storing it
 // would silently invert the intent.
 func TestSurfacesAPIRejectsEmptySelection(t *testing.T) {

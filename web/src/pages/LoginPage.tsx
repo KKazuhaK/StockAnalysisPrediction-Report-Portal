@@ -1,18 +1,20 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button, Card, Form, Input, Modal, Segmented, Select, Space, Typography, theme } from 'antd'
 import { LockOutlined, UserOutlined } from '@ant-design/icons'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth'
+import type { SSOProviderInfo } from '../api/types'
 import { usePrefs } from '../prefs'
 import { api, ApiError } from '../api/client'
+import { passkeySupported } from '../lib/webauthn'
 import { SiteLogo, useSite } from '../site'
 import { AutoIcon, MoonIcon, SunIcon } from '../components/icons'
 
 export default function LoginPage() {
   const { t } = useTranslation()
   const { title } = useSite()
-  const { user, loading, login } = useAuth()
+  const { user, loading, login, loginTOTP, loginPasskey } = useAuth()
   const { mode, setMode, lang, setLang, langs } = usePrefs()
   const { token } = theme.useToken()
   const navigate = useNavigate()
@@ -22,6 +24,18 @@ export default function LoginPage() {
   const [forgotAcct, setForgotAcct] = useState('')
   const [forgotBusy, setForgotBusy] = useState(false)
   const [forgotSent, setForgotSent] = useState(false)
+  // Second-factor step: the password leg hands back a single-use token and issues no session.
+  const [totpToken, setTotpToken] = useState('')
+  const [totpCode, setTotpCode] = useState('')
+  const [providers, setProviders] = useState<SSOProviderInfo[]>([])
+
+  useEffect(() => {
+    // Empty (or failing) means SSO is off, and the login page simply shows nothing extra.
+    api
+      .get<{ providers: SSOProviderInfo[] }>('/api/sso/providers')
+      .then((r) => setProviders(r.providers || []))
+      .catch(() => {})
+  }, [])
 
   if (!loading && user) return <Navigate to="/" replace />
 
@@ -42,11 +56,57 @@ export default function LoginPage() {
     setForgotAcct('')
   }
 
+  const submitTOTP = async () => {
+    setErr('')
+    setBusy(true)
+    try {
+      await loginTOTP(totpToken, totpCode.trim())
+      navigate('/')
+    } catch (e) {
+      // The pending token is single-use, so a wrong code means starting over rather than
+      // retrying against the same challenge.
+      setErr(e instanceof ApiError ? e.message : t('login.error'))
+      setTotpToken('')
+      setTotpCode('')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const cancelTOTP = () => {
+    setTotpToken('')
+    setTotpCode('')
+    setErr('')
+  }
+
+  // A passkey is the SECOND factor of this same password leg — it consumes the pending token the
+  // password issued, exactly as a code does. It is deliberately not offered on the password screen:
+  // these credentials are registered with user verification "preferred", so one may be
+  // possession-only, and the server refuses a passkey presented on its own.
+  const submitPasskey = async () => {
+    setErr('')
+    setBusy(true)
+    try {
+      await loginPasskey(totpToken)
+      navigate('/')
+    } catch (e) {
+      // A dismissed browser prompt is a change of mind, not a failure worth an error banner — and
+      // it must not clear the pending token, or the user would have to type their password again.
+      if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return
+      setErr(e instanceof ApiError ? e.message : t('login.error'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const onFinish = async (v: { username: string; password: string }) => {
     setErr('')
     setBusy(true)
     try {
-      await login(v.username, v.password)
+      const { totpToken: pending } = await login(v.username, v.password)
+      if (pending) {
+        setTotpToken(pending)
+        return
+      }
       navigate('/')
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('login.error'))
@@ -97,6 +157,36 @@ export default function LoginPage() {
               </Space>
             </div>
 
+            {totpToken ? (
+              <Form layout="vertical" onFinish={submitTOTP} requiredMark={false}>
+                <Typography.Paragraph type="secondary">{t('login.totpHint')}</Typography.Paragraph>
+                <Form.Item label={t('login.totpCode')} required>
+                  <Input
+                    autoFocus
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value)}
+                  />
+                </Form.Item>
+                {err && (
+                  <Typography.Text type="danger" style={{ display: 'block', marginBottom: 12 }}>
+                    {err}
+                  </Typography.Text>
+                )}
+                <Button type="primary" size="large" htmlType="submit" block loading={busy}>
+                  {t('login.totpVerify')}
+                </Button>
+                {passkeySupported() && (
+                  <Button size="large" block onClick={submitPasskey} loading={busy} style={{ marginTop: 8 }}>
+                    {t('login.passkeyUse')}
+                  </Button>
+                )}
+                <Button type="link" size="small" block onClick={cancelTOTP}>
+                  {t('common.cancel')}
+                </Button>
+              </Form>
+            ) : (
             <Form layout="vertical" onFinish={onFinish} requiredMark={false}>
               <Form.Item name="username" label={t('login.username')} rules={[{ required: true }]}>
                 <Input size="large" prefix={<UserOutlined />} autoFocus autoComplete="username" />
@@ -113,11 +203,35 @@ export default function LoginPage() {
                 {t('login.submit')}
               </Button>
             </Form>
-            <div style={{ textAlign: 'center', marginTop: -8 }}>
-              <Button type="link" size="small" onClick={() => setForgotOpen(true)}>
-                {t('login.forgot')}
-              </Button>
-            </div>
+            )}
+            {!totpToken && providers.length > 0 && (
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <Typography.Text type="secondary" style={{ textAlign: 'center', display: 'block' }}>
+                  {t('login.ssoDivider')}
+                </Typography.Text>
+                {providers.map((p) => (
+                  <Button
+                    key={p.slug}
+                    size="large"
+                    block
+                    // A full navigation, not fetch: the IdP redirect chain has to happen in the
+                    // browser's top-level context.
+                    onClick={() => {
+                      window.location.href = `/api/auth/${p.kind}/${encodeURIComponent(p.slug)}/start`
+                    }}
+                  >
+                    {t('login.ssoWith', { name: p.name })}
+                  </Button>
+                ))}
+              </Space>
+            )}
+            {!totpToken && (
+              <div style={{ textAlign: 'center', marginTop: -8 }}>
+                <Button type="link" size="small" onClick={() => setForgotOpen(true)}>
+                  {t('login.forgot')}
+                </Button>
+              </div>
+            )}
           </Space>
         </Card>
       </div>

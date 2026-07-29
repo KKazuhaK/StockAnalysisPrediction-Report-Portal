@@ -155,12 +155,18 @@ func (s *Server) apiMe(w http.ResponseWriter, r *http.Request) {
 // mail_enabled drive the "email me when done" opt-in).
 func (s *Server) meJSON(user string) map[string]any {
 	role, name, email := "", user, ""
+	federated, totpEnabled := false, false
 	if usr := s.st.GetUser(user); usr != nil {
 		role, name, email = usr.EffRole(), usr.Name(), usr.Email
+		federated, totpEnabled = usr.IsFederated(), usr.TOTPEnabled
 	}
 	return map[string]any{
 		"user": user, "name": name, "admin": s.isAdmin(user), "role": role, "perms": permsOf(role),
 		"email": email, "mail_enabled": s.emailEnabled(),
+		// Security state, so the account page can branch before the user submits: offering a
+		// password change to a federated account, or enrolment to someone already enrolled, is a
+		// dead end they would otherwise only discover on failure.
+		"federated": federated, "totp_enabled": totpEnabled, "passkeys": len(s.st.PasskeyList(user)),
 	}
 }
 
@@ -184,6 +190,14 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	// The password is checked FIRST: a correct password always succeeds (and clears the counters), so
 	// the per-account limit below can never lock a real owner out of their own account.
 	u := s.st.GetUser(uname)
+	// A federated account has no local password, so the password path must refuse it BEFORE bcrypt
+	// (ADR 0023). Today an SSO row would happen to fail on an empty hash, but that is a property of
+	// bcrypt rather than a stated invariant — and running bcrypt at all would leave the row exposed
+	// to guessing and to CPU burn. The response is the generic one, so this is not an oracle for
+	// which accounts are federated.
+	if u != nil && u.IsFederated() {
+		u = nil
+	}
 	if u == nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(in.Password)) != nil {
 		if thr != nil {
 			thr.record(ipKey, now)
@@ -210,10 +224,13 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		thr.reset(ipKey)
 		thr.reset(userKey)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.signUser(*u), Path: "/",
-		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets), SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
-	})
+	// With 2FA on, the password is only the first leg: park the login behind a single-use pending
+	// token and issue no session until a code is proven (ADR 0023).
+	if u.TOTPEnabled {
+		s.beginTOTPChallenge(w, u.Username)
+		return
+	}
+	s.setSessionCookie(w, r, *u)
 	s.st.TouchLastLogin(u.Username)
 	log.Printf("login %s", u.Username)
 	writeJSON(w, s.meJSON(u.Username))
@@ -406,9 +423,13 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 		selID = defID
 	}
 	rep := s.loadRep(user, selID)
+	// Tabs carry their version (ADR 0024) so the reader can collapse the two axes properly: one tab
+	// per report type, with a version switcher inside it. Without it, two written forms of one
+	// analysis appear as two tabs with the same label, which reads as a duplicate rather than as a
+	// choice.
 	tabs := make([]map[string]any, 0, len(members))
 	for _, m := range members {
-		tabs = append(tabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType})
+		tabs = append(tabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType, "version": m.Version})
 	}
 	first := members[0]
 	writeJSON(w, map[string]any{
