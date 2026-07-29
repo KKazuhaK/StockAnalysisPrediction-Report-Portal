@@ -25,10 +25,12 @@ func TestAuthSchemaBaseline(t *testing.T) {
 		{"users", "totp_confirmed_at"},
 		{"users", "recovery_codes"},
 		// Account linking.
-		{"user_identities", "provider"},
-		{"user_identities", "issuer"},
-		{"user_identities", "subject"},
-		{"user_identities", "username"},
+		// The external identity lives on the users row, one per account (ADR 0023, revised to match
+		// the Passwall panel). It was a side table that allowed several links per account, for an
+		// IdP-migration overlap this portal does not have.
+		{"users", "sso_provider"},
+		{"users", "sso_issuer"},
+		{"users", "sso_subject"},
 		// Provider config.
 		{"sso_providers", "kind"},
 		{"sso_providers", "slug"},
@@ -60,7 +62,7 @@ func TestAuthSchemaBaseline(t *testing.T) {
 			t.Errorf("missing column %s.%s", c.table, c.col)
 		}
 	}
-	for _, tbl := range []string{"user_identities", "sso_providers", "sso_group_rules",
+	for _, tbl := range []string{"sso_providers", "sso_group_rules",
 		"sso_auth_requests", "sso_assertion_seen", "sso_keyring", "webauthn_credentials"} {
 		if !st.tableExists(tbl) {
 			t.Errorf("missing table %s", tbl)

@@ -255,8 +255,19 @@ removes the one non-reconciler step the earlier draft needed (`ensureUserUIDs`).
   bare-string foreign key in `batch_jobs.created_by`, `chat_conversations.created_by`,
   `priority_tickets`, recurring tasks, and it is baked into every session cookie. Renaming it would
   orphan run history, chat, ticket quota and ADR 0022 report attribution.
-- **`user_identities`** — PK `(provider, issuer, subject)`, plus `username`, `provider_slug`,
-  `nameid_format`, `attrs`, timestamps.
+- **The external identity lives on `users`** — `sso_provider`, `sso_issuer`, `sso_subject`, plus
+  `sso_slug`, `sso_nameid_format`, `sso_attrs`, `sso_linked_at`. One account holds at most one
+  identity, and `idx_users_sso_identity` (unique, partial on a non-empty subject) stops two accounts
+  holding the same one.
+
+  This began as a `user_identities` side table allowing several links per account, on the reasoning
+  that an IdP migration needs both live during the overlap. That overlap is not a case this portal
+  has, and the table cost a join, an index and a class of bug the columns cannot express: the side
+  table's upsert wrote `username=excluded.username`, so a second account signing in with an existing
+  subject silently took the link and locked the first out of SSO. On the users row the same attempt
+  is a unique-index violation at the moment it happens. Matching the Passwall panel, which stores
+  the identity as two columns on its user row, decided the shape; the failure mode decided that it
+  was the right call.
 - **`sso_providers`** — one row per IdP: kind/slug/enabled/provisioning, defaults, SAML metadata +
   certs, SP keypair, OIDC issuer/client/scopes/discovery cache, attribute mapping.
 - **`sso_group_rules`** — ordered rules (`ord`, `attr`, `value`, `target_role`, `target_group`,
