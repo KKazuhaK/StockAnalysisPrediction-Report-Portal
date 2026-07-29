@@ -30,10 +30,15 @@ func TestExternalUserSchemaBaseline(t *testing.T) {
 	if !st.tableExists("group_targets") {
 		t.Error("missing table group_targets")
 	}
+	// owner_group deliberately has NO index (ADR 0024). It served the ADR 0022 read filter, which
+	// version grants and report_viewers replaced; the column survives only as attribution, written
+	// by a by-id UPDATE that uses the primary key. Asserted as an absence because an index nothing
+	// reads is pure write amplification on every ingest — measured at 13% — and this table has
+	// already lost two indexes for exactly that reason.
 	var n int
 	st.queryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, "idx_reports_owner").Scan(&n)
-	if n == 0 {
-		t.Error("missing index idx_reports_owner")
+	if n != 0 {
+		t.Error("idx_reports_owner is back: nothing reads owner_group, so it only costs writes")
 	}
 }
 
