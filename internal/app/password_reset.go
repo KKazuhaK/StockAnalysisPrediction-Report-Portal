@@ -81,12 +81,18 @@ func (s *Server) publicBaseURL() string {
 func (s *Server) apiForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Account string `json:"account"`
+		captchaProof
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
 	acct := strings.TrimSpace(in.Account)
+	// Gated before anything else: this form's abuse is an outbound-email flood aimed at someone
+	// else's inbox, so the cost has to be imposed on the sender, not on the victim.
+	if !s.requireCaptcha(w, r, ctxForgot, acct, in.captchaProof) {
+		return
+	}
 	u := s.st.GetUser(acct)
 	if u == nil {
 		u = s.st.UserByEmail(acct)

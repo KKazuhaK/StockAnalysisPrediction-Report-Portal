@@ -171,12 +171,20 @@ func (s *Server) meJSON(user string) map[string]any {
 }
 
 func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Username, Password string }
+	var in struct {
+		Username, Password string
+		captchaProof
+	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
 	uname := strings.TrimSpace(in.Username)
+	// Before the throttle and before bcrypt: a captcha that only runs after the expensive work has
+	// already paid for the attack it was meant to price out.
+	if !s.requireCaptcha(w, r, ctxLogin, uname, in.captchaProof) {
+		return
+	}
 	ipKey, userKey := "ip:"+clientIP(r, s.trustedNets), "u:"+uname
 	now := time.Now()
 	thr := s.loginThr

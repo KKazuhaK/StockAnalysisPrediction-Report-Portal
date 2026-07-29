@@ -66,6 +66,19 @@ func (l *loginThrottle) record(key string, now time.Time) {
 	r.n++
 }
 
+// fails reports how many failures a key has accumulated inside the current window, which is what
+// the captcha's after_failures trigger reads. A lapsed window counts as zero: the point is
+// "recently suspicious", not "ever suspicious".
+func (l *loginThrottle) fails(key string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	r := l.recs[key]
+	if r == nil || time.Now().After(r.resetAt) {
+		return 0
+	}
+	return r.n
+}
+
 // reset clears a key after a successful login.
 func (l *loginThrottle) reset(key string) {
 	l.mu.Lock()
