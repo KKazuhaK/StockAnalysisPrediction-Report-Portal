@@ -43,7 +43,7 @@ func newAuthToken() (string, error) {
 
 // CreateAuthRequest stores a pending ceremony with an absolute expiry.
 func (s *Store) CreateAuthRequest(r AuthRequest, expires time.Time) error {
-	_, err := s.exec(`INSERT INTO sso_auth_requests(token,provider_id,kind,req_id,nonce,verifier,username,target,created_at,expires_at)
+	_, err := s.exec(`INSERT INTO auth_requests(token,provider_id,kind,req_id,nonce,verifier,username,target,created_at,expires_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		r.Token, r.ProviderID, r.Kind, r.ReqID, r.Nonce, r.Verifier, r.Username, r.Target,
 		time.Now().Unix(), expires.Unix())
@@ -64,12 +64,12 @@ func (s *Store) ConsumeAuthRequest(token string, now time.Time) (AuthRequest, bo
 	var provID sql.NullInt64
 	var kind, reqID, nonce, verifier, username, target sql.NullString
 	err := s.queryRow(`SELECT provider_id,kind,req_id,nonce,verifier,username,target
-		FROM sso_auth_requests WHERE token=? AND expires_at>?`, token, now.Unix()).
+		FROM auth_requests WHERE token=? AND expires_at>?`, token, now.Unix()).
 		Scan(&provID, &kind, &reqID, &nonce, &verifier, &username, &target)
 	if err != nil {
 		return AuthRequest{}, false
 	}
-	res, err := s.exec(`DELETE FROM sso_auth_requests WHERE token=? AND expires_at>?`, token, now.Unix())
+	res, err := s.exec(`DELETE FROM auth_requests WHERE token=? AND expires_at>?`, token, now.Unix())
 	if err != nil {
 		return AuthRequest{}, false
 	}
@@ -94,7 +94,7 @@ func (s *Store) PeekAuthRequest(token string, now time.Time) (AuthRequest, bool)
 	var provID sql.NullInt64
 	var kind, reqID, nonce, verifier, username, target sql.NullString
 	err := s.queryRow(`SELECT provider_id,kind,req_id,nonce,verifier,username,target
-		FROM sso_auth_requests WHERE token=? AND expires_at>?`, token, now.Unix()).
+		FROM auth_requests WHERE token=? AND expires_at>?`, token, now.Unix()).
 		Scan(&provID, &kind, &reqID, &nonce, &verifier, &username, &target)
 	if err != nil {
 		return AuthRequest{}, false
@@ -143,4 +143,26 @@ func (s *Server) authSweepLoop() {
 		}
 		time.Sleep(authStateSweepInterval)
 	}
+}
+
+// adoptLegacyAuthRequests moves pending state out of the table's old name, for a database that ran
+// v0.4.0 or v0.4.1. It was called sso_auth_requests, which stopped being true once the same table
+// started holding the 2FA pending step, the WebAuthn challenge and the registration verification
+// link — a name that lies about its contents is how the next reader learns the wrong thing.
+//
+// The rows are ephemeral and could simply be dropped, except for one kind: a registration
+// verification link is valid for 24 hours, so an email already in someone's inbox would stop working
+// on upgrade. Copying is cheap enough that nobody has to be told about that.
+func (s *Store) adoptLegacyAuthRequests() error {
+	if !s.tableExists("sso_auth_requests") {
+		return nil
+	}
+	if _, err := s.exec(`INSERT INTO auth_requests(token,provider_id,kind,req_id,nonce,verifier,username,target,created_at,expires_at)
+		SELECT token,provider_id,kind,req_id,nonce,verifier,username,target,created_at,expires_at
+		FROM sso_auth_requests
+		WHERE token NOT IN (SELECT token FROM auth_requests)`); err != nil {
+		return err
+	}
+	_, err := s.exec(`DROP TABLE IF EXISTS sso_auth_requests`)
+	return err
 }

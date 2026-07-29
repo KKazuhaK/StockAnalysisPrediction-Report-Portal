@@ -152,7 +152,7 @@ GET  /api/auth/saml/{slug}/start        POST /api/auth/saml/{slug}/acs
 GET  /api/auth/saml/{slug}/metadata     SP metadata (public by design)
 ```
 
-Both protocols share **one pending-login mechanism**: a server-side `sso_auth_requests` row holding
+Both protocols share **one pending-login mechanism**: a server-side `auth_requests` row holding
 the nonce / PKCE verifier / AuthnRequest id / return path, plus a short-lived binding cookie carrying
 the same opaque token. Server-side rather than a sealed cookie because it is restart-safe, works
 across the multiple production instances sharing Postgres, and gives **global single-use** via a
@@ -188,7 +188,7 @@ Recovery codes are generated once at enrolment, shown once, and stored **hashed*
 password-equivalents. Each is single-use. Consuming one is logged.
 
 Login becomes two-step when 2FA is on: password → a short-lived, single-use *pending* token → code.
-The pending token is a row in the same `sso_auth_requests` table (it is the same problem: short-lived,
+The pending token is a row in the same `auth_requests` table (it is the same problem: short-lived,
 single-use, must survive a restart and work across instances), and it grants nothing on its own. The
 existing login throttle covers the second step keyed by account, so the code cannot be brute-forced.
 
@@ -274,13 +274,18 @@ removes the one non-reconciler step the earlier draft needed (`ensureUserUIDs`).
   `keep_on_miss`, `note`).
 - **`webauthn_credentials`** — one row per passkey: credential id (unique index), the serialized
   credential, owning username, label, sign counter, created/last-used.
-- **`sso_auth_requests`** — short-lived single-use state, TTL ~10 min. Shared by **all four** flows —
+- **`auth_requests`** — short-lived single-use state, TTL ~10 min. Shared by **all four** flows —
   SAML, OIDC, the 2FA pending-login step and WebAuthn challenges — because they are the same problem
   (single-use, restart-safe, cross-instance). One table, one sweeper, one conditional-DELETE
   consumption rule.
 - **`sso_assertion_seen`** — SAML replay cache, keyed on `sha256(idp_entity_id ‖ assertion_id)` so one
   IdP cannot poison another's ID space.
-- **`sso_keyring`** — one row: salt + wrapped DEK.
+- **The keyring lives in `meta`** — `keyring_salt` and `keyring_wrapped_dek`. It began as a
+  single-row table on the instinct that key material deserves its own place; one salt and one
+  wrapped key are two settings, which is the shape every other single value already uses. A database
+  that ran v0.4.0/v0.4.1 has it adopted out of the old table on start, before anything can ask for
+  the DEK — a keyring the new lookup cannot see would cause a SECOND one to be minted, silently
+  making every secret sealed under the first unreadable.
 
 The two TTL tables are swept by `authSweepLoop`, its **own** always-on 15-minute tick. Riding on the
 storage-retention pass (ADR 0017) was the original plan and was wrong: that pass only runs when an

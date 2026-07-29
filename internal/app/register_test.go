@@ -141,7 +141,7 @@ func TestVerificationGatesTheAccount(t *testing.T) {
 	}
 
 	var token string
-	s.st.queryRow("SELECT token FROM sso_auth_requests WHERE kind='verify' AND username=?",
+	s.st.queryRow("SELECT token FROM auth_requests WHERE kind='verify' AND username=?",
 		"pending@example.com").Scan(&token)
 	if token == "" {
 		t.Fatal("no verification token was parked")

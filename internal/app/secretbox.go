@@ -30,6 +30,11 @@ func sha256New() hash.Hash { return sha256.New() }
 const (
 	sealPrefix = "enc:v1:" // keeps a sealed value distinguishable from a legacy plaintext one
 	kekInfo    = "report-portal/sso/kek/v1"
+	// The keyring is one salt and one wrapped key. It lived in a single-row table on the instinct
+	// that key material deserves its own place; two rows in `meta` say the same thing and are the
+	// shape every other single setting already uses.
+	setKeyringSalt = "keyring_salt"
+	setKeyringDEK  = "keyring_wrapped_dek"
 )
 
 // errNotSealed is returned for a value that is not a sealed box at all, so a caller can tell
@@ -144,14 +149,9 @@ func aad(slug, purpose string) []byte { return []byte(slug + "\x00" + purpose) }
 // Keyring returns the stored salt and wrapped DEK. ok=false when the keyring has not been created
 // yet (no auth secret has ever been sealed).
 func (s *Store) Keyring() (salt, wrappedDEK string, ok bool) {
-	var sa, wd sql.NullString
-	if err := s.queryRow(`SELECT salt, wrapped_dek FROM sso_keyring WHERE id=1`).Scan(&sa, &wd); err != nil {
-		return "", "", false
-	}
-	if sa.String == "" || wd.String == "" {
-		return "", "", false
-	}
-	return sa.String, wd.String, true
+	salt = s.GetSetting(setKeyringSalt, "")
+	wrappedDEK = s.GetSetting(setKeyringDEK, "")
+	return salt, wrappedDEK, salt != "" && wrappedDEK != ""
 }
 
 // PurgeExpiredAuthState drops expired pending logins and expired SAML replay entries. Both are
@@ -161,7 +161,7 @@ func (s *Store) Keyring() (salt, wrappedDEK string, ok bool) {
 // Returns how many rows each sweep removed.
 func (s *Store) PurgeExpiredAuthState(now time.Time) (requests, assertions int64, err error) {
 	cut := now.Unix()
-	res, err := s.exec(`DELETE FROM sso_auth_requests WHERE expires_at < ?`, cut)
+	res, err := s.exec(`DELETE FROM auth_requests WHERE expires_at < ?`, cut)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -176,10 +176,17 @@ func (s *Store) PurgeExpiredAuthState(now time.Time) (requests, assertions int64
 
 // SaveKeyring writes the single keyring row. It never overwrites an existing one: doing so would
 // orphan every secret already sealed under the current DEK.
+// SaveKeyring stores the keyring, refusing to overwrite one that already exists. Replacing it would
+// make every secret sealed under the old DEK permanently unreadable, so the write is
+// create-if-absent and a caller that raced loses harmlessly.
 func (s *Store) SaveKeyring(salt, wrappedDEK string) error {
-	_, err := s.exec(`INSERT INTO sso_keyring(id,salt,wrapped_dek,kek_version,created_at)
-		VALUES(1,?,?,1,?) ON CONFLICT(id) DO NOTHING`, salt, wrappedDEK, nowStr())
-	return err
+	if _, _, ok := s.Keyring(); ok {
+		return nil
+	}
+	if err := s.SetSetting(setKeyringSalt, salt); err != nil {
+		return err
+	}
+	return s.SetSetting(setKeyringDEK, wrappedDEK)
 }
 
 func aesSeal(key, plaintext, additional []byte) (string, error) {
@@ -215,4 +222,26 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 		return nil, err
 	}
 	return cipher.NewGCM(block)
+}
+
+// adoptLegacyKeyring moves a keyring out of the single-row table it used to live in, for a database
+// that ran v0.4.0 or v0.4.1. It must run before anything asks for the DEK: losing the salt and the
+// wrapped key means every stored secret becomes permanently unreadable, and the operator's only
+// remedy is re-entering each one.
+//
+// Copy-then-drop, and the copy is create-if-absent, so running it twice is a no-op and a crash
+// between the two steps leaves the old table in place to be found on the next start.
+func (s *Store) adoptLegacyKeyring() error {
+	if !s.tableExists("sso_keyring") {
+		return nil
+	}
+	var salt, wrapped sql.NullString
+	if err := s.queryRow(`SELECT salt, wrapped_dek FROM sso_keyring WHERE id=1`).Scan(&salt, &wrapped); err == nil &&
+		salt.String != "" && wrapped.String != "" {
+		if err := s.SaveKeyring(salt.String, wrapped.String); err != nil {
+			return err
+		}
+	}
+	_, err := s.exec(`DROP TABLE IF EXISTS sso_keyring`)
+	return err
 }
