@@ -175,27 +175,7 @@ func privilegedRoles() map[string]bool {
 }
 
 // ssoRules loads the ordered rules that apply to a provider: its own, plus any global ones.
-func (s *Server) ssoRules(providerID int64) []ssorules.Rule {
-	rows, err := s.st.query(`SELECT id,COALESCE(ord,0),COALESCE(enabled,1),COALESCE(attr,''),COALESCE(value,''),
-		COALESCE(target_role,''),COALESCE(target_group,0),COALESCE(keep_on_miss,0),COALESCE(ci,0),COALESCE(note,'')
-		FROM sso_group_rules WHERE provider_id=? OR provider_id IS NULL ORDER BY ord, id`, providerID)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []ssorules.Rule
-	for rows.Next() {
-		var r ssorules.Rule
-		var enabled, keep, ci int
-		if err := rows.Scan(&r.ID, &r.Ord, &enabled, &r.Attr, &r.Value,
-			&r.TargetRole, &r.TargetGroup, &keep, &ci, &r.Note); err != nil {
-			continue
-		}
-		r.Enabled, r.KeepOnMiss, r.CaseInsensitive = enabled != 0, keep != 0, ci != 0
-		out = append(out, r)
-	}
-	return out
-}
+func (s *Server) ssoRules(providerID int64) []ssorules.Rule { return s.st.rulesFor(providerID) }
 
 // Refusal reasons, kept internal: the caller maps all of them to one generic outcome so the login
 // page cannot be used to probe which accounts exist or how they are provisioned.

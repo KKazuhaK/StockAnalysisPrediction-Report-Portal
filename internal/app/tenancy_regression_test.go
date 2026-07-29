@@ -46,8 +46,8 @@ func TestJITUserWithKeepOnMissLandsRestricted(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One enabled rule with keep_on_miss that will NOT match this login.
-	if _, err := s.st.exec(`INSERT INTO sso_group_rules(provider_id,ord,enabled,attr,value,target_role,target_group,keep_on_miss,ci,note)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, pid, 0, 1, "", "acme-external", "", ext, 1, 0, ""); err != nil {
+	if err := s.st.SaveSSORules([]storedRule{{ProviderID: pid, Enabled: true,
+		Value: "acme-external", TargetGroup: ext, KeepOnMiss: true}}); err != nil {
 		t.Fatal(err)
 	}
 	p, _ := s.st.SSOProviderBySlug("acme")
@@ -87,8 +87,8 @@ func TestAttributeNamedRuleMatches(t *testing.T) {
 		AttrGroups: "groups", AttrUPN: "preferred_username",
 	})
 	// Rule: department == "contractor" -> the restricted external OU.
-	s.st.exec(`INSERT INTO sso_group_rules(provider_id,ord,enabled,attr,value,target_role,target_group,keep_on_miss,ci,note)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, pid, 0, 1, "department", "contractor", "", ext, 0, 0, "")
+	s.st.SaveSSORules([]storedRule{{ProviderID: pid, Enabled: true, Attr: "department",
+		Value: "contractor", TargetGroup: ext}})
 	p, _ := s.st.SSOProviderBySlug("acme")
 
 	rec := httptest.NewRecorder()
@@ -127,8 +127,8 @@ func TestDanglingRuleTargetDoesNotUnrestrict(t *testing.T) {
 		AttrGroups: "groups", AttrUPN: "preferred_username",
 	})
 	// A rule pointing at a group id that no longer exists (typo / deleted OU).
-	s.st.exec(`INSERT INTO sso_group_rules(provider_id,ord,enabled,attr,value,target_role,target_group,keep_on_miss,ci,note)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, pid, 0, 1, "", "acme-external", "", 9999, 0, 0, "")
+	s.st.SaveSSORules([]storedRule{{ProviderID: pid, Enabled: true,
+		Value: "acme-external", TargetGroup: 9999}})
 	p, _ := s.st.SSOProviderBySlug("acme")
 	s.st.LinkIdentity(Identity{Provider: "oidc", Issuer: "https://idp.example", Subject: "sub-3", Username: "ext1", ProviderSlug: "acme"})
 

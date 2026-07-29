@@ -39,19 +39,12 @@ func TestAuthSchemaBaseline(t *testing.T) {
 		{"sso_providers", "default_group"},
 		{"sso_providers", "client_secret_enc"},
 		// Ordered group → role + OU rules.
-		{"sso_group_rules", "provider_id"},
-		{"sso_group_rules", "ord"},
-		{"sso_group_rules", "target_role"},
-		{"sso_group_rules", "target_group"},
-		{"sso_group_rules", "keep_on_miss"},
 		// Short-lived single-use state, shared by SAML / OIDC / 2FA / WebAuthn.
-		{"sso_auth_requests", "token"},
-		{"sso_auth_requests", "kind"},
-		{"sso_auth_requests", "expires_at"},
+		{"auth_requests", "token"},
+		{"auth_requests", "kind"},
+		{"auth_requests", "expires_at"},
 		// SAML replay cache.
 		{"sso_assertion_seen", "seen_key"},
-		// Envelope-encryption keyring.
-		{"sso_keyring", "wrapped_dek"},
 		// Passkeys.
 		{"webauthn_credentials", "credential_id"},
 		{"webauthn_credentials", "username"},
@@ -62,8 +55,19 @@ func TestAuthSchemaBaseline(t *testing.T) {
 			t.Errorf("missing column %s.%s", c.table, c.col)
 		}
 	}
-	for _, tbl := range []string{"sso_providers", "sso_group_rules",
-		"sso_auth_requests", "sso_assertion_seen", "sso_keyring", "webauthn_credentials"} {
+	// The keyring is deliberately absent: one salt and one wrapped key are two rows in `meta`, not a
+	// single-row table. adoptLegacyKeyring moves one out of the old table on upgrade, because losing
+	// it makes every stored secret permanently unreadable.
+	if st.tableExists("sso_keyring") {
+		t.Error("the single-row keyring table must not come back")
+	}
+	// The group rules are deliberately absent too: one ordered list that is always replaced whole,
+	// so it is one JSON setting rather than a table plus an index to keep its order stable.
+	if st.tableExists("sso_group_rules") {
+		t.Error("the group-rules table must not come back")
+	}
+	for _, tbl := range []string{"sso_providers",
+		"auth_requests", "sso_assertion_seen", "webauthn_credentials"} {
 		if !st.tableExists(tbl) {
 			t.Errorf("missing table %s", tbl)
 		}

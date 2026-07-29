@@ -13,7 +13,7 @@ func TestPurgeExpiredAuthState(t *testing.T) {
 	now := time.Now().Unix()
 
 	mkReq := func(token string, exp int64) {
-		if _, err := st.exec(`INSERT INTO sso_auth_requests(token,kind,created_at,expires_at) VALUES(?,?,?,?)`,
+		if _, err := st.exec(`INSERT INTO auth_requests(token,kind,created_at,expires_at) VALUES(?,?,?,?)`,
 			token, "oidc", now-60, exp); err != nil {
 			t.Fatal(err)
 		}
@@ -41,13 +41,13 @@ func TestPurgeExpiredAuthState(t *testing.T) {
 		st.queryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n)
 		return n
 	}
-	if count("sso_auth_requests") != 1 || count("sso_assertion_seen") != 1 {
+	if count("auth_requests") != 1 || count("sso_assertion_seen") != 1 {
 		t.Error("a live pending login or replay entry was purged early")
 	}
 	// A live pending login must still be there by name — purging the wrong row would silently
 	// break in-flight logins rather than fail loudly.
 	var tok string
-	st.queryRow(`SELECT token FROM sso_auth_requests`).Scan(&tok)
+	st.queryRow(`SELECT token FROM auth_requests`).Scan(&tok)
 	if tok != "live" {
 		t.Errorf("surviving pending login = %q, want the unexpired one", tok)
 	}

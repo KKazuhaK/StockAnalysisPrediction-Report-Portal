@@ -167,7 +167,7 @@ func (s *Store) SaveSSOProvider(p SSOProvider) (int64, error) {
 // purpose: they record who signed in as whom, and deleting a misconfigured provider should not
 // silently orphan accounts that were adopted through it.
 func (s *Store) DeleteSSOProvider(id int64) error {
-	if _, err := s.exec(`DELETE FROM sso_group_rules WHERE provider_id=?`, id); err != nil {
+	if err := s.DeleteRulesOfProvider(id); err != nil {
 		return err
 	}
 	_, err := s.exec(`DELETE FROM sso_providers WHERE id=?`, id)

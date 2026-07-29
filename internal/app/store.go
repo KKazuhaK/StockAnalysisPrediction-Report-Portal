@@ -204,6 +204,18 @@ func (s *Store) init() error {
 	if err := s.reconcileReportVersions(); err != nil {
 		return err
 	}
+	// Before anything can ask for the DEK: a keyring left in the table it used to occupy would be
+	// invisible to the new lookup, and the portal would mint a SECOND one — making every secret
+	// sealed under the first permanently unreadable.
+	if err := s.adoptLegacyKeyring(); err != nil {
+		return err
+	}
+	if err := s.adoptLegacySSORules(); err != nil {
+		return err
+	}
+	if err := s.adoptLegacyAuthRequests(); err != nil {
+		return err
+	}
 	if err := s.createBaseIndexes(); err != nil {
 		return err
 	}
@@ -325,7 +337,7 @@ func (s *Store) baseSchemaStmts() []string {
 			sso_linked_at TEXT)`,
 		// One row per IdP. Row-shaped (not a meta blob) so multiple providers are later a UI change
 		// with no schema movement; v1 manages one saml row and one oidc row. Secrets (SP private key,
-		// OIDC client secret) are sealed under the sso_keyring DEK and never returned by any API.
+		// OIDC client secret) are sealed under the keyring DEK (in `meta`) and never returned by any API.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS sso_providers(
 			id %s, kind TEXT, slug TEXT, name TEXT,
 			enabled INTEGER DEFAULT 0, provisioning TEXT DEFAULT 'off',
@@ -340,20 +352,12 @@ func (s *Store) baseSchemaStmts() []string {
 			scopes TEXT DEFAULT 'openid profile email', discovery_json TEXT, discovery_fetched_at TEXT,
 			attr_upn TEXT, attr_email TEXT, attr_display TEXT, attr_groups TEXT, attr_external_id TEXT,
 			session_hours INTEGER, created_at TEXT, updated_at TEXT)`, pk),
-		// Ordered IdP-group -> (role, OU) rules. Rows, never a JSON blob, so a future sync job can
-		// query and re-evaluate them. A rule targets BOTH a role and an OU because in this codebase
-		// the OU carries the real permissions (ADR 0022: restricted, quota, allow-list, visibility) —
-		// a role alone would leave a JIT-created external user with no entitlements.
-		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS sso_group_rules(
-			id %s, provider_id BIGINT, ord INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1,
-			attr TEXT, value TEXT, target_role TEXT DEFAULT '', target_group BIGINT,
-			keep_on_miss INTEGER DEFAULT 0, ci INTEGER DEFAULT 0, note TEXT DEFAULT '')`, pk),
 		// Short-lived single-use state for EVERY interactive auth ceremony: the SAML AuthnRequest id,
 		// the OIDC nonce + PKCE verifier, the 2FA pending-login step and the WebAuthn challenge. They
 		// are one problem (single-use, restart-safe, cross-instance), so they get one table, one
 		// sweeper, and one consumption rule: a conditional DELETE requiring RowsAffected()==1, which
 		// no cookie can provide and which two concurrent callbacks cannot both win.
-		`CREATE TABLE IF NOT EXISTS sso_auth_requests(
+		`CREATE TABLE IF NOT EXISTS auth_requests(
 			token TEXT PRIMARY KEY, provider_id BIGINT, kind TEXT,
 			req_id TEXT DEFAULT '', nonce TEXT DEFAULT '', verifier TEXT DEFAULT '',
 			username TEXT DEFAULT '', target TEXT DEFAULT '',
@@ -364,10 +368,6 @@ func (s *Store) baseSchemaStmts() []string {
 		// restart must not reopen the replay window.
 		`CREATE TABLE IF NOT EXISTS sso_assertion_seen(
 			seen_key TEXT PRIMARY KEY, expires_at BIGINT)`,
-		// One row. A random DEK wrapped under HKDF(secret_key, salt): rotating secret_key re-wraps
-		// this single row instead of re-encrypting every stored secret.
-		`CREATE TABLE IF NOT EXISTS sso_keyring(
-			id INTEGER PRIMARY KEY, salt TEXT, wrapped_dek TEXT, kek_version INTEGER DEFAULT 1, created_at TEXT)`,
 		// Passkeys. sign_count is stored because a counter that goes BACKWARDS is the one thing
 		// WebAuthn's counter exists to detect (a cloned authenticator).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS webauthn_credentials(
@@ -395,9 +395,8 @@ func (s *Store) baseSchemaStmts() []string {
 			WHERE sso_subject IS NOT NULL AND sso_subject <> ''`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id ON users(source_ref, external_id) WHERE external_id IS NOT NULL AND external_id <> ''`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_providers_slug ON sso_providers(slug)`,
-		`CREATE INDEX IF NOT EXISTS idx_sso_group_rules_ord ON sso_group_rules(provider_id, ord)`,
 		// The two TTL tables are swept by the existing cleanupLoop (ADR 0017), which scans by expiry.
-		`CREATE INDEX IF NOT EXISTS idx_sso_auth_requests_exp ON sso_auth_requests(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_auth_requests_exp ON auth_requests(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_sso_assertion_seen_exp ON sso_assertion_seen(expires_at)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_cred_id ON webauthn_credentials(credential_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_credentials(username)`,

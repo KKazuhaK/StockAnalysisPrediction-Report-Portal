@@ -307,25 +307,11 @@ func (s *Server) apiAdminSSODelete(w http.ResponseWriter, r *http.Request, user 
 // ---------- group rules ----------
 
 func (s *Server) apiAdminSSORules(w http.ResponseWriter, r *http.Request, user string) {
-	rows, err := s.st.query(`SELECT id,COALESCE(provider_id,0),COALESCE(ord,0),COALESCE(enabled,1),
-		COALESCE(attr,''),COALESCE(value,''),COALESCE(target_role,''),COALESCE(target_group,0),
-		COALESCE(keep_on_miss,0),COALESCE(ci,0),COALESCE(note,'') FROM sso_group_rules ORDER BY ord, id`)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer rows.Close()
 	out := make([]map[string]any, 0)
-	for rows.Next() {
-		var id, provID, group int64
-		var ord, enabled, keep, ci int
-		var attr, value, role, note string
-		if rows.Scan(&id, &provID, &ord, &enabled, &attr, &value, &role, &group, &keep, &ci, &note) != nil {
-			continue
-		}
-		out = append(out, map[string]any{"id": id, "provider_id": provID, "ord": ord,
-			"enabled": enabled != 0, "attr": attr, "value": value, "target_role": role,
-			"target_group": group, "keep_on_miss": keep != 0, "ci": ci != 0, "note": note})
+	for _, r := range s.st.SSORules() {
+		out = append(out, map[string]any{"id": r.ID, "provider_id": r.ProviderID, "ord": r.Ord,
+			"enabled": r.Enabled, "attr": r.Attr, "value": r.Value, "target_role": r.TargetRole,
+			"target_group": r.TargetGroup, "keep_on_miss": r.KeepOnMiss, "ci": r.CI, "note": r.Note})
 	}
 	writeJSON(w, map[string]any{"rules": out})
 }
@@ -350,27 +336,17 @@ func (s *Server) apiAdminSSORulesSave(w http.ResponseWriter, r *http.Request, us
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	tx, err := s.st.db.Begin()
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
+	rules := make([]storedRule, 0, len(in.Rules))
+	for _, r := range in.Rules {
+		rules = append(rules, storedRule{
+			ProviderID: r.ProviderID, Enabled: r.Enabled, Attr: r.Attr, Value: r.Value,
+			TargetRole: r.TargetRole, TargetGroup: r.TargetGroup,
+			KeepOnMiss: r.KeepOnMiss, CI: r.CI, Note: r.Note,
+		})
 	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(s.st.bind(`DELETE FROM sso_group_rules`)); err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	for i, r := range in.Rules {
-		if _, err := tx.Exec(s.st.bind(`INSERT INTO sso_group_rules
-			(provider_id,ord,enabled,attr,value,target_role,target_group,keep_on_miss,ci,note)
-			VALUES(?,?,?,?,?,?,?,?,?,?)`),
-			nullZero(r.ProviderID), i, boolInt(r.Enabled), strings.TrimSpace(r.Attr), r.Value,
-			r.TargetRole, nullZero(r.TargetGroup), boolInt(r.KeepOnMiss), boolInt(r.CI), r.Note); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	if err := tx.Commit(); err != nil {
+	// One statement, so a save can never land half-applied — which the previous delete-then-reinsert
+	// transaction could only avoid by being a transaction.
+	if err := s.st.SaveSSORules(rules); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

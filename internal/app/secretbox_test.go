@@ -88,18 +88,15 @@ func TestKeyringIsStableAndLazy(t *testing.T) {
 	cfg := &config.Config{SecretKey: "0123456789abcdef0123456789abcdef"}
 	s1 := &Server{st: st, cfg: cfg}
 
-	var n int
-	st.queryRow(`SELECT COUNT(*) FROM sso_keyring`).Scan(&n)
-	if n != 0 {
-		t.Fatalf("the keyring must not be created until a secret is sealed, found %d rows", n)
+	if _, _, ok := st.Keyring(); ok {
+		t.Fatal("the keyring must not be created until a secret is sealed")
 	}
 	box, err := s1.sealSecret("acme", "saml_sp_key", "k")
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.queryRow(`SELECT COUNT(*) FROM sso_keyring`).Scan(&n)
-	if n != 1 {
-		t.Fatalf("keyring rows = %d, want exactly 1", n)
+	if _, _, ok := st.Keyring(); !ok {
+		t.Fatal("sealing a secret must have created the keyring")
 	}
 
 	// A fresh Server over the same store — i.e. after a restart — must still open it.
