@@ -24,6 +24,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/captcha"
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/version"
 )
@@ -56,6 +57,7 @@ type Server struct {
 	mermaidCharts      mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
 	ssoInsecureForTest bool                                                                       // test-only: permit a plain-http loopback IdP (ADR 0023)
 	dekOnce            dekCache                                                                   // lazily unwrapped data key for stored auth secrets (ADR 0023)
+	captchaSvc         *captcha.Service                                                           // public-form captcha (login / forgot password / registration)
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -114,7 +116,8 @@ func RunServer(cfgPath string) {
 		bar := strings.Repeat("=", 52)
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
-	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute), loginThr: newLoginThrottle(), trustedNets: trustedNets}
+	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute), loginThr: newLoginThrottle(),
+		trustedNets: trustedNets, captchaSvc: captcha.New()}
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()
@@ -159,6 +162,11 @@ func RunServer(cfgPath string) {
 	// addressed provider is missing or disabled, so a portal with SSO off is indistinguishable
 	// from one that never had the feature.
 	mux.HandleFunc("GET /api/sso/providers", s.apiSSOProviders)
+	// Public-form captcha and self-service registration.
+	mux.HandleFunc("GET /api/captcha", s.apiCaptcha)
+	mux.HandleFunc("GET /api/register/config", s.apiRegisterConfig)
+	mux.HandleFunc("POST /api/register", s.apiRegister)
+	mux.HandleFunc("POST /api/register/verify", s.apiRegisterVerify)
 	mux.HandleFunc("POST /api/login/2fa", s.apiLoginTOTP) // second leg of a password login
 	mux.HandleFunc("POST /api/me/password", s.requireUserJSON(s.apiChangePassword))
 	mux.HandleFunc("POST /api/me/2fa/setup", s.requireUserJSON(s.apiTOTPSetup))
