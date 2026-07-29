@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, ApiError } from './api/client'
 import type { Me } from './api/types'
+import type { CaptchaValue } from './components/CaptchaField'
 import { getCredential } from './lib/webauthn'
 
 interface AuthCtx {
@@ -18,7 +19,8 @@ interface AuthCtx {
   loading: boolean
   // Resolves to a pending token when the account has 2FA on: the password alone issues no
   // session, and the caller must then complete loginTOTP (ADR 0023).
-  login: (username: string, password: string) => Promise<{ totpToken?: string }>
+  // captcha carries the public-form proof when the server is asking for one (ADR: captcha gate).
+  login: (username: string, password: string, captcha?: CaptchaValue) => Promise<{ totpToken?: string }>
   loginTOTP: (token: string, code: string) => Promise<void>
   // A passkey is the second factor of that same password leg, not a way past it: it consumes the
   // pending token, exactly like a code does.
@@ -63,10 +65,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       perms: me?.perms ?? {},
       can: (perm: string) => (me?.admin ?? false) || !!me?.perms?.[perm],
       loading,
-      login: async (username, password) => {
+      login: async (username, password, captcha) => {
         const res = await api.post<Me & { totp_required?: boolean; token?: string }>('/api/login', {
           username,
           password,
+          ...(captcha ?? {}),
         })
         if (res.totp_required && res.token) return { totpToken: res.token }
         setMe(res as Me)

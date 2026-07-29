@@ -91,7 +91,10 @@ describe('LoginPage', () => {
     fireEvent.change(screen.getByLabelText('login.password'), { target: { value: 'pw' } })
     fireEvent.click(screen.getByText('login.submit'))
 
-    await waitFor(() => expect(authMock.login).toHaveBeenCalledWith('alice', 'pw'))
+    // The third argument is the captcha proof, empty when the server is not asking for one.
+    await waitFor(() =>
+      expect(authMock.login).toHaveBeenCalledWith('alice', 'pw', expect.anything()),
+    )
     expect(screen.queryByText('login.totpHint')).toBeNull()
   })
 })

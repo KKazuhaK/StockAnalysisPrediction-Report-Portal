@@ -7,6 +7,8 @@ import { lazyRetry } from './lib/lazyRetry'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
+import RegisterPage from './pages/RegisterPage'
+import VerifyEmailPage from './pages/VerifyEmailPage'
 
 // Route pages are lazy-loaded (Suspense boundary lives in AppLayout), so the first
 // paint only ships the shell + landing page; admin / batch / webhook code and the
@@ -22,6 +24,7 @@ const LinksPage = lazyRetry(() => import('./pages/manage/LinksPage'))
 const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
 const UsersPage = lazyRetry(() => import('./pages/manage/UsersPage'))
 const SSOPage = lazyRetry(() => import('./pages/manage/SSOPage'))
+const SecurityPage = lazyRetry(() => import('./pages/manage/SecurityPage'))
 const VersionsPage = lazyRetry(() => import('./pages/manage/VersionsPage'))
 const SiteSettingsPage = lazyRetry(() => import('./pages/manage/SiteSettingsPage'))
 const AnnouncementPage = lazyRetry(() => import('./pages/manage/AnnouncementPage'))
@@ -73,6 +76,8 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/reset" element={<ResetPasswordPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/verify" element={<VerifyEmailPage />} />
       <Route
         element={
           <Protected>
@@ -137,6 +142,7 @@ function AppRoutes() {
           <Route path="versions" element={<VersionsPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="sso" element={<SSOPage />} />
+          <Route path="security" element={<SecurityPage />} />
           <Route path="tokens" element={<TokensPage />} />
           <Route path="batch" element={<BatchAdminPage />} />
           <Route path="runqueue" element={<RunQueueSettingsPage />} />
