@@ -13,7 +13,7 @@ func TestParsePriority(t *testing.T) {
 		idle bool
 	}{
 		{"urgent", 0, true, false},
-		{"idle", 0, false, true},   // run-when-queue-idle lane (ADR 0014)
+		{"idle", 0, false, true},     // run-when-queue-idle lane (ADR 0014)
 		{"normal", 50, false, false}, // legacy tier
 		{"other", 20, false, false},  // legacy tier
 		{"", 50, false, false},       // empty → default base

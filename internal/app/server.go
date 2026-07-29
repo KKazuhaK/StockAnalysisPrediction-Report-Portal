@@ -36,24 +36,26 @@ var tplFS embed.FS
 const cookieName = "rp_session"
 
 type Server struct {
-	cfg           *config.Config
-	st            *Store
-	names         *Names
-	pdf           *template.Template
-	jobRuns       sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
-	itemCancels   sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
-	jobNotify     sync.Map                                                                   // jobID -> bool; opt-in to email the submitter when the job finishes
-	buildProv     func(BatchJob, func(runID, convID, taskID string)) (batch.Provider, error) // test seam for the run-item provider; nil → real buildProvider
-	schedMu       sync.Mutex                                                                 // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
-	mailFn        func(to []string, subject, htmlBody string) error                          // test seam; nil → real SMTP send
-	appTok        *appTokens                                                                 // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
-	chatMu        sync.Mutex                                                                 // guards chatLive/chatSeq
-	chatLive      map[int64]*chatTurn                                                        // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
-	chatSeq       int64                                                                      // monotonic in-flight chat-turn id
-	cleanupMu     sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
-	loginThr      *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
-	trustedNets   []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
-	mermaidCharts mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
+	cfg                *config.Config
+	st                 *Store
+	names              *Names
+	pdf                *template.Template
+	jobRuns            sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
+	itemCancels        sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
+	jobNotify          sync.Map                                                                   // jobID -> bool; opt-in to email the submitter when the job finishes
+	buildProv          func(BatchJob, func(runID, convID, taskID string)) (batch.Provider, error) // test seam for the run-item provider; nil → real buildProvider
+	schedMu            sync.Mutex                                                                 // serializes scheduleTick (admission + finalize) so ticks can't over-admit or double-finalize (ADR 0004/0011)
+	mailFn             func(to []string, subject, htmlBody string) error                          // test seam; nil → real SMTP send
+	appTok             *appTokens                                                                 // short-lived scoped tokens for the iframe-app /api/v1 bridge (ADR 0003)
+	chatMu             sync.Mutex                                                                 // guards chatLive/chatSeq
+	chatLive           map[int64]*chatTurn                                                        // in-flight chat turns; independent ceiling + admin live view (ADR 0012), NOT the run queue
+	chatSeq            int64                                                                      // monotonic in-flight chat-turn id
+	cleanupMu          sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
+	loginThr           *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
+	trustedNets        []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
+	mermaidCharts      mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
+	ssoInsecureForTest bool                                                                       // test-only: permit a plain-http loopback IdP (ADR 0023)
+	dekOnce            dekCache                                                                   // lazily unwrapped data key for stored auth secrets (ADR 0023)
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -138,6 +140,7 @@ func RunServer(cfgPath string) {
 	go s.scheduleLoop()  // release one-shot 定时 jobs when their run_at passes (ADR 0007)
 	go s.cleanupLoop()   // run the admin-configured storage-retention pass on its cadence (ADR 0017)
 	go s.recurringLoop() // fire recurring tasks into the run queue on their cadence (ADR 0018)
+	go s.authSweepLoop() // drop expired pending logins + SAML replay entries (ADR 0023)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -152,6 +155,26 @@ func RunServer(cfgPath string) {
 	// The machine API is /api/v1/* (apiv1.go) — the pre-v1 routes that used to sit here were
 	// retired once Dify's tool schemas spoke only v1. This one is the remainder, and it is not
 	// a machine route at all: the omnibox's autocomplete, called from the browser.
+	// SSO (ADR 0023). Unauthenticated by necessity — they ARE the login. Each 404s when the
+	// addressed provider is missing or disabled, so a portal with SSO off is indistinguishable
+	// from one that never had the feature.
+	mux.HandleFunc("GET /api/sso/providers", s.apiSSOProviders)
+	mux.HandleFunc("POST /api/login/2fa", s.apiLoginTOTP) // second leg of a password login
+	mux.HandleFunc("POST /api/me/password", s.requireUserJSON(s.apiChangePassword))
+	mux.HandleFunc("POST /api/me/2fa/setup", s.requireUserJSON(s.apiTOTPSetup))
+	mux.HandleFunc("POST /api/me/2fa/enable", s.requireUserJSON(s.apiTOTPEnable))
+	mux.HandleFunc("POST /api/me/2fa/disable", s.requireUserJSON(s.apiTOTPDisable))
+	mux.HandleFunc("POST /api/login/passkey/begin", s.apiPasskeyLoginBegin)
+	mux.HandleFunc("POST /api/login/passkey/finish", s.apiPasskeyLoginFinish)
+	mux.HandleFunc("GET /api/me/passkeys", s.requireUserJSON(s.apiPasskeyList))
+	mux.HandleFunc("POST /api/me/passkeys/register/begin", s.requireUserJSON(s.apiPasskeyRegisterBegin))
+	mux.HandleFunc("POST /api/me/passkeys/register/finish", s.requireUserJSON(s.apiPasskeyRegisterFinish))
+	mux.HandleFunc("DELETE /api/me/passkeys/{id}", s.requireUserJSON(s.apiPasskeyDelete))
+	mux.HandleFunc("GET /api/auth/oidc/{slug}/start", s.oidcStart)
+	mux.HandleFunc("GET /api/auth/oidc/{slug}/callback", s.oidcCallback)
+	mux.HandleFunc("GET /api/auth/saml/{slug}/start", s.samlStart)
+	mux.HandleFunc("POST /api/auth/saml/{slug}/acs", s.samlACS)
+	mux.HandleFunc("GET /api/auth/saml/{slug}/metadata", s.samlMetadata)
 	mux.HandleFunc("GET /api/symbols", s.apiSymbols) // stock list / autocomplete (omnibox)
 
 	// ---- Dify machine API v1: clean contract (JSON errors, portal-derived identity, envelopes) ----
@@ -188,6 +211,12 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/link-groups", s.requireAdminJSON(s.apiLinkGroupAdd))
 	mux.HandleFunc("PUT /api/admin/link-groups/{id}", s.requireAdminJSON(s.apiLinkGroupEdit))
 	mux.HandleFunc("DELETE /api/admin/link-groups/{id}", s.requireAdminJSON(s.apiLinkGroupDelete))
+	// Report versions (ADR 0024): the registry, who may read each version, and the reader-side
+	// switcher over the forms of one report.
+	mux.HandleFunc("GET /api/admin/versions", s.requireAdminJSON(s.apiAdminVersions))
+	mux.HandleFunc("POST /api/admin/versions", s.requireAdminJSON(s.apiAdminVersionSave))
+	mux.HandleFunc("DELETE /api/admin/versions/{name}", s.requireAdminJSON(s.apiAdminVersionDelete))
+	mux.HandleFunc("GET /api/report/{id}/versions", s.requireUserJSON(s.apiReportVersions))
 	mux.HandleFunc("GET /api/admin/types", s.requireAdminJSON(s.apiAdminTypes))
 	mux.HandleFunc("POST /api/admin/types/save", s.requireAdminJSON(s.apiTypesSave))
 	mux.HandleFunc("POST /api/admin/types/add", s.requireAdminJSON(s.apiTypesAdd))
@@ -207,6 +236,14 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("PUT /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupSave))
 	mux.HandleFunc("DELETE /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupDelete))
 	// Per-OU run allow-list matrix (ADR 0022 R3): which workflows an OU may run, on which surfaces.
+	// SSO administration (ADR 0023). Admin-only; a secret is never returned by any of these.
+	mux.HandleFunc("GET /api/admin/sso/providers", s.requireAdminJSON(s.apiAdminSSOProviders))
+	mux.HandleFunc("POST /api/admin/sso/providers", s.requireAdminJSON(s.apiAdminSSOSave))
+	mux.HandleFunc("DELETE /api/admin/sso/providers/{id}", s.requireAdminJSON(s.apiAdminSSODelete))
+	mux.HandleFunc("POST /api/admin/sso/providers/{slug}/metadata", s.requireAdminJSON(s.apiAdminSSOFetchMetadata))
+	mux.HandleFunc("GET /api/admin/sso/providers/{slug}/last-seen", s.requireAdminJSON(s.apiAdminSSOLastSeen))
+	mux.HandleFunc("GET /api/admin/sso/rules", s.requireAdminJSON(s.apiAdminSSORules))
+	mux.HandleFunc("PUT /api/admin/sso/rules", s.requireAdminJSON(s.apiAdminSSORulesSave))
 	mux.HandleFunc("GET /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargets))
 	mux.HandleFunc("PUT /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargetsSave))
 	mux.HandleFunc("GET /api/admin/settings", s.requireAdminJSON(s.apiAdminSettings))
@@ -502,8 +539,35 @@ func (s *Server) sign(user string) string {
 	return s.signUser(*u)
 }
 
-func (s *Server) signUser(u User) string {
-	exp := time.Now().Add(7 * 24 * time.Hour).Unix()
+// sessionTTL is how long a portal session lasts by default. An SSO provider may shorten it
+// (session_hours), which is why signing takes a duration at all.
+const sessionTTL = 7 * 24 * time.Hour
+
+// setSessionCookie is the ONE place a portal session cookie is minted. Four call sites used to spell
+// the flags out by hand — password login, the 2FA second leg, the passkey second leg and SSO — and a
+// single one of them forgetting HttpOnly or Secure is a session-theft bug that no test would notice.
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, u User) {
+	s.setSessionCookieFor(w, r, u, sessionTTL)
+}
+
+func (s *Server) setSessionCookieFor(w http.ResponseWriter, r *http.Request, u User, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = sessionTTL
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: cookieName, Value: s.signUserFor(u, ttl), Path: "/",
+		HttpOnly: true, Secure: requestIsHTTPS(r, s.trustedNets),
+		SameSite: http.SameSiteLaxMode, MaxAge: int(ttl.Seconds()),
+	})
+}
+
+func (s *Server) signUser(u User) string { return s.signUserFor(u, sessionTTL) }
+
+func (s *Server) signUserFor(u User, ttl time.Duration) string {
+	if ttl <= 0 {
+		ttl = sessionTTL
+	}
+	exp := time.Now().Add(ttl).Unix()
 	msg := fmt.Sprintf("v1|%s|%d|%d", u.Username, u.SessionRev, exp)
 	sig := s.hmac(msg)
 	return encodeSessionMessage(msg) + "." + sig
@@ -561,47 +625,56 @@ func (s *Server) verify(cookie string) (string, int64) {
 // cookie ("v1|") signed by the same secret.
 const ownerTokenPrefix = "ot1"
 
-// mintOwnerToken produces a signed, opaque owner-attribution token carrying the OU to stamp. It is
-// injected into a restricted OU's Dify run inputs and echoed back at ingest, so a report's owner is
-// decided by the portal's secret_key, never by a client-supplied field (ADR 0022 R1). "" if ou is 0.
-func (s *Server) mintOwnerToken(ou int64) string {
-	if ou == 0 {
+// mintOwnerToken produces a signed, opaque attribution token naming WHO asked for a run: the person
+// and, when they have one, their OU. It is injected into a scoped user's Dify run inputs and echoed
+// back at ingest, so a report's attribution is decided by the portal's secret_key and never by a
+// client-supplied field (ADR 0022 R1).
+//
+// It carries the person, not only the OU, because under per-person visibility (ADR 0024) the OU
+// alone cannot identify a reader — and without the person, the requester could not read the very
+// report their own run produced.
+func (s *Server) mintOwnerToken(ou int64, user string) string {
+	if ou == 0 && user == "" {
 		return ""
 	}
 	exp := time.Now().Add(7 * 24 * time.Hour).Unix()
-	msg := fmt.Sprintf("%s|%d|%d", ownerTokenPrefix, ou, exp)
+	msg := fmt.Sprintf("%s|%d|%s|%d", ownerTokenPrefix, ou, user, exp)
 	return encodeSessionMessage(msg) + "." + s.hmac(msg)
 }
 
-// ownerFromToken verifies an owner token and returns the OU it carries. ok=false for an empty,
-// malformed, tampered, expired, or foreign (wrong-prefix) token — the caller then leaves the report
-// unattributed (NULL owner), which fails closed for restricted viewers.
-func (s *Server) ownerFromToken(tok string) (int64, bool) {
+// ownerFromToken verifies an attribution token and returns the OU and person it carries. ok=false
+// for an empty, malformed, tampered, expired, or foreign (wrong-prefix) token — the caller then
+// leaves the report unattributed, which fails closed for scoped viewers.
+func (s *Server) ownerFromToken(tok string) (ou int64, user string, ok bool) {
 	parts := strings.SplitN(tok, ".", 2)
 	if len(parts) != 2 {
-		return 0, false
+		return 0, "", false
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return 0, false
+		return 0, "", false
 	}
 	msg := string(raw)
 	if !hmac.Equal([]byte(s.hmac(msg)), []byte(parts[1])) {
-		return 0, false
+		return 0, "", false
 	}
 	f := strings.Split(msg, "|")
-	if len(f) != 3 || f[0] != ownerTokenPrefix {
-		return 0, false
+	if len(f) != 4 || f[0] != ownerTokenPrefix {
+		return 0, "", false
 	}
-	exp, err := strconv.ParseInt(f[2], 10, 64)
+	exp, err := strconv.ParseInt(f[3], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
-		return 0, false
+		return 0, "", false
 	}
-	ou, err := strconv.ParseInt(f[1], 10, 64)
-	if err != nil || ou <= 0 {
-		return 0, false
+	ou, err = strconv.ParseInt(f[1], 10, 64)
+	if err != nil || ou < 0 {
+		return 0, "", false
 	}
-	return ou, true
+	user = f[2]
+	if ou == 0 && user == "" {
+		return 0, "", false
+	}
+	return ou, user, true
 }
 
 // currentActiveUser returns the logged-in user only if the account still exists and

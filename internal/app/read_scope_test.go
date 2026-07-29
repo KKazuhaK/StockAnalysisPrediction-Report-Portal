@@ -12,9 +12,17 @@ import (
 )
 
 // readScopeFixture builds two restricted OUs (A, B) and, for symbol 600000: A's own report, an
-// internal (NULL-owner) report today, an internal report yesterday, and B's report today; plus a
-// B-only symbol and a B-only subtype. Returns the store, a Server, the restricted user in OU A, and
-// the report ids. It is the shared setup for the P2 owner-scope read tests (ADR 0022 R1).
+// internal report today, an internal report yesterday, and B's report today; plus a B-only symbol
+// and a B-only subtype.
+//
+// ADR 0024 REVERSED one of these expectations on purpose, and it is the reason the feature exists:
+// today's internal report used to be VISIBLE to a restricted viewer (the same-day internal pool),
+// which meant an entitled external reader was handed the internal analysis verbatim. Visibility is
+// now version-granted, the internal version is granted to nobody here, and so it is hidden. Every
+// other expectation in this file is unchanged.
+//
+// A's reports are on a granted version with group visibility, which is what "the reports my OU
+// asked for" now means.
 type scopeIDs struct{ own, intToday, intOld, otherOU, bOnlySym, bOnlyType int64 }
 
 func readScopeFixture(t *testing.T) (*Store, *Server, string, int64, scopeIDs) {
@@ -35,15 +43,29 @@ func readScopeFixture(t *testing.T) (*Store, *Server, string, int64, scopeIDs) {
 	st.SetPrimaryGroup("ext", ouA)
 	st.UpsertUser(User{Username: "staff", PasswordHash: "h", Role: "user"}) // internal (Default group)
 
+	// OU A may read the published version, sharing within the OU. The internal (default) version is
+	// granted to nobody, which is what hides it.
+	st.SaveVersion(ReportVersion{Name: "对外版", Ord: 1, Visibility: VisibilityGroup})
+	st.SetVersionGrants("对外版", []string{groupPrincipal(ouA), groupPrincipal(ouB)})
+
 	today := time.Now().Format("2006-01-02")
 	yest := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	// owner != 0 means "this OU asked for it": the report is on the published version, attributed
+	// for audit and recorded on its viewer list, which is what the read rule consults.
 	mk := func(sym, date, rtype, title string, owner int64) int64 {
-		id, _, err := st.UpsertReport(Rep{Symbol: sym, Date: date, RType: rtype, Title: title})
+		version := st.DefaultVersion()
+		if owner != 0 {
+			version = "对外版"
+		}
+		id, _, err := st.UpsertReport(Rep{Symbol: sym, Date: date, RType: rtype, Title: title, Version: version})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if owner != 0 {
 			if _, err := st.StampReportOwner(id, owner); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.AddReportViewer(id, date, "", owner); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -64,8 +86,8 @@ func TestViewerScopeGating(t *testing.T) {
 	st, s, _, ouA, _ := readScopeFixture(t)
 	// Restricted external user → non-nil scope pinned to their OU.
 	sc := s.viewerScope("ext")
-	if sc == nil || sc.myOU != ouA {
-		t.Fatalf("restricted viewerScope = %+v, want myOU=%d", sc, ouA)
+	if sc == nil || !contains(sc.principals, groupPrincipal(ouA)) || sc.self != userPrincipal("ext") {
+		t.Fatalf("restricted viewerScope = %+v, want it to carry the user and OU %d as principals", sc, ouA)
 	}
 	// Internal user, admin, and anonymous → nil (no predicate, unchanged behavior).
 	if s.viewerScope("staff") != nil {
@@ -93,9 +115,13 @@ func TestNewBySymbolScoped(t *testing.T) {
 	for _, r := range rows {
 		got[r.ID] = true
 	}
-	// Visible: own OU + today's internal. Hidden: yesterday's internal, other OU, other OU's subtype.
-	if !got[ids.own] || !got[ids.intToday] {
-		t.Errorf("restricted view missing own/internal-today: %v", got)
+	// Visible: what the OU asked for. Hidden: everything else — including today's internal report,
+	// which ADR 0024 deliberately reversed (see the fixture comment); it is the leak this closed.
+	if !got[ids.own] {
+		t.Errorf("restricted view missing the OU's own report: %v", got)
+	}
+	if got[ids.intToday] {
+		t.Error("today's internal report must NOT be visible — an ungranted version")
 	}
 	if got[ids.intOld] || got[ids.otherOU] || got[ids.bOnlyType] {
 		t.Errorf("restricted view leaked hidden rows: %v", got)
@@ -121,8 +147,10 @@ func TestGetNewScopedFailsClosed(t *testing.T) {
 	if r, _ := st.GetNew(ids.own, sc); r == nil {
 		t.Error("own-OU report must be visible")
 	}
-	if r, _ := st.GetNew(ids.intToday, sc); r == nil {
-		t.Error("today's internal report must be visible (same-day pool)")
+	// Reversed by ADR 0024, deliberately: today's internal report is on a version granted to
+	// nobody, so it is no longer readable. This is the leak the feature closed.
+	if r, _ := st.GetNew(ids.intToday, sc); r != nil {
+		t.Error("today's internal report must NOT be visible to a restricted viewer")
 	}
 	// The Server chokepoint loadRep(user,id) enforces the same for every by-id read path.
 	if s.loadRep("ext", ids.otherOU) != nil {
@@ -148,8 +176,8 @@ func TestListSymbolsScoped(t *testing.T) {
 		return nil
 	}
 	scoped := st.ListSymbols("", 0, sc)
-	if si := find(scoped, "600000"); si == nil || si.Count != 2 {
-		t.Errorf("scoped 600000 = %+v, want count 2 (own + internal-today)", si)
+	if si := find(scoped, "600000"); si == nil || si.Count != 1 {
+		t.Errorf("scoped 600000 = %+v, want count 1 (only what the OU asked for)", si)
 	}
 	if find(scoped, "000001") != nil {
 		t.Error("a symbol owned only by another OU must not appear in the omnibox")
@@ -233,8 +261,8 @@ func TestV1ReadSurfaceScopedForRestrictedSession(t *testing.T) {
 		json.Unmarshal(rec.Body.Bytes(), &resp)
 		return len(resp.Items)
 	}
-	if n := queryCount(cookie, ""); n != 2 {
-		t.Errorf("restricted v1 query for 600000 → %d items, want 2 (own + internal-today)", n)
+	if n := queryCount(cookie, ""); n != 1 {
+		t.Errorf("restricted v1 query for 600000 → %d items, want 1 (only what the OU asked for)", n)
 	}
 	if n := queryCount("", "machine-tok"); n != 5 {
 		t.Errorf("machine v1 query for 600000 → %d items, want 5 (unscoped)", n)

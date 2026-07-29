@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -46,6 +47,8 @@ func userGroupsJSON(gs []UserGroup) []map[string]any {
 			// restricted_effective also accounts for a restricted ancestor (sticky down the tree).
 			"restricted": g.Restricted, "restricted_effective": g.RestrictedEffective,
 			"daily_run_quota": dailyQuota,
+			// parent_id so the admin UI can render the tree it is editing (ADR 0022).
+			"parent_id": g.ParentID,
 		})
 	}
 	return out
@@ -70,6 +73,32 @@ type groupInput struct {
 	// DailyRunQuota is a pointer so null means "inherit the parent OU" and 0 means unlimited.
 	Restricted    *bool `json:"restricted"`
 	DailyRunQuota *int  `json:"daily_run_quota"`
+	// ParentID places this OU in the tree. A pointer because absent means "leave it where it is" —
+	// every pre-existing caller of this endpoint omits the field — while an explicit 0 detaches it
+	// to a root. Without this the tree could only be built by hand in SQL, which made every
+	// inherited behaviour (restricted stickiness, quota inheritance, the run allow-list's and the
+	// version grants' nearest-ancestor resolution) unreachable through the product.
+	ParentID *int64 `json:"parent_id"`
+}
+
+// applyParent moves an OU, refusing a move that would make it its own ancestor. groupChain survives
+// a cycle — it dedupes and caps — so this is not a hang; but an OU resolving its settings from a ring
+// is a configuration no admin can reason about, and the refusal has to be at the door.
+func (s *Server) applyParent(id int64, parent *int64) error {
+	if parent == nil {
+		return nil
+	}
+	p := *parent
+	if p == id {
+		return fmt.Errorf("an OU cannot be its own parent")
+	}
+	for seen, g := map[int64]bool{}, p; g != 0 && !seen[g]; g = s.st.groupParent(g) {
+		seen[g] = true
+		if g == id {
+			return fmt.Errorf("that would place the OU under itself")
+		}
+	}
+	return s.st.SetGroupParent(id, p)
 }
 
 // tenancy normalizes the external-tenancy fields for storage: a negative quota is clamped to 0
@@ -182,6 +211,11 @@ func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string
 			s.st.SetGroupDailyQuota(id, quota)
 		}
 	}
+	// Placing the OU in one step, so creating a sub-OU is one action rather than create-then-move.
+	if err := s.applyParent(id, in.ParentID); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -214,6 +248,10 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 		s.st.SetGroupRestricted(id, *restricted)
 	}
 	s.st.SetGroupDailyQuota(id, quota) // nil = inherit the parent OU
+	if err := s.applyParent(id, in.ParentID); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	writeJSON(w, okJSON)
 }
 

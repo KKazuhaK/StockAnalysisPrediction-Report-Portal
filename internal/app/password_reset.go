@@ -63,7 +63,15 @@ func (s *Server) verifyResetToken(token string) string {
 // r.Host and X-Forwarded-* are all attacker-controllable and a forged one would
 // poison the emailed link into an account-takeover primitive. Reset-by-email
 // therefore requires public_url to be configured (Manage → Email).
-func (s *Server) resetLinkBase() string {
+func (s *Server) resetLinkBase() string { return s.publicBaseURL() }
+
+// publicBaseURL is the portal's externally-reachable origin, and the single source for every
+// self-referential URL we hand out: password-reset links, and the SAML entity id / ACS URL and OIDC
+// redirect URI (ADR 0023). One function on purpose — SAML compares the Destination of an incoming
+// assertion against the ACS URL it published, so if those two could be derived differently you
+// would have a bypass. There is deliberately no request-derived fallback: a Host header is
+// attacker-controlled, and "" here makes the dependent feature refuse rather than trust it.
+func (s *Server) publicBaseURL() string {
 	return strings.TrimRight(strings.TrimSpace(s.st.GetSetting("public_url", "")), "/")
 }
 
@@ -84,7 +92,10 @@ func (s *Server) apiForgotPassword(w http.ResponseWriter, r *http.Request) {
 		u = s.st.UserByEmail(acct)
 	}
 	base := s.resetLinkBase()
-	eligible := u != nil && u.Active && u.Email != "" && s.emailEnabled()
+	// A federated account has no local password, so a reset link would be meaningless — and
+	// following one would silently give it a password that the SSO login path then refuses. The
+	// response is unchanged either way, so this is not an oracle for which accounts are federated.
+	eligible := u != nil && u.Active && !u.IsFederated() && u.Email != "" && s.emailEnabled()
 	// Rate-limit per resolved account so a flood of POSTs can't spam a victim's inbox or pile up SMTP
 	// goroutines/sockets. Only a real, eligible account ever spawns a send, so a per-account cap fully
 	// bounds it; the response stays a constant okJSON either way (no account-existence leak).

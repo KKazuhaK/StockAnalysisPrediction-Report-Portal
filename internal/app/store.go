@@ -35,6 +35,7 @@ type Rep struct {
 	Source, Time  string
 	HTML, MD      string // body (only filled when reading)
 	Label         string // short tab label within a run
+	Version       string // which written form this is (ADR 0024); part of the report's identity
 }
 
 // Link is an entry button.
@@ -196,6 +197,13 @@ func (s *Store) init() error {
 	if err := s.ensureColumns(); err != nil {
 		return err
 	}
+	// Ordered, and the order is the whole safety argument (ADR 0024). The identity index gained a
+	// `version` component, so every existing row must carry a value BEFORE the unique index is
+	// rebuilt: NULLs compare distinct in a unique index on both drivers, so building it first would
+	// admit exactly the duplicate rows the index exists to forbid.
+	if err := s.reconcileReportVersions(); err != nil {
+		return err
+	}
 	if err := s.createBaseIndexes(); err != nil {
 		return err
 	}
@@ -209,16 +217,23 @@ func (s *Store) init() error {
 }
 
 // reportIdentExpr is the column tuple that identifies a report: stock code + civil date +
-// subtype + title. It is written ONCE and shared by the unique index and UpsertReport's
+// subtype + title + version. It is written ONCE and shared by the unique index and UpsertReport's
 // ON CONFLICT target — those two must match exactly for conflict inference to resolve, so
 // they must never be edited apart.
+//
+// version (ADR 0024) joins the tuple because two written forms of one analysis legitimately share
+// every other component, title included: without it, publishing the external version would resolve
+// to the internal row and overwrite the analysis it was derived from. Adding it is safe for existing
+// data in a way that REMOVING a component never is — every pre-version row resolves to the same
+// default version, so the five-column tuple is unique exactly where the four-column one was, and the
+// index rebuild can neither merge two reports nor fork one (the v0.3.0 failure).
 //
 // title is load-bearing, not decoration: rtype is a coarse registry label ("股权分析",
 // "估值分析") and one code+date+subtype legitimately carries several different reports that
 // only their titles tell apart. Keying without it merges them and keeps only the last.
-// A thematic report has no code (symbol ''), and is likewise told apart by its title, so
+// A thematic report has no code (symbol ”), and is likewise told apart by its title, so
 // this one tuple covers both without a code-or-title fallback expression.
-const reportIdentExpr = `symbol, rdate, rtype, title`
+const reportIdentExpr = `symbol, rdate, rtype, title, version`
 
 const reportIdentIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_ident ON reports(` + reportIdentExpr + `)`
 
@@ -242,7 +257,8 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s,
 			title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
 			kind TEXT, run_id TEXT, owner_group BIGINT,
-			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT)`, pk),
+			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT,
+			version TEXT NOT NULL DEFAULT '')`, pk),
 		// These two carry every lookup by code or date. Single-column idx_reports_sym(symbol) and
 		// idx_reports_date(rdate) used to sit beside them and are gone: a B-tree already serves its
 		// leftmost prefix, so both were answered by a wider index anyway. Measured on 30k rows,
@@ -283,10 +299,86 @@ func (s *Store) baseSchemaStmts() []string {
 		// tables (docs/adr/0013-v2-schema-consolidation.md). active defaults to 1 (enabled).
 		// expires_at (ADR 0022): account validity cutoff as a panel-tz civil date "YYYY-MM-DD" (NULL =
 		// never), orthogonal to active — valid THROUGH that whole day; see Server.accountExpired. Additive.
+		// users.restricted (ADR 0024): scopes THIS account's reads regardless of its OU, so a portal
+		// with no OU tree can still have external users. ORs with the OU's own restricted flag.
+		//
+		// Authentication columns (ADR 0023). source/source_ref record WHERE an account came from
+		// (local | jit | scim) so a future sync only ever owns its own rows; external_id is the IdP's
+		// immutable object id and the SSO<->SCIM join key — it must be recorded during the SSO era
+		// because it cannot be reconstructed later. The SCIM-only columns (uid, login_name,
+		// deactivated_at, deleted_at, last_sync_at) are deliberately deferred to the SCIM change:
+		// ensureColumns adds columns for free here, so reserving them early buys nothing.
+		// totp_* / recovery_codes back TOTP 2FA; the secret is sealed (never plaintext) and the
+		// recovery codes are stored HASHED and single-use, because they are password-equivalents.
 		`CREATE TABLE IF NOT EXISTS users(
 			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user',
 			display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT, group_id BIGINT,
-			session_rev BIGINT DEFAULT 0, expires_at TEXT)`,
+			session_rev BIGINT DEFAULT 0, expires_at TEXT,
+			external_id TEXT, source TEXT DEFAULT 'local', source_ref TEXT DEFAULT '',
+			created_at TEXT, updated_at TEXT,
+			totp_secret_enc TEXT, totp_enabled INTEGER DEFAULT 0, totp_confirmed_at TEXT,
+			recovery_codes TEXT, restricted INTEGER DEFAULT 0)`,
+		// An account is linked to an external identity ONLY by (provider, issuer, subject) — never by
+		// email, which is the nOAuth account-takeover class (an admin of any other tenant can set an
+		// unverified email claim to your user's address). sub is unique only WITHIN an issuer, hence
+		// the composite key. A side table rather than columns on users because one human may hold both
+		// a SAML and an OIDC identity, and an IdP migration needs both links live during the overlap.
+		`CREATE TABLE IF NOT EXISTS user_identities(
+			provider TEXT NOT NULL, issuer TEXT NOT NULL, subject TEXT NOT NULL,
+			username TEXT NOT NULL, provider_slug TEXT DEFAULT '', nameid_format TEXT DEFAULT '',
+			attrs TEXT DEFAULT '', created_at TEXT DEFAULT '', last_login_at TEXT DEFAULT '',
+			PRIMARY KEY(provider, issuer, subject))`,
+		// One row per IdP. Row-shaped (not a meta blob) so multiple providers are later a UI change
+		// with no schema movement; v1 manages one saml row and one oidc row. Secrets (SP private key,
+		// OIDC client secret) are sealed under the sso_keyring DEK and never returned by any API.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS sso_providers(
+			id %s, kind TEXT, slug TEXT, name TEXT,
+			enabled INTEGER DEFAULT 0, provisioning TEXT DEFAULT 'off',
+			default_group BIGINT, default_role TEXT DEFAULT 'user',
+			default_expiry_days INTEGER, allow_admin_role INTEGER DEFAULT 0,
+			idp_metadata_url TEXT, idp_metadata_xml TEXT, idp_metadata_fetched_at TEXT,
+			idp_metadata_error TEXT, idp_entity_id TEXT, idp_cert_pem TEXT,
+			allow_idp_initiated INTEGER DEFAULT 0, clock_skew_sec INTEGER DEFAULT 60,
+			sp_cert_pem TEXT, sp_cert_not_after TEXT, sp_key_enc TEXT,
+			sp_cert_prev_pem TEXT, sp_key_prev_enc TEXT,
+			issuer TEXT, client_id TEXT, client_secret_enc TEXT,
+			scopes TEXT DEFAULT 'openid profile email', discovery_json TEXT, discovery_fetched_at TEXT,
+			attr_upn TEXT, attr_email TEXT, attr_display TEXT, attr_groups TEXT, attr_external_id TEXT,
+			session_hours INTEGER, created_at TEXT, updated_at TEXT)`, pk),
+		// Ordered IdP-group -> (role, OU) rules. Rows, never a JSON blob, so a future sync job can
+		// query and re-evaluate them. A rule targets BOTH a role and an OU because in this codebase
+		// the OU carries the real permissions (ADR 0022: restricted, quota, allow-list, visibility) —
+		// a role alone would leave a JIT-created external user with no entitlements.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS sso_group_rules(
+			id %s, provider_id BIGINT, ord INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1,
+			attr TEXT, value TEXT, target_role TEXT DEFAULT '', target_group BIGINT,
+			keep_on_miss INTEGER DEFAULT 0, ci INTEGER DEFAULT 0, note TEXT DEFAULT '')`, pk),
+		// Short-lived single-use state for EVERY interactive auth ceremony: the SAML AuthnRequest id,
+		// the OIDC nonce + PKCE verifier, the 2FA pending-login step and the WebAuthn challenge. They
+		// are one problem (single-use, restart-safe, cross-instance), so they get one table, one
+		// sweeper, and one consumption rule: a conditional DELETE requiring RowsAffected()==1, which
+		// no cookie can provide and which two concurrent callbacks cannot both win.
+		`CREATE TABLE IF NOT EXISTS sso_auth_requests(
+			token TEXT PRIMARY KEY, provider_id BIGINT, kind TEXT,
+			req_id TEXT DEFAULT '', nonce TEXT DEFAULT '', verifier TEXT DEFAULT '',
+			username TEXT DEFAULT '', target TEXT DEFAULT '',
+			created_at BIGINT, expires_at BIGINT)`,
+		// SAML assertion replay cache (a Web SSO profile MUST). Keyed on the HASH of entity id +
+		// assertion id so one IdP cannot pre-poison another's ID space; a DB table rather than an
+		// in-memory map because production runs several instances against shared Postgres and a
+		// restart must not reopen the replay window.
+		`CREATE TABLE IF NOT EXISTS sso_assertion_seen(
+			seen_key TEXT PRIMARY KEY, expires_at BIGINT)`,
+		// One row. A random DEK wrapped under HKDF(secret_key, salt): rotating secret_key re-wraps
+		// this single row instead of re-encrypting every stored secret.
+		`CREATE TABLE IF NOT EXISTS sso_keyring(
+			id INTEGER PRIMARY KEY, salt TEXT, wrapped_dek TEXT, kek_version INTEGER DEFAULT 1, created_at TEXT)`,
+		// Passkeys. sign_count is stored because a counter that goes BACKWARDS is the one thing
+		// WebAuthn's counter exists to detect (a cloned authenticator).
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS webauthn_credentials(
+			id %s, credential_id TEXT, username TEXT, label TEXT DEFAULT '',
+			credential TEXT, sign_count BIGINT DEFAULT 0,
+			created_at TEXT, last_used_at TEXT)`, pk),
 		// API tokens (multiple, with note/scope/validity period/last used). scope: all|ingest|query.
 		// Existing plaintext token values stay untouched and remain valid. New writes leave token
 		// NULL and authenticate through token_hash; token_prefix is safe display metadata.
@@ -295,6 +387,19 @@ func (s *Store) baseSchemaStmts() []string {
 			name TEXT, scope TEXT DEFAULT 'all',
 			created_at TEXT, expires_at TEXT, last_used_at TEXT)`, pk),
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash) WHERE token_hash IS NOT NULL`,
+		// ADR 0023 indexes. Uniqueness on users is a PARTIAL index rather than a column constraint
+		// because SQLite cannot ALTER TABLE ADD COLUMN ... UNIQUE — the same shape as the token-hash
+		// index above. The `<> ''` clause keeps pre-existing rows (which reconcile to NULL/'') from
+		// colliding with each other.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id ON users(source_ref, external_id) WHERE external_id IS NOT NULL AND external_id <> ''`,
+		`CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(username)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_providers_slug ON sso_providers(slug)`,
+		`CREATE INDEX IF NOT EXISTS idx_sso_group_rules_ord ON sso_group_rules(provider_id, ord)`,
+		// The two TTL tables are swept by the existing cleanupLoop (ADR 0017), which scans by expiry.
+		`CREATE INDEX IF NOT EXISTS idx_sso_auth_requests_exp ON sso_auth_requests(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_sso_assertion_seen_exp ON sso_assertion_seen(expires_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_cred_id ON webauthn_credentials(credential_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_credentials(username)`,
 		// Structured "assumption/tracking items" for re-run review (common across report types). itype: assumption|tracking.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS tracking_items(
 			id %s, report_id BIGINT, symbol TEXT, itype TEXT, content TEXT,
@@ -411,6 +516,30 @@ func (s *Store) baseSchemaStmts() []string {
 			urgent_unlimited INTEGER, is_default INTEGER DEFAULT 0,
 			allow_urgent INTEGER, max_queued INTEGER, run_window TEXT, priority TEXT,
 			parent_id BIGINT, restricted INTEGER DEFAULT 0, daily_run_quota INTEGER)`, pk),
+		// report_versions (ADR 0024): the registry of written forms a report can be published in.
+		// `name` is a stable id stored on report rows; `label` is what users see, so renaming the
+		// display name can never orphan a report. `visibility` decides WHOSE reports of this version a
+		// reader sees once granted it (owner|group|all) — see the Visibility constants.
+		`CREATE TABLE IF NOT EXISTS report_versions(
+			name TEXT PRIMARY KEY, label TEXT DEFAULT '', ord INTEGER DEFAULT 0,
+			visibility TEXT DEFAULT 'owner')`,
+		// version_grants (ADR 0024): who may READ a version, default-deny. The principal is an OU
+		// ("g:<id>") or a single account ("u:<name>") in one column, so a portal with no OU tree
+		// configured is a first-class case rather than a workaround — and so the read path has ONE
+		// shape to get right instead of two. Additive side table with a composite key, like
+		// group_targets.
+		`CREATE TABLE IF NOT EXISTS version_grants(
+			version TEXT, principal TEXT, PRIMARY KEY(version, principal))`,
+		// report_viewers (ADR 0024): who asked for a report. This is the single ownership mechanism
+		// the READ path consults — the security-critical filter must not have two spellings — with
+		// the same principal encoding as version_grants. rdate is carried on the row on purpose: the
+		// list page orders by it, and a covering (principal, rdate, report_id) key turns that sort
+		// into an index walk instead of a temp B-tree (measured 0.014ms vs 0.235ms at 200k reports).
+		// It is safe to denormalize because rdate is part of report identity and never changes after
+		// ingest.
+		`CREATE TABLE IF NOT EXISTS report_viewers(
+			principal TEXT, rdate TEXT, report_id BIGINT, PRIMARY KEY(principal, rdate, report_id))`,
+		`CREATE INDEX IF NOT EXISTS idx_report_viewers_report ON report_viewers(report_id)`,
 		// group_targets (ADR 0022): a restricted OU's default-deny allow-list of which batch_targets it
 		// may run and on which surfaces. A row = "this OU MAY run this target"; surfaces is the OU's
 		// subset of run|batch|recurring|chat ('' = inherit the target's own batch_targets.surfaces).
@@ -512,19 +641,31 @@ func (s *Store) execBaseSchema(indexes bool) error {
 // ADR 0013): a NULL display_name/email/last_login reads as ” and a NULL active reads as 1.
 const userCols = `u.username,u.password_hash,u.role,
 	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,''),
-	COALESCE(u.session_rev,0),COALESCE(u.expires_at,'')`
+	COALESCE(u.session_rev,0),COALESCE(u.expires_at,''),
+	COALESCE(u.source,'local'),COALESCE(u.source_ref,''),COALESCE(u.external_id,''),COALESCE(u.totp_enabled,0),
+	COALESCE(u.restricted,0)`
 
 func scanUser(scan func(...any) error) (User, error) {
 	var u User
-	var role, dn, email, last, expires sql.NullString
-	var active, sessionRev sql.NullInt64
-	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev, &expires); err != nil {
+	var role, dn, email, last, expires, source, sourceRef, externalID sql.NullString
+	var active, sessionRev, totp, restricted sql.NullInt64
+	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev, &expires,
+		&source, &sourceRef, &externalID, &totp, &restricted); err != nil {
 		return User{}, err
 	}
+	u.Restricted = restricted.Int64 != 0
 	u.Role, u.DisplayName, u.Email, u.LastLogin = role.String, dn.String, email.String, last.String
 	u.Active = !active.Valid || active.Int64 != 0
 	u.SessionRev = sessionRev.Int64
 	u.ExpiresAt = expires.String
+	// A NULL source (a row that predates ADR 0023) reads as "local": a pre-existing account must
+	// never be mistaken for a federated one, which would lock its owner out of password login.
+	u.Source = source.String
+	if u.Source == "" {
+		u.Source = "local"
+	}
+	u.SourceRef, u.ExternalID = sourceRef.String, externalID.String
+	u.TOTPEnabled = totp.Int64 != 0
 	return u, nil
 }
 
@@ -811,7 +952,7 @@ func (s *Store) newReportFilter(f Filters, sc *ownerScope) (string, []any) {
 // viewer's own OU + same-day internal pool (nil = no restriction; see ownerScope).
 func (s *Store) SearchNew(f Filters, sc *ownerScope) ([]Rep, error) {
 	where, args := s.newReportFilter(f, sc)
-	q := "SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
+	q := "SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,COALESCE(r.version,'') FROM reports r LEFT JOIN stocks s ON s.code = r.symbol"
 	q += where
 	q += fmt.Sprintf(" ORDER BY r.rdate %s, r.sent_at %s", dir(f.Sort), dir(f.Sort))
 	rows, err := s.query(q, args...)
@@ -833,7 +974,7 @@ func (s *Store) SearchNew(f Filters, sc *ownerScope) ([]Rep, error) {
 func (s *Store) SearchNewLatest(f Filters, sc *ownerScope) ([]Rep, int, error) {
 	where, args := s.newReportFilter(f, sc)
 	q := `WITH filtered AS (
-		SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,
+		SELECT r.id,r.title,r.symbol,r.name,r.rtype,r.rdate,r.kind,r.run_id,r.source,r.sent_at,COALESCE(r.version,'') AS version,
 			COUNT(*) OVER() AS filtered_total
 		FROM reports r LEFT JOIN stocks s ON s.code = r.symbol` + where + `
 	), ranked AS (
@@ -866,15 +1007,17 @@ func (s *Store) SearchNewLatest(f Filters, sc *ownerScope) ([]Rep, int, error) {
 	return out, total, rows.Err()
 }
 
-// scanNewRow scans one new-report row (without body). Fixed column order: id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at.
+// scanNewRow scans one new-report row (without body). Fixed column order:
+// id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,version — every caller's SELECT must
+// match it exactly, in that order.
 func scanNewRow(rows *sql.Rows) Rep {
 	var id int64
-	var title, sym, name, rt, rd, kind, runID, src, sent sql.NullString
-	rows.Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent)
+	var title, sym, name, rt, rd, kind, runID, src, sent, version sql.NullString
+	rows.Scan(&id, &title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &version)
 	return Rep{
 		ID: id, Title: title.String, Symbol: sym.String, Name: name.String,
 		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
-		Source: src.String, Time: sent.String,
+		Source: src.String, Time: sent.String, Version: version.String,
 	}
 }
 
@@ -1311,7 +1454,7 @@ func (s *Store) ListRuns(symbol, date string, sc *ownerScope) []RunInfo {
 
 // NewBySymbol fetches all new reports for a symbol (without body, date descending), for the per-stock timeline detail view.
 func (s *Store) NewBySymbol(symbol string, sc *ownerScope) ([]Rep, error) {
-	q := `SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at FROM reports WHERE symbol=?`
+	q := `SELECT id,title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,COALESCE(version,'') FROM reports WHERE symbol=?`
 	args := []any{symbol}
 	if frag, fargs := sc.where(""); frag != "" {
 		q += " AND " + frag
@@ -1334,15 +1477,15 @@ func (s *Store) NewBySymbol(symbol string, sc *ownerScope) ([]Rep, error) {
 // out-of-scope id returns (nil, nil), so every by-id read path fails closed at the SQL layer and its
 // existing "nil → 404" handling keeps another OU's report unreachable by id enumeration (ADR 0022 R1).
 func (s *Store) GetNew(rowid int64, sc *ownerScope) (*Rep, error) {
-	var title, sym, name, rt, rd, kind, runID, src, sent, md, html sql.NullString
-	q := "SELECT title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html FROM reports WHERE id=?"
+	var title, sym, name, rt, rd, kind, runID, src, sent, md, html, version sql.NullString
+	q := "SELECT title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html,version FROM reports WHERE id=?"
 	args := []any{rowid}
 	if frag, fargs := sc.where(""); frag != "" {
 		q += " AND " + frag
 		args = append(args, fargs...)
 	}
 	err := s.queryRow(q, args...).
-		Scan(&title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html)
+		Scan(&title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html, &version)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1353,13 +1496,14 @@ func (s *Store) GetNew(rowid int64, sc *ownerScope) (*Rep, error) {
 		ID: rowid, Title: title.String, Symbol: sym.String, Name: name.String,
 		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
 		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String,
+		Version: version.String,
 	}, nil
 }
 
 // reportIdentWhere matches one report by the identity reportIdentExpr indexes, for the
 // existence probe UpsertReport needs to tell an insert from an overwrite. It is the same
 // tuple spelled as a predicate; keep it in step with reportIdentExpr.
-const reportIdentWhere = `symbol=? AND rdate=? AND rtype=? AND title=?`
+const reportIdentWhere = `symbol=? AND rdate=? AND rtype=? AND title=? AND version=?`
 
 // UpsertReport inserts a report, or overwrites the existing row that shares its identity
 // (see reportIdentExpr: code + date + subtype + title). Returns the id of the row actually
@@ -1370,7 +1514,9 @@ func (s *Store) UpsertReport(r Rep) (int64, bool, error) {
 	// alternatives (Postgres' xmax trick) do not exist on SQLite. Both statements run against
 	// idx_reports_ident, so this costs one extra index seek per ingest.
 	var prevID int64
-	err := s.queryRow("SELECT id FROM reports WHERE "+reportIdentWhere, r.Symbol, r.Date, r.RType, r.Title).Scan(&prevID)
+	version := s.resolveVersion(r.Version)
+	err := s.queryRow("SELECT id FROM reports WHERE "+reportIdentWhere,
+		r.Symbol, r.Date, r.RType, r.Title, version).Scan(&prevID)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, false, err
 	}
@@ -1378,13 +1524,14 @@ func (s *Store) UpsertReport(r Rep) (int64, bool, error) {
 	// RETURNING id yields the written row on both the insert and the update branch, on
 	// SQLite and Postgres alike, so one statement serves both drivers.
 	if err := s.queryRow(`
-		INSERT INTO reports(title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		INSERT INTO reports(title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html,version)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(`+reportIdentExpr+`) DO UPDATE SET title=excluded.title,symbol=excluded.symbol,name=excluded.name,
 		  rtype=excluded.rtype,rdate=excluded.rdate,kind=excluded.kind,run_id=excluded.run_id,
 		  source=excluded.source,sent_at=excluded.sent_at,body_md=excluded.body_md,body_html=excluded.body_html
 		RETURNING id`,
-		r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.RunID, r.Source, r.Time, r.MD, r.HTML).Scan(&id); err != nil {
+		r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.RunID, r.Source, r.Time, r.MD, r.HTML,
+		version).Scan(&id); err != nil {
 		return 0, false, err
 	}
 	return id, prevID == 0, nil

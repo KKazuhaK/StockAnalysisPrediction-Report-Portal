@@ -2,9 +2,11 @@ import { Suspense, useEffect, useState } from 'react'
 import { Button, Drawer, Menu, Spin, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import {
+  SafetyOutlined,
   ApiOutlined,
   AppstoreAddOutlined,
   AppstoreOutlined,
+  BranchesOutlined,
   ControlOutlined,
   DatabaseOutlined,
   FileTextOutlined,
@@ -104,13 +106,17 @@ export default function ManageLayout() {
     {
       type: 'group',
       label: t('nav.group.content'),
-      children: [{ key: 'types', label: t('nav.types'), icon: <AppstoreOutlined /> }],
+      children: [
+        { key: 'types', label: t('nav.types'), icon: <AppstoreOutlined /> },
+        { key: 'versions', label: t('nav.versions'), icon: <BranchesOutlined /> },
+      ],
     },
     {
       type: 'group',
       label: t('nav.group.access'),
       children: [
         { key: 'users', label: t('nav.users'), icon: <TeamOutlined /> },
+        { key: 'sso', label: t('nav.sso'), icon: <SafetyOutlined /> },
         { key: 'tokens', label: t('settings.tokens'), icon: <KeyOutlined /> },
       ],
     },

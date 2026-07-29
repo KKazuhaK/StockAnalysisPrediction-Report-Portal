@@ -589,7 +589,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
       form.setFieldsValue({
         name: '', description: '', urgent_inherit: true, urgent_policy: 'ticket', weight: 0,
         maxq_inherit: true, max_queued: 0, window_inherit: true, run_window: '', priority: undefined,
-        restricted: false, quota_inherit: true, daily_run_quota: 0,
+        restricted: false, quota_inherit: true, daily_run_quota: 0, parent_id: 0,
       })
     else
       form.setFieldsValue({
@@ -608,6 +608,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
         restricted: !!g.restricted,
         quota_inherit: !g.is_default && g.daily_run_quota == null,
         daily_run_quota: g.daily_run_quota ?? 0,
+        parent_id: g.parent_id ?? 0,
       })
   }
   const save = async () => {
@@ -631,6 +632,9 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
       // null inherits the parent OU and 0 means unlimited.
       restricted: isDef ? false : !!v.restricted,
       daily_run_quota: !isDef && v.quota_inherit ? null : (v.daily_run_quota ?? 0),
+      // Where this OU sits in the tree (ADR 0022). 0 detaches it to a root. Every inherited
+      // setting below resolves along this edge, so without it the tree is decorative.
+      ...(isDef ? {} : { parent_id: v.parent_id ?? 0 }),
     }
     try {
       if (edit === 'new') await api.post('/api/admin/groups', body)
@@ -855,6 +859,20 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
               appear on a non-default OU. Restriction is sticky down the OU tree. */}
           {!isDefault && (
             <>
+              <Form.Item name="parent_id" label={t('users.parentOu')} extra={t('users.parentOuHint')}>
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  options={[
+                    { value: 0, label: t('users.parentOuNone') },
+                    // An OU cannot be placed under itself; its descendants are refused by the
+                    // server too, but not offering them keeps the admin out of a dead end.
+                    ...groups
+                      .filter((g) => !(edit !== 'new' && edit && g.id === (edit as UserGroupRow).id))
+                      .map((g) => ({ value: g.id, label: g.name })),
+                  ]}
+                />
+              </Form.Item>
               <Form.Item name="restricted" valuePropName="checked" label={t('users.restricted')} extra={t('users.restrictedHint')}>
                 <Switch size="small" />
               </Form.Item>

@@ -65,6 +65,12 @@ func ingestInstant(clientTime string) string {
 // back to the process/system zone when unset or unparseable. This is the business
 // timezone: date-only values (report date, date=today, /now's date) resolve here,
 // while instant timestamps travel as UTC and are localized for display client-side.
+// panelToday is the civil date in the business timezone — the date reports are filed under and
+// every day-boundary rule is measured against.
+func (s *Server) panelToday() string {
+	return time.Now().In(s.panelLocation()).Format("2006-01-02")
+}
+
 func (s *Server) panelLocation() *time.Location {
 	name := s.st.GetSetting("timezone", "")
 	if name == "" {
@@ -128,6 +134,8 @@ func (s *Server) v1RepJSON(r Rep, withBody bool) map[string]any {
 		"id": r.ID, "run_id": r.RunID, "symbol": r.Symbol,
 		"name": firstNonEmpty(r.Name, s.names.Get(r.Symbol)),
 		"date": r.Date, "time": r.Time, "kind": r.Kind, "subtype": r.RType, "title": r.Title, "source": r.Source,
+		// version (ADR 0024) so a consumer can tell which written form it received, and label it.
+		"version": r.Version,
 	}
 	if withBody {
 		m["body_md"] = r.MD
@@ -150,6 +158,10 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		Kind       string `json:"kind"`
 		Subtype    string `json:"subtype"`
 		RType      string `json:"rtype"`
+		// Version (ADR 0024): which written form of this analysis the workflow just produced.
+		// Omitted means the default version — exactly what every existing producer means today —
+		// so a workflow that has never heard of versions keeps overwriting its own row in place.
+		Version string `json:"version"`
 		Title      string `json:"title"`
 		Source     string `json:"source"`
 		Time       string `json:"time"`
@@ -195,12 +207,13 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = s.names.Resolve(in.Symbol)
 	}
-	// Identity is resolved by the store's unique index (code-or-title + date + subtype),
-	// so a re-ingest overwrites in place and hands back the same id.
+	// Identity is resolved by the store's unique index (code-or-title + date + subtype + version),
+	// so a re-ingest overwrites in place and hands back the same id, while a different version is a
+	// row of its own rather than an overwrite of the analysis it was derived from.
 	id, created, err := s.st.UpsertReport(Rep{
 		RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
 		RType: rtype, Title: in.Title, Source: in.Source, Time: ingestInstant(in.Time),
-		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML),
+		MD: in.BodyMD, HTML: htmlToStore(in.BodyMD, in.BodyHTML), Version: in.Version,
 	})
 	if err != nil {
 		log.Printf("v1 ingest db error: %v", err)
@@ -210,9 +223,16 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	// Stamp the generating OU first-writer-wins from the signed owner_token (ADR 0022 R1). A missing
 	// or invalid token leaves owner_group NULL (internal/unattributed), which fails closed for
 	// restricted viewers. Ownership is never taken from a plain client-supplied field.
-	if ou, ok := s.ownerFromToken(in.OwnerToken); ok {
+	// Attribution (ADR 0022 R1) and the requester's place on the report's viewer list (ADR 0024) are
+	// both decided by the signed token, never by a client-supplied field. The viewer row is what
+	// makes the report readable by the person who paid for it under per-person visibility; stamping
+	// the OU alone would leave them unable to open their own result.
+	if ou, who, ok := s.ownerFromToken(in.OwnerToken); ok {
 		if _, err := s.st.StampReportOwner(id, ou); err != nil {
 			log.Printf("v1 ingest stamp owner id=%d ou=%d: %v", id, ou, err)
+		}
+		if err := s.st.AddReportViewer(id, in.Date, who, ou); err != nil {
+			log.Printf("v1 ingest record viewer id=%d user=%q: %v", id, who, err)
 		}
 	}
 	if len(in.Tracking) > 0 {

@@ -8,6 +8,10 @@ export interface Me {
   perms?: Record<string, boolean>
   email?: string // the user's email (for the "email me when done" opt-in)
   mail_enabled?: boolean // whether SMTP is configured, so email features can be offered
+  // Security state, so the account page can branch before the user submits (ADR 0023).
+  federated?: boolean // credentials live at the IdP: no local password, no local second factor
+  totp_enabled?: boolean
+  passkeys?: number
 }
 
 // ---- Batch-run feature ----
@@ -250,6 +254,7 @@ export interface SubTab {
   id: number
   label: string
   rtype: string
+  version?: string // which written form this tab is (ADR 0024)
 }
 
 export interface StockResp {
@@ -348,6 +353,7 @@ export interface UserGroupRow {
   run_window?: string | null // '' = any hour, else 'H1-H2' (panel timezone)
   priority?: string // base run priority 0..100 override ('' / undefined = inherit the system default; ADR 0008)
   members: number // primary-member count
+  parent_id?: number // where this OU sits in the tree; 0/absent = a root (ADR 0022)
   // External-user tenancy (ADR 0022). restricted is this OU's own flag; restricted_effective also
   // accounts for a restricted ancestor (restriction is sticky down the OU tree).
   restricted?: boolean
@@ -638,4 +644,53 @@ export interface RecurringDetail extends RecurringTask {
 
 export interface RecurringTasksResp {
   tasks: RecurringTask[]
+}
+
+// A login-page SSO button (ADR 0023). Deliberately minimal — the public endpoint exposes no
+// issuer, client id or configuration, only what is needed to render and start a sign-in.
+export interface SSOProviderInfo {
+  slug: string
+  kind: 'saml' | 'oidc'
+  name: string
+}
+
+// Admin view of an SSO provider (ADR 0023). Note what is NOT here: no client secret, no SP
+// private key — the server reports only whether each is set.
+export interface SSOProviderAdmin {
+  id: number
+  kind: 'saml' | 'oidc'
+  slug: string
+  name: string
+  enabled: boolean
+  provisioning: 'off' | 'jit'
+  default_group: number
+  default_role: string
+  default_expiry_days: number
+  allow_admin_role: boolean
+  session_hours: number
+  issuer: string
+  client_id: string
+  scopes: string
+  has_client_secret: boolean
+  redirect_url: string // derived from the public URL; read-only
+  idp_metadata_url: string
+  idp_entity_id: string
+  has_idp_metadata: boolean
+  allow_idp_initiated: boolean
+  clock_skew_sec: number
+  sp_entity_id: string // derived; paste into the IdP
+  sp_acs_url: string // derived; paste into the IdP
+  sp_cert_pem: string
+  sp_cert_not_after: string
+  has_sp_key: boolean
+  attr_upn: string
+  attr_email: string
+  attr_display: string
+  attr_groups: string
+  attr_external_id: string
+}
+
+export interface SSOProvidersResp {
+  providers: SSOProviderAdmin[]
+  public_url: string
 }

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 )
 
@@ -99,6 +100,16 @@ func targetOutputSubtype(config string) string {
 	return strings.TrimSpace(m.OutputSubtype)
 }
 
+// targetOutputVersion names the report version this target produces (ADR 0024). Empty means the
+// default version, which is what every pre-version target means.
+func targetOutputVersion(config string) string {
+	var m struct {
+		OutputVersion string `json:"output_version"`
+	}
+	json.Unmarshal([]byte(config), &m)
+	return strings.TrimSpace(m.OutputVersion)
+}
+
 // targetSymbolInput names the input key that carries the stock code for this target. Input keys are
 // target-defined (code / symbol / …), so the same-day reuse gate cannot guess: it is declared beside
 // output_subtype in the target's config JSON. Guessing here would risk handing back a DIFFERENT
@@ -112,17 +123,19 @@ func targetSymbolInput(config string) string {
 }
 
 // reuseSameDayReport implements R1's "already generated today → show it directly" rule: it reports
-// the id of an existing same-day report that satisfies this submit, so the caller can be handed it
-// instead of running (costing no quota).
+// an existing report to hand back instead of running, for a single-row submit by a scoped user.
 //
-// It applies to RESTRICTED callers only — an internal user re-running is a legitimate refresh — and
-// only to a single-row submit, the one-report-per-click shape the rule describes. It is deliberately
-// fail-safe: a target that has not declared BOTH what it produces (output_subtype) and which input
-// carries the stock code (symbol_input) never reuses, because guessing could hand back a different
-// company's report. A symbol-less (thematic) request never reuses either (D5) — its identity is the
-// generated title, which the requester cannot predict.
-// It returns the report id plus its group key (the gkey the /run/{key} view is addressed by), so the
-// caller can be sent straight to the existing report without the client having to re-derive it.
+// The lookup is by CONTENT — this symbol, this subtype, this version, today — and NOT by what the
+// caller can already see. Scoping it to the viewer was the original mistake and it made the whole
+// feature inert: under per-person visibility a first-time requester is by definition not on any
+// report's viewer list, so the lookup found nothing and every request ran for real. Reuse is needed
+// precisely for the person who has not asked before.
+//
+// Handing the report over discloses nothing new, because two conditions already hold: the caller
+// passed the run allow-list for this target, so they could have generated the identical content
+// themselves, and the version is granted to them, so they are entitled to read that form of it. What
+// reuse saves is the second run, not a permission check. On a hit the caller JOINS the report's
+// viewer list — which is why strict per-person isolation costs no duplicate generation.
 func (s *Server) reuseSameDayReport(user string, targetID int64, rows []map[string]string) (int64, string, bool) {
 	sc := s.viewerScope(user)
 	if sc == nil || len(rows) != 1 {
@@ -140,12 +153,33 @@ func (s *Server) reuseSameDayReport(user string, targetID int64, rows []map[stri
 	if symbol == "" {
 		return 0, "", false
 	}
-	id, found := s.st.FindSameDayReport(symbol, subtype, sc.panelToday, sc)
+	version := s.st.resolveVersion(targetOutputVersion(t.Config))
+	// A version this caller may not read must never be handed back: reuse skips the run, it does not
+	// skip the grant. Without this, "reuse" would become a way to receive a form of a report the
+	// caller was never entitled to.
+	if !containsString(s.st.GrantedVersions(user), version) {
+		return 0, "", false
+	}
+	today := s.panelToday()
+	id, found := s.st.FindSameDayReport(symbol, subtype, version, today)
 	if !found {
 		return 0, "", false
 	}
+	if err := s.st.AddReportViewer(id, today, user, s.st.OwnerGroupOf(user)); err != nil {
+		log.Printf("reuse: could not record %s as a viewer of report %d: %v", user, id, err)
+		return 0, "", false // fail closed: handing back a report they cannot then read is worse than running
+	}
 	// The report was matched on symbol+rdate, so its group key is exactly this pair (see gkey).
-	return id, symbol + "|" + sc.panelToday, true
+	return id, symbol + "|" + today, true
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // allowedSubtypes lists the report subtypes a restricted user's OU is entitled to. nil means "no
