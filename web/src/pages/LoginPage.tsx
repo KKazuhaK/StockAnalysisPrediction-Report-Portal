@@ -8,6 +8,7 @@ import type { SSOProviderInfo } from '../api/types'
 import { usePrefs } from '../prefs'
 import { api, ApiError } from '../api/client'
 import { passkeySupported } from '../lib/webauthn'
+import CaptchaField, { type CaptchaValue } from '../components/CaptchaField'
 import { SiteLogo, useSite } from '../site'
 import { AutoIcon, MoonIcon, SunIcon } from '../components/icons'
 
@@ -28,12 +29,20 @@ export default function LoginPage() {
   const [totpToken, setTotpToken] = useState('')
   const [totpCode, setTotpCode] = useState('')
   const [providers, setProviders] = useState<SSOProviderInfo[]>([])
+  const [captcha, setCaptcha] = useState<CaptchaValue>({})
+  const [captchaRound, setCaptchaRound] = useState(0)
+  const [account, setAccount] = useState('')
+  const [canRegister, setCanRegister] = useState(false)
 
   useEffect(() => {
     // Empty (or failing) means SSO is off, and the login page simply shows nothing extra.
     api
       .get<{ providers: SSOProviderInfo[] }>('/api/sso/providers')
       .then((r) => setProviders(r.providers || []))
+      .catch(() => {})
+    api
+      .get<{ enabled: boolean }>('/api/register/config')
+      .then((r) => setCanRegister(!!r.enabled))
       .catch(() => {})
   }, [])
 
@@ -102,7 +111,7 @@ export default function LoginPage() {
     setErr('')
     setBusy(true)
     try {
-      const { totpToken: pending } = await login(v.username, v.password)
+      const { totpToken: pending } = await login(v.username, v.password, captcha)
       if (pending) {
         setTotpToken(pending)
         return
@@ -110,6 +119,9 @@ export default function LoginPage() {
       navigate('/')
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : t('login.error'))
+      // A challenge is consumed on use, so any refusal must re-arm the field — and a portal in
+      // after-failures mode starts asking for one exactly here, on the attempt that crossed it.
+      setCaptchaRound((n) => n + 1)
     } finally {
       setBusy(false)
     }
@@ -189,11 +201,14 @@ export default function LoginPage() {
             ) : (
             <Form layout="vertical" onFinish={onFinish} requiredMark={false}>
               <Form.Item name="username" label={t('login.username')} rules={[{ required: true }]}>
-                <Input size="large" prefix={<UserOutlined />} autoFocus autoComplete="username" />
+                <Input size="large" prefix={<UserOutlined />} autoFocus autoComplete="username"
+                  onChange={(e) => setAccount(e.target.value)} />
               </Form.Item>
               <Form.Item name="password" label={t('login.password')} rules={[{ required: true }]}>
                 <Input.Password size="large" prefix={<LockOutlined />} autoComplete="current-password" />
               </Form.Item>
+              <CaptchaField context="login" account={account} refresh={captchaRound}
+                value={captcha} onChange={setCaptcha} />
               {err && (
                 <Typography.Text type="danger" style={{ display: 'block', marginBottom: 12 }}>
                   {err}
@@ -202,6 +217,11 @@ export default function LoginPage() {
               <Button type="primary" size="large" htmlType="submit" block loading={busy}>
                 {t('login.submit')}
               </Button>
+              {canRegister && (
+                <Button type="link" size="small" block onClick={() => navigate('/register')}>
+                  {t('login.register')}
+                </Button>
+              )}
             </Form>
             )}
             {!totpToken && providers.length > 0 && (

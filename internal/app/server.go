@@ -221,6 +221,8 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("DELETE /api/admin/link-groups/{id}", s.requireAdminJSON(s.apiLinkGroupDelete))
 	// Report versions (ADR 0024): the registry, who may read each version, and the reader-side
 	// switcher over the forms of one report.
+	mux.HandleFunc("GET /api/admin/security", s.requireAdminJSON(s.apiAdminSecurity))
+	mux.HandleFunc("POST /api/admin/security", s.requireAdminJSON(s.apiAdminSecuritySave))
 	mux.HandleFunc("GET /api/admin/versions", s.requireAdminJSON(s.apiAdminVersions))
 	mux.HandleFunc("POST /api/admin/versions", s.requireAdminJSON(s.apiAdminVersionSave))
 	mux.HandleFunc("DELETE /api/admin/versions/{name}", s.requireAdminJSON(s.apiAdminVersionDelete))

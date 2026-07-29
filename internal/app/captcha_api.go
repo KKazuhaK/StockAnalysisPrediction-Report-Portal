@@ -164,3 +164,113 @@ func (s *Server) apiCaptcha(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, out)
 }
+
+// GET /api/admin/security — the captcha and registration settings, with the secret masked. The
+// admin sees only WHETHER a secret is stored; the value never leaves the server, so a compromised
+// admin session cannot exfiltrate the provider credential.
+func (s *Server) apiAdminSecurity(w http.ResponseWriter, r *http.Request, user string) {
+	groups := make([]map[string]any, 0)
+	for _, g := range s.st.ListUserGroups() {
+		groups = append(groups, map[string]any{"id": g.ID, "name": g.Name, "restricted": g.RestrictedEffective})
+	}
+	writeJSON(w, map[string]any{
+		"captcha": map[string]any{
+			"provider":       s.st.GetSetting(setCaptchaProvider, captcha.ProviderImage),
+			"site_key":       s.st.GetSetting(setCaptchaSiteKey, ""),
+			"has_secret":     s.st.GetSetting(setCaptchaSecret, "") != "",
+			"login":          s.st.GetSetting(setCaptchaLogin, "") == "1",
+			"forgot":         s.st.GetSetting(setCaptchaForgot, "") == "1",
+			"register":       s.st.GetSetting(setCaptchaRegister, "") == "1",
+			"trigger":        s.st.GetSetting(setCaptchaTrigger, triggerAlways),
+			"fail_threshold": s.st.GetSetting(setCaptchaThreshold, "3"),
+		},
+		"registration": map[string]any{
+			"enabled":        s.registrationOpen(),
+			"require_verify": s.registrationNeedsVerify(),
+			"domains":        s.st.GetSetting(setRegDomains, ""),
+			"default_group":  s.st.GetSetting(setRegGroup, ""),
+			"expiry_days":    s.st.GetSetting(setRegExpiryDays, ""),
+		},
+		// Registration with verification on cannot work without SMTP, and an admin who cannot see
+		// that will only learn it from a user who never got their email.
+		"email_configured": s.emailEnabled(),
+		"groups":           groups,
+	})
+}
+
+// POST /api/admin/security — save both. A nil secret keeps the stored one; an explicit "" clears it,
+// the same convention the SSO provider editor uses.
+func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, user string) {
+	var in struct {
+		Captcha struct {
+			Provider      string  `json:"provider"`
+			SiteKey       string  `json:"site_key"`
+			SecretKey     *string `json:"secret_key"`
+			Login         bool    `json:"login"`
+			Forgot        bool    `json:"forgot"`
+			Register      bool    `json:"register"`
+			Trigger       string  `json:"trigger"`
+			FailThreshold int     `json:"fail_threshold"`
+		} `json:"captcha"`
+		Registration struct {
+			Enabled       bool   `json:"enabled"`
+			RequireVerify bool   `json:"require_verify"`
+			Domains       string `json:"domains"`
+			DefaultGroup  string `json:"default_group"`
+			ExpiryDays    string `json:"expiry_days"`
+		} `json:"registration"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(in.Captcha.Provider))
+	if provider == "" {
+		provider = captcha.ProviderImage
+	}
+	// Validated here so the store can never hold a provider Verify would reject — which would
+	// fail closed on every login and look like a portal-wide outage.
+	if !captcha.ValidProvider(provider) {
+		jsonError(w, http.StatusBadRequest, "unknown captcha provider")
+		return
+	}
+	trigger := strings.ToLower(strings.TrimSpace(in.Captcha.Trigger))
+	if trigger != triggerAfterFailure {
+		trigger = triggerAlways
+	}
+	s.st.SetSetting(setCaptchaProvider, provider)
+	s.st.SetSetting(setCaptchaSiteKey, strings.TrimSpace(in.Captcha.SiteKey))
+	s.st.SetSetting(setCaptchaTrigger, trigger)
+	s.st.SetSetting(setCaptchaThreshold, strconv.Itoa(in.Captcha.FailThreshold))
+	for k, on := range map[string]bool{
+		setCaptchaLogin: in.Captcha.Login, setCaptchaForgot: in.Captcha.Forgot,
+		setCaptchaRegister: in.Captcha.Register,
+	} {
+		s.st.SetSetting(k, boolSetting(on))
+	}
+	if in.Captcha.SecretKey != nil {
+		if v := strings.TrimSpace(*in.Captcha.SecretKey); v == "" {
+			s.st.SetSetting(setCaptchaSecret, "")
+		} else {
+			sealed, err := s.sealSecret("captcha", "secret_key", v)
+			if err != nil {
+				jsonError(w, http.StatusInternalServerError, "could not store the secret key")
+				return
+			}
+			s.st.SetSetting(setCaptchaSecret, sealed)
+		}
+	}
+	s.st.SetSetting(setRegEnabled, boolSetting(in.Registration.Enabled))
+	s.st.SetSetting(setRegVerify, boolSetting(in.Registration.RequireVerify))
+	s.st.SetSetting(setRegDomains, strings.TrimSpace(in.Registration.Domains))
+	s.st.SetSetting(setRegGroup, strings.TrimSpace(in.Registration.DefaultGroup))
+	s.st.SetSetting(setRegExpiryDays, strings.TrimSpace(in.Registration.ExpiryDays))
+	writeJSON(w, okJSON)
+}
+
+func boolSetting(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}

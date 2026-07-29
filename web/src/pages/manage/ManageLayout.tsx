@@ -117,6 +117,7 @@ export default function ManageLayout() {
       children: [
         { key: 'users', label: t('nav.users'), icon: <TeamOutlined /> },
         { key: 'sso', label: t('nav.sso'), icon: <SafetyOutlined /> },
+        { key: 'security', label: t('nav.security'), icon: <SafetyOutlined /> },
         { key: 'tokens', label: t('settings.tokens'), icon: <KeyOutlined /> },
       ],
     },
