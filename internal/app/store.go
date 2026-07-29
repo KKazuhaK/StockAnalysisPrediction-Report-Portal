@@ -733,6 +733,15 @@ func (s *Store) SetUserRole(name, role string) error {
 func (s *Store) DeleteUser(name string) error {
 	// Profile attributes and the primary group are columns on users now (ADR 0013), so they
 	// vanish with the row — no side-table cleanup needed.
+	// The viewer list goes with the account, and this one has teeth: a username can be taken again
+	// — delete an account and the same address may register — so a surviving `u:<name>` row would
+	// hand the NEW holder of that name everything the previous one could read (ADR 0024).
+	if _, err := s.exec("DELETE FROM report_viewers WHERE principal=?", userPrincipal(name)); err != nil {
+		return err
+	}
+	if _, err := s.exec("DELETE FROM version_grants WHERE principal=?", userPrincipal(name)); err != nil {
+		return err
+	}
 	_, err := s.exec("DELETE FROM users WHERE username=?", name)
 	return err
 }
@@ -1554,6 +1563,12 @@ func (s *Store) DeleteReport(id int64) (int64, error) {
 		return 0, err
 	}
 	if _, err := tx.Exec(s.bind("DELETE FROM tracking_items WHERE report_id=?"), id); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	// The viewer list is what the read path consults, so a row pointing at a report that no longer
+	// exists is not merely waste — it is an access grant with nothing on the other end (ADR 0024).
+	if _, err := tx.Exec(s.bind("DELETE FROM report_viewers WHERE report_id=?"), id); err != nil {
 		tx.Rollback()
 		return 0, err
 	}

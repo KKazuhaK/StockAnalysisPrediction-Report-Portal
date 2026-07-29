@@ -196,7 +196,9 @@ func (s *Store) DeleteReportsIngestedBefore(cutoff time.Time) (int64, error) {
 
 // deleteReportChunk deletes one chunk of reports (+ their tracking_items) in a single transaction,
 // re-asserting sent_at so a concurrently re-ingested report is skipped. tracking_items are removed
-// only for reports whose row actually matched (so a preserved report keeps its items).
+// only for reports whose row actually matched (so a preserved report keeps its items), and so are
+// the viewer rows — a viewer row pointing at a deleted report is an access grant with nothing on the
+// other end (ADR 0024).
 func (s *Store) deleteReportChunk(keys []reportKey) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -212,6 +214,10 @@ func (s *Store) deleteReportChunk(keys []reportKey) (int64, error) {
 		c, _ := res.RowsAffected()
 		if c == 0 {
 			continue // re-ingested (sent_at changed) or already gone — keep its tracking_items
+		}
+		if _, err := tx.Exec(s.bind("DELETE FROM report_viewers WHERE report_id=?"), k.id); err != nil {
+			tx.Rollback()
+			return n, err
 		}
 		if _, err := tx.Exec(s.bind("DELETE FROM tracking_items WHERE report_id=?"), k.id); err != nil {
 			tx.Rollback()

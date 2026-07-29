@@ -134,6 +134,13 @@ func (s *Store) DeleteUserGroup(id int64) error {
 		return fmt.Errorf("the Default group cannot be deleted")
 	}
 	s.exec("UPDATE users SET group_id=NULL WHERE group_id=?", id)
+	// Everything keyed to this OU goes with it. Group ids are assigned by the database and a
+	// deleted one can come back around, so a lingering grant or viewer row would be inherited by
+	// whichever OU is created next (ADR 0022 / 0024).
+	s.exec("DELETE FROM report_viewers WHERE principal=?", groupPrincipal(id))
+	s.exec("DELETE FROM version_grants WHERE principal=?", groupPrincipal(id))
+	s.exec("DELETE FROM group_targets WHERE group_id=?", id)
+	s.exec("UPDATE user_groups SET parent_id=NULL WHERE parent_id=?", id)
 	_, err := s.exec("DELETE FROM user_groups WHERE id=?", id)
 	return err
 }
