@@ -319,17 +319,10 @@ func (s *Store) baseSchemaStmts() []string {
 			external_id TEXT, source TEXT DEFAULT 'local', source_ref TEXT DEFAULT '',
 			created_at TEXT, updated_at TEXT,
 			totp_secret_enc TEXT, totp_enabled INTEGER DEFAULT 0, totp_confirmed_at TEXT,
-			recovery_codes TEXT, restricted INTEGER DEFAULT 0)`,
-		// An account is linked to an external identity ONLY by (provider, issuer, subject) — never by
-		// email, which is the nOAuth account-takeover class (an admin of any other tenant can set an
-		// unverified email claim to your user's address). sub is unique only WITHIN an issuer, hence
-		// the composite key. A side table rather than columns on users because one human may hold both
-		// a SAML and an OIDC identity, and an IdP migration needs both links live during the overlap.
-		`CREATE TABLE IF NOT EXISTS user_identities(
-			provider TEXT NOT NULL, issuer TEXT NOT NULL, subject TEXT NOT NULL,
-			username TEXT NOT NULL, provider_slug TEXT DEFAULT '', nameid_format TEXT DEFAULT '',
-			attrs TEXT DEFAULT '', created_at TEXT DEFAULT '', last_login_at TEXT DEFAULT '',
-			PRIMARY KEY(provider, issuer, subject))`,
+			recovery_codes TEXT, restricted INTEGER DEFAULT 0,
+			sso_provider TEXT DEFAULT '', sso_issuer TEXT DEFAULT '', sso_subject TEXT DEFAULT '',
+			sso_slug TEXT DEFAULT '', sso_nameid_format TEXT DEFAULT '', sso_attrs TEXT DEFAULT '',
+			sso_linked_at TEXT)`,
 		// One row per IdP. Row-shaped (not a meta blob) so multiple providers are later a UI change
 		// with no schema movement; v1 manages one saml row and one oidc row. Secrets (SP private key,
 		// OIDC client secret) are sealed under the sso_keyring DEK and never returned by any API.
@@ -393,8 +386,14 @@ func (s *Store) baseSchemaStmts() []string {
 		// because SQLite cannot ALTER TABLE ADD COLUMN ... UNIQUE — the same shape as the token-hash
 		// index above. The `<> ''` clause keeps pre-existing rows (which reconcile to NULL/'') from
 		// colliding with each other.
+		// One account holds at most one external identity, and no two accounts hold the same one
+		// (ADR 0023, revised). The key is (issuer, subject) and never email — subject is unique only
+		// within an issuer, so keying on the provider slug alone would let an admin repointing a
+		// provider at a different IdP match a stranger's subject onto an existing account. Partial,
+		// because every local account carries the empty subject.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sso_identity ON users(sso_issuer, sso_subject)
+			WHERE sso_subject IS NOT NULL AND sso_subject <> ''`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id ON users(source_ref, external_id) WHERE external_id IS NOT NULL AND external_id <> ''`,
-		`CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(username)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_providers_slug ON sso_providers(slug)`,
 		`CREATE INDEX IF NOT EXISTS idx_sso_group_rules_ord ON sso_group_rules(provider_id, ord)`,
 		// The two TTL tables are swept by the existing cleanupLoop (ADR 0017), which scans by expiry.

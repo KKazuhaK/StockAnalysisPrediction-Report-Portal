@@ -33,7 +33,8 @@ func (s *Store) FindIdentity(provider, issuer, subject string) (string, bool) {
 		return "", false
 	}
 	var u sql.NullString
-	err := s.queryRow(`SELECT username FROM user_identities WHERE provider=? AND issuer=? AND subject=?`,
+	err := s.queryRow(`SELECT username FROM users
+		WHERE sso_provider=? AND sso_issuer=? AND sso_subject=?`,
 		provider, issuer, subject).Scan(&u)
 	if err != nil || u.String == "" {
 		return "", false
@@ -42,40 +43,52 @@ func (s *Store) FindIdentity(provider, issuer, subject string) (string, bool) {
 }
 
 // LinkIdentity binds an external identity to an account, or refreshes it on a repeat login. It is
-// idempotent: the same identity logging in again updates the last-seen data rather than failing.
+// idempotent: the same identity signing in again updates the last-seen data rather than failing.
+//
+// ONE identity per account, enforced by the shape rather than by a rule someone has to remember —
+// the columns live on the users row, so binding a new identity replaces the previous one. And no
+// two accounts may hold the same identity: idx_users_sso_identity refuses that, which turns what
+// would otherwise be a silent theft (the second sign-in quietly repointing the link and locking the
+// first account out of SSO) into an error at the moment it is attempted.
 func (s *Store) LinkIdentity(id Identity) error {
-	_, err := s.exec(`INSERT INTO user_identities(provider,issuer,subject,username,provider_slug,nameid_format,attrs,created_at,last_login_at)
-		VALUES(?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(provider,issuer,subject) DO UPDATE SET
-			username=excluded.username, provider_slug=excluded.provider_slug,
-			nameid_format=excluded.nameid_format, attrs=excluded.attrs, last_login_at=excluded.last_login_at`,
-		id.Provider, id.Issuer, id.Subject, id.Username, id.ProviderSlug, id.NameIDFormat, id.Attrs,
-		nowStr(), nowStr())
-	return err
+	if id.Username == "" || id.Provider == "" || id.Issuer == "" || id.Subject == "" {
+		return fmt.Errorf("identity is incomplete")
+	}
+	res, err := s.exec(`UPDATE users SET sso_provider=?, sso_issuer=?, sso_subject=?, sso_slug=?,
+			sso_nameid_format=?, sso_attrs=?, sso_linked_at=?
+		WHERE username=?`,
+		id.Provider, id.Issuer, id.Subject, id.ProviderSlug, id.NameIDFormat, id.Attrs,
+		nowStr(), id.Username)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("no such account: %s", id.Username)
+	}
+	return nil
 }
 
-// IdentitiesOf lists the external identities bound to an account, so an admin can see and unlink
-// them. Ordered for a stable UI.
+// IdentitiesOf returns the external identity bound to an account: at most one, so the slice is
+// there only to keep the admin API shape stable for a UI that lists them.
 func (s *Store) IdentitiesOf(username string) []Identity {
-	rows, err := s.query(`SELECT provider,issuer,subject,username,COALESCE(provider_slug,''),COALESCE(nameid_format,'')
-		FROM user_identities WHERE username=? ORDER BY provider, issuer`, username)
-	if err != nil {
+	var provider, issuer, subject, slug, format sql.NullString
+	err := s.queryRow(`SELECT COALESCE(sso_provider,''),COALESCE(sso_issuer,''),COALESCE(sso_subject,''),
+		COALESCE(sso_slug,''),COALESCE(sso_nameid_format,'') FROM users WHERE username=?`, username).
+		Scan(&provider, &issuer, &subject, &slug, &format)
+	if err != nil || subject.String == "" {
 		return nil
 	}
-	defer rows.Close()
-	var out []Identity
-	for rows.Next() {
-		var id Identity
-		if rows.Scan(&id.Provider, &id.Issuer, &id.Subject, &id.Username, &id.ProviderSlug, &id.NameIDFormat) == nil {
-			out = append(out, id)
-		}
-	}
-	return out
+	return []Identity{{
+		Provider: provider.String, Issuer: issuer.String, Subject: subject.String,
+		Username: username, ProviderSlug: slug.String, NameIDFormat: format.String,
+	}}
 }
 
 // UnlinkIdentity removes one external login binding.
 func (s *Store) UnlinkIdentity(provider, issuer, subject string) error {
-	_, err := s.exec(`DELETE FROM user_identities WHERE provider=? AND issuer=? AND subject=?`,
+	_, err := s.exec(`UPDATE users SET sso_provider='', sso_issuer='', sso_subject='', sso_slug='',
+			sso_nameid_format='', sso_attrs='', sso_linked_at=NULL
+		WHERE sso_provider=? AND sso_issuer=? AND sso_subject=?`,
 		provider, issuer, subject)
 	return err
 }
@@ -200,8 +213,8 @@ func (s *Server) applyAssignment(username, role string, group int64) error {
 // rather than trial and error.
 func (s *Store) LastSeenAttrs(providerSlug string) string {
 	var v sql.NullString
-	s.queryRow(`SELECT attrs FROM user_identities WHERE provider_slug=? AND attrs<>''
-		ORDER BY last_login_at DESC LIMIT 1`, providerSlug).Scan(&v)
+	s.queryRow(`SELECT sso_attrs FROM users WHERE sso_slug=? AND COALESCE(sso_attrs,'')<>''
+		ORDER BY sso_linked_at DESC LIMIT 1`, providerSlug).Scan(&v)
 	return v.String
 }
 
