@@ -274,9 +274,11 @@ func (s *Store) baseSchemaStmts() []string {
 		// a subtype in the registry must never fork a report into two rows. run_id is only a
 		// batch label and likewise stays out.
 		reportIdentIndex,
-		// idx_reports_owner (ADR 0022) serves the restricted-viewer read filter and the same-day
-		// reuse lookup: both scope reports by owner_group, and the today-clause also by rdate.
-		`CREATE INDEX IF NOT EXISTS idx_reports_owner ON reports(owner_group, rdate)`,
+		// There is deliberately NO index on owner_group. It served the ADR 0022 read filter, which
+		// ADR 0024 replaced: reads now resolve through version grants and report_viewers, and
+		// owner_group survives only as attribution written by a by-id UPDATE. An index nothing reads
+		// is pure write amplification on every ingest — measured at 13% — and this table has already
+		// lost two indexes for that reason. Don't reintroduce it without a query that needs it.
 		// Entry buttons. group_id: the link group it belongs to (0 = ungrouped/top-level, shown inline).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS links(
 			id %s, label TEXT, url TEXT, icon TEXT DEFAULT '', new_tab INTEGER DEFAULT 1,
@@ -539,7 +541,10 @@ func (s *Store) baseSchemaStmts() []string {
 		// ingest.
 		`CREATE TABLE IF NOT EXISTS report_viewers(
 			principal TEXT, rdate TEXT, report_id BIGINT, PRIMARY KEY(principal, rdate, report_id))`,
-		`CREATE INDEX IF NOT EXISTS idx_report_viewers_report ON report_viewers(report_id)`,
+		// (report_id, principal), not report_id alone: the read path asks "is this principal on this
+		// report's list", and the second column makes that a COVERING index lookup with no table
+		// visit. Same storage, strictly better shape.
+		`CREATE INDEX IF NOT EXISTS idx_report_viewers_report ON report_viewers(report_id, principal)`,
 		// group_targets (ADR 0022): a restricted OU's default-deny allow-list of which batch_targets it
 		// may run and on which surfaces. A row = "this OU MAY run this target"; surfaces is the OU's
 		// subset of run|batch|recurring|chat ('' = inherit the target's own batch_targets.surfaces).
