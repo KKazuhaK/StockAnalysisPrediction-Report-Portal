@@ -327,6 +327,82 @@ sc, meJSON = admin.req("GET", "/api/me")
 check("D", "/api/me 报告安全状态",
       all(k in meJSON for k in ("federated", "totp_enabled", "passkeys")), f"{meJSON}")
 
+# ---------------------------------------------------------------- F. captcha + registration
+print("\nF. 验证码与自助注册")
+sc, cfg = admin.req("GET", "/api/register/config")
+check("F", "自助注册默认关闭", sc == 200 and cfg.get("enabled") is False, f"{sc} {cfg}")
+sc, _ = Session().req("POST", "/api/register",
+                      {"email": "x@example.com", "password": "a-long-enough-password"})
+check("F", "关闭时注册路由 404", sc == 404, f"{sc}")
+sc, cap = Session().req("GET", "/api/captcha?ctx=login")
+check("F", "验证码默认不要求", sc == 200 and cap.get("required") is False, f"{sc} {cap}")
+
+sc, _ = admin.req("POST", "/api/admin/security", {
+    "captcha": {"provider": "image", "login": True, "forgot": True, "register": True,
+                "trigger": "always", "fail_threshold": 3},
+    "registration": {"enabled": True, "require_verify": False, "domains": "",
+                     "default_group": "", "expiry_days": ""}})
+check("F", "管理端保存登录保护设置", sc == 200, f"{sc}")
+
+sc, cap = Session().req("GET", "/api/captcha?ctx=register")
+check("F", "开启后签发图形验证码",
+      sc == 200 and cap.get("required") is True and str(cap.get("image", "")).startswith("data:image"),
+      f"{sc} {list(cap)}")
+check("F", "验证码接口不泄露答案", "answer" not in json.dumps(cap).lower())
+
+for name, path, body in [("登录", "/api/login", {"username": "admin", "password": "x"}),
+                         ("找回密码", "/api/password/forgot", {"account": "admin"}),
+                         ("注册", "/api/register", {"email": "n@example.com",
+                                                    "password": "a-long-enough-password"})]:
+    sc, b = Session().req("POST", path, body)
+    check("F", f"{name}：缺验证码被拒且带标记",
+          sc == 400 and b.get("captcha_required") is True, f"{sc} {b}")
+check("F", "被拒的注册没有留下账号",
+      not sql("SELECT username FROM users WHERE username='n@example.com'"))
+
+# 配置一个 token 服务但不给密钥 —— 验证失败必须闭合，而不是放行
+admin.req("POST", "/api/admin/security", {
+    "captcha": {"provider": "turnstile", "login": False, "forgot": False, "register": True,
+                "trigger": "always", "fail_threshold": 3},
+    "registration": {"enabled": True, "require_verify": False, "domains": "",
+                     "default_group": "", "expiry_days": ""}})
+sc, b = Session().req("POST", "/api/register",
+                      {"email": "closed@example.com", "password": "a-long-enough-password",
+                       "captcha_token": "anything"})
+check("F", "验证器配置错误时闭合（不放行）", sc == 400, f"{sc} {b}")
+check("F", "闭合时同样没有建账号",
+      not sql("SELECT username FROM users WHERE username='closed@example.com'"))
+
+sc, _ = admin.req("POST", "/api/admin/security", {
+    "captcha": {"provider": "image", "login": False, "forgot": False, "register": False,
+                "trigger": "always", "fail_threshold": 3},
+    "registration": {"enabled": True, "require_verify": False, "domains": "corp.example",
+                     "default_group": "", "expiry_days": ""}})
+sc, _ = Session().req("POST", "/api/register",
+                      {"email": "outsider@elsewhere.test", "password": "a-long-enough-password"})
+check("F", "域名白名单拒绝表外域名", sc == 400, f"{sc}")
+sc, b = Session().req("POST", "/api/register",
+                      {"email": "newbie@corp.example", "password": "a-long-enough-password"})
+check("F", "允许的域名可以注册", sc == 200, f"{sc} {b}")
+row = sql("SELECT active, COALESCE(restricted,0), COALESCE(group_id,0) FROM users WHERE username='newbie@corp.example'")
+check("F", "未分配 OU 的注册账号：启用但受限、无分组",
+      row == [(1, 1, 0)], f"{row}")
+
+reg = Session()
+sc, _ = reg.login("newbie@corp.example", "a-long-enough-password")
+check("F", "注册账号可以登录", sc == 200, f"{sc}")
+sc, home = reg.req("GET", "/api/home")
+blob = json.dumps(home, ensure_ascii=False)
+check("F", "注册账号看不到任何报告", "茅台" not in blob, blob[:160])
+sc, _ = reg.req("GET", f"/api/v1/reports/{RID_INTERNAL}")
+check("F", "注册账号读不到内部报告", sc == 404, f"{sc}")
+
+sc, _ = Session().req("POST", "/api/register",
+                      {"email": "newbie@corp.example", "password": "a-long-enough-password"})
+check("F", "重复邮箱明确拒绝", sc == 409, f"{sc}")
+sc, _ = Session().req("POST", "/api/register/verify", {"token": "forged"})
+check("F", "伪造的确认令牌被拒", sc != 200, f"{sc}")
+
 # ---------------------------------------------------------------- restart
 print("\nE. 重启后状态保持")
 restart()
