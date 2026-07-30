@@ -729,17 +729,49 @@ func (s *Store) SetUserRole(name, role string) error {
 	return err
 }
 
+// DeleteUser removes an account and everything keyed to its name.
+//
+// The name is the thing to worry about. There are no foreign keys in this schema, so each of these
+// deletes is the only thing standing between a table and an orphan row — and a username is
+// re-registerable, so an orphan is not merely wasted space: the next person to take that address
+// inherits whatever the last one left behind. That is why this sweeps credentials and pending
+// ceremonies too, not just the grant tables.
+//
+// Profile attributes and the primary group are columns on users now (ADR 0013), so they vanish with
+// the row. batch_jobs is deliberately NOT swept: it is the run history an operator audits, who ran
+// what must outlive the person, and it carries no grant, so nothing is inherited through it.
 func (s *Store) DeleteUser(name string) error {
-	// Profile attributes and the primary group are columns on users now (ADR 0013), so they
-	// vanish with the row — no side-table cleanup needed.
-	// The viewer list goes with the account, and this one has teeth: a username can be taken again
-	// — delete an account and the same address may register — so a surviving `u:<name>` row would
-	// hand the NEW holder of that name everything the previous one could read (ADR 0024).
-	if _, err := s.exec("DELETE FROM report_viewers WHERE principal=?", userPrincipal(name)); err != nil {
-		return err
+	principal := userPrincipal(name)
+	// recurring_runs is a child of recurring_tasks, so it has to go first and by subquery —
+	// sweeping the parent by name and leaving the audit rows would recreate, one level down,
+	// exactly the orphan this function exists to prevent.
+	for _, q := range []string{
+		"DELETE FROM recurring_runs WHERE task_id IN (SELECT id FROM recurring_tasks WHERE created_by=?)",
+		"DELETE FROM recurring_tasks WHERE created_by=?",
+		// A passkey is a credential: left behind, it would let the previous holder of the name sign
+		// in as whoever registers it next, with no expiry to bound it.
+		"DELETE FROM webauthn_credentials WHERE username=?",
+		// Pending TOTP / passkey / reset / email-verify ceremonies. Short-lived, but a live token
+		// resolves by username and would act on the account that holds the name when it is redeemed.
+		"DELETE FROM auth_requests WHERE username=?",
+		// The portal's index of the person's chat threads (Dify holds the messages themselves).
+		"DELETE FROM chat_conversations WHERE created_by=?",
+		// The urgent-run allowance, which is a scarce resource allocated per person (ADR 0005).
+		"DELETE FROM priority_tickets WHERE username=?",
+	} {
+		if _, err := s.exec(q, name); err != nil {
+			return err
+		}
 	}
-	if _, err := s.exec("DELETE FROM version_grants WHERE principal=?", userPrincipal(name)); err != nil {
-		return err
+	// The read path consults report_viewers alone (ADR 0024), so a surviving `u:<name>` row hands
+	// the new holder of the name every report the old one could read.
+	for _, q := range []string{
+		"DELETE FROM report_viewers WHERE principal=?",
+		"DELETE FROM version_grants WHERE principal=?",
+	} {
+		if _, err := s.exec(q, principal); err != nil {
+			return err
+		}
 	}
 	_, err := s.exec("DELETE FROM users WHERE username=?", name)
 	return err

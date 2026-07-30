@@ -3,6 +3,8 @@ package app
 import (
 	"testing"
 	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 // Deleting something must take its viewer rows with it (ADR 0024).
@@ -86,6 +88,74 @@ func TestDeletingAnAccountTakesItsViewers(t *testing.T) {
 	st.SetVersionGrants("对外版", []string{userPrincipal("alice@corp.example")})
 	if r, _ := st.GetNew(id, s.viewerScope("alice@corp.example")); r != nil {
 		t.Error("a reused username must NOT inherit the previous holder's reports")
+	}
+}
+
+// TestDeletingAnAccountTakesEverythingKeyedToTheName widens the same argument past report_viewers.
+// There are no foreign keys anywhere in this schema, so every "when the account goes, this goes too"
+// is hand-written, and a reusable username turns each miss into an inheritance: the next person to
+// register that address picks up what the last one left. A passkey is the worst of them — it is a
+// credential, so the previous holder could sign in AS the new account, with no time limit.
+func TestDeletingAnAccountTakesEverythingKeyedToTheName(t *testing.T) {
+	s := tenancyServer(t)
+	st := s.st
+	const name = "alice@corp.example"
+	st.UpsertUser(User{Username: name, PasswordHash: "h", Role: "user"})
+
+	if err := st.AddPasskey(name, "laptop", &webauthn.Credential{ID: []byte("cred-1")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateConversation(7, name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRecurringTask(RecurringTask{Name: "nightly", TargetID: 7, Rows: "[]",
+		Freq: "daily", AtTime: "02:00", Enabled: true, CreatedBy: name}); err != nil {
+		t.Fatal(err)
+	}
+	st.saveTicket(name, 3, time.Now())
+	if err := st.CreateAuthRequest(AuthRequest{Token: "tok-1", Kind: "verify", Username: name},
+		time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := func(table, col string) int {
+		t.Helper()
+		var n int
+		st.queryRow("SELECT COUNT(*) FROM "+table+" WHERE "+col+"=?", name).Scan(&n)
+		return n
+	}
+	for _, c := range [][2]string{{"webauthn_credentials", "username"}, {"chat_conversations", "created_by"},
+		{"recurring_tasks", "created_by"}, {"priority_tickets", "username"}, {"auth_requests", "username"}} {
+		if rows(c[0], c[1]) == 0 {
+			t.Fatalf("failed to seed %s", c[0])
+		}
+	}
+
+	if err := st.DeleteUser(name); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ table, col, why string }{
+		{"webauthn_credentials", "username", "the previous holder's passkey would authenticate the next one"},
+		{"chat_conversations", "created_by", "a reused name would read the previous holder's conversations"},
+		{"recurring_tasks", "created_by", "an ownerless task keeps firing and keeps spending run quota"},
+		{"priority_tickets", "username", "a reused name would inherit the urgent-run allowance"},
+		{"auth_requests", "username", "a pending link would act on whoever holds the name next"},
+	} {
+		if got := rows(c.table, c.col); got != 0 {
+			t.Errorf("%d %s rows outlived the account: %s", got, c.table, c.why)
+		}
+	}
+
+	// batch_jobs is deliberately NOT swept: it is the run history an operator audits, and who ran
+	// what must survive the person leaving. It carries no grant, so nothing is inherited.
+	if _, err := st.CreateBatchJob(7, 1, 0, name, []map[string]string{{"symbol": "600519"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	st.DeleteUser(name)
+	var jobs int
+	st.queryRow("SELECT COUNT(*) FROM batch_jobs WHERE created_by=?", name).Scan(&jobs)
+	if jobs == 0 {
+		t.Error("run history must outlive the account that created it")
 	}
 }
 
