@@ -5,7 +5,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -222,26 +221,4 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 		return nil, err
 	}
 	return cipher.NewGCM(block)
-}
-
-// adoptLegacyKeyring moves a keyring out of the single-row table it used to live in, for a database
-// that ran v0.4.0 or v0.4.1. It must run before anything asks for the DEK: losing the salt and the
-// wrapped key means every stored secret becomes permanently unreadable, and the operator's only
-// remedy is re-entering each one.
-//
-// Copy-then-drop, and the copy is create-if-absent, so running it twice is a no-op and a crash
-// between the two steps leaves the old table in place to be found on the next start.
-func (s *Store) adoptLegacyKeyring() error {
-	if !s.tableExists("sso_keyring") {
-		return nil
-	}
-	var salt, wrapped sql.NullString
-	if err := s.queryRow(`SELECT salt, wrapped_dek FROM sso_keyring WHERE id=1`).Scan(&salt, &wrapped); err == nil &&
-		salt.String != "" && wrapped.String != "" {
-		if err := s.SaveKeyring(salt.String, wrapped.String); err != nil {
-			return err
-		}
-	}
-	_, err := s.exec(`DROP TABLE IF EXISTS sso_keyring`)
-	return err
 }
