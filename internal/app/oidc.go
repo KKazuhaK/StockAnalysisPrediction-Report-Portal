@@ -133,12 +133,19 @@ func (s *Server) oidcRedirectURL(slug string) string {
 
 // GET /api/sso/providers — what the login page may offer. Public by necessity (it is read before
 // login) and deliberately minimal: no issuer, no client id, nothing about configuration.
+//
+// It returns the RESOLVED offers (mode + two booleans) rather than the raw setting, so the page
+// renders from one source of truth instead of re-implementing the degradation rules in TypeScript.
+// It deliberately does NOT report sso_only: that is an endpoint policy, the page has no use for it,
+// and publishing "this portal refuses ordinary password logins" to anonymous callers would tell an
+// attacker exactly which accounts are worth guessing.
 func (s *Server) apiSSOProviders(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0)
 	for _, p := range s.st.EnabledSSOProviders() {
 		out = append(out, map[string]any{"slug": p.Slug, "kind": p.Kind, "name": firstNonEmpty(p.Name, p.Slug)})
 	}
-	writeJSON(w, map[string]any{"providers": out})
+	mode, local, sso := s.loginOffers()
+	writeJSON(w, map[string]any{"providers": out, "login_mode": mode, "local": local, "sso": sso})
 }
 
 // GET /api/auth/oidc/{slug}/start — begin a login.

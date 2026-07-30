@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import LoginPage from './LoginPage'
 
 // vi.mock is hoisted above the file body, so the mocks it closes over must be hoisted too.
-const { apiMock, authMock, webauthnMock } = vi.hoisted(() => ({
+const { apiMock, authMock, webauthnMock, navMock } = vi.hoisted(() => ({
   apiMock: { get: vi.fn(), post: vi.fn(), put: vi.fn(), del: vi.fn() },
   authMock: {
     user: null as unknown,
@@ -16,11 +16,13 @@ const { apiMock, authMock, webauthnMock } = vi.hoisted(() => ({
     logout: vi.fn(),
   },
   webauthnMock: { getCredential: vi.fn(), passkeySupported: vi.fn(() => true) },
+  navMock: { hardNavigate: vi.fn() },
 }))
 
 vi.mock('../api/client', () => ({ api: apiMock, ApiError: class extends Error {} }))
 vi.mock('../auth', () => ({ useAuth: () => authMock }))
 vi.mock('../lib/webauthn', () => webauthnMock)
+vi.mock('../lib/hardNavigate', () => navMock)
 vi.mock('../prefs', () => ({
   usePrefs: () => ({ mode: 'light', setMode: vi.fn(), lang: 'en-US', setLang: vi.fn(), langs: [] }),
 }))
@@ -147,5 +149,70 @@ describe('LoginPage passkey second factor', () => {
 
     expect(await screen.findByText('login.totpHint')).toBeTruthy()
     expect(screen.queryByText('login.passkeyUse')).toBeNull()
+  })
+})
+
+// The four login modes. The server resolves them (login_mode.go) and hands the page `login_mode`
+// plus two booleans, so these tests pin that the page renders off those and re-derives nothing.
+describe('LoginPage login modes', () => {
+  const ACME = { slug: 'acme', kind: 'oidc', name: 'Acme' }
+
+  const mockMode = (mode: string, local: boolean, sso: boolean) => {
+    apiMock.get.mockReset()
+    apiMock.get.mockImplementation((url: string) =>
+      url === '/api/sso/providers'
+        ? Promise.resolve({ providers: [ACME], login_mode: mode, local, sso })
+        : Promise.resolve({ enabled: false }),
+    )
+  }
+
+  it('dual shows the password form and the provider together', async () => {
+    mockMode('dual', true, true)
+    renderLogin()
+    expect(await screen.findByText('login.ssoWith:{"name":"Acme"}')).toBeTruthy()
+    expect(screen.getByText('login.submit')).toBeTruthy()
+  })
+
+  it('sso_first hides the password form behind one deliberate click', async () => {
+    mockMode('sso_first', true, true)
+    renderLogin()
+    expect(await screen.findByText('login.ssoWith:{"name":"Acme"}')).toBeTruthy()
+    expect(screen.queryByText('login.submit')).toBeNull()
+
+    fireEvent.click(screen.getByText('login.usePassword'))
+    expect(await screen.findByText('login.submit')).toBeTruthy()
+  })
+
+  it('local_only hides the provider even though one is configured', async () => {
+    mockMode('local_only', true, false)
+    renderLogin()
+    expect(await screen.findByText('login.submit')).toBeTruthy()
+    expect(screen.queryByText('login.ssoWith:{"name":"Acme"}')).toBeNull()
+    expect(screen.queryByText('login.ssoDivider')).toBeNull()
+  })
+
+  it('sso_redirect sends the browser to the provider', async () => {
+    navMock.hardNavigate.mockReset()
+    mockMode('sso_redirect', false, true)
+    renderLogin()
+    await waitFor(() => expect(navMock.hardNavigate).toHaveBeenCalledWith('/api/auth/oidc/acme/start'))
+  })
+
+  // The escape hatch. It only declines the auto-redirect — whether a password is ACCEPTED is the
+  // server's call, and admins stay exempt there — but without it a misconfigured IdP would make the
+  // page itself unreachable, before anyone can prove who they are.
+  it('sso_redirect with ?local=1 stays on the page', async () => {
+    navMock.hardNavigate.mockReset()
+    // history.replaceState changes location.search without navigating, so no jsdom global is
+    // replaced — overwriting window.location destabilised unrelated test files.
+    window.history.replaceState({}, '', '/login?local=1')
+    try {
+      mockMode('sso_redirect', false, true)
+      renderLogin()
+      expect(await screen.findByText('login.ssoWith:{"name":"Acme"}')).toBeTruthy()
+      expect(navMock.hardNavigate).not.toHaveBeenCalled()
+    } finally {
+      window.history.replaceState({}, '', '/')
+    }
   })
 })

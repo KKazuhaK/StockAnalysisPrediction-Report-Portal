@@ -25,6 +25,16 @@ interface RegCfg {
   default_group: string
   expiry_days: string
 }
+// The two login axes (login_mode.go). `effective` is what the portal actually does right now —
+// it differs from `mode` when no provider is enabled and the mode degrades — so the admin can be
+// told their choice is currently inert instead of wondering why nothing changed.
+interface LoginCfg {
+  mode: string
+  effective: string
+  sso_only: boolean
+  sso_available: boolean
+}
+
 interface GroupRow {
   id: number
   name: string
@@ -36,6 +46,7 @@ export default function SecurityPage() {
   const { message } = App.useApp()
   const [captcha, setCaptcha] = useState<CaptchaCfg | null>(null)
   const [reg, setReg] = useState<RegCfg | null>(null)
+  const [login, setLogin] = useState<LoginCfg | null>(null)
   const [groups, setGroups] = useState<GroupRow[]>([])
   const [emailOK, setEmailOK] = useState(true)
   const [secret, setSecret] = useState<string | null>(null) // null = leave the stored one alone
@@ -43,12 +54,17 @@ export default function SecurityPage() {
 
   const load = useCallback(() => {
     api
-      .get<{ captcha: CaptchaCfg; registration: RegCfg; groups: GroupRow[]; email_configured: boolean }>(
-        '/api/admin/security',
-      )
+      .get<{
+        captcha: CaptchaCfg
+        registration: RegCfg
+        login: LoginCfg
+        groups: GroupRow[]
+        email_configured: boolean
+      }>('/api/admin/security')
       .then((r) => {
         setCaptcha(r.captcha)
         setReg(r.registration)
+        setLogin(r.login)
         setGroups(r.groups ?? [])
         setEmailOK(r.email_configured)
         setSecret(null)
@@ -58,7 +74,7 @@ export default function SecurityPage() {
   useEffect(load, [load])
 
   const save = async () => {
-    if (!captcha || !reg) return
+    if (!captcha || !reg || !login) return
     setBusy(true)
     try {
       await api.post('/api/admin/security', {
@@ -75,6 +91,7 @@ export default function SecurityPage() {
           fail_threshold: Number(captcha.fail_threshold) || 3,
         },
         registration: reg,
+        login: { mode: login.mode, sso_only: login.sso_only },
       })
       message.success(t('common.saved'))
       load()
@@ -85,11 +102,33 @@ export default function SecurityPage() {
     }
   }
 
-  if (!captcha || !reg) return null
+  if (!captcha || !reg || !login) return null
   const tokenProvider = captcha.provider !== 'image'
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%', maxWidth: 720 }}>
+      <Card title={t('security.loginTitle')}>
+        <Row label={t('security.loginMode')} hint={t('security.loginModeHint')}>
+          <Select
+            style={{ width: 280 }}
+            value={login.mode}
+            onChange={(v) => setLogin({ ...login, mode: v })}
+            options={[
+              { value: 'dual', label: t('security.loginDual') },
+              { value: 'sso_first', label: t('security.loginSSOFirst') },
+              { value: 'sso_redirect', label: t('security.loginSSORedirect') },
+              { value: 'local_only', label: t('security.loginLocalOnly') },
+            ]}
+          />
+        </Row>
+        <Row label={t('security.ssoOnly')} hint={t('security.ssoOnlyHint')}>
+          <Switch checked={login.sso_only} onChange={(v) => setLogin({ ...login, sso_only: v })} />
+        </Row>
+        {!login.sso_available && (login.mode !== 'local_only' || login.sso_only) && (
+          <Alert type="warning" showIcon style={{ marginTop: 12 }} message={t('security.noProviderWarning')} />
+        )}
+      </Card>
+
       <Card title={t('security.captchaTitle')}>
         <Typography.Paragraph type="secondary">{t('security.captchaDesc')}</Typography.Paragraph>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>

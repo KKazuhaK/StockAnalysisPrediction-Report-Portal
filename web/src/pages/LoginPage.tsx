@@ -8,6 +8,7 @@ import type { SSOProviderInfo } from '../api/types'
 import { usePrefs } from '../prefs'
 import { api, ApiError } from '../api/client'
 import { passkeySupported } from '../lib/webauthn'
+import { hardNavigate } from '../lib/hardNavigate'
 import CaptchaField, { type CaptchaValue } from '../components/CaptchaField'
 import { SiteLogo, useSite } from '../site'
 import { AutoIcon, MoonIcon, SunIcon } from '../components/icons'
@@ -29,6 +30,15 @@ export default function LoginPage() {
   const [totpToken, setTotpToken] = useState('')
   const [totpCode, setTotpCode] = useState('')
   const [providers, setProviders] = useState<SSOProviderInfo[]>([])
+  // What the server says this page may offer. Resolved server-side (login_mode.go) so the rules —
+  // including "degrade to local when no provider is enabled" — live in exactly one place.
+  const [offers, setOffers] = useState<{ mode: string; local: boolean; sso: boolean }>({
+    mode: 'dual',
+    local: true,
+    sso: false,
+  })
+  // sso_first hides the password form behind one deliberate click; this is that click.
+  const [showLocal, setShowLocal] = useState(false)
   const [captcha, setCaptcha] = useState<CaptchaValue>({})
   const [captchaRound, setCaptchaRound] = useState(0)
   const [account, setAccount] = useState('')
@@ -37,8 +47,29 @@ export default function LoginPage() {
   useEffect(() => {
     // Empty (or failing) means SSO is off, and the login page simply shows nothing extra.
     api
-      .get<{ providers: SSOProviderInfo[] }>('/api/sso/providers')
-      .then((r) => setProviders(r.providers || []))
+      .get<{ providers: SSOProviderInfo[]; login_mode?: string; local?: boolean; sso?: boolean }>(
+        '/api/sso/providers',
+      )
+      .then((r) => {
+        const list = r.providers || []
+        setProviders(list)
+        // `??`, not `||`: an explicit false from the server means local_only and must be honoured,
+        // while an ABSENT field means the response predates these fields — fall back to the old
+        // contract, which was simply "there are providers, so offer them".
+        setOffers({
+          mode: r.login_mode || 'dual',
+          local: r.local ?? true,
+          sso: r.sso ?? list.length > 0,
+        })
+        // Force-SSO sends the browser straight to the provider. `?local=1` opts out — it only skips
+        // this redirect and grants nothing, because whether a password is ACCEPTED is decided by the
+        // server (admins stay exempt). Without it a misconfigured IdP would make the page
+        // unreachable, and the escape has to work before anyone has proven who they are.
+        const bypass = new URLSearchParams(window.location.search).has('local')
+        if (r.login_mode === 'sso_redirect' && !bypass && list.length === 1) {
+          hardNavigate(`/api/auth/${list[0].kind}/${encodeURIComponent(list[0].slug)}/start`)
+        }
+      })
       .catch(() => {})
     api
       .get<{ enabled: boolean }>('/api/register/config')
@@ -198,7 +229,7 @@ export default function LoginPage() {
                   {t('common.cancel')}
                 </Button>
               </Form>
-            ) : (
+            ) : offers.local && (offers.mode !== 'sso_first' || showLocal || !offers.sso) ? (
             <Form layout="vertical" onFinish={onFinish} requiredMark={false}>
               <Form.Item name="username" label={t('login.username')} rules={[{ required: true }]}>
                 <Input size="large" prefix={<UserOutlined />} autoFocus autoComplete="username"
@@ -223,8 +254,17 @@ export default function LoginPage() {
                 </Button>
               )}
             </Form>
+            ) : (
+              // sso_first with the form still collapsed, or sso_redirect (where the auto-redirect is
+              // either in flight or was declined via ?local=1).
+              !totpToken &&
+              offers.local && (
+                <Button type="link" size="small" block onClick={() => setShowLocal(true)}>
+                  {t('login.usePassword')}
+                </Button>
+              )
             )}
-            {!totpToken && providers.length > 0 && (
+            {!totpToken && offers.sso && providers.length > 0 && (
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 <Typography.Text type="secondary" style={{ textAlign: 'center', display: 'block' }}>
                   {t('login.ssoDivider')}
@@ -237,7 +277,7 @@ export default function LoginPage() {
                     // A full navigation, not fetch: the IdP redirect chain has to happen in the
                     // browser's top-level context.
                     onClick={() => {
-                      window.location.href = `/api/auth/${p.kind}/${encodeURIComponent(p.slug)}/start`
+                      hardNavigate(`/api/auth/${p.kind}/${encodeURIComponent(p.slug)}/start`)
                     }}
                   >
                     {t('login.ssoWith', { name: p.name })}
