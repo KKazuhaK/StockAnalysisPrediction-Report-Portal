@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography, message } from 'antd'
+import { Alert, App, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError } from '../../api/client'
 
@@ -33,6 +33,7 @@ interface GroupRow {
 
 export default function SecurityPage() {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const [captcha, setCaptcha] = useState<CaptchaCfg | null>(null)
   const [reg, setReg] = useState<RegCfg | null>(null)
   const [groups, setGroups] = useState<GroupRow[]>([])

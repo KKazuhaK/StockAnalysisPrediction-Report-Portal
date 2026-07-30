@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Card, Empty, Input, Popconfirm, Select, Space, Tag, Typography, message } from 'antd'
+import { Alert, App, Button, Card, Empty, Input, Popconfirm, Select, Space, Tag, Typography } from 'antd'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError } from '../../api/client'
@@ -32,6 +32,7 @@ interface Principal {
 
 export default function VersionsPage() {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const [versions, setVersions] = useState<VersionRow[]>([])
   const [groups, setGroups] = useState<Principal[]>([])
   const [users, setUsers] = useState<Principal[]>([])
