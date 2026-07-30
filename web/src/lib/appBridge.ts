@@ -13,14 +13,6 @@ export const INIT_MESSAGE = 'rp:init'
 // light/dark and colours live, not just on first load (ADR 0003 phase 2).
 export const THEME_MESSAGE = 'rp:theme'
 
-export interface ApiRequestMsg {
-  type: typeof API_MESSAGE
-  reqId: string | number
-  method?: string
-  path: string
-  body?: unknown
-}
-
 // ThemePayload is handed to an app on init and on every theme change so it can match
 // the host without any API access.
 export interface ThemePayload {

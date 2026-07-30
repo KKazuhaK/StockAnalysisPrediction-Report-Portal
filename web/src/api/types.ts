@@ -38,14 +38,6 @@ export interface BatchPlugin {
   config: PluginConfigField[]
 }
 
-export interface MarketPlugin {
-  slug: string
-  name: string
-  version: string
-  description: string
-  installed: boolean
-}
-
 // A Dify workflow input field, discovered via /parameters (docs/adr/0006-dify-native.md).
 export interface DifyInput {
   variable: string
