@@ -116,7 +116,12 @@ func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (username stri
 	}
 	// A collision with a LOCAL account is never auto-linked: that would let anyone who can make
 	// their IdP assert a matching UPN take over a password account. It needs an admin.
-	if existing := s.st.GetUser(name); existing != nil {
+	//
+	// Ignoring case is load-bearing, not tidiness. sanitizeSSOUsername folds, so an assertion for
+	// "Alice.Wang" arrives here as "alice.wang"; an exact-match guard would sail past a local
+	// "Alice.Wang" and provision a second account — and the two would then share the single read
+	// principal u:alice.wang, which is the takeover this check exists to prevent.
+	if s.st.UsernameTaken(name) {
 		return "", false, errUsernameTaken
 	}
 	// Created with the baseline role, NOT the provider default. The default is a privileged role in

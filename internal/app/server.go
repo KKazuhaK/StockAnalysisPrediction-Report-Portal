@@ -132,6 +132,16 @@ func RunServer(cfgPath string) {
 		log.Printf("seeded %d default kind colors", n)
 	}
 
+	// Account names are folded from here on, but a database written before that may already hold a
+	// pair. They share one read principal, so each sees what the other was granted — say it out loud
+	// rather than let an admin find out through the reports. Not fatal: refusing to start over data
+	// the portal itself created would be the worse failure.
+	if dupes := st.CaseVariantUsernames(); len(dupes) > 0 {
+		log.Printf("WARNING: %d username(s) exist in more than one capitalisation (%s). "+
+			"Accounts differing only by case share one read principal and can see each other's "+
+			"reports — rename or delete all but one of each.", len(dupes), strings.Join(dupes, ", "))
+	}
+
 	// Bundled Dify adapter (docs/adr/0006-dify-native.md): a marker plugin every Dify
 	// target references, so admins configure a workflow by pasting its API key — no
 	// manifest import needed.
@@ -456,7 +466,9 @@ func AddUser(cfgPath, name, pw string, admin bool) error {
 	if admin {
 		role = "admin"
 	}
-	return st.UpsertUser(User{Username: name, PasswordHash: string(h), Role: role})
+	// This is the lockout fallback, so it must not refuse — but it still folds, or an admin
+	// recovering access as "Admin" would create a second account beside the real one.
+	return st.UpsertUser(User{Username: normalizeUsername(name), PasswordHash: string(h), Role: role})
 }
 
 // RecomputeKinds opens the store and re-derives every report's top-level kind with

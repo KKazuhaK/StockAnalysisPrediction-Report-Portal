@@ -305,3 +305,37 @@ func TestPostgresUpgradeRebuildsIdentityIndex(t *testing.T) {
 		t.Fatalf("second init: %v", err)
 	}
 }
+
+// TestPostgresUsernameCaseGuards runs the case-folding guards on the driver production actually
+// uses. LOWER() and GROUP BY LOWER() are the kind of thing that reads as portable and then behaves
+// differently — and both of these decide whether two accounts can share one read principal, so a
+// silent driver difference here is a disclosure, not a formatting quirk.
+func TestPostgresUsernameCaseGuards(t *testing.T) {
+	st := pgStore(t, "report_viewers", "version_grants", "users")
+
+	if err := st.UpsertUser(User{Username: "alice", PasswordHash: "h", Role: "user"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, probe := range []string{"alice", "Alice", "ALICE", "  AlIcE  "} {
+		if !st.UsernameTaken(probe) {
+			t.Errorf("UsernameTaken(%q) = false; a case variant would become a second account "+
+				"on the principal %q", probe, userPrincipal("alice"))
+		}
+	}
+	if st.UsernameTaken("bob") {
+		t.Error("UsernameTaken reported an uncontested name as taken")
+	}
+	if got := st.CaseVariantUsernames(); len(got) != 0 {
+		t.Errorf("a clean users table reported collisions %v", got)
+	}
+
+	// The pair a database written before the fold may already hold.
+	if _, err := st.exec("INSERT INTO users(username,password_hash,role) VALUES($1,$2,$3)",
+		"Alice", "h", "user"); err != nil {
+		t.Fatal(err)
+	}
+	got := st.CaseVariantUsernames()
+	if len(got) != 1 || got[0] != "alice" {
+		t.Errorf("CaseVariantUsernames() = %v, want [alice]", got)
+	}
+}
