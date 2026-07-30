@@ -204,18 +204,6 @@ func (s *Store) init() error {
 	if err := s.reconcileReportVersions(); err != nil {
 		return err
 	}
-	// Before anything can ask for the DEK: a keyring left in the table it used to occupy would be
-	// invisible to the new lookup, and the portal would mint a SECOND one — making every secret
-	// sealed under the first permanently unreadable.
-	if err := s.adoptLegacyKeyring(); err != nil {
-		return err
-	}
-	if err := s.adoptLegacySSORules(); err != nil {
-		return err
-	}
-	if err := s.adoptLegacyAuthRequests(); err != nil {
-		return err
-	}
 	if err := s.createBaseIndexes(); err != nil {
 		return err
 	}

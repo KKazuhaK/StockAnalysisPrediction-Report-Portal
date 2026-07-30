@@ -104,38 +104,3 @@ func (s *Store) rulesFor(providerID int64) []ssorules.Rule {
 	}
 	return out
 }
-
-// adoptLegacySSORules moves the rules out of the table they used to live in, for a database that ran
-// v0.4.0 or v0.4.1. Copy-then-drop, and the copy is skipped when the setting already holds a list,
-// so running it twice cannot overwrite edits made after the move.
-func (s *Store) adoptLegacySSORules() error {
-	if !s.tableExists("sso_group_rules") {
-		return nil
-	}
-	if len(s.SSORules()) == 0 {
-		rows, err := s.query(`SELECT COALESCE(provider_id,0),COALESCE(ord,0),COALESCE(enabled,1),
-			COALESCE(attr,''),COALESCE(value,''),COALESCE(target_role,''),COALESCE(target_group,0),
-			COALESCE(keep_on_miss,0),COALESCE(ci,0),COALESCE(note,'')
-			FROM sso_group_rules ORDER BY ord, id`)
-		if err == nil {
-			var list []storedRule
-			for rows.Next() {
-				var r storedRule
-				var enabled, keep, ci int
-				if rows.Scan(&r.ProviderID, &r.Ord, &enabled, &r.Attr, &r.Value, &r.TargetRole,
-					&r.TargetGroup, &keep, &ci, &r.Note) == nil {
-					r.Enabled, r.KeepOnMiss, r.CI = enabled != 0, keep != 0, ci != 0
-					list = append(list, r)
-				}
-			}
-			rows.Close()
-			if len(list) > 0 {
-				if err := s.SaveSSORules(list); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	_, err := s.exec(`DROP TABLE IF EXISTS sso_group_rules`)
-	return err
-}

@@ -270,8 +270,13 @@ removes the one non-reconciler step the earlier draft needed (`ensureUserUIDs`).
   was the right call.
 - **`sso_providers`** — one row per IdP: kind/slug/enabled/provisioning, defaults, SAML metadata +
   certs, SP keypair, OIDC issuer/client/scopes/discovery cache, attribute mapping.
-- **`sso_group_rules`** — ordered rules (`ord`, `attr`, `value`, `target_role`, `target_group`,
-  `keep_on_miss`, `note`).
+- **The group rules live in `meta`** — one ordered JSON list under `sso_group_rules` (`ord`, `attr`,
+  `value`, `target_role`, `target_group`, `keep_on_miss`, `note`). They were a table and it earned
+  nothing: every write already replaced the whole list in a transaction, because an admin edits it as
+  one ordered thing, so the rows only ever moved together. One value is written with one statement
+  and cannot end up half-applied. A rule may be **global** (pinned to no provider), which is why the
+  list belongs to the portal in `meta` rather than to a column on `sso_providers` — the Passwall
+  panel, which has no global rules, keeps its role rules as a JSON column on the provider config.
 - **`webauthn_credentials`** — one row per passkey: credential id (unique index), the serialized
   credential, owning username, label, sign counter, created/last-used.
 - **`auth_requests`** — short-lived single-use state, TTL ~10 min. Shared by **all four** flows —
@@ -282,10 +287,15 @@ removes the one non-reconciler step the earlier draft needed (`ensureUserUIDs`).
   IdP cannot poison another's ID space.
 - **The keyring lives in `meta`** — `keyring_salt` and `keyring_wrapped_dek`. It began as a
   single-row table on the instinct that key material deserves its own place; one salt and one
-  wrapped key are two settings, which is the shape every other single value already uses. A database
-  that ran v0.4.0/v0.4.1 has it adopted out of the old table on start, before anything can ask for
-  the DEK — a keyring the new lookup cannot see would cause a SECOND one to be minted, silently
-  making every secret sealed under the first unreadable.
+  wrapped key are two settings, which is the shape every other single value already uses.
+
+These three moves — the keyring, the group rules, and renaming `sso_auth_requests` to
+`auth_requests` once TOTP, WebAuthn and email verification all parked their pending state in it —
+each shipped with a copy-then-drop adoption step for a database that had run v0.4.0 or v0.4.1. Those
+steps are **gone as of v0.4.3**. SSO first shipped in v0.4.1, the only line that ever had the old
+tables, and no deployment ever ran it: production went v0.3.10 → v0.4.3 directly, and a v0.3.x
+database has none of these tables, so every adoption step was dead code that could not fire. A
+database that did run v0.4.1 with SSO configured cannot be upgraded in place — recreate it.
 
 The two TTL tables are swept by `authSweepLoop`, its **own** always-on 15-minute tick. Riding on the
 storage-retention pass (ADR 0017) was the original plan and was wrong: that pass only runs when an
