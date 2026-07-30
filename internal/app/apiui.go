@@ -228,6 +228,13 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusForbidden, "账号已过期")
 		return
 	}
+	// The hard policy, checked AFTER the password so it can never become an oracle for which
+	// accounts are privileged: a wrong password fails identically either way. Admins are exempt —
+	// this endpoint is the break-glass path when the IdP is the thing that is broken.
+	if s.localLoginRefused(u) {
+		jsonError(w, http.StatusForbidden, "本站已限制使用密码登录，请通过单点登录进入")
+		return
+	}
 	if thr != nil {
 		thr.reset(ipKey)
 		thr.reset(userKey)

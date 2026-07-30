@@ -184,6 +184,15 @@ func (s *Server) apiAdminSecurity(w http.ResponseWriter, r *http.Request, user s
 			"trigger":        s.st.GetSetting(setCaptchaTrigger, triggerAlways),
 			"fail_threshold": s.st.GetSetting(setCaptchaThreshold, "3"),
 		},
+		// Two axes (login_mode.go): what the page offers, and what the endpoint accepts. The
+		// admin sees the STORED mode, not the resolved one, or a portal with no provider yet
+		// would show "local only" and quietly discard the choice on save.
+		"login": map[string]any{
+			"mode":          s.st.GetSetting(setLoginMode, loginDual),
+			"effective":     s.loginMode(),
+			"sso_only":      s.st.GetSetting(setSSOOnly, "") == "1",
+			"sso_available": s.ssoAvailable(),
+		},
 		"registration": map[string]any{
 			"enabled":        s.registrationOpen(),
 			"require_verify": s.registrationNeedsVerify(),
@@ -212,6 +221,10 @@ func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, us
 			Trigger       string  `json:"trigger"`
 			FailThreshold int     `json:"fail_threshold"`
 		} `json:"captcha"`
+		Login struct {
+			Mode    string `json:"mode"`
+			SSOOnly bool   `json:"sso_only"`
+		} `json:"login"`
 		Registration struct {
 			Enabled       bool   `json:"enabled"`
 			RequireVerify bool   `json:"require_verify"`
@@ -238,6 +251,17 @@ func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, us
 	if trigger != triggerAfterFailure {
 		trigger = triggerAlways
 	}
+	// An unrecognized mode is refused rather than coerced: silently storing something else would
+	// leave an admin believing they configured a login policy they did not.
+	if in.Login.Mode != "" {
+		if !validLoginMode(in.Login.Mode) {
+			jsonError(w, http.StatusBadRequest, "login mode must be dual | sso_first | sso_redirect | local_only")
+			return
+		}
+		s.st.SetSetting(setLoginMode, in.Login.Mode)
+	}
+	s.st.SetSetting(setSSOOnly, boolSetting(in.Login.SSOOnly))
+
 	s.st.SetSetting(setCaptchaProvider, provider)
 	s.st.SetSetting(setCaptchaSiteKey, strings.TrimSpace(in.Captcha.SiteKey))
 	s.st.SetSetting(setCaptchaTrigger, trigger)
