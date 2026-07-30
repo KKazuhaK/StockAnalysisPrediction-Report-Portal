@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Alert,
+  App,
   Button,
   Card,
   Form,
@@ -11,7 +12,6 @@ import {
   Space,
   Tag,
   Typography,
-  message,
 } from 'antd'
 import { KeyOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -79,6 +79,7 @@ export default function AccountPage() {
 
 function PasswordCard() {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const [form] = Form.useForm()
   const [busy, setBusy] = useState(false)
 
@@ -142,6 +143,7 @@ function PasswordCard() {
 
 function TwoFactorCard({ enabled, onChange }: { enabled: boolean; onChange: () => void }) {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const [stage, setStage] = useState<'idle' | 'proof' | 'confirm'>('idle')
   const [secret, setSecret] = useState('')
   const [uri, setUri] = useState('')
@@ -280,6 +282,7 @@ function PasskeyCard({
   onChange: () => void
 }) {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const [proofFor, setProofFor] = useState<'register' | number | null>(null)
   const [busy, setBusy] = useState(false)
   const supported = passkeySupported()
