@@ -694,3 +694,26 @@ export interface SSOProvidersResp {
   providers: SSOProviderAdmin[]
   public_url: string
 }
+
+// One group rule. Order in the array is the contract — first match wins — so `ord` and `id` are
+// assigned by the server from the submitted order and are never chosen by the client.
+export interface SSORuleRow {
+  id: number
+  provider_id: number // 0 = applies to every provider
+  ord: number
+  enabled: boolean
+  attr: string
+  value: string
+  target_role: string // '' = leave the role alone
+  target_group: number // 0 = leave the OU alone
+  keep_on_miss: boolean
+  ci: boolean // compare the value case-insensitively
+  note: string
+}
+
+export interface SSORulesResp {
+  rules: SSORuleRow[]
+  // Ids of enabled rules an earlier rule already answers for, so they can never win. Computed
+  // server-side because the ordering rule lives there.
+  shadowed: number[]
+}

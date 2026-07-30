@@ -3,7 +3,8 @@ import { Alert, App, Button, Card, Form, Input, InputNumber, Select, Space, Swit
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
-import type { SSOProviderAdmin, SSOProvidersResp, UserGroupRow } from '../../api/types'
+import type { Role, SSOProviderAdmin, SSOProvidersResp, UserGroupRow, UsersResp } from '../../api/types'
+import SSORulesEditor from './SSORulesEditor'
 
 // SSO administration (ADR 0023). One SAML tab and one OIDC tab; the API is row-shaped, so adding
 // more providers later is a change here and nowhere else.
@@ -222,6 +223,7 @@ export default function SSOPage() {
   const { t } = useTranslation()
   const [providers, setProviders] = useState<SSOProviderAdmin[]>([])
   const [groups, setGroups] = useState<UserGroupRow[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
   const [publicUrl, setPublicUrl] = useState('')
 
   const load = () => {
@@ -236,6 +238,12 @@ export default function SSOPage() {
       .get<{ groups: UserGroupRow[] }>('/api/admin/groups')
       .then((r) => setGroups(r.groups || []))
       .catch(() => {})
+    // The rules editor assigns roles, and the role registry is server-side (roles.go), so the list
+    // has to come from the same place the account page gets it.
+    api
+      .get<UsersResp>('/api/admin/users')
+      .then((r) => setRoles(r.roles || []))
+      .catch(() => {})
   }
   useEffect(load, [])
 
@@ -244,19 +252,26 @@ export default function SSOPage() {
   return (
     <Card>
       <Tabs
-        items={(['saml', 'oidc'] as const).map((kind) => ({
-          key: kind,
-          label: kind === 'saml' ? t('sso.tabSaml') : t('sso.tabOidc'),
-          children: (
-            <ProviderForm
-              kind={kind}
-              provider={forKind(kind)}
-              groups={groups}
-              publicUrl={publicUrl}
-              onSaved={load}
-            />
-          ),
-        }))}
+        items={[
+          ...(['saml', 'oidc'] as const).map((kind) => ({
+            key: kind,
+            label: kind === 'saml' ? t('sso.tabSaml') : t('sso.tabOidc'),
+            children: (
+              <ProviderForm
+                kind={kind}
+                provider={forKind(kind)}
+                groups={groups}
+                publicUrl={publicUrl}
+                onSaved={load}
+              />
+            ),
+          })),
+          {
+            key: 'rules',
+            label: t('sso.tabRules'),
+            children: <SSORulesEditor providers={providers} groups={groups} roles={roles} />,
+          },
+        ]}
       />
     </Card>
   )

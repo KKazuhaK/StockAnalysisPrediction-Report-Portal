@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/ssorules"
 )
 
 // Admin API for SSO configuration (ADR 0023). Everything lives in the DB and is edited here;
@@ -307,13 +309,24 @@ func (s *Server) apiAdminSSODelete(w http.ResponseWriter, r *http.Request, user 
 // ---------- group rules ----------
 
 func (s *Server) apiAdminSSORules(w http.ResponseWriter, r *http.Request, user string) {
-	out := make([]map[string]any, 0)
-	for _, r := range s.st.SSORules() {
+	stored := s.st.SSORules()
+	out := make([]map[string]any, 0, len(stored))
+	engine := make([]ssorules.Rule, 0, len(stored))
+	for _, r := range stored {
 		out = append(out, map[string]any{"id": r.ID, "provider_id": r.ProviderID, "ord": r.Ord,
 			"enabled": r.Enabled, "attr": r.Attr, "value": r.Value, "target_role": r.TargetRole,
 			"target_group": r.TargetGroup, "keep_on_miss": r.KeepOnMiss, "ci": r.CI, "note": r.Note})
+		engine = append(engine, ssorules.Rule{ID: r.ID, Ord: r.Ord, Enabled: r.Enabled,
+			Attr: r.Attr, Value: r.Value})
 	}
-	writeJSON(w, map[string]any{"rules": out})
+	// Which rules can never win, so the page can say so. First match wins, so a rule sitting behind
+	// an earlier one on the same attribute and value is unreachable — and an unreachable rule reads
+	// to an admin exactly like a granted permission, which is the whole reason to compute this.
+	shadowed := ssorules.Shadowed(engine)
+	if shadowed == nil {
+		shadowed = []int64{}
+	}
+	writeJSON(w, map[string]any{"rules": out, "shadowed": shadowed})
 }
 
 // apiAdminSSORulesSave replaces the whole ordered rule set in one transaction. Order is the
