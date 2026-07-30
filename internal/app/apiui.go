@@ -850,7 +850,9 @@ func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string)
 		ExpiresAt    string `json:"expires_at"`
 	}
 	readJSON(r, &in)
-	name := strings.TrimSpace(in.Username)
+	// Folded, not merely trimmed: a case variant of an existing name would be a second account
+	// sharing the first one's read principal.
+	name := normalizeUsername(in.Username)
 	if name == "" || in.Password == "" {
 		jsonError(w, http.StatusBadRequest, "username and password required")
 		return
@@ -864,7 +866,7 @@ func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string)
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if s.st.GetUser(name) != nil {
+	if s.st.UsernameTaken(name) {
 		jsonError(w, http.StatusBadRequest, "username already exists")
 		return
 	}

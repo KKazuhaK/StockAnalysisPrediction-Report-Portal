@@ -697,6 +697,40 @@ func (s *Store) GetUser(name string) *User {
 	return &u
 }
 
+// UsernameTaken reports whether any account holds this name ignoring case. Creation paths ask this
+// instead of GetUser: new names are folded (normalizeUsername), but a database written before that
+// may hold `Alice`, and an exact-match guard would happily create `alice` alongside it — two accounts
+// on the one principal `u:alice`. Deliberately not on the login path, which stays an exact
+// primary-key hit; this runs only when an account is created.
+// It normalizes its own argument rather than trusting the caller to have done it: this is a guard,
+// and a guard that is only correct when called correctly is not one.
+func (s *Store) UsernameTaken(name string) bool {
+	var n int
+	s.queryRow("SELECT COUNT(*) FROM users WHERE LOWER(username)=?", normalizeUsername(name)).Scan(&n)
+	return n > 0
+}
+
+// CaseVariantUsernames returns the folded names that more than one account already answers to.
+// Folding new writes cannot retrofit a collision that predates it, and a pair that silently shares a
+// read principal is exactly the failure this is meant to make impossible — so the server says so out
+// loud at startup rather than leaving an admin to discover it through the reports.
+func (s *Store) CaseVariantUsernames() []string {
+	rows, err := s.query(`SELECT LOWER(username) FROM users
+		GROUP BY LOWER(username) HAVING COUNT(*) > 1 ORDER BY LOWER(username)`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // UserByEmail finds a user by their (case-insensitive, non-empty) profile email, for
 // the "forgot password" lookup. Returns nil if none or the email is blank.
 func (s *Store) UserByEmail(email string) *User {

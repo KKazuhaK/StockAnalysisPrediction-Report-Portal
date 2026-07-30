@@ -1,5 +1,21 @@
 package app
 
+import "strings"
+
+// normalizeUsername is the canonical form of an account name: trimmed and folded to lower case.
+//
+// It exists because userPrincipal folds and the storage does not. A read principal has to be stable,
+// so it folds; `users.username` is a plain TEXT PRIMARY KEY, which is BINARY on SQLite and
+// case-sensitive on Postgres. While the two disagreed, `Alice` and `alice` were two accounts sharing
+// the one principal `u:alice` — each read what the other had been granted, and deleting either wiped
+// both their viewer rows.
+//
+// The Passwall panel never had to write this down: its `upn` UNIQUE index is MySQL under a utf8mb4
+// collation, so the database refuses the case variant for it. Neither of this project's drivers does,
+// so the fold happens here, at every creation path, and the guards compare through it. Folding at
+// write rather than comparing case-insensitively at read keeps every lookup an exact primary-key hit.
+func normalizeUsername(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+
 // User is an account. All fields are columns on the `users` table (the profile attributes
 // were folded in from user_profiles, ADR 0013). The single primary group is carried
 // out-of-band via PrimaryGroupOf/users.group_id, not on this struct.
