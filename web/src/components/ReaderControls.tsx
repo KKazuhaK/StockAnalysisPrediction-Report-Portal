@@ -1,7 +1,10 @@
+import { useEffect, useRef, useState } from 'react'
 import { Button, Grid, Popover, Segmented, Slider, Space, Switch, Typography } from 'antd'
+import type { TooltipRef } from 'antd/es/tooltip'
 import { FontSizeOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { FONT_DEFAULT, FONT_MAX, FONT_MIN, setReaderPrefs, useReaderPrefs } from '../reader'
+import { followTrigger } from '../lib/followAlign'
 
 // The "Aa" reading-settings popover: body font size / weight and (on desktop) a
 // wide-layout toggle. State lives in the shared reader store, so changes apply
@@ -11,6 +14,19 @@ export default function ReaderControls() {
   const { fontSize, fontWeight, wide } = useReaderPrefs()
   const screens = Grid.useBreakpoint()
   const isDesktop = !!screens.md
+  const [open, setOpen] = useState(false)
+  const pop = useRef<TooltipRef>(null)
+
+  // The wide toggle is the one control here that moves its own popover: it widens the reading
+  // column, so the card header this button sits in slides sideways underneath an already-open
+  // popover. antd re-positions on scroll and on window resize, neither of which a re-flow is, so
+  // the popover stayed at the coordinates it opened at. forceAlign is the supported way to ask it
+  // to catch up, and the widening is animated, so we follow the button until it comes to rest.
+  useEffect(() => {
+    const p = pop.current
+    if (!open || !p?.nativeElement) return
+    return followTrigger(p.nativeElement, () => p.forceAlign())
+  }, [open, wide])
 
   const content = (
     <div style={{ width: 244 }}>
@@ -75,7 +91,15 @@ export default function ReaderControls() {
   )
 
   return (
-    <Popover content={content} title={t('reader.title')} trigger="click" placement="bottomRight">
+    <Popover
+      ref={pop}
+      content={content}
+      title={t('reader.title')}
+      trigger="click"
+      placement="bottomRight"
+      open={open}
+      onOpenChange={setOpen}
+    >
       <Button icon={<FontSizeOutlined />}>{t('reader.title')}</Button>
     </Popover>
   )
