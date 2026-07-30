@@ -43,7 +43,7 @@ type UserGroup struct {
 	Restricted          bool
 	RestrictedEffective bool
 	ParentID            int64 // 0 = a root OU; the tree the inherited settings resolve along
-	DailyRunQuota       int // runs/day cap for members; 0 = unlimited
+	DailyRunQuota       int   // runs/day cap for members; 0 = unlimited
 	DailyQuotaInherit   bool
 }
 

@@ -205,10 +205,10 @@ func TestPostgresScopedReads(t *testing.T) {
 		}
 		return id
 	}
-	hidden := mk(st.DefaultVersion(), "内部")   // ungranted version
+	hidden := mk(st.DefaultVersion(), "内部") // ungranted version
 	mine := mk("对外版", "我申请的")               // granted, owner visibility
 	theirs := mk("对外版", "别人申请的")            // granted, owner visibility, not mine
-	library := mk("客户版", "公开库")              // granted, visible to all
+	library := mk("客户版", "公开库")             // granted, visible to all
 	st.AddReportViewer(mine, "2026-07-28", "pg-ext", ou)
 
 	// Built by hand rather than through viewerScope, so the test needs no Server and states the

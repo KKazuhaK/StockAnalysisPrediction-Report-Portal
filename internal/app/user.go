@@ -17,13 +17,13 @@ type User struct {
 	// Identity source (ADR 0023). Source is local | jit | scim and SourceRef names the provider that
 	// owns the row, so a future sync only ever touches what it created. A row that predates SSO
 	// reconciles to "local", never to federated.
-	Source      string
-	SourceRef   string
-	ExternalID  string // the IdP's immutable object id; the SSO<->SCIM join key
+	Source     string
+	SourceRef  string
+	ExternalID string // the IdP's immutable object id; the SSO<->SCIM join key
 	// Restricted (ADR 0024) scopes this ACCOUNT's reads regardless of its OU, so a portal with no
 	// OU tree can still have external users. ORs with the OU's own restricted flag.
-	Restricted bool
-	TOTPEnabled bool   // whether TOTP 2FA is confirmed and in force for this (local) account
+	Restricted  bool
+	TOTPEnabled bool // whether TOTP 2FA is confirmed and in force for this (local) account
 }
 
 // IsFederated reports whether the account is owned by an external identity provider, and therefore

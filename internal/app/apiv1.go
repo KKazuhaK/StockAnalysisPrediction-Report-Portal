@@ -161,13 +161,13 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		// Version (ADR 0024): which written form of this analysis the workflow just produced.
 		// Omitted means the default version — exactly what every existing producer means today —
 		// so a workflow that has never heard of versions keeps overwriting its own row in place.
-		Version string `json:"version"`
-		Title      string `json:"title"`
-		Source     string `json:"source"`
-		Time       string `json:"time"`
-		BodyMD     string `json:"body_md"`
-		BodyHTML   string `json:"body_html"`
-		Tracking   []struct {
+		Version  string `json:"version"`
+		Title    string `json:"title"`
+		Source   string `json:"source"`
+		Time     string `json:"time"`
+		BodyMD   string `json:"body_md"`
+		BodyHTML string `json:"body_html"`
+		Tracking []struct {
 			IType       string `json:"itype"`
 			Content     string `json:"content"`
 			Status      string `json:"status"`
