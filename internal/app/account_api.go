@@ -79,14 +79,3 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request, user 
 	}
 	writeJSON(w, okJSON)
 }
-
-// sessionValid reports whether a signed session cookie value would still be accepted. It exists so
-// the revocation behaviour of a password change is directly testable rather than inferred.
-func (s *Server) sessionValid(cookie string) bool {
-	user, rev := s.verify(cookie)
-	if user == "" {
-		return false
-	}
-	u := s.st.GetUser(user)
-	return u != nil && u.Active && !s.accountExpired(u) && u.SessionRev == rev
-}

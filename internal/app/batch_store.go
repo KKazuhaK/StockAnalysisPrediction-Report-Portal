@@ -143,11 +143,6 @@ func (s *Store) QueuedItems(jobID int64) ([]batch.Item, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) StartItem(id int64) error {
-	_, err := s.exec("UPDATE batch_items SET status='running', started_at=? WHERE id=?", nowStr(), id)
-	return err
-}
-
 func (s *Store) FinishItem(id int64, st batch.Outcome, attempts int, runID, detail string) error {
 	// run_id is written only when non-empty so a finish that carries no id (e.g. a pure-chat run
 	// whose result has no workflow run id) never wipes the id already persisted mid-stream.
@@ -178,14 +173,6 @@ func (s *Store) MarkItemDifyStarted(itemID int64) error {
 	_, err := s.exec(`UPDATE batch_items SET dify_started_at=?
 		WHERE id=? AND COALESCE(dify_started_at,'')=''`, nowStr(), itemID)
 	return err
-}
-
-func (s *Store) Cancelled(jobID int64) (bool, error) {
-	var status string
-	if err := s.queryRow("SELECT status FROM batch_jobs WHERE id=?", jobID).Scan(&status); err != nil {
-		return false, err
-	}
-	return status == "cancelling" || status == "cancelled", nil
 }
 
 func (s *Store) FinishJob(jobID int64, cancelled bool) error {
@@ -685,10 +672,6 @@ func (s *Store) GetBatchJob(id int64) (BatchJob, bool) {
 		return BatchJob{}, false
 	}
 	return j, true
-}
-
-func (s *Store) ListBatchJobs() []BatchJob {
-	return s.queryBatchJobs(`ORDER BY b.id DESC`)
 }
 
 // queryBatchJobs runs a SELECT of the shared job columns with the given WHERE/ORDER/LIMIT tail.

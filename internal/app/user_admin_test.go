@@ -97,8 +97,9 @@ func TestUserGroupsCRUDAndMembership(t *testing.T) {
 	}
 
 	// Override urgent-unlimited on Research (concrete shim), then confirm it sticks.
-	if err := st.UpdateUserGroup(gid, "Research", "The research desk", 0, true); err != nil {
-		t.Fatalf("UpdateUserGroup urgent unlimited: %v", err)
+	urgentFree := true
+	if err := st.UpdateGroup(gid, "Research", "The research desk", quotaPtr(0), &urgentFree); err != nil {
+		t.Fatalf("UpdateGroup urgent unlimited: %v", err)
 	}
 	if !st.UserUrgentUnlimited("alice") {
 		t.Fatal("override did not grant alice unlimited urgent")

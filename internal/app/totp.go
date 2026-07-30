@@ -317,11 +317,6 @@ func (s *Store) RecoveryCodes(username string) string {
 	return v.String
 }
 
-func (s *Store) SetRecoveryCodes(username, hashedCodes string) error {
-	_, err := s.exec(`UPDATE users SET recovery_codes=?, updated_at=? WHERE username=?`, hashedCodes, nowStr(), username)
-	return err
-}
-
 // SwapRecoveryCodes replaces the code list only if it still holds the value the caller read. This
 // is what makes spending a code single-use under concurrency: the write is conditional on the
 // unchanged prior value, so of two racing attempts exactly one commits.

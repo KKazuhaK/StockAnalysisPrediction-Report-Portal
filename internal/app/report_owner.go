@@ -1,7 +1,6 @@
 package app
 
 import (
-	"sort"
 	"strings"
 )
 
@@ -184,27 +183,4 @@ func (s *Server) viewerScope(user string) *ownerScope {
 		}
 	}
 	return sc
-}
-
-// entitledSubtypes narrows the same-day pool to the report types the user's OU may run. It returns
-// nil when the OU has no allow-list at all (nothing to narrow by — the pool stays open, matching
-// pre-P4 behavior), and a non-nil (possibly empty) slice once a list exists.
-func (s *Server) entitledSubtypes(user string) []string {
-	if len(s.st.resolveGroupTargets(user)) == 0 {
-		return nil
-	}
-	subs := []string{}
-	seen := map[string]bool{}
-	for _, g := range s.st.resolveGroupTargets(user) {
-		t, ok := s.st.GetTarget(g.TargetID)
-		if !ok {
-			continue
-		}
-		if sub := targetOutputSubtype(t.Config); sub != "" && !seen[sub] {
-			seen[sub] = true
-			subs = append(subs, sub)
-		}
-	}
-	sort.Strings(subs) // stable order keeps the generated SQL (and its query plan) deterministic
-	return subs
 }

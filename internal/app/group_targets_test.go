@@ -108,25 +108,6 @@ func TestRunAllowedResolvesUpTheOuTree(t *testing.T) {
 	}
 }
 
-// TestAllowedSubtypesForViewer backs the P2-deferred narrowing: the same-day pool a restricted viewer
-// may see is limited to the subtypes its OU is actually entitled to run.
-func TestAllowedSubtypesForViewer(t *testing.T) {
-	s, org, _, tgtA, tgtB := ouFixture(t)
-	st := s.st
-	// Declare each target's produced subtype (stored in the existing config JSON, no schema change).
-	st.UpdateTarget(tgtA, "A", `{"output_subtype":"val"}`)
-	st.UpdateTarget(tgtB, "B", `{"output_subtype":"secret-type"}`)
-	st.SetGroupTargets(org, []GroupTarget{{TargetID: tgtA, Surfaces: ""}})
-
-	got := s.allowedSubtypes("ext")
-	if len(got) != 1 || got[0] != "val" {
-		t.Errorf("allowedSubtypes = %v, want [val] (only the entitled target's subtype)", got)
-	}
-	if s.allowedSubtypes("staff") != nil {
-		t.Error("an internal user has no subtype restriction (nil = unrestricted)")
-	}
-}
-
 // TestApiBatchJobCreateEnforcesAllowList proves the allow-list is enforced SERVER-side at submit —
 // the gate that defeats a crafted request for a workflow the UI never offered — and that a granted
 // target on a non-granted surface is refused too.

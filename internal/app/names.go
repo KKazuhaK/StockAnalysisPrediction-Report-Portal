@@ -303,24 +303,6 @@ func FetchOneName(code string) string {
 	return fetchNameWithRetry(aShareNameSources(pre, code), httpGetGBK)
 }
 
-// EnsureOne, if a code has no name yet, fetches it once in the background from the fallback sources (Tencent -> Sina) and caches it in memory and the stocks table (called on ingestion).
-func (n *Names) EnsureOne(code string) {
-	if code == "" || n.Get(code) != "" {
-		return
-	}
-	go func() {
-		name := FetchOneName(code)
-		if name == "" {
-			return
-		}
-		n.merge(map[string]string{code: name})
-		if n.st != nil {
-			n.st.SyncStocks(map[string]string{code: name})
-		}
-		log.Printf("stock name fallback: %s = %s", code, name)
-	}()
-}
-
 func (n *Names) fetchOne(code string) string {
 	if n.fetch != nil {
 		return n.fetch(code)
