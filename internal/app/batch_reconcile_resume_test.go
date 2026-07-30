@@ -38,8 +38,8 @@ func TestSaveDifyRefAndResetScoping(t *testing.T) {
 	job, _ := st.CreateBatchJob(tgt, 2, 0, "admin", []map[string]string{{"c": "a"}, {"c": "b"}}, "normal")
 	st.MarkJobRunning(job)
 	items := st.BatchJobItems(job)
-	st.StartItem(items[0].ID)
-	st.StartItem(items[1].ID)
+	st.MarkItemRunning(items[0].ID)
+	st.MarkItemRunning(items[1].ID)
 	// item0 captured a run id mid-stream; item1 crashed before any id was emitted.
 	if err := st.SaveItemDifyRef(items[0].ID, "run-1", "", "task-1"); err != nil {
 		t.Fatalf("SaveItemDifyRef: %v", err)
@@ -77,7 +77,7 @@ func TestResumeReconcilesStartedRunNoRerun(t *testing.T) {
 	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"c": "a"}}, "normal")
 	st.MarkJobRunning(job)
 	items := st.BatchJobItems(job)
-	st.StartItem(items[0].ID)
+	st.MarkItemRunning(items[0].ID)
 	st.SaveItemDifyRef(items[0].ID, "run-1", "", "task-1")
 
 	var runs, recs int32
@@ -113,7 +113,7 @@ func resumeUntrackedCase(t *testing.T, arrange func(st *Store, itemID int64)) {
 	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"c": "a"}}, "normal")
 	st.MarkJobRunning(job)
 	items := st.BatchJobItems(job)
-	st.StartItem(items[0].ID)
+	st.MarkItemRunning(items[0].ID)
 	arrange(st, items[0].ID)
 
 	var runs, recs int32
@@ -164,7 +164,7 @@ func TestResumeNeverStartedIsRequeuedAndReRun(t *testing.T) {
 	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"c": "a"}}, "normal")
 	st.MarkJobRunning(job)
 	items := st.BatchJobItems(job)
-	st.StartItem(items[0].ID) // 'running' but nothing captured — a crash before the stream opened
+	st.MarkItemRunning(items[0].ID) // 'running' but nothing captured — a crash before the stream opened
 
 	var runs, recs int32
 	srv := &Server{st: st}
@@ -197,7 +197,7 @@ func TestManualReconcileEndpoint(t *testing.T) {
 	job, _ := st.CreateBatchJob(tgt, 1, 0, "admin", []map[string]string{{"c": "a"}}, "normal")
 	st.MarkJobRunning(job)
 	items := st.BatchJobItems(job)
-	st.StartItem(items[0].ID)
+	st.MarkItemRunning(items[0].ID)
 	st.SaveItemDifyRef(items[0].ID, "run-9", "", "task-9")
 	st.FinishItem(items[0].ID, batch.Failed, 1, "run-9", "stream ended before workflow_finished")
 

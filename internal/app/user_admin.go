@@ -113,16 +113,6 @@ func (s *Store) UpdateGroup(id int64, name, description string, weight *int, urg
 	return err
 }
 
-// UpdateUserGroup is the concrete-value shim kept for existing call sites/tests.
-func (s *Store) UpdateUserGroup(id int64, name, description string, weight int, urgentFree ...bool) error {
-	w := weight
-	if len(urgentFree) == 0 {
-		return s.UpdateGroup(id, name, description, &w, nil)
-	}
-	uf := urgentFree[0]
-	return s.UpdateGroup(id, name, description, &w, &uf)
-}
-
 // DeleteUserGroup removes a group and reassigns its former primary members to the Default
 // group (users.group_id back to NULL). Its priority rides on the group row, so it goes with
 // it. Any group flagged is_default is never deletable — the resolution depends on it. We check

@@ -553,14 +553,6 @@ func (s *Server) parseTemplates() {
 
 // ---------- Session / auth ----------
 
-func (s *Server) sign(user string) string {
-	u := s.st.GetUser(user)
-	if u == nil {
-		return ""
-	}
-	return s.signUser(*u)
-}
-
 // sessionTTL is how long a portal session lasts by default. An SSO provider may shorten it
 // (session_hours), which is why signing takes a duration at all.
 const sessionTTL = 7 * 24 * time.Hour
@@ -583,7 +575,9 @@ func (s *Server) setSessionCookieFor(w http.ResponseWriter, r *http.Request, u U
 	})
 }
 
-func (s *Server) signUser(u User) string { return s.signUserFor(u, sessionTTL) }
+func encodeSessionMessage(msg string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(msg))
+}
 
 func (s *Server) signUserFor(u User, ttl time.Duration) string {
 	if ttl <= 0 {
@@ -593,10 +587,6 @@ func (s *Server) signUserFor(u User, ttl time.Duration) string {
 	msg := fmt.Sprintf("v1|%s|%d|%d", u.Username, u.SessionRev, exp)
 	sig := s.hmac(msg)
 	return encodeSessionMessage(msg) + "." + sig
-}
-
-func encodeSessionMessage(msg string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(msg))
 }
 
 func (s *Server) hmac(msg string) string {

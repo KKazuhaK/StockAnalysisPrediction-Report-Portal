@@ -174,7 +174,7 @@ func TestResetInFlightItemsRequeues(t *testing.T) {
 	st.MarkJobRunning(job) // the job had been admitted (running) before the crash
 	// simulate a crash mid-run: one item stuck running
 	items := st.BatchJobItems(job)
-	st.StartItem(items[0].ID)
+	st.MarkItemRunning(items[0].ID)
 
 	if err := st.ResetInFlightItems(); err != nil {
 		t.Fatalf("ResetInFlightItems: %v", err)

@@ -181,14 +181,3 @@ func containsString(list []string, want string) bool {
 	}
 	return false
 }
-
-// allowedSubtypes lists the report subtypes a restricted user's OU is entitled to. nil means "no
-// restriction" — an internal user/admin, or a restricted OU with no allow-list at all (nothing to
-// narrow by). Restricted callers share entitledSubtypes with the read filter, so "what you may run"
-// and "what you may see today" can never drift apart.
-func (s *Server) allowedSubtypes(user string) []string {
-	if s.viewerScope(user) == nil {
-		return nil
-	}
-	return s.entitledSubtypes(user)
-}

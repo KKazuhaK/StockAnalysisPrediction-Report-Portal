@@ -1137,11 +1137,6 @@ func (s *Store) DeleteToken(id int64) error {
 	return err
 }
 
-func (s *Store) CountTokens() (n int) {
-	s.queryRow("SELECT COUNT(*) FROM api_tokens").Scan(&n)
-	return
-}
-
 const tokenLastUsedWriteInterval = time.Minute
 
 // TokenValid validates a token: exists, not expired, scope matches (all or equal to need).
@@ -1424,13 +1419,6 @@ func (s *Store) AllStockNames() map[string]string {
 		}
 	}
 	return m
-}
-
-// StockName looks up a single stock's name (empty if not in the DB).
-func (s *Store) StockName(code string) string {
-	var name sql.NullString
-	s.queryRow("SELECT name FROM stocks WHERE code=?", code).Scan(&name)
-	return name.String
 }
 
 // ListSymbols lists stocks that have reports (q matches code or name, empty means all), ordered by report count descending.

@@ -68,31 +68,6 @@ func (s *Store) LinkIdentity(id Identity) error {
 	return nil
 }
 
-// IdentitiesOf returns the external identity bound to an account: at most one, so the slice is
-// there only to keep the admin API shape stable for a UI that lists them.
-func (s *Store) IdentitiesOf(username string) []Identity {
-	var provider, issuer, subject, slug, format sql.NullString
-	err := s.queryRow(`SELECT COALESCE(sso_provider,''),COALESCE(sso_issuer,''),COALESCE(sso_subject,''),
-		COALESCE(sso_slug,''),COALESCE(sso_nameid_format,'') FROM users WHERE username=?`, username).
-		Scan(&provider, &issuer, &subject, &slug, &format)
-	if err != nil || subject.String == "" {
-		return nil
-	}
-	return []Identity{{
-		Provider: provider.String, Issuer: issuer.String, Subject: subject.String,
-		Username: username, ProviderSlug: slug.String, NameIDFormat: format.String,
-	}}
-}
-
-// UnlinkIdentity removes one external login binding.
-func (s *Store) UnlinkIdentity(provider, issuer, subject string) error {
-	_, err := s.exec(`UPDATE users SET sso_provider='', sso_issuer='', sso_subject='', sso_slug='',
-			sso_nameid_format='', sso_attrs='', sso_linked_at=NULL
-		WHERE sso_provider=? AND sso_issuer=? AND sso_subject=?`,
-		provider, issuer, subject)
-	return err
-}
-
 // FindUserByExternalID finds an account pre-provisioned for this IdP object id — an admin who filled
 // it in ahead of time, or (later) SCIM. It is what lets a first SSO login ADOPT the intended account
 // instead of creating a duplicate. Scoped by provider so two IdPs cannot collide on the same id.
@@ -227,4 +202,34 @@ func (s *Store) GroupExists(id int64) bool {
 	var n int
 	s.queryRow(`SELECT COUNT(*) FROM user_groups WHERE id=?`, id).Scan(&n)
 	return n > 0
+}
+
+// Both of the following are unshipped: nothing in the product calls them yet. They are the two
+// halves of an admin action this portal still owes — showing which IdP binding an account holds,
+// and revoking a stale one — and the identity tests assert real invariants through them. Kept
+// here rather than folded into a test helper, so the gap stays visible instead of looking closed.
+
+// IdentitiesOf returns the external identity bound to an account: at most one, so the slice is
+// there only to keep the admin API shape stable for a UI that lists them.
+func (s *Store) IdentitiesOf(username string) []Identity {
+	var provider, issuer, subject, slug, format sql.NullString
+	err := s.queryRow(`SELECT COALESCE(sso_provider,''),COALESCE(sso_issuer,''),COALESCE(sso_subject,''),
+		COALESCE(sso_slug,''),COALESCE(sso_nameid_format,'') FROM users WHERE username=?`, username).
+		Scan(&provider, &issuer, &subject, &slug, &format)
+	if err != nil || subject.String == "" {
+		return nil
+	}
+	return []Identity{{
+		Provider: provider.String, Issuer: issuer.String, Subject: subject.String,
+		Username: username, ProviderSlug: slug.String, NameIDFormat: format.String,
+	}}
+}
+
+// UnlinkIdentity removes one external login binding.
+func (s *Store) UnlinkIdentity(provider, issuer, subject string) error {
+	_, err := s.exec(`UPDATE users SET sso_provider='', sso_issuer='', sso_subject='', sso_slug='',
+			sso_nameid_format='', sso_attrs='', sso_linked_at=NULL
+		WHERE sso_provider=? AND sso_issuer=? AND sso_subject=?`,
+		provider, issuer, subject)
+	return err
 }
