@@ -36,6 +36,7 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
+import OrgUnitPicker, { subtreeOf } from './OrgUnitPicker'
 import { priorityNum } from '../../lib/batchUi'
 import type { BatchConfig, GroupTargetsResp, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
 
@@ -165,7 +166,12 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState<string>()
-  const [groupFilter, setGroupFilter] = useState<number>()
+  // OU scoping (the tree picker). `ouScoped` is the all-vs-selected radio; `ouSelected` is what the
+  // tree has highlighted. Kept apart so clearing the selection does not silently widen the scope
+  // back to every account, and so the radio survives a search that hides the selected node.
+  const [ouScoped, setOuScoped] = useState(false)
+  const [ouSelected, setOuSelected] = useState<number[]>([])
+  const [tab, setTab] = useState('accounts')
   const [selected, setSelected] = useState<string[]>([])
   const [editUser, setEditUser] = useState<UserRow | 'new' | null>(null)
   const [pwUser, setPwUser] = useState<string | null>(null)
@@ -194,18 +200,27 @@ export default function UsersPage() {
   // A user's effective group is their primary group, or the Default when unassigned.
   const primaryOf = (u: UserRow) => (u.primary_group ? groupById.get(u.primary_group) : undefined)
 
+  // null = no OU filter at all. Selecting nothing while scoped means nothing matches, which is the
+  // honest reading of "only the selected units" — silently showing everything would hide the state.
+  const ouScope = useMemo(
+    () => (ouScoped ? subtreeOf(groups, ouSelected) : null),
+    [ouScoped, ouSelected, groups],
+  )
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return (data?.users || []).filter((u) => {
       if (roleFilter && u.role !== roleFilter) return false
-      if (groupFilter) {
-        const inherits = !u.primary_group && groupFilter === defaultGroup?.id
-        if (u.primary_group !== groupFilter && !inherits) return false
+      if (ouScope) {
+        // An account with no primary group belongs to the Default OU by inheritance, so the tree
+        // has to match it the same way the rest of the product resolves it.
+        const own = u.primary_group || defaultGroup?.id || 0
+        if (!ouScope.has(own)) return false
       }
       if (q && ![u.username, u.display_name, u.email].some((v) => (v || '').toLowerCase().includes(q))) return false
       return true
     })
-  }, [data, search, roleFilter, groupFilter, defaultGroup])
+  }, [data, search, roleFilter, ouScope, defaultGroup])
 
   const patch = async (name: string, body: Record<string, unknown>) => {
     await api.put(`/api/admin/users/${encodeURIComponent(name)}`, body)
@@ -377,8 +392,8 @@ export default function UsersPage() {
     load()
   }
 
-  const accounts = (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+  const accountList = (
+    <Space direction="vertical" size={16} style={{ width: '100%', minWidth: 0 }}>
       <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
         <Space wrap>
           <Input
@@ -396,16 +411,6 @@ export default function UsersPage() {
             value={roleFilter}
             onChange={setRoleFilter}
             options={roles.map((r) => ({ value: r.code, label: r.name }))}
-          />
-          <Select
-            showSearch
-            optionFilterProp="label"
-            allowClear
-            placeholder={t('users.group')}
-            style={{ width: 160 }}
-            value={groupFilter}
-            onChange={setGroupFilter}
-            options={groups.map((g) => ({ value: g.id, label: g.name }))}
           />
         </Space>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
@@ -514,9 +519,26 @@ export default function UsersPage() {
     </Space>
   )
 
+  // Tree beside the list, the way an admin console scopes a directory: the OU hierarchy is visible
+  // at all times, so inheritance stops being something you can only infer from an edit dialog.
+  const accounts = (
+    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      <OrgUnitPicker
+        groups={groups}
+        scoped={ouScoped}
+        onScopedChange={setOuScoped}
+        selected={ouSelected}
+        onSelect={setOuSelected}
+        onManage={() => setTab('groups')}
+      />
+      {accountList}
+    </div>
+  )
+
   return (
     <Tabs
-      defaultActiveKey="accounts"
+      activeKey={tab}
+      onChange={setTab}
       items={[
         { key: 'accounts', label: t('users.tabAccounts'), children: accounts },
         { key: 'groups', label: t('users.tabGroups'), children: <GroupsPanel groups={groups} onChanged={load} /> },
