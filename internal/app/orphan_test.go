@@ -247,3 +247,39 @@ func TestDeletingAnAccountDoesNotLeaveItsRunsLive(t *testing.T) {
 	}
 	_ = job
 }
+
+// TestDeletingAnAccountIsAllOrNothing pins the sweep to one transaction.
+//
+// The users row is deleted LAST, so every sweep before it ran while the account was still fully
+// valid for authentication. A concurrent request could re-create a row that had just been swept —
+// TicketStatus INSERTs a priority_tickets row on a plain GET, for instance — and it would then
+// outlive the account and be inherited by the next holder of the username. On Postgres the
+// statements could even run on different pooled connections.
+func TestDeletingAnAccountIsAllOrNothing(t *testing.T) {
+	s := tenancyServer(t)
+	st := s.st
+	const name = "alice@corp.example"
+	st.UpsertUser(User{Username: name, PasswordHash: "h", Role: "user"})
+	st.saveTicket(name, 3, time.Now())
+	st.CreateConversation(7, name)
+
+	if err := st.DeleteUser(name); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing keyed to the name is left anywhere, and the account itself is gone.
+	for _, q := range []struct{ table, col string }{
+		{"users", "username"}, {"priority_tickets", "username"}, {"chat_conversations", "created_by"},
+	} {
+		var n int
+		st.queryRow("SELECT COUNT(*) FROM "+q.table+" WHERE "+q.col+"=?", name).Scan(&n)
+		if n != 0 {
+			t.Errorf("%d rows left in %s", n, q.table)
+		}
+	}
+
+	// Deleting a name nobody holds is a no-op that reports no error, so a bulk delete over a stale
+	// list cannot half-fail.
+	if err := st.DeleteUser("nobody@example.com"); err != nil {
+		t.Errorf("deleting an absent account errored: %v", err)
+	}
+}

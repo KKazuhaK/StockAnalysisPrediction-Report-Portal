@@ -820,47 +820,56 @@ func (s *Store) SetUserRole(name, role string) error {
 // what must outlive the person, and it carries no grant, so nothing is inherited through it.
 func (s *Store) DeleteUser(name string) error {
 	principal := userPrincipal(name)
-	// batch_jobs stays — it is the run history an operator audits — but it must stop being LIVE
-	// state. A job left queued is still dispatched to Dify, and billed, for an account that no
-	// longer exists; and the two counters below read this table, so an unfinished job would also
-	// count against whoever takes the username next.
-	if _, err := s.exec(`UPDATE batch_jobs SET status='cancelled', finished_at=?
-		WHERE created_by=? AND status IN ('queued','running','cancelling')`, nowStr(), name); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
-	// recurring_runs is a child of recurring_tasks, so it has to go first and by subquery —
-	// sweeping the parent by name and leaving the audit rows would recreate, one level down,
-	// exactly the orphan this function exists to prevent.
-	for _, q := range []string{
-		"DELETE FROM recurring_runs WHERE task_id IN (SELECT id FROM recurring_tasks WHERE created_by=?)",
-		"DELETE FROM recurring_tasks WHERE created_by=?",
+	defer tx.Rollback() // a no-op once Commit has run; the safety net if any step below returns
+
+	run := func(q string, args ...any) error {
+		_, err := tx.Exec(s.bind(q), args...)
+		return err
+	}
+	// The users row goes FIRST, inside the transaction. Deleting it last meant every sweep ran
+	// while the account was still fully valid for authentication, so a concurrent request could
+	// re-create a row that had just been swept — TicketStatus INSERTs a priority_tickets row on a
+	// plain GET — and the orphan would then be inherited by the next holder of the username. One
+	// transaction also means a failure half-way leaves the account intact rather than partly
+	// dismantled, and on Postgres it keeps all of this on a single pooled connection.
+	steps := []struct {
+		q   string
+		arg any
+	}{
+		{"DELETE FROM users WHERE username=?", name},
+		// batch_jobs stays — it is the run history an operator audits — but it must stop being LIVE
+		// state. A job left queued is still dispatched to Dify, and billed, for an account that no
+		// longer exists; and the run counters read this table, so an unfinished job would also
+		// count against whoever takes the username next.
+		{"UPDATE batch_jobs SET status='cancelled', finished_at='" + nowStr() +
+			"' WHERE created_by=? AND status IN ('queued','running','cancelling')", name},
+		{"DELETE FROM recurring_runs WHERE task_id IN (SELECT id FROM recurring_tasks WHERE created_by=?)", name},
+		{"DELETE FROM recurring_tasks WHERE created_by=?", name},
 		// A passkey is a credential: left behind, it would let the previous holder of the name sign
 		// in as whoever registers it next, with no expiry to bound it.
-		"DELETE FROM webauthn_credentials WHERE username=?",
+		{"DELETE FROM webauthn_credentials WHERE username=?", name},
 		// Pending TOTP / passkey / reset / email-verify ceremonies. Short-lived, but a live token
 		// resolves by username and would act on the account that holds the name when it is redeemed.
-		"DELETE FROM auth_requests WHERE username=?",
+		{"DELETE FROM auth_requests WHERE username=?", name},
 		// The portal's index of the person's chat threads (Dify holds the messages themselves).
-		"DELETE FROM chat_conversations WHERE created_by=?",
+		{"DELETE FROM chat_conversations WHERE created_by=?", name},
 		// The urgent-run allowance, which is a scarce resource allocated per person (ADR 0005).
-		"DELETE FROM priority_tickets WHERE username=?",
-	} {
-		if _, err := s.exec(q, name); err != nil {
+		{"DELETE FROM priority_tickets WHERE username=?", name},
+		// The read path consults report_viewers alone (ADR 0024), so a surviving `u:<name>` row
+		// hands the new holder of the name every report the old one could read.
+		{"DELETE FROM report_viewers WHERE principal=?", principal},
+		{"DELETE FROM version_grants WHERE principal=?", principal},
+	}
+	for _, st := range steps {
+		if err := run(st.q, st.arg); err != nil {
 			return err
 		}
 	}
-	// The read path consults report_viewers alone (ADR 0024), so a surviving `u:<name>` row hands
-	// the new holder of the name every report the old one could read.
-	for _, q := range []string{
-		"DELETE FROM report_viewers WHERE principal=?",
-		"DELETE FROM version_grants WHERE principal=?",
-	} {
-		if _, err := s.exec(q, principal); err != nil {
-			return err
-		}
-	}
-	_, err := s.exec("DELETE FROM users WHERE username=?", name)
-	return err
+	return tx.Commit()
 }
 
 func (s *Store) CountUsers() (n int) {
