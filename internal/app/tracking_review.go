@@ -270,3 +270,49 @@ func (s *Store) UpdateTrackingStatusScoped(id int64, status, reviewPoint string,
 	n, _ := res.RowsAffected()
 	return n > 0, nil
 }
+
+// ComparableReport is one candidate to diff a report against.
+type ComparableReport struct {
+	ID      int64  `json:"id"`
+	Date    string `json:"date"`
+	Title   string `json:"title"`
+	Version string `json:"version"`
+}
+
+// ComparableReports lists the other editions of the SAME analysis — same symbol, same subtype —
+// newest first, so the UI can default to the previous one and offer the rest.
+//
+// Deliberately narrow: a different analysis of the same company, or the same analysis of a
+// different company, is not a sensible thing to diff against. The endpoint that performs the diff
+// accepts any pair, so nothing here prevents a deliberate cross-comparison; this is only what the
+// picker suggests.
+func (s *Store) ComparableReports(id int64, limit int, sc *ownerScope) []ComparableReport {
+	var symbol, rtype string
+	if s.queryRow("SELECT symbol,rtype FROM reports WHERE id=?", id).Scan(&symbol, &rtype) != nil {
+		return nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	where := []string{"r.symbol=?", "r.rtype=?", "r.id<>?"}
+	args := []any{symbol, rtype, id}
+	if frag, fargs := sc.where("r."); frag != "" {
+		where = append(where, frag)
+		args = append(args, fargs...)
+	}
+	rows, err := s.query(fmt.Sprintf(`SELECT r.id,r.rdate,r.title,COALESCE(r.version,'')
+		FROM reports r WHERE %s ORDER BY r.rdate DESC, r.id DESC LIMIT %d`,
+		strings.Join(where, " AND "), limit), args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := []ComparableReport{}
+	for rows.Next() {
+		var c ComparableReport
+		if rows.Scan(&c.ID, &c.Date, &c.Title, &c.Version) == nil {
+			out = append(out, c)
+		}
+	}
+	return out
+}
