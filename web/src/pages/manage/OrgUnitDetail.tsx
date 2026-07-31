@@ -248,7 +248,7 @@ export default function OrgUnitDetail({
           label={t('users.priority')}
           hint={t('users.priorityHint')}
           from={t('ou.systemDefault')}
-          inherited={t('users.prioritySystemDefault')}
+          inherited=""
           inheriting={d.priority == null}
           onInheritingChange={(v) => set('priority', v ? null : 50)}
         >

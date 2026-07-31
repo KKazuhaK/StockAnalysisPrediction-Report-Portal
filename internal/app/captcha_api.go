@@ -261,9 +261,19 @@ func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, us
 		// Refuse rather than warn. Enabling this with no local admin is not a risky configuration,
 		// it is a locked door with the key inside: the exemption only covers an admin who can still
 		// present a password, and recovery would need shell access to the host.
+		// Neither is wrong alone, but together they mint accounts nobody can use: registration
+		// creates a local password account and sso_only refuses exactly that at the login form. The
+		// registrant confirms their email and is then turned away by the portal that invited them.
+		if in.Login.SSOOnly && in.Registration.Enabled {
+			jsonErrorCode(w, http.StatusBadRequest, "sso_only_with_registration",
+				"refusing password login while self-service registration is open would create accounts "+
+					"that cannot sign in — close registration first, or leave password login enabled")
+			return
+		}
 		if in.Login.SSOOnly && !s.localAdminExists() {
-			jsonError(w, http.StatusBadRequest, "refusing password login needs at least one enabled "+
-				"administrator with a local password to fall back on — create one first")
+			jsonErrorCode(w, http.StatusBadRequest, "local_admin_required",
+				"refusing password login needs at least one enabled administrator with a local "+
+					"password to fall back on — create one first")
 			return
 		}
 		if !validLoginMode(in.Login.Mode) {

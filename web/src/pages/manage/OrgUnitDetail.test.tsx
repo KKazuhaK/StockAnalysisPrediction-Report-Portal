@@ -45,8 +45,11 @@ describe('OrgUnitDetail', () => {
 
   it('priority names the SYSTEM default, which is a different source from the Default group', () => {
     mount(g({ id: 2 }))
-    const labels = screen.getAllByText(/ou\.inheritedAs/).map((n) => n.textContent ?? '')
-    expect(labels.some((l) => l.includes('ou.systemDefault'))).toBe(true)
+    // And it says it ONCE: "inherit the system default — the system default" is what naming both a
+    // source and a value gets you when the source has no value worth printing.
+    const label = screen.getByText(/ou\.inheritedFrom/).textContent ?? ''
+    expect(label).toContain('ou.systemDefault')
+    expect(screen.queryByText(/ou\.inheritedAs.*ou\.systemDefault/)).toBeNull()
   })
 
   // Choosing "set here" is what reveals the input. A disabled control next to a selected "inherit"
