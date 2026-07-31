@@ -17,6 +17,12 @@ import (
 
 func nowStr() string { return time.Now().Format("2006-01-02 15:04:05") }
 
+// newSessionEpoch is the starting session revision for a newly created account: the current time in
+// microseconds, so no two account instances sharing a username can start at the same value. Not
+// secret and not a nonce — it only has to differ from whatever the previous holder's cookies carry,
+// and it stays well inside int64 for the next several thousand years.
+func newSessionEpoch() int64 { return time.Now().UnixMicro() }
+
 // boolInt maps a bool to the 0/1 integer stored in SQLite/Postgres.
 func boolInt(b bool) int {
 	if b {
@@ -634,14 +640,15 @@ const userCols = `u.username,u.password_hash,u.role,
 	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,''),
 	COALESCE(u.session_rev,0),COALESCE(u.expires_at,''),
 	COALESCE(u.source,'local'),COALESCE(u.source_ref,''),COALESCE(u.external_id,''),COALESCE(u.totp_enabled,0),
-	COALESCE(u.restricted,0)`
+	COALESCE(u.restricted,0),COALESCE(u.created_at,'')`
 
 func scanUser(scan func(...any) error) (User, error) {
 	var u User
 	var role, dn, email, last, expires, source, sourceRef, externalID sql.NullString
 	var active, sessionRev, totp, restricted sql.NullInt64
+	var createdAt sql.NullString
 	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev, &expires,
-		&source, &sourceRef, &externalID, &totp, &restricted); err != nil {
+		&source, &sourceRef, &externalID, &totp, &restricted, &createdAt); err != nil {
 		return User{}, err
 	}
 	u.Restricted = restricted.Int64 != 0
@@ -657,6 +664,7 @@ func scanUser(scan func(...any) error) (User, error) {
 	}
 	u.SourceRef, u.ExternalID = sourceRef.String, externalID.String
 	u.TOTPEnabled = totp.Int64 != 0
+	u.CreatedAt = createdAt.String
 	return u, nil
 }
 
@@ -734,10 +742,25 @@ func (s *Store) UserByEmail(email string) *User {
 }
 
 func (s *Store) UpsertUser(u User) error {
-	_, err := s.exec(`INSERT INTO users(username,password_hash,role) VALUES(?,?,?)
+	// A new account starts at a session revision nobody has held before, rather than at zero.
+	//
+	// session_rev already invalidates old cookies when a password changes, but it could not survive
+	// a DELETION: a recreated row is a fresh INSERT, so it restarted at zero and the previous
+	// holder's still-valid cookie — usernames are re-registerable — authenticated them as the new
+	// account, with its OU, its role and its reports. Seeding from the clock makes the revision
+	// unique per account INSTANCE, so the old cookie's revision simply no longer matches.
+	//
+	// Only on INSERT. The conflict branch keeps its +1, so an ordinary password change is still a
+	// single monotonic step and no live session is disturbed by a profile save. Rows written before
+	// this keep revision 0 and their cookies keep working.
+	//
+	// created_at is stamped here too — it was declared and never written, and "when was this
+	// account created" is worth answering in the admin UI.
+	_, err := s.exec(`INSERT INTO users(username,password_hash,role,created_at,session_rev)
+			VALUES(?,?,?,?,?)
 		ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash,role=excluded.role,
 			session_rev=COALESCE(users.session_rev,0)+1`,
-		u.Username, u.PasswordHash, u.EffRole())
+		u.Username, u.PasswordHash, u.EffRole(), nowStr(), newSessionEpoch())
 	return err
 }
 
