@@ -366,7 +366,7 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	symbol := r.PathValue("symbol")
 	all, _ := s.st.NewBySymbol(symbol, s.viewerScope(user))
 	if len(all) == 0 {
-		jsonError(w, http.StatusNotFound, "该标的暂无报告")
+		jsonErrorCode(w, http.StatusNotFound, "no_reports_for_symbol", "该标的暂无报告")
 		return
 	}
 	// Newest date first; keep a stable order within a date by ingest/report time.
@@ -444,7 +444,7 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 	key := r.PathValue("key")
 	members := s.runMembers(user, key)
 	if len(members) == 0 {
-		jsonError(w, http.StatusNotFound, "未找到该 run")
+		jsonErrorCode(w, http.StatusNotFound, "run_not_found", "未找到该 run")
 		return
 	}
 	members, defID := s.orderAndDefault(members)
@@ -473,7 +473,7 @@ func (s *Server) apiRepBody(w http.ResponseWriter, r *http.Request, user string)
 	id, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
 	rep := s.loadRep(user, id)
 	if rep == nil {
-		jsonError(w, http.StatusNotFound, "报告不存在")
+		jsonErrorCode(w, http.StatusNotFound, "report_not_found", "报告不存在")
 		return
 	}
 	writeJSON(w, repJSON(rep, s.names.Get))
@@ -1019,7 +1019,7 @@ func (s *Server) apiAdminSettings(w http.ResponseWriter, r *http.Request, user s
 func (s *Server) apiTypesRecompute(w http.ResponseWriter, r *http.Request, user string) {
 	n, err := s.st.RecomputeKinds()
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "重新分类失败")
+		jsonErrorCode(w, http.StatusInternalServerError, "recompute_failed", "重新分类失败")
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "updated": n})
@@ -1038,37 +1038,37 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	if in.Timezone != nil {
 		if tz := strings.TrimSpace(*in.Timezone); tz != "" {
 			if _, err := time.LoadLocation(tz); err != nil {
-				jsonError(w, http.StatusBadRequest, "无效的时区")
+				jsonErrorCode(w, http.StatusBadRequest, "bad_timezone", "无效的时区")
 				return
 			}
 		}
 	}
 	if in.SiteTitle != nil && len([]rune(strings.TrimSpace(*in.SiteTitle))) > maxSiteTitleRunes {
-		jsonError(w, http.StatusBadRequest, "站点标题过长")
+		jsonErrorCode(w, http.StatusBadRequest, "site_title_too_long", "站点标题过长")
 		return
 	}
 	if in.SiteLogoUrl != nil && !validSiteLogoURL(strings.TrimSpace(*in.SiteLogoUrl)) {
-		jsonError(w, http.StatusBadRequest, "无效的 Logo 地址")
+		jsonErrorCode(w, http.StatusBadRequest, "bad_logo_url", "无效的 Logo 地址")
 		return
 	}
 	if in.FooterText != nil && len([]rune(strings.TrimSpace(*in.FooterText))) > maxFooterTextRunes {
-		jsonError(w, http.StatusBadRequest, "底部信息过长")
+		jsonErrorCode(w, http.StatusBadRequest, "footer_too_long", "底部信息过长")
 		return
 	}
 	if in.AnnouncementLevel != nil && !validAnnouncementLevel(strings.TrimSpace(*in.AnnouncementLevel)) {
-		jsonError(w, http.StatusBadRequest, "无效的公告级别")
+		jsonErrorCode(w, http.StatusBadRequest, "bad_announcement_level", "无效的公告级别")
 		return
 	}
 	if in.AnnouncementTitle != nil && len([]rune(strings.TrimSpace(*in.AnnouncementTitle))) > maxAnnouncementTitleRunes {
-		jsonError(w, http.StatusBadRequest, "公告标题过长")
+		jsonErrorCode(w, http.StatusBadRequest, "announcement_title_too_long", "公告标题过长")
 		return
 	}
 	if in.AnnouncementContent != nil && len([]rune(strings.TrimSpace(*in.AnnouncementContent))) > maxAnnouncementContentRunes {
-		jsonError(w, http.StatusBadRequest, "公告内容过长")
+		jsonErrorCode(w, http.StatusBadRequest, "announcement_content_too_long", "公告内容过长")
 		return
 	}
 	if in.PwaIconUrl != nil && !validSiteLogoURL(strings.TrimSpace(*in.PwaIconUrl)) {
-		jsonError(w, http.StatusBadRequest, "无效的安装图标地址")
+		jsonErrorCode(w, http.StatusBadRequest, "bad_pwa_icon_url", "无效的安装图标地址")
 		return
 	}
 	if in.OldBase != nil {

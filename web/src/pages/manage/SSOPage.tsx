@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Tabs, Tag, Typography } from 'antd'
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import type { Role, SSOProviderAdmin, SSOProvidersResp, UserGroupRow, UsersResp } from '../../api/types'
 import SSORulesEditor from './SSORulesEditor'
 
@@ -74,7 +74,7 @@ function ProviderForm({
       message.success(t('common.saved'))
       onSaved()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     } finally {
       setSaving(false)
     }
@@ -89,7 +89,7 @@ function ProviderForm({
       message.success(t('sso.metadataFetched', { id: r.entity_id }))
       onSaved()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     }
   }
 

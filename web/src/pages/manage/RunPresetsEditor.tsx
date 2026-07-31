@@ -3,7 +3,7 @@ import { App, Button, Empty, Input, InputNumber, Modal, Popconfirm, Select, Spac
 import { DeleteOutlined, EditOutlined, MinusCircleOutlined, PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import type { RunFreq, RunOverrun, RunPreset, RunPresetAnchor, RunPresetInterval, RunPresetsResp } from '../../api/types'
 import { presetSummary } from '../../lib/runSchedule'
 import { DragHandle, SortableItem, SortableWrapper } from './dnd'
@@ -103,7 +103,7 @@ export default function RunPresetsEditor() {
       setDraft(null)
       load()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     } finally {
       setSaving(false)
     }

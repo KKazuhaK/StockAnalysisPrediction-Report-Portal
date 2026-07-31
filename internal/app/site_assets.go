@@ -24,43 +24,43 @@ var siteAssetExtByType = map[string]string{
 func (s *Server) apiSiteAssetUpload(w http.ResponseWriter, r *http.Request, user string) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxSiteAssetUploadBytes+1024*1024)
 	if err := r.ParseMultipartForm(maxSiteAssetUploadBytes + 1024); err != nil {
-		jsonError(w, http.StatusBadRequest, "上传文件过大")
+		jsonErrorCode(w, http.StatusBadRequest, "upload_too_large", "上传文件过大")
 		return
 	}
 	kind := strings.TrimSpace(r.FormValue("kind"))
 	if kind != "logo" && kind != "pwaIcon" {
-		jsonError(w, http.StatusBadRequest, "无效的资源类型")
+		jsonErrorCode(w, http.StatusBadRequest, "bad_asset_kind", "无效的资源类型")
 		return
 	}
 	f, header, err := r.FormFile("file")
 	if err != nil {
-		jsonError(w, http.StatusBadRequest, "请选择图片文件")
+		jsonErrorCode(w, http.StatusBadRequest, "not_an_image", "请选择图片文件")
 		return
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, maxSiteAssetUploadBytes+1))
 	if err != nil || len(raw) == 0 {
-		jsonError(w, http.StatusBadRequest, "读取图片失败")
+		jsonErrorCode(w, http.StatusBadRequest, "image_unreadable", "读取图片失败")
 		return
 	}
 	if len(raw) > maxSiteAssetUploadBytes {
-		jsonError(w, http.StatusBadRequest, "上传文件过大")
+		jsonErrorCode(w, http.StatusBadRequest, "upload_too_large", "上传文件过大")
 		return
 	}
 	mime, ext := siteAssetMime(raw, header.Header.Get("Content-Type"), header.Filename)
 	if ext == "" {
-		jsonError(w, http.StatusBadRequest, "不支持的图片格式")
+		jsonErrorCode(w, http.StatusBadRequest, "unsupported_image", "不支持的图片格式")
 		return
 	}
 
 	if err := os.MkdirAll(s.siteAssetsDir(), 0o755); err != nil {
-		jsonError(w, http.StatusInternalServerError, "保存图片失败")
+		jsonErrorCode(w, http.StatusInternalServerError, "image_save_failed", "保存图片失败")
 		return
 	}
 	name := siteAssetBaseName(kind) + ext
 	dst := filepath.Join(s.siteAssetsDir(), name)
 	if err := os.WriteFile(dst, raw, 0o644); err != nil {
-		jsonError(w, http.StatusInternalServerError, "保存图片失败")
+		jsonErrorCode(w, http.StatusInternalServerError, "image_save_failed", "保存图片失败")
 		return
 	}
 	s.removeSiblingSiteAssets(kind, name)

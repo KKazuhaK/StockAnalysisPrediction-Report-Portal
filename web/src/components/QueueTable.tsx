@@ -34,7 +34,7 @@ import {
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { Dayjs } from 'dayjs'
-import { api } from '../api/client'
+import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchQueueSummary, BatchTarget } from '../api/types'
 import { BASE_MAX, fmtInputs, InputsPreview, isTerminal, isUrgent, priorityNum, priorityTag, statusTag } from '../lib/batchUi'
@@ -75,7 +75,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
       setSelected([])
       await load()
     } catch (e) {
-      message.error((e as Error).message || 'failed')
+      message.error(errText(e, t))
     }
   }
 
@@ -89,7 +89,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
       message.success(r.note ? t('queue.reconcileStillRunning') : t('queue.reconcileDone', { status: t(`batch.status.${r.status}`) }))
       await load()
     } catch (e) {
-      message.error((e as Error).message || 'failed')
+      message.error(errText(e, t))
     }
   }
   const idCell = (v: string) =>
@@ -288,7 +288,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
       if (okMsg) message.success(okMsg)
       load()
     } catch (e) {
-      message.error((e as Error).message || 'failed')
+      message.error(errText(e, t))
     }
   }
   const cancel = (id: number) => act(() => api.post(`/api/admin/batch/jobs/${id}/cancel`), t('batch.msg.cancelRequested'))
@@ -317,7 +317,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
       message.success(t('queue.clearedN', { n: r.n }))
       load()
     } catch (e) {
-      message.error((e as Error).message || 'failed')
+      message.error(errText(e, t))
     }
   }
 

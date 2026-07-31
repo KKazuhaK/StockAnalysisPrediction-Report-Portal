@@ -183,7 +183,7 @@ export default function UsersPage() {
       message.success(t('common.saved'))
       load()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     }
   }
   const resetPw = async () => {
@@ -504,7 +504,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
       message.success(t('common.saved'))
       loadCfg()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     }
   }
 

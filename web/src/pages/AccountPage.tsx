@@ -15,7 +15,7 @@ import {
 } from 'antd'
 import { KeyOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api, ApiError } from '../api/client'
+import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { formatReportDateTime } from '../lib/datetime'
 import { createCredential, passkeySupported } from '../lib/webauthn'
@@ -96,7 +96,7 @@ function PasswordCard() {
             message.success(t('account.passwordChanged'))
             form.resetFields()
           } catch (e) {
-            message.error(e instanceof ApiError ? e.message : String(e))
+            message.error(errText(e, t))
           } finally {
             setBusy(false)
           }
@@ -159,7 +159,7 @@ function TwoFactorCard({ enabled, onChange }: { enabled: boolean; onChange: () =
       setUri(r.uri)
       setStage('confirm')
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : String(e))
+      message.error(errText(e, t))
     } finally {
       setBusy(false)
     }
@@ -174,7 +174,7 @@ function TwoFactorCard({ enabled, onChange }: { enabled: boolean; onChange: () =
       setCode('')
       onChange()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : String(e))
+      message.error(errText(e, t))
     } finally {
       setBusy(false)
     }
@@ -187,7 +187,7 @@ function TwoFactorCard({ enabled, onChange }: { enabled: boolean; onChange: () =
       message.success(t('account.totpDisabled'))
       onChange()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : String(e))
+      message.error(errText(e, t))
     } finally {
       setBusy(false)
     }
@@ -306,7 +306,7 @@ function PasskeyCard({
     } catch (e) {
       // A user who dismisses the browser prompt is not an error worth shouting about.
       if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return
-      message.error(e instanceof ApiError ? e.message : String(e))
+      message.error(errText(e, t))
     } finally {
       setBusy(false)
     }
@@ -319,7 +319,7 @@ function PasskeyCard({
       message.success(t('account.passkeyRemoved'))
       onChange()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : String(e))
+      message.error(errText(e, t))
     } finally {
       setBusy(false)
     }

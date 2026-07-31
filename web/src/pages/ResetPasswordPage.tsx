@@ -3,7 +3,7 @@ import { Button, Card, Form, Input, Result, Space, Typography, theme } from 'ant
 import { LockOutlined } from '@ant-design/icons'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, ApiError } from '../api/client'
+import { api, errText } from '../api/client'
 
 // Public page reached from a reset-email link (/reset?token=…). Sets a new password
 // against the stateless reset token; the token is single-use (bound to the old hash).
@@ -24,7 +24,7 @@ export default function ResetPasswordPage() {
       await api.post('/api/password/reset', { token: resetToken, password: v.password })
       setDone(true)
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : t('reset.error'))
+      setErr(errText(e, t, 'reset.error'))
     } finally {
       setBusy(false)
     }

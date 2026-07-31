@@ -3,7 +3,7 @@ import { Alert, Button, Card, Form, Input, Result, Space, Typography, theme } fr
 import { LockOutlined, MailOutlined } from '@ant-design/icons'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, ApiError } from '../api/client'
+import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { SiteLogo, useSite } from '../site'
 import CaptchaField, { type CaptchaValue } from '../components/CaptchaField'
@@ -42,7 +42,7 @@ export default function RegisterPage() {
       const r = await api.post<{ requires_verification?: boolean }>('/api/register', { ...v, ...captcha })
       setDone(r.requires_verification ? 'verify' : 'ready')
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : t('register.failed'))
+      setErr(errText(e, t, 'register.failed'))
       // A challenge is consumed on use, so any refusal — captcha or not — must re-arm the field or
       // the next attempt fails on a stale one.
       setCaptchaRound((n) => n + 1)
