@@ -24,124 +24,17 @@ import {
 import dayjs from 'dayjs'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  AppstoreOutlined,
-  ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   KeyOutlined,
   PlusOutlined,
   SearchOutlined,
-  ThunderboltOutlined,
-  UsergroupAddOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import OrgUnitPicker, { subtreeOf } from './OrgUnitPicker'
-import { resolveOU } from './ouSettings'
-import { priorityNum } from '../../lib/batchUi'
-import type { BatchConfig, GroupTargetsResp, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
-
-const RUN_SURFACES = ['run', 'batch', 'recurring', 'chat'] as const
-
-// GroupTargetsModal is the "OU × workflow × surface" allow-list matrix (ADR 0022 R3). A restricted
-// OU is default-deny: no row here means its members can run nothing, so the empty state says so.
-function GroupTargetsModal({ group, onClose }: { group: UserGroupRow | null; onClose: () => void }) {
-  const { t } = useTranslation()
-  const { message } = App.useApp()
-  const [data, setData] = useState<GroupTargetsResp | null>(null)
-  const [granted, setGranted] = useState<Record<number, string[]>>({})
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (!group) return
-    setData(null)
-    api
-      .get<GroupTargetsResp>(`/api/admin/groups/${group.id}/targets`)
-      .then((r) => {
-        setData(r)
-        const m: Record<number, string[]> = {}
-        for (const g of r.granted || []) m[g.target_id] = g.surfaces
-        setGranted(m)
-      })
-      .catch((e) => message.error((e as Error).message))
-  }, [group])
-
-  const toggleTarget = (id: number, on: boolean, allSurfaces: string[]) =>
-    setGranted((g) => {
-      const next = { ...g }
-      if (on) next[id] = allSurfaces
-      else delete next[id]
-      return next
-    })
-  const toggleSurface = (id: number, surface: string, on: boolean) =>
-    setGranted((g) => {
-      const cur = g[id] || []
-      const next = on ? [...cur, surface] : cur.filter((s) => s !== surface)
-      return { ...g, [id]: next }
-    })
-
-  const save = async () => {
-    if (!group) return
-    setSaving(true)
-    try {
-      await api.put(`/api/admin/groups/${group.id}/targets`, {
-        granted: Object.entries(granted).map(([id, surfaces]) => ({ target_id: Number(id), surfaces })),
-      })
-      message.success(t('common.saved'))
-      onClose()
-    } catch (e) {
-      message.error((e as Error).message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Modal
-      open={!!group}
-      title={`${t('users.groupTargets')} — ${group?.name ?? ''}`}
-      onOk={save}
-      confirmLoading={saving}
-      onCancel={onClose}
-      okText={t('common.save')}
-      cancelText={t('common.cancel')}
-      width={640}
-      destroyOnHidden
-    >
-      <Typography.Paragraph type="secondary">{t('users.groupTargetsHint')}</Typography.Paragraph>
-      {data && data.targets.length === 0 && <Empty description={t('users.groupTargetsNoTargets')} />}
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        {(data?.targets || []).map((tg) => {
-          const on = granted[tg.id] != null
-          return (
-            <Card key={tg.id} size="small">
-              <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                <Space wrap>
-                  <Switch size="small" checked={on} onChange={(v) => toggleTarget(tg.id, v, tg.surfaces)} />
-                  <Typography.Text strong>{tg.name}</Typography.Text>
-                  {tg.output_subtype && <Tag color="blue">{tg.output_subtype}</Tag>}
-                </Space>
-                {on && (
-                  <Space wrap style={{ paddingLeft: 34 }}>
-                    {RUN_SURFACES.filter((sf) => tg.surfaces.includes(sf)).map((sf) => (
-                      <Tag.CheckableTag
-                        key={sf}
-                        checked={(granted[tg.id] || []).includes(sf)}
-                        onChange={(v) => toggleSurface(tg.id, sf, v)}
-                      >
-                        {t(`users.surface.${sf}`)}
-                      </Tag.CheckableTag>
-                    ))}
-                  </Space>
-                )}
-              </Space>
-            </Card>
-          )
-        })}
-      </Space>
-    </Modal>
-  )
-}
+import OrgUnitDetail from './OrgUnitDetail'
+import type { BatchConfig, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
 
 // A deterministic avatar colour from a name, so each user reads distinctly.
 const ROLE_COLOR: Record<string, string> = { admin: 'gold', operator: 'blue', user: 'default' }
@@ -569,17 +462,12 @@ export default function UsersPage() {
 function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged: () => void }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const [edit, setEdit] = useState<UserGroupRow | 'new' | null>(null)
-  const [targetsFor, setTargetsFor] = useState<UserGroupRow | null>(null)
-  const [form] = Form.useForm()
-  const isDefault = edit !== 'new' && !!edit?.is_default
-  const urgentInherit = Form.useWatch('urgent_inherit', form)
-  const urgentPolicy = Form.useWatch('urgent_policy', form)
-  const maxqInherit = Form.useWatch('maxq_inherit', form)
-  const windowInherit = Form.useWatch('window_inherit', form)
-  const quotaInherit = Form.useWatch('quota_inherit', form)
-  const defaultGroup = useMemo(() => groups.find((g) => g.is_default), [groups])
-
+  // Which OU the detail pane is showing. Held as an id, not the row: the list is refetched after
+  // every save, so a held object would go stale the moment it was edited.
+  const [selId, setSelId] = useState<number | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newParent, setNewParent] = useState(0)
   // The urgent lane + ticket config is GLOBAL (not per-group), but it belongs with the
   // per-group weights conceptually, so it lives here rather than on the run-queue
   // settings page. Loaded from / saved to the shared batch config.
@@ -620,81 +508,27 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
     }
   }
 
-  const openForm = (g: UserGroupRow | 'new') => {
-    setEdit(g)
-    if (g === 'new')
-      form.setFieldsValue({
-        name: '', description: '', urgent_inherit: true, urgent_policy: 'ticket', weight: 0,
-        maxq_inherit: true, max_queued: 0, window_inherit: true, run_window: '', priority: undefined,
-        restricted: false, quota_inherit: true, daily_run_quota: 0, parent_id: 0,
-      })
-    else
-      form.setFieldsValue({
-        name: g.name,
-        description: g.description,
-        // A null field means the group inherits the Default group's value. The urgent
-        // policy folds allow_urgent + urgent_unlimited into one 3-way choice.
-        urgent_inherit: !g.is_default && g.allow_urgent == null,
-        urgent_policy: g.allow_urgent === false ? 'off' : g.urgent_unlimited ? 'unlimited' : 'ticket',
-        weight: g.weight ?? 0,
-        maxq_inherit: !g.is_default && g.max_queued == null,
-        max_queued: g.max_queued ?? 0,
-        window_inherit: !g.is_default && g.run_window == null,
-        run_window: g.run_window ?? '',
-        priority: g.priority ? Number(g.priority) : undefined,
-        restricted: !!g.restricted,
-        quota_inherit: !g.is_default && g.daily_run_quota == null,
-        daily_run_quota: g.daily_run_quota ?? 0,
-        parent_id: g.parent_id ?? 0,
-      })
-  }
-  const save = async () => {
-    const v = await form.validateFields()
-    const target = edit !== 'new' && edit ? edit : null
-    const isDef = !!target?.is_default
-    // The urgent policy is one control (禁止 / 限量-次票 / 无限) mapped back to the three
-    // stored fields, so allow + unlimited can never contradict. null = inherit Default.
-    const urgentInh = !isDef && v.urgent_inherit
-    const policy = v.urgent_policy as 'off' | 'ticket' | 'unlimited'
-    const body = {
-      name: v.name,
-      description: v.description || '',
-      allow_urgent: urgentInh ? null : policy !== 'off',
-      urgent_unlimited: urgentInh ? null : policy === 'unlimited',
-      weight: urgentInh ? null : policy === 'ticket' ? (v.weight ?? 0) : 0,
-      max_queued: !isDef && v.maxq_inherit ? null : (v.max_queued ?? 0),
-      run_window: !isDef && v.window_inherit ? null : (v.run_window || ''),
-      priority: v.priority == null || v.priority === '' ? '' : String(v.priority),
-      // External-user tenancy (ADR 0022): the root/Default OU is always internal; a quota of
-      // null inherits the parent OU and 0 means unlimited.
-      restricted: isDef ? false : !!v.restricted,
-      daily_run_quota: !isDef && v.quota_inherit ? null : (v.daily_run_quota ?? 0),
-      // Where this OU sits in the tree (ADR 0022). 0 detaches it to a root. Every inherited
-      // setting below resolves along this edge, so without it the tree is decorative.
-      ...(isDef ? {} : { parent_id: v.parent_id ?? 0 }),
-    }
+  const sel = groups.find((g) => g.id === selId) ?? null
+  // Default to the root so the pane is never empty on arrival — an admin opening this tab wants to
+  // see something, and the Default OU is the one every other setting falls back to.
+  useEffect(() => {
+    if (selId == null && groups.length > 0) setSelId((groups.find((g) => g.is_default) ?? groups[0]).id)
+  }, [groups, selId])
+
+  const createOU = async () => {
+    const name = newName.trim()
+    if (!name) return
     try {
-      if (edit === 'new') await api.post('/api/admin/groups', body)
-      else await api.put(`/api/admin/groups/${(edit as UserGroupRow).id}`, body)
-      setEdit(null)
-      onChanged()
-      message.success(t('common.saved'))
-    } catch (e) {
-      message.error((e as Error).message)
-    }
-  }
-  const remove = async (id: number) => {
-    try {
-      await api.del(`/api/admin/groups/${id}`)
+      await api.post('/api/admin/groups', { name, description: '', parent_id: newParent })
+      setAdding(false)
+      setNewName('')
+      setNewParent(0)
       onChanged()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     }
   }
 
-  // Effective weight / urgent for display: a group's own value, or the Default's when inherited.
-  const effMaxQueued = (g: UserGroupRow) => (g.max_queued != null ? g.max_queued : defaultGroup?.max_queued ?? 0)
-  const effWindow = (g: UserGroupRow) => (g.run_window != null ? g.run_window : defaultGroup?.run_window ?? '')
 
   const cfgRow = (label: string, hint: string, control: React.ReactNode) => (
     <Space wrap align="start">
@@ -743,191 +577,61 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
         </Space>
       </Card>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button type="primary" icon={<UsergroupAddOutlined />} onClick={() => openForm('new')}>
-          {t('users.addGroup')}
-        </Button>
+      {/* Pick one on the left, see all of it on the right. A flat list of every OU plus a modal of
+          ten fields plus a second modal for the allow-list was the thing that made this
+          unreadable — and it hid the hierarchy, which is what explains every inherited value. */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <OrgUnitPicker
+          mode="manage"
+          groups={groups}
+          unassigned={0}
+          scoped
+          onScopedChange={() => {}}
+          selected={sel ? [sel.id] : []}
+          onSelect={(ids) => setSelId(ids[0] ?? null)}
+          onManage={() => {}}
+          onAdd={() => setAdding(true)}
+        />
+        {sel ? (
+          <OrgUnitDetail
+            key={sel.id}
+            group={sel}
+            groups={groups}
+            onChanged={onChanged}
+            onDeleted={() => {
+              setSelId(null)
+              onChanged()
+            }}
+          />
+        ) : (
+          <Empty style={{ flex: 1, paddingTop: 48 }} description={t('ou.pickOne')} />
+        )}
       </div>
-      {groups.length === 0 ? (
-        <Empty description={t('users.noGroups')} />
-      ) : (
-        <Space direction="vertical" size={8} style={{ width: '100%' }}>
-          {groups.map((g) => {
-            return (
-              <Card key={g.id} size="small">
-                <Space style={{ width: '100%', justifyContent: 'space-between' }} align="start">
-                  <div>
-                    <Space size={6} wrap>
-                      <Typography.Text strong>{g.name}</Typography.Text>
-                      {g.is_default && <Tag color="green">{t('users.defaultGroupTag')}</Tag>}
-                      {g.restricted_effective && (
-                        <Tag color="volcano">
-                          {t('users.restrictedTag')}
-                          {!g.restricted && <span style={{ opacity: 0.6 }}> · {t('users.inheritedTag')}</span>}
-                        </Tag>
-                      )}
-                      {g.restricted_effective && (g.daily_run_quota ?? 0) > 0 && (
-                        <Tag color="cyan">{t('users.dailyQuotaTag', { n: g.daily_run_quota })}</Tag>
-                      )}
-                      <Tag>{t('users.groupMembers', { n: g.members })}</Tag>
-                      {/* ONE urgent tag, from the resolved policy. Rendering a ticket count and
-                          "unlimited" from two independent conditions let them contradict: an OU
-                          inheriting weight 2 from Default while setting unlimited itself showed
-                          both. */}
-                      {(() => {
-                        const r = resolveOU(g, defaultGroup)
-                        const inh = r.urgent.inherited ? (
-                          <span style={{ opacity: 0.6 }}> · {t('users.inheritedTag')}</span>
-                        ) : null
-                        if (r.urgent.value === 'off') return <Tag>{t('users.urgentDisabledTag')}{inh}</Tag>
-                        if (r.urgent.value === 'unlimited')
-                          return (
-                            <Tag color="red" icon={<ThunderboltOutlined />}>
-                              {t('users.urgentUnlimitedTag')}
-                              {inh}
-                            </Tag>
-                          )
-                        return r.weight.value > 0 ? (
-                          <Tag color="gold" icon={<ThunderboltOutlined />}>
-                            {t('users.weightN', { n: r.weight.value })}
-                            {inh}
-                          </Tag>
-                        ) : null
-                      })()}
-                      {effMaxQueued(g) > 0 && <Tag color="geekblue">{t('users.maxQueuedTag', { n: effMaxQueued(g) })}</Tag>}
-                      {effWindow(g) && (
-                        <Tag color="purple">
-                          <ClockCircleOutlined /> {effWindow(g)}
-                        </Tag>
-                      )}
-                    </Space>
-                    <div>
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        {g.is_default ? g.description || t('users.defaultGroupHint') : g.description}
-                      </Typography.Text>
-                    </div>
-                  </div>
-                  <Space>
-                    {/* The allow-list only governs restricted OUs, so the matrix is offered there. */}
-                    {g.restricted_effective && (
-                      <Tooltip title={t('users.groupTargets')}>
-                        <Button size="small" icon={<AppstoreOutlined />} onClick={() => setTargetsFor(g)} />
-                      </Tooltip>
-                    )}
-                    <Button size="small" icon={<EditOutlined />} onClick={() => openForm(g)} />
-                    {!g.is_default && (
-                      <Popconfirm title={t('users.deleteGroupConfirm')} onConfirm={() => remove(g.id)}>
-                        <Button size="small" danger icon={<DeleteOutlined />} />
-                      </Popconfirm>
-                    )}
-                  </Space>
-                </Space>
-              </Card>
-            )
-          })}
-        </Space>
-      )}
 
       <Modal
-        open={edit != null}
-        title={edit === 'new' ? t('users.addGroup') : t('users.editGroup')}
-        onOk={save}
-        onCancel={() => setEdit(null)}
+        open={adding}
+        title={t('ou.add')}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
+        onCancel={() => setAdding(false)}
+        onOk={createOU}
         destroyOnHidden
       >
-        <Form form={form} layout="vertical">
-          <Form.Item name="name" label={t('users.groupName')} rules={[{ required: true }]}>
-            <Input autoComplete="off" />
-          </Form.Item>
-          <Form.Item name="description" label={t('users.groupDesc')} extra={isDefault ? t('users.defaultGroupHint') : undefined}>
-            <Input.TextArea rows={2} />
-          </Form.Item>
-
-          {/* Urgent policy: one 3-way control (disabled / ticketed / unlimited) so allow +
-              unlimited can't contradict. A non-default group may inherit the Default's. */}
-          {!isDefault && (
-            <Form.Item name="urgent_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
-              <Switch size="small" />
-            </Form.Item>
-          )}
-          <Form.Item name="urgent_policy" label={t('users.urgentPolicy')} extra={t('users.urgentPolicyHint')}>
-            <Select
-              disabled={!isDefault && urgentInherit}
-              options={[
-                { value: 'off', label: t('users.urgentOff') },
-                { value: 'ticket', label: t('users.urgentTicket') },
-                { value: 'unlimited', label: t('users.urgentUnlimitedOpt') },
-              ]}
-            />
-          </Form.Item>
-          {urgentPolicy === 'ticket' && (
-            <Form.Item name="weight" label={t('users.weight')} extra={t('users.weightHint')}>
-              <InputNumber min={0} max={999} style={{ width: '100%' }} disabled={!isDefault && urgentInherit} />
-            </Form.Item>
-          )}
-
-          {/* Max active (queued + running) runs per member; 0 = unlimited. */}
-          {!isDefault && (
-            <Form.Item name="maxq_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
-              <Switch size="small" />
-            </Form.Item>
-          )}
-          <Form.Item name="max_queued" label={t('users.maxQueued')} extra={t('users.maxQueuedHint')}>
-            <InputNumber min={0} max={999} style={{ width: '100%' }} disabled={!isDefault && maxqInherit} />
-          </Form.Item>
-
-          {/* Run window: allowed hours in panel time, e.g. 9-18. Empty = any hour. */}
-          {!isDefault && (
-            <Form.Item name="window_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
-              <Switch size="small" />
-            </Form.Item>
-          )}
-          <Form.Item name="run_window" label={t('users.runWindow')} extra={t('users.runWindowHint')}>
-            <Input placeholder="9-18" style={{ width: '100%' }} disabled={!isDefault && windowInherit} />
-          </Form.Item>
-
-          {/* The Default group has no priority override — its members use the system default. */}
-          {!isDefault && (
-            <Form.Item name="priority" label={t('users.priority')} extra={t('users.priorityHint')}>
-              <InputNumber min={0} max={100} style={{ width: '100%' }} placeholder={t('users.prioritySystemDefault')} />
-            </Form.Item>
-          )}
-
-          {/* External tenancy (ADR 0022): the root/Default OU is always internal, so these only
-              appear on a non-default OU. Restriction is sticky down the OU tree. */}
-          {!isDefault && (
-            <>
-              <Form.Item name="parent_id" label={t('users.parentOu')} extra={t('users.parentOuHint')}>
-                <Select
-                  showSearch
-                  optionFilterProp="label"
-                  options={[
-                    { value: 0, label: t('users.parentOuNone') },
-                    // An OU cannot be placed under itself; its descendants are refused by the
-                    // server too, but not offering them keeps the admin out of a dead end.
-                    ...groups
-                      .filter((g) => !(edit !== 'new' && edit && g.id === (edit as UserGroupRow).id))
-                      .map((g) => ({ value: g.id, label: g.name })),
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item name="restricted" valuePropName="checked" label={t('users.restricted')} extra={t('users.restrictedHint')}>
-                <Switch size="small" />
-              </Form.Item>
-              <Form.Item name="quota_inherit" valuePropName="checked" label={t('users.inheritFromDefault')} style={{ marginBottom: 8 }}>
-                <Switch size="small" />
-              </Form.Item>
-              <Form.Item name="daily_run_quota" label={t('users.dailyRunQuota')} extra={t('users.dailyRunQuotaHint')}>
-                <InputNumber min={0} max={999} style={{ width: '100%' }} disabled={quotaInherit} />
-              </Form.Item>
-            </>
-          )}
-        </Form>
+        {/* Creation asks only for a name and a place. Everything else has a sensible inherited
+            value the moment it exists, and is changed in the pane where it can be seen. */}
+        <Typography.Text strong>{t('users.groupName')}</Typography.Text>
+        <Input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} style={{ marginBottom: 12 }} />
+        <Typography.Text strong>{t('users.parentOu')}</Typography.Text>
+        <Select
+          style={{ width: '100%' }}
+          value={newParent}
+          onChange={setNewParent}
+          options={[
+            { value: 0, label: t('users.parentOuNone') },
+            ...groups.map((g) => ({ value: g.id, label: g.name })),
+          ]}
+        />
       </Modal>
-
-      <GroupTargetsModal group={targetsFor} onClose={() => setTargetsFor(null)} />
     </Space>
   )
 }
