@@ -129,6 +129,19 @@ export default function UsersPage() {
     })
   }, [data, search, roleFilter, ouScope, defaultGroup])
 
+  // Cut an account's identity-provider binding without deleting the account. A link outlives the
+  // person's IdP account, and while it stands whoever the IdP later issues that subject to would
+  // sign in as this one. The account returns to local and its sessions end.
+  const unlink = async (name: string) => {
+    try {
+      await api.del(`/api/admin/users/${encodeURIComponent(name)}/identity`)
+      message.success(t('users.unlinked'))
+      load()
+    } catch (e) {
+      message.error(errText(e, t))
+    }
+  }
+
   const patch = async (name: string, body: Record<string, unknown>) => {
     await api.put(`/api/admin/users/${encodeURIComponent(name)}`, body)
     load()
@@ -205,6 +218,20 @@ export default function UsersPage() {
             <Space size={6}>
               <Typography.Text strong>{u.display_name || u.username}</Typography.Text>
               {u.username === data?.me && <Tag color="green">{t('users.me')}</Tag>}
+              {/* A federated account has no local password, so knowing which rows those are is the
+                  difference between offering a password reset and offering to revoke a binding. */}
+              {u.federated && (
+                <Popconfirm
+                  title={t('users.unlinkConfirm', { slug: u.sso_slug || 'SSO' })}
+                  okText={t('users.unlink')}
+                  cancelText={t('common.cancel')}
+                  onConfirm={() => unlink(u.username)}
+                >
+                  <Tag color="geekblue" style={{ cursor: 'pointer' }}>
+                    {t('users.federatedTag', { slug: u.sso_slug || 'SSO' })}
+                  </Tag>
+                </Popconfirm>
+              )}
             </Space>
             <div>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>

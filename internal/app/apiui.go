@@ -831,6 +831,11 @@ func userJSON(u User, primaryGroup int64) map[string]any {
 		"username": u.Username, "role": u.EffRole(), "display_name": u.DisplayName,
 		"email": u.Email, "active": u.Active, "last_login": u.LastLogin, "primary_group": primaryGroup,
 		"expires_at": u.ExpiresAt,
+		// Whether the account signs in through an IdP, and which one. The users page needs this to
+		// badge the row and to offer revoking the binding; without it an admin could not tell a
+		// federated account from a local one, which is also why offering them a password reset was
+		// a dead end they only discovered on failure.
+		"federated": u.IsFederated(), "sso_slug": u.SourceRef,
 	}
 }
 

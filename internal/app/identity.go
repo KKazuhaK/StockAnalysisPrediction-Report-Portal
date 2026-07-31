@@ -204,10 +204,8 @@ func (s *Store) GroupExists(id int64) bool {
 	return n > 0
 }
 
-// Both of the following are unshipped: nothing in the product calls them yet. They are the two
-// halves of an admin action this portal still owes — showing which IdP binding an account holds,
-// and revoking a stale one — and the identity tests assert real invariants through them. Kept
-// here rather than folded into a test helper, so the gap stays visible instead of looking closed.
+// The two halves of one admin action: showing which IdP binding an account holds, and revoking a
+// stale one. Reached through /api/admin/users/{name}/identity.
 
 // IdentitiesOf returns the external identity bound to an account: at most one, so the slice is
 // there only to keep the admin API shape stable for a UI that lists them.
