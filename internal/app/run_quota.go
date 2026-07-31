@@ -15,8 +15,18 @@ import (
 // stored in (nowStr), so the string comparison matches the stored format.
 func (s *Store) RunsToday(username string, since time.Time) int {
 	var n sql.NullInt64
-	s.queryRow(`SELECT COALESCE(SUM(total),0) FROM batch_jobs WHERE created_by=? AND created_at >= ?`,
-		username, since.Format("2006-01-02 15:04:05")).Scan(&n)
+	// Also floored at the account's own creation. batch_jobs is kept across a delete for audit, so
+	// without this the previous holder of a reused username would spend the new holder's daily
+	// quota. COALESCE over the whole subquery, not inside it: an absent users row (a machine-created
+	// job, or a name nobody holds) must mean NO floor rather than a NULL that excludes everything.
+	//
+	// created_at is second-granular, so a delete and recreate inside the same second still shares
+	// that second's usage. Bounded and self-clearing at the next panel midnight; not worth a
+	// sub-second timestamp format that every other column would then disagree with.
+	s.queryRow(`SELECT COALESCE(SUM(total),0) FROM batch_jobs
+		WHERE created_by=? AND created_at >= ?
+		  AND created_at >= COALESCE((SELECT created_at FROM users WHERE username=?), '')`,
+		username, since.Format("2006-01-02 15:04:05"), username).Scan(&n)
 	return int(n.Int64)
 }
 

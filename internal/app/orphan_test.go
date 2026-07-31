@@ -190,3 +190,60 @@ func TestDeletingAnOUTakesItsGrantsAndViewers(t *testing.T) {
 		t.Errorf("run allow-list %v outlived the OU", got)
 	}
 }
+
+// TestDeletingAnAccountDoesNotLeaveItsRunsLive is the other half of the batch_jobs decision. The
+// history stays for audit — but history is all it may be. Two counters read that table as LIVE
+// state, so a reused username inherited the previous holder's daily quota consumption and their
+// active-run count; and jobs left queued were still dispatched to Dify, and billed, on behalf of an
+// account that no longer exists.
+func TestDeletingAnAccountDoesNotLeaveItsRunsLive(t *testing.T) {
+	s := tenancyServer(t)
+	st := s.st
+	const name = "alice@corp.example"
+	st.UpsertUser(User{Username: name, PasswordHash: "h", Role: "user"})
+
+	job, err := st.CreateBatchJob(7, 1, 0, name, []map[string]string{{"symbol": "600519"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ActiveJobCount(name) == 0 {
+		t.Fatal("failed to seed an active job")
+	}
+	// Age the whole episode into the past — account created two hours ago, ran an hour ago — so the
+	// delete-and-recreate below is a genuinely later event. Without this the recreated row's
+	// created_at lands in the same second as the original's and the floor cannot tell them apart.
+	stamp := func(ago time.Duration) string { return time.Now().Add(-ago).Format("2006-01-02 15:04:05") }
+	st.exec("UPDATE users SET created_at=? WHERE username=?", stamp(2*time.Hour), name)
+	st.exec("UPDATE batch_jobs SET created_at=? WHERE created_by=?", stamp(time.Hour), name)
+	midnight := time.Now().Add(-12 * time.Hour)
+	if st.RunsToday(name, midnight) == 0 {
+		t.Fatal("failed to seed today's usage")
+	}
+
+	if err := st.DeleteUser(name); err != nil {
+		t.Fatal(err)
+	}
+	// The audit row survives…
+	var kept int
+	st.queryRow("SELECT COUNT(*) FROM batch_jobs WHERE created_by=?", name).Scan(&kept)
+	if kept == 0 {
+		t.Error("run history must outlive the account that created it")
+	}
+	// …but it is no longer queued, so nothing is dispatched for a departed account.
+	var live int
+	st.queryRow("SELECT COUNT(*) FROM batch_jobs WHERE created_by=? AND status IN ('queued','running','cancelling')",
+		name).Scan(&live)
+	if live != 0 {
+		t.Errorf("%d job(s) still live for a deleted account — they would be dispatched and billed", live)
+	}
+
+	// The name is taken again. The new holder starts clean on both counters.
+	st.UpsertUser(User{Username: name, PasswordHash: "h2", Role: "user"})
+	if got := st.ActiveJobCount(name); got != 0 {
+		t.Errorf("the new holder starts with %d active runs, want 0", got)
+	}
+	if got := st.RunsToday(name, midnight); got != 0 {
+		t.Errorf("the new holder starts having used %d runs today, want 0", got)
+	}
+	_ = job
+}
