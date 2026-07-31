@@ -26,16 +26,22 @@ type cleanupConfig struct {
 	TokensGraceDays int
 	ReportsEnabled  bool
 	ReportsDays     int
+	// Target D: the audit log. Off means never delete — which is a real choice here in a way it is
+	// not for the others: an audit trail an operator has to justify keeping is worth less than one
+	// that simply does not expire.
+	AuditEnabled bool
+	AuditDays    int
 }
 
 // cleanupTargets selects which targets a pass acts on.
-type cleanupTargets struct{ Batch, Tokens, Reports bool }
+type cleanupTargets struct{ Batch, Tokens, Reports, Audit bool }
 
-func (t cleanupTargets) any() bool { return t.Batch || t.Tokens || t.Reports }
+func (t cleanupTargets) any() bool { return t.Batch || t.Tokens || t.Reports || t.Audit }
 
 // scheduledTargets is the set of targets a scheduled pass would act on (those enabled in config).
 func (c cleanupConfig) scheduledTargets() cleanupTargets {
-	return cleanupTargets{Batch: c.BatchEnabled, Tokens: c.TokensEnabled, Reports: c.ReportsEnabled}
+	return cleanupTargets{Batch: c.BatchEnabled, Tokens: c.TokensEnabled, Reports: c.ReportsEnabled,
+		Audit: c.AuditEnabled}
 }
 
 // cleanupResult is the outcome of one pass (also the JSON returned by run/preview and the
@@ -49,6 +55,7 @@ type cleanupResult struct {
 	Batch      int64  `json:"batch"`
 	Tokens     int64  `json:"tokens"`
 	Reports    int64  `json:"reports"`
+	Audit      int64  `json:"audit"`
 	DurationMs int64  `json:"duration_ms"`
 }
 
@@ -84,9 +91,14 @@ func (s *Server) cleanupConfigLoad() cleanupConfig {
 		TokensGraceDays: atoi("cleanup_tokens_grace_days", 30),
 		ReportsEnabled:  s.st.GetSetting("cleanup_reports_enabled", "0") == "1",
 		ReportsDays:     atoi("cleanup_reports_days", 730),
+		AuditEnabled:    s.st.GetSetting("cleanup_audit_enabled", "0") == "1",
+		AuditDays:       atoi("cleanup_audit_days", 365),
 	}
 	if c.BatchDays < minBatchRetentionDays {
 		c.BatchDays = minBatchRetentionDays
+	}
+	if c.AuditDays < minAuditRetentionDays {
+		c.AuditDays = minAuditRetentionDays
 	}
 	if c.ReportsDays < minReportsRetentionDays {
 		c.ReportsDays = minReportsRetentionDays
@@ -102,10 +114,13 @@ func (s *Server) cleanupConfigLoad() cleanupConfig {
 // formatted from system-local time (NOT the panel timezone — a panel/container tz mismatch would
 // otherwise delete up to the offset short of the configured retention). reports compares against a
 // parsed UTC instant, so its cutoff is a UTC time.Time. now must be time.Now().
-func (c cleanupConfig) cutoffs(now time.Time) (batchCut, tokenCut string, reportsCut time.Time) {
+func (c cleanupConfig) cutoffs(now time.Time) (batchCut, tokenCut string, reportsCut, auditCut time.Time) {
 	batchCut = now.AddDate(0, 0, -c.BatchDays).Format("2006-01-02 15:04:05")
 	tokenCut = now.AddDate(0, 0, -c.TokensGraceDays).Format("2006-01-02 15:04:05")
 	reportsCut = now.UTC().AddDate(0, 0, -c.ReportsDays)
+	// audit_log.at is written by nowStr(), i.e. system-local wall clock, so its cutoff is a local
+	// time — the same reasoning as batch and tokens, not the UTC instant reports uses.
+	auditCut = now.AddDate(0, 0, -c.AuditDays)
 	return
 }
 
@@ -152,7 +167,7 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 
 	start := time.Now()
 	c := s.cleanupConfigLoad()
-	batchCut, tokenCut, reportsCut := c.cutoffs(start)
+	batchCut, tokenCut, reportsCut, auditCut := c.cutoffs(start)
 	res := cleanupResult{Trigger: trigger, DryRun: dryRun, OK: true}
 
 	if sel.Batch {
@@ -187,6 +202,18 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 			n, err = s.st.DeleteReportsIngestedBefore(cutoff)
 		}
 		res.Reports, _ = n, err
+		res.note(err)
+	}
+
+	if sel.Audit {
+		var n int64
+		var err error
+		if dryRun {
+			n, err = s.st.CountAuditBefore(auditCut)
+		} else {
+			n, err = s.st.DeleteAuditBefore(auditCut)
+		}
+		res.Audit, _ = n, err
 		res.note(err)
 	}
 

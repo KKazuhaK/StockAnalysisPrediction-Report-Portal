@@ -34,6 +34,8 @@ func (s *Server) apiCleanupConfigGet(w http.ResponseWriter, r *http.Request, use
 		"tokens_grace_days": c.TokensGraceDays,
 		"reports_enabled":   c.ReportsEnabled,
 		"reports_days":      c.ReportsDays,
+		"audit_enabled":     c.AuditEnabled,
+		"audit_days":        c.AuditDays,
 		"batch_floor":       minBatchRetentionDays,
 		"reports_floor":     minReportsRetentionDays,
 		"last_run_period":   s.st.GetSetting("cleanup_last_run_period", ""),
@@ -53,6 +55,8 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 		TokensGraceDays *int    `json:"tokens_grace_days"`
 		ReportsEnabled  *bool   `json:"reports_enabled"`
 		ReportsDays     *int    `json:"reports_days"`
+		AuditEnabled    *bool   `json:"audit_enabled"`
+		AuditDays       *int    `json:"audit_days"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -75,6 +79,11 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 	}
 	if in.BatchDays != nil && *in.BatchDays < minBatchRetentionDays {
 		jsonError(w, http.StatusBadRequest, "batch_days below floor")
+		return
+	}
+	if in.AuditDays != nil && *in.AuditDays < minAuditRetentionDays {
+		jsonErrorCode(w, http.StatusBadRequest, "retention_too_short",
+			"审计日志保留天数不能少于 "+strconv.Itoa(minAuditRetentionDays)+" 天")
 		return
 	}
 	if in.ReportsDays != nil && *in.ReportsDays < minReportsRetentionDays {
@@ -100,6 +109,12 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 	if in.TokensGraceDays != nil && *in.TokensGraceDays >= 0 {
 		s.st.SetSetting("cleanup_tokens_grace_days", strconv.Itoa(*in.TokensGraceDays))
 	}
+	if in.AuditDays != nil {
+		s.st.SetSetting("cleanup_audit_days", strconv.Itoa(*in.AuditDays))
+	}
+	if in.AuditEnabled != nil {
+		s.st.SetSetting("cleanup_audit_enabled", strconv.Itoa(boolInt(*in.AuditEnabled)))
+	}
 	if in.ReportsDays != nil {
 		s.st.SetSetting("cleanup_reports_days", strconv.Itoa(*in.ReportsDays))
 	}
@@ -119,15 +134,17 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 
 func (s *Server) apiCleanupUsage(w http.ResponseWriter, r *http.Request, user string) {
 	c := s.cleanupConfigLoad()
-	batchCut, tokenCut, reportsCut := c.cutoffs(time.Now())
+	batchCut, tokenCut, reportsCut, auditCut := c.cutoffs(time.Now())
 
 	batchEligible, _ := s.st.CountFinishedJobsBefore(batchCut)
 	tokEligible, _ := s.st.CountExpiredTokensBefore(tokenCut)
 	repEligible, _ := s.st.CountReportsIngestedBefore(reportsCut)
+	auditEligible, _ := s.st.CountAuditBefore(auditCut)
 
 	batchOld, batchNew := s.st.usageSpan("batch_jobs", "finished_at")
 	tokOld, tokNew := s.st.usageSpan("api_tokens", "created_at")
 	repOld, repNew := s.st.usageSpan("reports", "sent_at")
+	auditOld, auditNew := s.st.usageSpan("audit_log", "at")
 
 	cat := func(key string, rows, bytes, eligible int64, oldest, newest string) map[string]any {
 		return map[string]any{"key": key, "rows": rows, "bytes": bytes, "eligible": eligible, "oldest": oldest, "newest": newest}
@@ -147,6 +164,10 @@ func (s *Server) apiCleanupUsage(w http.ResponseWriter, r *http.Request, user st
 				s.st.usageCount("reports"),
 				s.st.usageBytes("reports", "LENGTH(COALESCE(body_md,''))+LENGTH(COALESCE(body_html,''))"),
 				repEligible, repOld, repNew),
+			cat("audit",
+				s.st.usageCount("audit_log"),
+				s.st.usageBytes("audit_log", "LENGTH(COALESCE(detail,''))+LENGTH(COALESCE(target_id,''))"),
+				auditEligible, auditOld, auditNew),
 			cat("chat",
 				s.st.usageCount("chat_conversations"),
 				s.st.usageBytes("chat_conversations", "LENGTH(COALESCE(title,''))"),
@@ -164,13 +185,15 @@ func (s *Server) readTargets(r *http.Request) cleanupTargets {
 	}
 	_ = readJSON(r, &in)
 	if len(in.Targets) == 0 {
-		return cleanupTargets{Batch: true, Tokens: true, Reports: true}
+		return cleanupTargets{Batch: true, Tokens: true, Reports: true, Audit: true}
 	}
 	var t cleanupTargets
 	for _, x := range in.Targets {
 		switch x {
 		case "batch":
 			t.Batch = true
+		case "audit":
+			t.Audit = true
 		case "tokens":
 			t.Tokens = true
 		case "reports":
@@ -187,7 +210,7 @@ func (s *Server) apiCleanupPreview(w http.ResponseWriter, r *http.Request, user 
 	sel := s.readTargets(r)
 	c := s.cleanupConfigLoad()
 	now := time.Now()
-	batchCut, tokenCut, reportsCut := c.cutoffs(now)
+	batchCut, tokenCut, reportsCut, auditCut := c.cutoffs(now)
 	res := cleanupResult{Trigger: "preview", DryRun: true, OK: true, At: now.UTC().Format(time.RFC3339)}
 	if sel.Batch {
 		n, err := s.st.CountFinishedJobsBefore(batchCut)
@@ -202,6 +225,11 @@ func (s *Server) apiCleanupPreview(w http.ResponseWriter, r *http.Request, user 
 	if sel.Reports {
 		n, err := s.st.CountReportsIngestedBefore(reportsCut)
 		res.Reports = n
+		res.note(err)
+	}
+	if sel.Audit {
+		n, err := s.st.CountAuditBefore(auditCut)
+		res.Audit = n
 		res.note(err)
 	}
 	writeJSON(w, res)

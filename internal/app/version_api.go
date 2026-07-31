@@ -66,6 +66,13 @@ func (s *Server) apiAdminVersionSave(w http.ResponseWriter, r *http.Request, use
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// The grant list IS the read permission (ADR 0024), so a change to it is the single most
+	// consequential thing an admin does here. Recorded with both sides, because "who can read this
+	// now" is answerable from the current state — "when did they gain it, and who gave it" is not.
+	before := s.st.VersionGrants(name)
+	s.st.WriteAudit(AuditEntry{Actor: user, ActorOU: s.st.PrimaryGroupOf(user), Action: AuditGrantChange,
+		TargetType: "version", TargetID: name,
+		Detail: auditJSON(map[string]any{"before": before, "after": in.Grants})})
 	if err := s.st.SetVersionGrants(name, in.Grants); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

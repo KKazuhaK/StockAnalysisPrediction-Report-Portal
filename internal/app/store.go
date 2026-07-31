@@ -569,6 +569,28 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, ran_at TEXT, trigger TEXT, dry_run INTEGER DEFAULT 0, ok INTEGER DEFAULT 1, error TEXT DEFAULT '',
 			batch_deleted INTEGER DEFAULT 0, tokens_deleted INTEGER DEFAULT 0, reports_deleted INTEGER DEFAULT 0,
 			duration_ms INTEGER DEFAULT 0)`, pk),
+		// The audit log: who did what to which object, and when.
+		//
+		// One table for two audiences. "Who read this report" is the question a client asks and the
+		// only one the portal can answer with evidence rather than assurance; "who changed this
+		// grant" is what an operator asks when something is visible that should not be. Same shape,
+		// so one table and one query rather than a UNION over two.
+		//
+		// actor_ou is stamped at WRITE time. People move between OUs, so resolving it later from
+		// users.group_id would answer "which OU are they in now" — not what an audit line means.
+		// It is also the seam for per-OU audit visibility later: a WHERE clause, not a migration.
+		//
+		// target_id is TEXT because targets are not all numeric — a version is named, a setting is
+		// keyed. detail is free JSON: the columns are what must be queryable, the rest is context.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS audit_log(
+			id %s, at TEXT, actor TEXT DEFAULT '', actor_ou BIGINT DEFAULT 0,
+			action TEXT, target_type TEXT DEFAULT '', target_id TEXT DEFAULT '',
+			detail TEXT DEFAULT '')`, pk),
+		// The three questions the log is read with: the time feed, this object's history, and what
+		// one person did. Each is a leading-column match, so each is a range scan rather than a scan.
+		`CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type, target_id, at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor, at DESC)`,
 		// Recurring tasks (scheduled tasks; docs/adr/0018-recurring-tasks.md): a saved job template + a
 		// daily/weekly/monthly cadence a background loop fires into the run queue, indefinitely, until
 		// disabled. rows is the JSON job template (the exact shape CreateBatchJob takes: 1 row = a

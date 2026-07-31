@@ -47,6 +47,10 @@ func parseReportInstant(s string) (time.Time, bool) {
 const (
 	minBatchRetentionDays   = 7
 	minReportsRetentionDays = 365
+	// The audit log's floor is deliberately short: an operator who wants a 30-day trail should get
+	// one rather than be forced to keep a year. The protection that matters here is the opposite
+	// one — the target ships OFF, so nothing is ever deleted until someone chooses it.
+	minAuditRetentionDays = 30
 )
 
 // cleanupRunsKeep bounds the audit ring buffer: only the most recent N cleanup_runs rows are kept.

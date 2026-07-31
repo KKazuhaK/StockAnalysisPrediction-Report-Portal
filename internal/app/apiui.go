@@ -924,6 +924,9 @@ func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string
 		if newRole != "admin" && u.IsAdmin() && s.st.CountAdmins() <= 1 { // never demote the last admin
 			newRole = "admin"
 		}
+		s.st.WriteAudit(AuditEntry{Actor: user, ActorOU: s.st.PrimaryGroupOf(user),
+			Action: AuditUserChange, TargetType: "user", TargetID: name,
+			Detail: auditJSON(map[string]any{"field": "role", "to": newRole})})
 		s.st.SetUserRole(name, newRole)
 	}
 	if pw := in.Password; pw != "" {
@@ -976,6 +979,12 @@ func (s *Server) apiUserSave(w http.ResponseWriter, r *http.Request, user string
 		s.st.SetUserExpiry(name, expiry)
 	}
 	if in.PrimaryGroup != nil {
+		// Moving an account between OUs changes what it can read, so it belongs in the log for the
+		// same reason a grant change does.
+		s.st.WriteAudit(AuditEntry{Actor: user, ActorOU: s.st.PrimaryGroupOf(user),
+			Action: AuditUserChange, TargetType: "user", TargetID: name,
+			Detail: auditJSON(map[string]any{"field": "primary_group",
+				"from": s.st.PrimaryGroupOf(name), "to": *in.PrimaryGroup})})
 		s.st.SetPrimaryGroup(name, *in.PrimaryGroup)
 	}
 	writeJSON(w, okJSON)
