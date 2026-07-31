@@ -40,6 +40,21 @@ func jsonError(w http.ResponseWriter, code int, msg string) {
 	json.NewEncoder(w).Encode(map[string]any{"error": msg})
 }
 
+// jsonErrorCode is jsonError plus a stable machine-readable reason, so the SPA can translate it.
+//
+// A server message cannot be localized: the portal speaks three languages and the browser picks one
+// after the response has been written — which is why an English login page was printing
+// "用户名或密码错误", and a Chinese one "captcha is required or incorrect". The message stays as a
+// fallback for machine clients and for any UI that has no string for the code yet; the code is what
+// the SPA renders through t().
+//
+// Codes are part of the API contract once shipped. They describe the REASON, never the wording.
+func jsonErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg, "code": code})
+}
+
 // readJSON parses the request JSON body (capped at 1MB).
 func readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v)
@@ -192,7 +207,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	// force). This is keyed by the real peer IP, so a legit user is only affected if they share the
 	// abuser's IP (a short-lived window), never by someone else attacking their account.
 	if thr != nil && thr.blocked(ipKey, now) {
-		jsonError(w, http.StatusTooManyRequests, "尝试过于频繁，请稍后再试")
+		jsonErrorCode(w, http.StatusTooManyRequests, "rate_limited", "尝试过于频繁，请稍后再试")
 		return
 	}
 	// The password is checked FIRST: a correct password always succeeds (and clears the counters), so
@@ -213,26 +228,26 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 			// An account under sustained wrong-password pressure rejects further WRONG guesses; a
 			// correct password would have passed above, so this only rate-limits an attacker.
 			if thr.blocked(userKey, now) {
-				jsonError(w, http.StatusTooManyRequests, "尝试过于频繁，请稍后再试")
+				jsonErrorCode(w, http.StatusTooManyRequests, "rate_limited", "尝试过于频繁，请稍后再试")
 				return
 			}
 		}
-		jsonError(w, http.StatusUnauthorized, "用户名或密码错误")
+		jsonErrorCode(w, http.StatusUnauthorized, "bad_credentials", "用户名或密码错误")
 		return
 	}
 	if !u.Active {
-		jsonError(w, http.StatusForbidden, "账号已停用")
+		jsonErrorCode(w, http.StatusForbidden, "account_disabled", "账号已停用")
 		return
 	}
 	if s.accountExpired(u) {
-		jsonError(w, http.StatusForbidden, "账号已过期")
+		jsonErrorCode(w, http.StatusForbidden, "account_expired", "账号已过期")
 		return
 	}
 	// The hard policy, checked AFTER the password so it can never become an oracle for which
 	// accounts are privileged: a wrong password fails identically either way. Admins are exempt —
 	// this endpoint is the break-glass path when the IdP is the thing that is broken.
 	if s.localLoginRefused(u) {
-		jsonError(w, http.StatusForbidden, "本站已限制使用密码登录，请通过单点登录进入")
+		jsonErrorCode(w, http.StatusForbidden, "local_login_refused", "本站已限制使用密码登录，请通过单点登录进入")
 		return
 	}
 	if thr != nil {

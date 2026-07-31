@@ -37,6 +37,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import OrgUnitPicker, { subtreeOf } from './OrgUnitPicker'
+import { resolveOU } from './ouSettings'
 import { priorityNum } from '../../lib/batchUi'
 import type { BatchConfig, GroupTargetsResp, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
 
@@ -692,9 +693,6 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   }
 
   // Effective weight / urgent for display: a group's own value, or the Default's when inherited.
-  const effWeight = (g: UserGroupRow) => (g.weight != null ? g.weight : defaultGroup?.weight ?? 0)
-  const effUrgent = (g: UserGroupRow) => (g.urgent_unlimited != null ? g.urgent_unlimited : !!defaultGroup?.urgent_unlimited)
-  const effAllow = (g: UserGroupRow) => (g.allow_urgent != null ? g.allow_urgent : defaultGroup?.allow_urgent !== false)
   const effMaxQueued = (g: UserGroupRow) => (g.max_queued != null ? g.max_queued : defaultGroup?.max_queued ?? 0)
   const effWindow = (g: UserGroupRow) => (g.run_window != null ? g.run_window : defaultGroup?.run_window ?? '')
 
@@ -755,10 +753,6 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
       ) : (
         <Space direction="vertical" size={8} style={{ width: '100%' }}>
           {groups.map((g) => {
-            const weightInh = !g.is_default && g.weight == null
-            const urgentInh = !g.is_default && g.urgent_unlimited == null
-            const w = effWeight(g)
-            const urg = effUrgent(g)
             return (
               <Card key={g.id} size="small">
                 <Space style={{ width: '100%', justifyContent: 'space-between' }} align="start">
@@ -776,20 +770,30 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
                         <Tag color="cyan">{t('users.dailyQuotaTag', { n: g.daily_run_quota })}</Tag>
                       )}
                       <Tag>{t('users.groupMembers', { n: g.members })}</Tag>
-                      {w > 0 && (
-                        <Tag color="gold" icon={<ThunderboltOutlined />}>
-                          {t('users.weightN', { n: w })}
-                          {weightInh && <span style={{ opacity: 0.6 }}> · {t('users.inheritedTag')}</span>}
-                        </Tag>
-                      )}
-                      {urg && (
-                        <Tag color="red" icon={<ThunderboltOutlined />}>
-                          {t('users.urgentUnlimitedTag')}
-                          {urgentInh && <span style={{ opacity: 0.6 }}> · {t('users.inheritedTag')}</span>}
-                        </Tag>
-                      )}
-                      {g.priority && <Tag color="blue">{t('users.priorityTag', { n: priorityNum(g.priority) })}</Tag>}
-                      {!effAllow(g) && <Tag>{t('users.urgentDisabledTag')}</Tag>}
+                      {/* ONE urgent tag, from the resolved policy. Rendering a ticket count and
+                          "unlimited" from two independent conditions let them contradict: an OU
+                          inheriting weight 2 from Default while setting unlimited itself showed
+                          both. */}
+                      {(() => {
+                        const r = resolveOU(g, defaultGroup)
+                        const inh = r.urgent.inherited ? (
+                          <span style={{ opacity: 0.6 }}> · {t('users.inheritedTag')}</span>
+                        ) : null
+                        if (r.urgent.value === 'off') return <Tag>{t('users.urgentDisabledTag')}{inh}</Tag>
+                        if (r.urgent.value === 'unlimited')
+                          return (
+                            <Tag color="red" icon={<ThunderboltOutlined />}>
+                              {t('users.urgentUnlimitedTag')}
+                              {inh}
+                            </Tag>
+                          )
+                        return r.weight.value > 0 ? (
+                          <Tag color="gold" icon={<ThunderboltOutlined />}>
+                            {t('users.weightN', { n: r.weight.value })}
+                            {inh}
+                          </Tag>
+                        ) : null
+                      })()}
                       {effMaxQueued(g) > 0 && <Tag color="geekblue">{t('users.maxQueuedTag', { n: effMaxQueued(g) })}</Tag>}
                       {effWindow(g) && (
                         <Tag color="purple">
