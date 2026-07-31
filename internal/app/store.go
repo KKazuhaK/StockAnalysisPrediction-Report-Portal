@@ -700,19 +700,31 @@ func (s *Store) GetUser(name string) *User {
 // primary-key hit; this runs only when an account is created.
 // It normalizes its own argument rather than trusting the caller to have done it: this is a guard,
 // and a guard that is only correct when called correctly is not one.
+//
+// The comparison is done in Go, not with SQL LOWER(). They disagree on non-ASCII, and not in the
+// same way on each driver: SQLite's LOWER() is ASCII-only, so it leaves 'ÉLODIE' alone while Go
+// folds it to 'élodie' — the guard would pass and two accounts would share the principal
+// `u:élodie`, which is precisely what it exists to prevent. Postgres' lower() is collation-aware
+// and would have caught it, so the hole existed on one driver only. Folding here makes the guard
+// agree with userPrincipal by construction, on both. The scan is the same cost as LOWER() was —
+// neither can use the primary key — and this only runs when an account is created.
 func (s *Store) UsernameTaken(name string) bool {
-	var n int
-	s.queryRow("SELECT COUNT(*) FROM users WHERE LOWER(username)=?", normalizeUsername(name)).Scan(&n)
-	return n > 0
+	want := normalizeUsername(name)
+	if want == "" {
+		return false
+	}
+	for _, existing := range s.allUsernames() {
+		if normalizeUsername(existing) == want {
+			return true
+		}
+	}
+	return false
 }
 
-// CaseVariantUsernames returns the folded names that more than one account already answers to.
-// Folding new writes cannot retrofit a collision that predates it, and a pair that silently shares a
-// read principal is exactly the failure this is meant to make impossible — so the server says so out
-// loud at startup rather than leaving an admin to discover it through the reports.
-func (s *Store) CaseVariantUsernames() []string {
-	rows, err := s.query(`SELECT LOWER(username) FROM users
-		GROUP BY LOWER(username) HAVING COUNT(*) > 1 ORDER BY LOWER(username)`)
+// allUsernames lists every account name verbatim, for the two case-folding checks that must compare
+// the way Go does rather than the way the database does.
+func (s *Store) allUsernames() []string {
+	rows, err := s.query("SELECT username FROM users")
 	if err != nil {
 		return nil
 	}
@@ -724,6 +736,27 @@ func (s *Store) CaseVariantUsernames() []string {
 			out = append(out, name)
 		}
 	}
+	return out
+}
+
+// CaseVariantUsernames returns the folded names that more than one account already answers to.
+// Folding new writes cannot retrofit a collision that predates it, and a pair that silently shares a
+// read principal is exactly the failure this is meant to make impossible — so the server says so out
+// loud at startup rather than leaving an admin to discover it through the reports.
+func (s *Store) CaseVariantUsernames() []string {
+	// Grouped in Go for the same reason UsernameTaken compares in Go: SQL LOWER() is ASCII-only on
+	// SQLite, so a GROUP BY over it would not report the very non-ASCII pair this warning describes.
+	seen := map[string]int{}
+	for _, name := range s.allUsernames() {
+		seen[normalizeUsername(name)]++
+	}
+	var out []string
+	for name, n := range seen {
+		if n > 1 {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out) // a stable order, so the startup warning reads the same on every boot
 	return out
 }
 

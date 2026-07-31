@@ -221,7 +221,7 @@ func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, us
 			Trigger       string  `json:"trigger"`
 			FailThreshold int     `json:"fail_threshold"`
 		} `json:"captcha"`
-		Login struct {
+		Login *struct {
 			Mode    string `json:"mode"`
 			SSOOnly bool   `json:"sso_only"`
 		} `json:"login"`
@@ -253,14 +253,17 @@ func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, us
 	}
 	// An unrecognized mode is refused rather than coerced: silently storing something else would
 	// leave an admin believing they configured a login policy they did not.
-	if in.Login.Mode != "" {
+	// A pointer, so a body that omits `login` entirely leaves both settings alone. Every other
+	// boolean on this endpoint is cleared by omission, which is fine for a captcha toggle and not
+	// fine for the switch that decides whether passwords are accepted at all.
+	if in.Login != nil {
 		if !validLoginMode(in.Login.Mode) {
 			jsonError(w, http.StatusBadRequest, "login mode must be dual | sso_first | sso_redirect | local_only")
 			return
 		}
 		s.st.SetSetting(setLoginMode, in.Login.Mode)
+		s.st.SetSetting(setSSOOnly, boolSetting(in.Login.SSOOnly))
 	}
-	s.st.SetSetting(setSSOOnly, boolSetting(in.Login.SSOOnly))
 
 	s.st.SetSetting(setCaptchaProvider, provider)
 	s.st.SetSetting(setCaptchaSiteKey, strings.TrimSpace(in.Captcha.SiteKey))
