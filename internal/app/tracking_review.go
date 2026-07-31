@@ -3,7 +3,10 @@ package app
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
+	"time"
 )
 
 // The review queue: tracking items across every symbol, not one at a time.
@@ -26,6 +29,10 @@ type TrackingRow struct {
 	ReportDate  string
 	ReportKind  string
 	ReportType  string
+	// Due is a date parsed out of the free-text review point, "" when it holds none. Derived on
+	// read rather than stored: the text is the workflow's, and a column would go stale the moment
+	// a re-run reworded it.
+	Due string
 }
 
 // TrackingFilter narrows the queue. Every field is optional; the zero value is "everything".
@@ -34,8 +41,45 @@ type TrackingFilter struct {
 	Status string
 	IType  string
 	Q      string // substring of the item's content or its review point
+	// Sort is "" (newest first) or "due" — soonest due first, undated last. Applied in Go, since
+	// the due date is parsed out of free text and no column holds it.
+	Sort   string
 	Limit  int
 	Offset int
+}
+
+// trackingDueDate pulls a date out of a free-text review point, returning "" when there is nothing
+// it can trust. The workflow writes whatever it likes there — "2026-10-31 三季报", "三季报发布后",
+// a whole sentence — so this is opportunistic by design.
+//
+// Deliberately narrow: guessing wrong is worse than admitting there is no date, because a wrong
+// guess sorts someone's day around a deadline that does not exist. A bare year is not a date, and
+// an impossible one (month 13, February 30th) is rejected by round-tripping it through time.Parse
+// rather than by range-checking the parts.
+func trackingDueDate(reviewPoint string) string {
+	for _, m := range dueDatePatterns {
+		g := m.FindStringSubmatch(reviewPoint)
+		if g == nil {
+			continue
+		}
+		iso := fmt.Sprintf("%s-%02s-%02s", g[1], pad(g[2]), pad(g[3]))
+		if t, err := time.Parse("2006-01-02", iso); err == nil && t.Format("2006-01-02") == iso {
+			return iso
+		}
+	}
+	return ""
+}
+
+func pad(v string) string {
+	if len(v) == 1 {
+		return "0" + v
+	}
+	return v
+}
+
+var dueDatePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(\d{4})[-/](\d{1,2})[-/](\d{1,2})`),
+	regexp.MustCompile(`(\d{4})年(\d{1,2})月(\d{1,2})日?`),
 }
 
 // trackingScopeJoin applies the viewer's read scope. tracking_items carries no owner of its own, so
@@ -85,8 +129,7 @@ func (s *Store) ListTracking(f TrackingFilter, sc *ownerScope) ([]TrackingRow, i
 	if offset < 0 {
 		offset = 0
 	}
-	// Newest first. review_point is free text from the workflow — it may be a date, a quarter, or a
-	// sentence — so it cannot be ordered as a due date without lying about what it contains.
+	// Newest first from SQL; a due-date order is layered on below.
 	rows, err := s.query(fmt.Sprintf(`SELECT t.id,t.report_id,t.symbol,t.itype,t.content,t.status,
 			t.review_point,t.created_at,
 			COALESCE(r.name,''),COALESCE(r.title,''),COALESCE(r.rdate,''),COALESCE(r.kind,''),COALESCE(r.rtype,'')
@@ -109,7 +152,24 @@ func (s *Store) ListTracking(f TrackingFilter, sc *ownerScope) ([]TrackingRow, i
 		t.ReviewPoint, t.Created = rp.String, cr.String
 		t.Name, t.ReportTitle, t.ReportDate = name.String, title.String, date.String
 		t.ReportKind, t.ReportType = kind.String, rtype.String
+		t.Due = trackingDueDate(t.ReviewPoint)
 		out = append(out, t)
+	}
+	// Due-date order is applied here rather than in SQL, because the date lives inside free text and
+	// no column holds it. That means it orders the PAGE, not the whole table — acceptable while the
+	// queue is small, and the alternative is asking the workflow for a real date column, which is a
+	// contract change rather than a query.
+	if f.Sort == "due" {
+		sort.SliceStable(out, func(i, j int) bool {
+			a, b := out[i].Due, out[j].Due
+			if (a == "") != (b == "") {
+				return a != "" // an undated item never outranks one that is actually due
+			}
+			if a != b {
+				return a < b // soonest first
+			}
+			return out[i].Created > out[j].Created
+		})
 	}
 	return out, total
 }
