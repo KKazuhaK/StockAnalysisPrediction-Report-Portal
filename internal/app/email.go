@@ -81,14 +81,13 @@ func (s *Server) sendEmail(to []string, subject, htmlBody string) error {
 func (s *Server) apiEmailGet(w http.ResponseWriter, r *http.Request, user string) {
 	c := s.mailConfig()
 	writeJSON(w, map[string]any{
-		"enabled":    s.st.GetSetting("smtp_enabled", "0") == "1",
-		"host":       c.Host,
-		"port":       c.Port,
-		"user":       c.User,
-		"from":       c.From,
-		"security":   c.Security,
-		"has_pass":   c.Pass != "",
-		"public_url": s.st.GetSetting("public_url", ""), // origin for reset links (avoids host-header poisoning)
+		"enabled":  s.st.GetSetting("smtp_enabled", "0") == "1",
+		"host":     c.Host,
+		"port":     c.Port,
+		"user":     c.User,
+		"from":     c.From,
+		"security": c.Security,
+		"has_pass": c.Pass != "",
 	})
 }
 
@@ -96,21 +95,17 @@ func (s *Server) apiEmailGet(w http.ResponseWriter, r *http.Request, user string
 // editing other fields never forces re-entering the secret.
 func (s *Server) apiEmailSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		Enabled   *bool   `json:"enabled"`
-		Host      *string `json:"host"`
-		Port      *int    `json:"port"`
-		User      *string `json:"user"`
-		Pass      *string `json:"pass"`
-		From      *string `json:"from"`
-		Security  *string `json:"security"`
-		PublicURL *string `json:"public_url"`
+		Enabled  *bool   `json:"enabled"`
+		Host     *string `json:"host"`
+		Port     *int    `json:"port"`
+		User     *string `json:"user"`
+		Pass     *string `json:"pass"`
+		From     *string `json:"from"`
+		Security *string `json:"security"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
-	}
-	if in.PublicURL != nil {
-		s.st.SetSetting("public_url", strings.TrimSpace(*in.PublicURL))
 	}
 	if in.Enabled != nil {
 		s.st.SetSetting("smtp_enabled", boolStr(*in.Enabled))

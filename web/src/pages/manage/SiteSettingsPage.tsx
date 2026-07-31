@@ -44,6 +44,7 @@ export default function SiteSettingsPage() {
           pwaEnabled: r.pwaEnabled !== false,
           pwaIconUrl: r.pwaIconUrl || '',
           timezone: r.timezone || '',
+          publicUrl: r.publicUrl || '',
         }),
       )
       .finally(() => setLoading(false))
@@ -62,6 +63,7 @@ export default function SiteSettingsPage() {
         pwaEnabled: v.pwaEnabled !== false,
         pwaIconUrl: v.pwaIconUrl || '',
         timezone: v.timezone || '',
+        publicUrl: v.publicUrl || '',
       })
       await refresh()
       message.success(t('common.saved'))
@@ -195,6 +197,30 @@ export default function SiteSettingsPage() {
         <Form.Item name="footerShowVersion" label={t('settings.footerShowVersion')} valuePropName="checked">
           <Switch />
         </Form.Item>
+        {/* The portal's own origin. It used to sit on the email page, because reset links were the
+            first thing that needed an origin a forged Host header cannot poison — but the SAML
+            entity id, the OIDC redirect URL, the WebAuthn relying-party id, registration links and
+            the captcha host check all derive from it too, so it belongs with the deployment. */}
+        <Divider titlePlacement="left">{t('settings.urlSection')}</Divider>
+        <Form.Item
+          name="publicUrl"
+          label={t('settings.publicUrl')}
+          style={{ marginBottom: 8 }}
+          rules={[
+            {
+              validator: (_, v?: string) =>
+                !v || /^https?:\/\/[^/?#]+\/?$/.test(v.trim())
+                  ? Promise.resolve()
+                  : Promise.reject(new Error(t('settings.publicUrlInvalid'))),
+            },
+          ]}
+        >
+          <Input placeholder="https://portal.example.com" />
+        </Form.Item>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          {t('settings.publicUrlHint')}
+        </Typography.Paragraph>
+
         <Divider titlePlacement="left">
           {t('settings.timeSection')}
         </Divider>

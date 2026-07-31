@@ -29,6 +29,7 @@ const loadedSettings = {
   oldUser: '',
   hasPass: false,
   timezone: 'Asia/Shanghai',
+  publicUrl: 'https://portal.example.com',
   siteTitle: '智研平台',
   siteLogoUrl: '/brand/logo.png',
   homeMoreStyle: 'popover',
@@ -84,6 +85,9 @@ describe('SiteSettingsPage', () => {
       pwaEnabled: false,
       pwaIconUrl: '/brand/app.png',
       timezone: 'Asia/Shanghai',
+      // The portal's own origin belongs with the deployment's settings, not on the email page —
+      // reset links were only the first of seven things to derive from it.
+      publicUrl: 'https://portal.example.com',
     })
     expect(Object.keys(apiMock.post.mock.calls[0][1])).not.toContain('announcementTitle')
     expect(Object.keys(apiMock.post.mock.calls[0][1])).not.toContain('announcementContent')

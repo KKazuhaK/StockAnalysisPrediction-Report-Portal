@@ -62,7 +62,7 @@ func (s *Server) verifyResetToken(token string) string {
 // public_url, or "" if unset. There is deliberately NO request-derived fallback —
 // r.Host and X-Forwarded-* are all attacker-controllable and a forged one would
 // poison the emailed link into an account-takeover primitive. Reset-by-email
-// therefore requires public_url to be configured (Manage → Email).
+// therefore requires public_url to be configured (Manage → General).
 func (s *Server) resetLinkBase() string { return s.publicBaseURL() }
 
 // publicBaseURL is the portal's externally-reachable origin, and the single source for every

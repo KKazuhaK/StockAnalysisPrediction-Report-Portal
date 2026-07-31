@@ -1005,13 +1005,30 @@ func (s *Server) apiUserDelete(w http.ResponseWriter, r *http.Request, user stri
 // old_base/old_user/old_pass persist as inert settings after the legacy importer was
 // removed (the old portal is fully retired); they have no remaining consumer.
 
+// validPublicURL accepts an http(s) origin and nothing else. A path would be concatenated into
+// every reset link and redirect URL, and an IdP handed a redirect_uri it was not registered with
+// rejects the login — a failure that surfaces at someone else's sign-in, not at this form.
+func validPublicURL(raw string) bool {
+	u, err := url.Parse(strings.TrimRight(raw, "/"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	return u.Path == "" && u.RawQuery == "" && u.Fragment == ""
+}
+
 func (s *Server) apiAdminSettings(w http.ResponseWriter, r *http.Request, user string) {
 	out := map[string]any{
 		"oldBase":  s.st.GetSetting("old_base", ""),
 		"oldUser":  s.st.GetSetting("old_user", ""),
 		"hasPass":  s.st.GetSetting("old_pass", "") != "",
 		"timezone": s.st.GetSetting("timezone", ""), // "" = follow system zone
-		"newCount": s.st.CountNew(),
+		// The portal's canonical origin. It lived on the email page because reset links were the
+		// first thing to need an origin a forged Host header cannot poison, but six more features
+		// depend on it now — SAML entity id and ACS URL, the OIDC redirect URL, the WebAuthn
+		// relying-party id, registration links and the captcha host check — so it belongs with the
+		// deployment's own settings. The stored key is unchanged.
+		"publicUrl": s.st.GetSetting("public_url", ""),
+		"newCount":  s.st.CountNew(),
 	}
 	for k, v := range s.siteSettingsJSON() {
 		out[k] = v
@@ -1035,6 +1052,7 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
 	var in struct {
 		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText, PwaIconUrl   *string
+		PublicUrl                                                                             *string
 		AnnouncementLevel, AnnouncementTitle, AnnouncementContent, HomeMoreStyle              *string
 		FooterShowInfo, FooterShowVersion, PwaEnabled, AnnouncementEnabled, AnnouncementPopup *bool
 	}
@@ -1046,6 +1064,15 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 				jsonErrorCode(w, http.StatusBadRequest, "bad_timezone", "无效的时区")
 				return
 			}
+		}
+	}
+	// An origin only: a path here would be silently concatenated into every redirect and reset
+	// link, and an IdP that is handed a redirect_uri it was not configured with refuses the login.
+	if in.PublicUrl != nil {
+		if v := strings.TrimSpace(*in.PublicUrl); v != "" && !validPublicURL(v) {
+			jsonErrorCode(w, http.StatusBadRequest, "bad_public_url",
+				"公开网址必须是 http(s) origin，例如 https://portal.example.com")
+			return
 		}
 	}
 	if in.SiteTitle != nil && len([]rune(strings.TrimSpace(*in.SiteTitle))) > maxSiteTitleRunes {
@@ -1087,6 +1114,9 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	if in.Timezone != nil { // "" clears → follow system zone
 		s.st.SetSetting("timezone", strings.TrimSpace(*in.Timezone))
+	}
+	if in.PublicUrl != nil {
+		s.st.SetSetting("public_url", strings.TrimSpace(*in.PublicUrl))
 	}
 	if in.SiteTitle != nil { // "" clears → localized default brand title
 		s.st.SetSetting("site_title", strings.TrimSpace(*in.SiteTitle))
