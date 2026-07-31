@@ -123,3 +123,20 @@ func (s *Server) apiReportDiff(w http.ResponseWriter, r *http.Request, user stri
 	}
 	writeJSON(w, map[string]any{"a": side(a), "b": side(b), "sections": sections, "changed": changed})
 }
+
+// GET /api/reports/comparable?id=<id> — what this report can sensibly be diffed against.
+func (s *Server) apiComparableReports(w http.ResponseWriter, r *http.Request, user string) {
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "id must be a report id")
+		return
+	}
+	sc := s.viewerScope(user)
+	// Confirm the caller may read the report they are asking about, so the candidate list cannot
+	// be used to learn that some other tenant's report exists.
+	if rep, _ := s.st.GetNew(id, sc); rep == nil {
+		jsonErrorCode(w, http.StatusNotFound, "report_not_found", "报告不存在")
+		return
+	}
+	writeJSON(w, map[string]any{"items": s.st.ComparableReports(id, 50, sc)})
+}

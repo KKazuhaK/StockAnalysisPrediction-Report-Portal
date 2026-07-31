@@ -89,3 +89,51 @@ func TestDiffAPIRefusesAReportYouCannotRead(t *testing.T) {
 		t.Errorf("self-diff → %d changed=%v", code, out["changed"])
 	}
 }
+
+// Choosing what to compare against. The default the UI wants — the previous edition of the same
+// analysis — is a query, not a guess, and it has to be scoped like every other read.
+func TestComparableReportsOffersThePreviousEditions(t *testing.T) {
+	s := tenancyServer(t)
+	st := s.st
+	var ids []int64
+	for _, d := range []string{"2026-05-31", "2026-06-30", "2026-07-31"} {
+		id, _, _ := st.UpsertReport(Rep{Symbol: "600519", Date: d, RType: "投资决策", Title: "决策", MD: "x"})
+		ids = append(ids, id)
+	}
+	// A different analysis of the same company, and the same analysis of another company: neither
+	// is a sensible thing to diff against, so neither is offered.
+	st.UpsertReport(Rep{Symbol: "600519", Date: "2026-07-31", RType: "估值分析", Title: "估值", MD: "y"})
+	st.UpsertReport(Rep{Symbol: "000001", Date: "2026-07-31", RType: "投资决策", Title: "别家", MD: "z"})
+
+	got := st.ComparableReports(ids[2], 20, nil)
+	if len(got) != 2 {
+		t.Fatalf("offered %d candidates, want the 2 earlier editions: %+v", len(got), got)
+	}
+	if got[0].Date != "2026-06-30" {
+		t.Errorf("candidates are not newest-first: %v", got[0].Date)
+	}
+	// The report itself is never offered as its own counterpart.
+	for _, c := range got {
+		if c.ID == ids[2] {
+			t.Error("a report was offered as a comparison against itself")
+		}
+	}
+}
+
+func TestComparableReportsIsScoped(t *testing.T) {
+	s := tenancyServer(t)
+	st := s.st
+	st.SaveVersion(ReportVersion{Name: "对外版", Ord: 1, Visibility: VisibilityOwner})
+	st.UpsertReport(Rep{Symbol: "600519", Date: "2026-06-30", RType: "投资决策", Title: "内部", MD: "a"})
+	ext, _, _ := st.UpsertReport(Rep{Symbol: "600519", Date: "2026-07-31", RType: "投资决策",
+		Title: "对外", Version: "对外版", MD: "b"})
+
+	st.UpsertUser(User{Username: "client@corp.example", PasswordHash: "h", Role: "user"})
+	st.SetUserRestricted("client@corp.example", true)
+	st.SetVersionGrants("对外版", []string{userPrincipal("client@corp.example")})
+	st.AddReportViewer(ext, "2026-07-31", "client@corp.example", 0)
+
+	if got := st.ComparableReports(ext, 20, s.viewerScope("client@corp.example")); len(got) != 0 {
+		t.Errorf("a restricted viewer was offered %d unreadable reports to diff against", len(got))
+	}
+}
