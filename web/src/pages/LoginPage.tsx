@@ -41,6 +41,8 @@ export default function LoginPage() {
   const [showLocal, setShowLocal] = useState(false)
   // Why the last handshake failed, so a loop that used to be silent now explains itself.
   const [ssoError, setSSOError] = useState('')
+  // Where force-SSO should send the browser, once we know nobody is already signed in.
+  const [redirectTo, setRedirectTo] = useState('')
   const [captcha, setCaptcha] = useState<CaptchaValue>({})
   const [captchaRound, setCaptchaRound] = useState(0)
   const [account, setAccount] = useState('')
@@ -77,9 +79,16 @@ export default function LoginPage() {
           sso: r.sso ?? list.length > 0,
         })
 
-        if (r.login_mode === 'sso_redirect' && !bypass && list.length === 1) {
-          hardNavigate(`/api/auth/${list[0].kind}/${encodeURIComponent(list[0].slug)}/start`)
-        }
+        // Not fired from here. Two reasons: this promise can resolve after the component has
+        // unmounted — the auth check may already have sent an-already-signed-in visitor to "/", and
+        // throwing them at the IdP would yank them straight back off it — and the decision needs
+        // the auth state, which this callback does not have. Recorded, and acted on in the effect
+        // below once both are known.
+        setRedirectTo(
+          r.login_mode === 'sso_redirect' && !bypass && list.length === 1
+            ? `/api/auth/${list[0].kind}/${encodeURIComponent(list[0].slug)}/start`
+            : '',
+        )
       })
       .catch(() => {})
     api
@@ -87,6 +96,14 @@ export default function LoginPage() {
       .then((r) => setCanRegister(!!r.enabled))
       .catch(() => {})
   }, [])
+
+  // Force-SSO's navigation, gated on the auth state. A visitor who already holds a session — a
+  // bookmark, a typed URL, Back after the SSO round-trip (a real history entry, because the
+  // callback is a top-level redirect) — is sent to "/" by the check below instead.
+  useEffect(() => {
+    if (loading || user || !redirectTo) return
+    hardNavigate(redirectTo)
+  }, [loading, user, redirectTo])
 
   if (!loading && user) return <Navigate to="/" replace />
 
