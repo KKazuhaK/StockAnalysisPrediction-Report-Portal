@@ -19,6 +19,7 @@ const HomePage = lazyRetry(() => import('./pages/HomePage'))
 const AccountPage = lazyRetry(() => import('./pages/AccountPage'))
 const StockPage = lazyRetry(() => import('./pages/StockPage'))
 const RunPage = lazyRetry(() => import('./pages/RunPage'))
+const ReviewPage = lazyRetry(() => import('./pages/ReviewPage'))
 const ManageLayout = lazyRetry(() => import('./pages/manage/ManageLayout'))
 const LinksPage = lazyRetry(() => import('./pages/manage/LinksPage'))
 const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
@@ -89,6 +90,7 @@ function AppRoutes() {
         <Route path="/account" element={<AccountPage />} />
         <Route path="/stock/:symbol" element={<StockPage />} />
         <Route path="/run/:key" element={<RunPage />} />
+        <Route path="/review" element={<ReviewPage />} />
         {/* The apps hub and installed iframe apps are open to any logged-in user;
             the built-in batch console stays permission-gated. */}
         <Route path="/apps" element={<AppsHub />} />

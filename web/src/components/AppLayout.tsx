@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, AuditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -248,6 +248,9 @@ export default function AppLayout() {
                   {t('nav.chat')}
                 </Button>
               )}
+              <Button icon={<AuditOutlined />} onClick={() => navigate('/review')} title={t('nav.review')}>
+                {t('nav.review')}
+              </Button>
               <Button icon={<AppstoreOutlined />} onClick={() => navigate('/apps')} title={t('nav.apps')}>
                 {t('nav.apps')}
               </Button>

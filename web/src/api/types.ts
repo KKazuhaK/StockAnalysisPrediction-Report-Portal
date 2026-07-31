@@ -745,3 +745,34 @@ export interface ReportDiff {
   sections: SectionDiff[]
   changed: number
 }
+
+// ---- The review queue (tracking items) ----
+
+/** One assumption a report rests on, with the report context needed to judge it. */
+export interface TrackingRow {
+  id: number
+  symbol: string
+  name: string
+  itype: string
+  content: string
+  status: string
+  review_point: string
+  /** A date parsed out of review_point when it holds one; '' otherwise. */
+  due: string
+  created_at: string
+  report_id: number
+  report_title: string
+  report_date: string
+  report_kind: string
+  report_type: string
+}
+
+export interface TrackingResp {
+  items: TrackingRow[]
+  total: number
+  counts: Record<string, number>
+  /** The itype and status values actually present — the ingest contract lets a workflow send any
+   *  string, so the filters are built from the data rather than from a fixed list. */
+  itypes: string[]
+  statuses: string[]
+}
