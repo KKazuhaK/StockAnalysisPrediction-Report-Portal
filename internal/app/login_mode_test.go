@@ -204,3 +204,44 @@ func TestSSOOnlyIsInertWhenThePageOffersNoSSO(t *testing.T) {
 		}
 	}
 }
+
+// TestSSOOnlyNeedsALocalAdminToFallBackOn guards the guarantee the admin UI prints. The exemption
+// only ever protects an admin with a LOCAL password: apiLogin nils out a federated account before
+// bcrypt, so the refusal is never even reached for one. An organisation whose admins are all
+// federated therefore has no browser path in at all the moment its IdP breaks.
+func TestSSOOnlyNeedsALocalAdminToFallBackOn(t *testing.T) {
+	s := loginModeServer(t)
+	withProvider(s)
+	// Make every admin federated, the way a JIT provider with an admin-granting rule ends up:
+	// SetUserSource is what resolveSSOAccount calls, and IsFederated reads that column.
+	s.st.SetUserSource("boss", "jit", "acme")
+	if u := s.st.GetUser("boss"); u == nil || !u.IsFederated() {
+		t.Fatal("failed to federate the only admin")
+	}
+
+	if s.localAdminExists() {
+		t.Error("a federated admin is not a fallback: apiLogin refuses them before the exemption")
+	}
+	// Turning the policy on must be refused rather than silently locking the portal.
+	rec := httptest.NewRecorder()
+	s.apiAdminSecuritySave(rec, httptest.NewRequest(http.MethodPost, "/api/admin/security",
+		strings.NewReader(`{"login":{"mode":"dual","sso_only":true}}`)), "boss")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("enabling sso_only with no local admin → %d, want 400", rec.Code)
+	}
+	if s.st.GetSetting(setSSOOnly, "") == "1" {
+		t.Error("the policy was stored despite being refused")
+	}
+
+	// With a local admin present it saves normally.
+	s.st.UpsertUser(User{Username: "root", PasswordHash: "$2a$04$abcdefghijklmnopqrstuv", Role: "admin"})
+	if !s.localAdminExists() {
+		t.Fatal("a local admin was not recognised")
+	}
+	rec = httptest.NewRecorder()
+	s.apiAdminSecuritySave(rec, httptest.NewRequest(http.MethodPost, "/api/admin/security",
+		strings.NewReader(`{"login":{"mode":"dual","sso_only":true}}`)), "boss")
+	if rec.Code != http.StatusOK {
+		t.Errorf("enabling sso_only with a local admin → %d, want 200", rec.Code)
+	}
+}

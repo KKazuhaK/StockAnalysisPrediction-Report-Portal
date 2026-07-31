@@ -257,6 +257,14 @@ func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, us
 	// boolean on this endpoint is cleared by omission, which is fine for a captcha toggle and not
 	// fine for the switch that decides whether passwords are accepted at all.
 	if in.Login != nil {
+		// Refuse rather than warn. Enabling this with no local admin is not a risky configuration,
+		// it is a locked door with the key inside: the exemption only covers an admin who can still
+		// present a password, and recovery would need shell access to the host.
+		if in.Login.SSOOnly && !s.localAdminExists() {
+			jsonError(w, http.StatusBadRequest, "refusing password login needs at least one enabled "+
+				"administrator with a local password to fall back on — create one first")
+			return
+		}
 		if !validLoginMode(in.Login.Mode) {
 			jsonError(w, http.StatusBadRequest, "login mode must be dual | sso_first | sso_redirect | local_only")
 			return

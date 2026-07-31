@@ -85,6 +85,24 @@ func (s *Server) localLoginRefused(u *User) bool {
 	return !can(u.EffRole(), PermManage)
 }
 
+// localAdminExists reports whether at least one enabled, unexpired admin can still sign in with a
+// password. That is a narrower question than "is there an admin": apiLogin nils out a federated
+// account before bcrypt, so a federated admin can never reach the sso_only exemption at all. An
+// organisation whose admins are all federated — a JIT provider with an admin-granting rule gets
+// there on its own — would have no browser path in the moment its IdP broke, and the exemption the
+// admin UI promises would be dead code.
+func (s *Server) localAdminExists() bool {
+	for _, u := range s.st.Users() {
+		if u.IsFederated() || !u.Active || u.PasswordHash == "" {
+			continue
+		}
+		if can(u.EffRole(), PermManage) && !s.accountExpired(&u) {
+			return true
+		}
+	}
+	return false
+}
+
 // loginOffers resolves what the login page may render, so the page never re-derives these rules.
 //
 // Under sso_redirect the local form is hidden but SSO stays exposed — that is the redirect target,
