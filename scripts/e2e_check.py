@@ -150,12 +150,12 @@ sc, home = admin.req("GET", "/api/home")
 check("A", "首页信息流", sc == 200 and (home.get("total", 0) >= 1 or home.get("groups")), f"{sc}")
 sc, stock = admin.req("GET", "/api/stock/600519")
 check("A", "个股页", sc == 200 and stock.get("symbol") == "600519", f"{sc}")
-sc, body = admin.req("GET", f"/api/repbody?id={RID_INTERNAL}")
-check("A", "报告正文", sc == 200 and "护城河" in json.dumps(body, ensure_ascii=False), f"{sc}")
 sc, syms = admin.req("GET", "/api/symbols?q=600519")
 check("A", "代码自动补全", sc == 200, f"{sc}")
-sc, _ = admin.req("GET", f"/report/{RID_INTERNAL}/md")
-check("A", "Markdown 导出", sc == 200, f"{sc}")
+sc, md = admin.req("GET", f"/report/{RID_INTERNAL}/md")
+# Asserts the CONTENT, not just the status: this replaced a separate /api/repbody check, and the
+# export is the path the product actually serves a body through.
+check("A", "报告正文导出", sc == 200 and "护城河" in md.get("_raw", ""), f"{sc}")
 sc, ver = admin.req("GET", "/api/version")
 check("A", "版本信息接口", sc in (200, 404), f"{sc}")
 
