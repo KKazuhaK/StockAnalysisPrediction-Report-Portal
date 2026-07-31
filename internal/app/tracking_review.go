@@ -237,3 +237,36 @@ func (s *Store) TrackingVocabulary(sc *ownerScope) (itypes []string, statuses []
 // The one status the portal itself assigns — SetTracking defaults to it when a workflow omits one.
 // Everything else in the vocabulary comes from the pipeline, so the portal must not enumerate it.
 const trackingPending = "pending"
+
+// UpdateTrackingStatusScoped records a human's verdict on one item, but only if the caller may read
+// the report it belongs to. The scope is part of the UPDATE rather than a check before it: a
+// separate read would leave a window, and a scoped statement that matches nothing is exactly the
+// "not found" the caller should be told.
+func (s *Store) UpdateTrackingStatusScoped(id int64, status, reviewPoint string, sc *ownerScope) (bool, error) {
+	sets, args := []string{}, []any{}
+	if status != "" {
+		sets = append(sets, "status=?")
+		args = append(args, status)
+	}
+	if reviewPoint != "" {
+		sets = append(sets, "review_point=?")
+		args = append(args, reviewPoint)
+	}
+	if len(sets) == 0 {
+		return false, nil
+	}
+	q := "UPDATE tracking_items SET " + strings.Join(sets, ",") + " WHERE id=?"
+	args = append(args, id)
+	// UPDATE ... JOIN is not portable, so the scope rides in as a subquery on the report id, which
+	// behaves the same on both drivers.
+	if frag, fargs := sc.where("r."); frag != "" {
+		q += " AND report_id IN (SELECT r.id FROM reports r WHERE " + frag + ")"
+		args = append(args, fargs...)
+	}
+	res, err := s.exec(q, args...)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
