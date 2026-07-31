@@ -38,6 +38,7 @@ func (s *Server) apiCleanupConfigGet(w http.ResponseWriter, r *http.Request, use
 		"audit_days":        c.AuditDays,
 		"batch_floor":       minBatchRetentionDays,
 		"reports_floor":     minReportsRetentionDays,
+		"audit_floor":       minAuditRetentionDays,
 		"last_run_period":   s.st.GetSetting("cleanup_last_run_period", ""),
 		"last_result":       last,
 	})

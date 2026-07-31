@@ -3,6 +3,7 @@ import { Button, Drawer, Menu, Spin, Tooltip, Typography, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   SafetyOutlined,
+  AuditOutlined,
   ApiOutlined,
   AppstoreAddOutlined,
   AppstoreOutlined,
@@ -142,7 +143,10 @@ export default function ManageLayout() {
     {
       type: 'group',
       label: t('nav.group.system'),
-      children: [{ key: 'storage', label: t('nav.storage'), icon: <DatabaseOutlined /> }],
+      children: [
+        { key: 'storage', label: t('nav.storage'), icon: <DatabaseOutlined /> },
+        { key: 'audit', label: t('nav.audit'), icon: <AuditOutlined /> },
+      ],
     },
   ]
 

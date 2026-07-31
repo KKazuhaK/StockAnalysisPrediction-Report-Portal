@@ -97,8 +97,10 @@ describe('StoragePage', () => {
     const user = userEvent.setup()
     renderPage()
     await screen.findAllByText('storage.cat.batch')
-    const switches = screen.getAllByRole('switch') // [batch, tokens, reports]
-    await user.click(switches[2])
+    // The reports switch is the LAST one: it lives in its own danger section below the others, so
+    // this stays correct when a new retention target is added above it (audit was).
+    const switches = screen.getAllByRole('switch')
+    await user.click(switches[switches.length - 1])
     await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/api/admin/cleanup/preview', { targets: ['reports'] }))
     expect((await screen.findAllByText('storage.confirmReportsTitle')).length).toBeGreaterThan(0)
   })

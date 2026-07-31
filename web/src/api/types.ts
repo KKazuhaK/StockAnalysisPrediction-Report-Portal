@@ -384,8 +384,11 @@ export interface CleanupConfig {
   tokens_grace_days: number
   reports_enabled: boolean
   reports_days: number
+  audit_enabled: boolean
+  audit_days: number
   batch_floor: number
   reports_floor: number
+  audit_floor: number
   last_run_period: string
   last_result: CleanupResult | null
 }
@@ -775,4 +778,26 @@ export interface TrackingResp {
    *  string, so the filters are built from the data rather than from a fixed list. */
   itypes: string[]
   statuses: string[]
+}
+
+// ---- Audit log ----
+
+export interface AuditEntry {
+  id: number
+  at: string
+  actor: string // '' for a machine caller holding a token
+  /** The OU the actor was in AT THE TIME — people move, so this is not a live lookup. */
+  actor_ou: number
+  action: string
+  target_type: string
+  target_id: string
+  detail: string // JSON
+}
+
+export interface AuditResp {
+  items: AuditEntry[]
+  total: number
+  /** The action values actually present, so rows written by an older build still filter. */
+  actions: string[]
+  ou_names: Record<string, string>
 }

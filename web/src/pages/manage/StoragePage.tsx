@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Divider, InputNumber, Select, Space, Switch, Table, Tag, TimePicker, Typography, theme } from 'antd'
-import { DatabaseOutlined, FileTextOutlined, KeyOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { AuditOutlined, DatabaseOutlined, FileTextOutlined, KeyOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
@@ -19,12 +19,14 @@ const CAT_COLOR: Record<string, { light: string; dark: string }> = {
   tokens: { light: '#1baf7a', dark: '#199e70' }, // aqua
   reports: { light: '#eda100', dark: '#c98500' }, // yellow
   chat: { light: '#008300', dark: '#008300' }, // green
+  audit: { light: '#8452d6', dark: '#9366e0' }, // violet
 }
 const CAT_ICON: Record<string, React.ReactNode> = {
   batch: <ThunderboltOutlined />,
   tokens: <KeyOutlined />,
   reports: <FileTextOutlined />,
   chat: <MessageOutlined />,
+  audit: <AuditOutlined />,
 }
 
 // fmtBytes renders an approximate byte count in human units.
@@ -63,6 +65,8 @@ export default function StoragePage() {
   const [time, setTime] = useState('03:00')
   const [weekday, setWeekday] = useState(1)
   const [monthday, setMonthday] = useState(1)
+  const [auditEnabled, setAuditEnabled] = useState(false)
+  const [auditDays, setAuditDays] = useState(365)
   const [batchEnabled, setBatchEnabled] = useState(false)
   const [batchDays, setBatchDays] = useState(90)
   const [tokensEnabled, setTokensEnabled] = useState(false)
@@ -71,6 +75,7 @@ export default function StoragePage() {
   const [reportsDays, setReportsDays] = useState(730)
   const [batchFloor, setBatchFloor] = useState(7)
   const [reportsFloor, setReportsFloor] = useState(365)
+  const [auditFloor, setAuditFloor] = useState(30)
   const [cfg, setCfg] = useState<CleanupConfig | null>(null) // last-saved view, drives the usage cards
   const [usage, setUsage] = useState<CleanupUsage | null>(null)
   const [history, setHistory] = useState<CleanupRun[]>([])
@@ -88,8 +93,11 @@ export default function StoragePage() {
       setTokensGraceDays(r.tokens_grace_days)
       setReportsEnabled(r.reports_enabled)
       setReportsDays(r.reports_days)
+      setAuditEnabled(r.audit_enabled)
+      setAuditDays(r.audit_days)
       setBatchFloor(r.batch_floor)
       setReportsFloor(r.reports_floor)
+      setAuditFloor(r.audit_floor)
     })
   const loadUsage = () => api.get<CleanupUsage>('/api/admin/cleanup/usage').then(setUsage)
   const loadHistory = () => api.get<{ runs: CleanupRun[] }>('/api/admin/cleanup/history').then((r) => setHistory(r.runs ?? []))
@@ -112,6 +120,8 @@ export default function StoragePage() {
       tokens_grace_days: tokensGraceDays,
       reports_enabled: reportsEnabled,
       reports_days: reportsDays,
+      audit_enabled: auditEnabled,
+      audit_days: auditDays,
     })
     message.success(t('common.saved'))
     loadConfig()
@@ -168,7 +178,13 @@ export default function StoragePage() {
 
   // retention/grace currently in effect for each category (last-saved, so labels match what a run does)
   const catDays = (key: string) =>
-    key === 'batch' ? cfg?.batch_days ?? batchDays : key === 'tokens' ? cfg?.tokens_grace_days ?? tokensGraceDays : cfg?.reports_days ?? reportsDays
+    key === 'batch'
+      ? cfg?.batch_days ?? batchDays
+      : key === 'tokens'
+        ? cfg?.tokens_grace_days ?? tokensGraceDays
+        : key === 'audit'
+          ? cfg?.audit_days ?? auditDays
+          : cfg?.reports_days ?? reportsDays
 
   const cats = usage?.categories ?? []
   const totalBytes = cats.reduce((s, c) => s + c.bytes, 0)
@@ -326,6 +342,17 @@ export default function StoragePage() {
               <InputNumber min={0} value={tokensGraceDays} onChange={(v) => setTokensGraceDays(v ?? 0)} addonAfter={t('batch.admin.days')} />
             </Space>,
             t('storage.tokensHint'),
+          )}
+
+          {row(
+            t('storage.auditTarget'),
+            <Space>
+              <Switch checked={auditEnabled} onChange={setAuditEnabled} />
+              <InputNumber min={auditFloor} value={auditDays} onChange={(v) => setAuditDays(v ?? auditFloor)} addonAfter={t('batch.admin.days')} />
+            </Space>,
+            // Off means never delete, which is a real choice for an audit trail in a way it is not
+            // for batch history — so the hint says so rather than only naming the floor.
+            t('storage.auditHint', { n: auditFloor }),
           )}
 
           <Divider style={{ margin: '4px 0' }} titlePlacement="left" plain>
