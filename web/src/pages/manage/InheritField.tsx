@@ -45,7 +45,11 @@ export default function InheritField({
         onChange={(e) => onInheritingChange(e.target.value === 'inherit')}
       >
         <Space direction="vertical" size={6}>
-          <Radio value="inherit">{t('ou.inheritedAs', { from, value: inherited })}</Radio>
+          <Radio value="inherit">
+            {/* Some sources have no value worth naming — the system default is just "the system
+                default" — and "inherit the system default — the system default" says it twice. */}
+            {inherited ? t('ou.inheritedAs', { from, value: inherited }) : t('ou.inheritedFrom', { from })}
+          </Radio>
           <Radio value="own">
             <Space size={8} align="center">
               {t('ou.override')}

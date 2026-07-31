@@ -23,7 +23,12 @@ import base64, hashlib, hmac, json, os, sqlite3, struct, subprocess, sys, time, 
 
 BASE = os.environ.get("E2E_BASE", "http://localhost:8791")
 DB = os.environ.get("E2E_DB", "/tmp/e2e/data/portal.db")
-BIN = "/Users/kazuha/Codes/StockAnalysisPrediction-Report-Portal/local-build/report-portal"
+# Resolved from this script's own location, so the harness runs on any checkout rather than only
+# on the machine it was written on. E2E_BIN overrides it.
+BIN = os.environ.get(
+    "E2E_BIN",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local-build", "report-portal"),
+)
 # Derived from the database path, so pointing E2E_DB at a different portal restarts THAT one.
 # Hardcoding it silently restarted the wrong server and made the restart checks meaningless.
 CFG = os.path.dirname(os.path.dirname(DB))

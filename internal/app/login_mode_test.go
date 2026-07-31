@@ -245,3 +245,31 @@ func TestSSOOnlyNeedsALocalAdminToFallBackOn(t *testing.T) {
 		t.Errorf("enabling sso_only with a local admin → %d, want 200", rec.Code)
 	}
 }
+
+// TestSSOOnlyAndSelfRegistrationAreRefusedTogether closes a configuration trap. Neither setting is
+// wrong on its own, but together they mint accounts nobody can use: registration creates a local
+// password account, and sso_only then refuses exactly that at the login form. The registrant gets
+// a confirmation email, follows it, and is turned away by a portal that told them to sign up.
+func TestSSOOnlyAndSelfRegistrationAreRefusedTogether(t *testing.T) {
+	s := loginModeServer(t)
+	withProvider(s)
+	s.st.UpsertUser(User{Username: "root", PasswordHash: "$2a$04$abcdefghijklmnopqrstuv", Role: "admin"})
+	s.st.SetSetting(setRegEnabled, "1")
+
+	post := func(body string) int {
+		rec := httptest.NewRecorder()
+		s.apiAdminSecuritySave(rec, httptest.NewRequest(http.MethodPost, "/api/admin/security",
+			strings.NewReader(body)), "boss")
+		return rec.Code
+	}
+	if code := post(`{"login":{"mode":"dual","sso_only":true},"registration":{"enabled":true}}`); code != http.StatusBadRequest {
+		t.Errorf("sso_only alongside open registration → %d, want 400", code)
+	}
+	if s.st.GetSetting(setSSOOnly, "") == "1" {
+		t.Error("the pair was stored despite being refused")
+	}
+	// Turning registration off in the same request is a coherent state and must be accepted.
+	if code := post(`{"login":{"mode":"dual","sso_only":true},"registration":{"enabled":false}}`); code != http.StatusOK {
+		t.Errorf("sso_only with registration closed → %d, want 200", code)
+	}
+}
