@@ -25,6 +25,12 @@ func TestPasswordChangeInvalidatesExistingSession(t *testing.T) {
 	if got := s.currentActiveUser(requestWith(oldCookie)); got != "alice" {
 		t.Fatalf("fresh session user = %q", got)
 	}
+	// A legacy cookie carries no revision, so it reads as revision 0 — which only ever matches a row
+	// written before accounts started at a per-instance epoch. Model that row, because the pairing
+	// this asserts (pre-upgrade cookie + pre-upgrade account) is the only one that can exist: an
+	// account created after the change cannot have a cookie issued before it.
+	st.exec("UPDATE users SET session_rev=0 WHERE username=?", "alice")
+	oldCookie = s.sign("alice")
 	legacyMsg := "alice|" + strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
 	legacy := encodeSessionMessage(legacyMsg) + "." + s.hmac(legacyMsg)
 	if got := s.currentActiveUser(requestWith(legacy)); got != "alice" {
