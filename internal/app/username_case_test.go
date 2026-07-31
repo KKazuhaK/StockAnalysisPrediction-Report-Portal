@@ -106,3 +106,28 @@ func TestPreexistingCaseVariantsAreReported(t *testing.T) {
 		t.Errorf("a portal with no collisions reported %v", clean)
 	}
 }
+
+// TestRegistrationRefusesACaseVariant covers the one creation path the fold missed. Self-service
+// registration folds the address it stores but checked for a clash with an EXACT-match GetUser, so
+// a database holding an admin-created `Alice@corp.example` (with no profile email set, which the
+// admin form leaves optional) would happily accept a stranger registering `alice@corp.example` —
+// two accounts on the single principal `u:alice@corp.example`.
+func TestRegistrationRefusesACaseVariant(t *testing.T) {
+	s := regServer(t)
+	s.st.SetSetting(setRegEnabled, "1")
+	s.st.SetSetting(setRegVerify, "0")
+	// Created the way an admin would before the fold: mixed case, no profile email.
+	s.st.exec("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)",
+		"Alice@corp.example", "h", "user")
+
+	code, _ := postPublic(t, s.apiRegister, "/api/register",
+		`{"email":"alice@corp.example","password":"a-long-enough-password"}`)
+	if code == http.StatusOK {
+		t.Error("registration created a case variant of an existing account")
+	}
+	var n int
+	s.st.queryRow("SELECT COUNT(*) FROM users WHERE LOWER(username)=?", "alice@corp.example").Scan(&n)
+	if n != 1 {
+		t.Errorf("%d accounts now share the principal %q", n, userPrincipal("alice@corp.example"))
+	}
+}

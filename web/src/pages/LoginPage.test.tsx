@@ -201,6 +201,38 @@ describe('LoginPage login modes', () => {
   // The escape hatch. It only declines the auto-redirect — whether a password is ACCEPTED is the
   // server's call, and admins stay exempt there — but without it a misconfigured IdP would make the
   // page itself unreachable, before anyone can prove who they are.
+  // The escape has to actually escape. Skipping the redirect onto a page whose only control is the
+  // provider that just failed is a dead end, not a break-glass path.
+  it('sso_redirect with ?local=1 reveals the password form', async () => {
+    navMock.hardNavigate.mockReset()
+    window.history.replaceState({}, '', '/login?local=1')
+    try {
+      mockMode('sso_redirect', false, true)
+      renderLogin()
+      expect(await screen.findByText('login.submit')).toBeTruthy()
+      expect(navMock.hardNavigate).not.toHaveBeenCalled()
+    } finally {
+      window.history.replaceState({}, '', '/')
+    }
+  })
+
+  // A failed handshake lands back here. If that did not count as a bypass the page would redirect
+  // straight back into the IdP that just refused it — a loop no browser breaks, because it is
+  // JS-driven rather than a server redirect chain.
+  it('sso_redirect after a failed handshake stops, explains, and offers the password form', async () => {
+    navMock.hardNavigate.mockReset()
+    window.history.replaceState({}, '', '/login?sso_error=not_provisioned')
+    try {
+      mockMode('sso_redirect', false, true)
+      renderLogin()
+      expect(await screen.findByText(/login\.ssoFailed/)).toBeTruthy()
+      expect(screen.getByText('login.submit')).toBeTruthy()
+      expect(navMock.hardNavigate).not.toHaveBeenCalled()
+    } finally {
+      window.history.replaceState({}, '', '/')
+    }
+  })
+
   it('sso_redirect with ?local=1 stays on the page', async () => {
     navMock.hardNavigate.mockReset()
     // history.replaceState changes location.search without navigating, so no jsdom global is

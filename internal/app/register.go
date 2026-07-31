@@ -136,7 +136,10 @@ func (s *Server) apiRegister(w http.ResponseWriter, r *http.Request) {
 	// Taken-address IS revealed, unlike password recovery. It is the expected signup experience —
 	// the alternative is a form that silently does nothing for someone who simply already has an
 	// account — and an attacker learns the same fact by trying to register anyway.
-	if s.st.GetUser(email) != nil || s.st.UserByEmail(email) != nil {
+	// UsernameTaken, not GetUser: the address is folded above, but a database written before the
+	// fold may hold `Alice@corp.example`, and an exact-match guard would create a second account on
+	// the one principal `u:alice@corp.example`. UserByEmail still covers the different-address case.
+	if s.st.UsernameTaken(email) || s.st.UserByEmail(email) != nil {
 		jsonError(w, http.StatusConflict, "that email is already registered")
 		return
 	}

@@ -60,8 +60,18 @@ func (s *Server) loginMode() string {
 }
 
 // ssoOnlyActive reports whether local password login is refused for ordinary accounts.
+//
+// It asks whether the login page actually OFFERS SSO, not merely whether a provider is enabled.
+// Those differ under local_only, and the difference was a lockout: the page hid every provider
+// button while the endpoint refused every password, so a non-admin got a form that always returned
+// 403 and no alternative anywhere in the product. Refusing passwords only means something when
+// there is a visible way in that is not a password.
 func (s *Server) ssoOnlyActive() bool {
-	return s.st.GetSetting(setSSOOnly, "") == "1" && s.ssoAvailable()
+	if s.st.GetSetting(setSSOOnly, "") != "1" {
+		return false
+	}
+	_, _, sso := s.loginOffers()
+	return sso
 }
 
 // localLoginRefused decides one account's fate under the hard policy. Admins are always allowed

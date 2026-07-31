@@ -1,8 +1,17 @@
 import { afterEach } from 'vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 
 // Unmount rendered React trees after each test so queries don't see stale DOM.
 afterEach(cleanup)
+
+// waitFor / findBy* default to a 1s budget, which is not a statement about the code — it is a bet
+// that a machine running the whole suite in parallel will schedule this one microtask promptly. It
+// lost that bet roughly one run in eight: a provider whose fetch had not resolved yet still showed
+// its pre-fetch fallback, and the assertion reported the fallback as if it were the final value.
+// The failure roamed between files, because whichever one lost the CPU that run was the one to
+// fail. Raising the ceiling costs a passing test nothing (waitFor returns as soon as the assertion
+// holds) and only lengthens a genuine failure.
+configure({ asyncUtilTimeout: 5000 })
 
 // jsdom in this runtime ships without Web Storage; install a minimal in-memory
 // localStorage so modules that persist prefs (reader / prefs) work under test.
