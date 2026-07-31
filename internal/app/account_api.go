@@ -74,7 +74,12 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request, user 
 	}
 	// Everyone else is out, including the caller — so re-issue the caller's own session at the new
 	// revision, or they would be signed out of the page they are standing on.
-	if fresh := s.st.GetUser(user); fresh != nil {
+	//
+	// Unless the portal has stopped accepting their password. sso_only is evaluated at the login
+	// form, and this is the one other place a full-length session is minted: without the check, a
+	// user who was signed in when the policy was switched on could renew here indefinitely and
+	// never touch /api/login again. Admins are exempt, exactly as they are at login.
+	if fresh := s.st.GetUser(user); fresh != nil && !s.localLoginRefused(fresh) {
 		s.setSessionCookie(w, r, *fresh)
 	}
 	writeJSON(w, okJSON)

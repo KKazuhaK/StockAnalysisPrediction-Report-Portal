@@ -46,6 +46,18 @@ func (s *Store) requireSchemaBaseline() (fresh bool, err error) {
 	if version := s.schemaVersion(); version < schemaBaseline {
 		return false, fmt.Errorf("unsupported schema generation %d: first run v0.2.26 successfully, then upgrade to v0.3.0", version)
 	}
+	// v0.4.1 is the only released line that created these, and its adoption steps were removed in
+	// v0.4.3. Booting anyway is the dangerous outcome, not a merciful one: the keyring is now read
+	// from `meta`, so the portal would mint a SECOND data key and every secret sealed under the
+	// first — SSO client secrets, the SAML SP key — becomes undecryptable at runtime with no error;
+	// and the group rules would read as empty, silently re-placing every federated user into their
+	// provider's default OU at the next login. Refusing turns silent loss into a message.
+	for _, table := range []string{"sso_keyring", "sso_group_rules", "sso_auth_requests"} {
+		if s.tableExists(table) {
+			return false, fmt.Errorf("this database was written by v0.4.1, whose upgrade path is no "+
+				"longer supported (found table %q): recreate it, or run v0.4.2 once to migrate it first", table)
+		}
+	}
 	return false, nil
 }
 

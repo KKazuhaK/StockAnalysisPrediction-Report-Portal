@@ -131,3 +131,29 @@ func TestRegistrationRefusesACaseVariant(t *testing.T) {
 		t.Errorf("%d accounts now share the principal %q", n, userPrincipal("alice@corp.example"))
 	}
 }
+
+// TestCaseGuardFoldsTheWayGoDoes covers the driver split. SQLite's LOWER() is ASCII-only, so a
+// guard written in SQL left 'ÉLODIE' unfolded and happily created 'élodie' beside it — two accounts
+// on the one principal u:élodie. userPrincipal folds with Go, so the guard has to as well.
+func TestCaseGuardFoldsTheWayGoDoes(t *testing.T) {
+	st := newTestStore(t)
+	st.exec("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", "ÉLODIE", "h", "user")
+
+	if !st.UsernameTaken("élodie") {
+		t.Error("a non-ASCII case variant slipped past the guard; both accounts would share " +
+			userPrincipal("élodie"))
+	}
+	if !st.UsernameTaken("ÉLODIE") || !st.UsernameTaken("  Élodie  ") {
+		t.Error("the guard missed a variant it must catch")
+	}
+	if st.UsernameTaken("bob") {
+		t.Error("an uncontested name reported as taken")
+	}
+
+	// And the startup warning must be able to see such a pair.
+	st.exec("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", "élodie", "h", "user")
+	got := st.CaseVariantUsernames()
+	if len(got) != 1 || got[0] != "élodie" {
+		t.Errorf("CaseVariantUsernames() = %v, want [élodie]", got)
+	}
+}
