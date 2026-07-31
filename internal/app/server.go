@@ -217,6 +217,10 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/home", s.requireUserJSON(s.apiHome))
 	mux.HandleFunc("GET /api/stock/{symbol}", s.requireUserJSON(s.apiStock))
 	mux.HandleFunc("GET /api/run/{key}", s.requireUserJSON(s.apiRun))
+	// The review queue (tracking items). Session-scoped, unlike /api/v1/tracking, which runs on an
+	// ingest token that already has access to everything.
+	mux.HandleFunc("GET /api/tracking", s.requireUserJSON(s.apiTracking))
+	mux.HandleFunc("PATCH /api/tracking/{id}", s.requireUserJSON(s.apiTrackingUpdate))
 	mux.HandleFunc("GET /api/repbody", s.requireUserJSON(s.apiRepBody))
 	mux.HandleFunc("POST /api/mermaid-cache", s.requireUserJSON(s.apiMermaidCache))
 
