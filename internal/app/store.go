@@ -1401,6 +1401,28 @@ type TrackingItem struct {
 
 // SetTracking overwrites a report's tracking items (on re-run, clears then writes to stay consistent with the latest body).
 func (s *Store) SetTracking(reportID int64, symbol string, items []TrackingItem) error {
+	// Carry a human's verdict across the rewrite.
+	//
+	// Clearing and rewriting is right for the CONTENT — the newest body is the truth about which
+	// assumptions a report makes — but status and review_point are the one part a PERSON puts
+	// there, and a nightly re-run would otherwise reset everything anyone had reviewed back to
+	// pending, which makes a review queue worthless.
+	//
+	// Keyed on the exact text, so a reworded assumption is a new one and starts pending. Silently
+	// carrying "confirmed" onto a claim that has changed would be worse than losing the review.
+	type verdict struct{ status, reviewPoint string }
+	prior := map[string]verdict{}
+	if rows, err := s.query(
+		"SELECT itype,content,COALESCE(status,''),COALESCE(review_point,'') FROM tracking_items WHERE report_id=?",
+		reportID); err == nil {
+		for rows.Next() {
+			var itype, content, status, rp string
+			if rows.Scan(&itype, &content, &status, &rp) == nil && status != "" && status != trackingPending {
+				prior[itype+"\x00"+content] = verdict{status, rp}
+			}
+		}
+		rows.Close()
+	}
 	if _, err := s.exec("DELETE FROM tracking_items WHERE report_id=?", reportID); err != nil {
 		return err
 	}
@@ -1408,7 +1430,14 @@ func (s *Store) SetTracking(reportID int64, symbol string, items []TrackingItem)
 	for _, it := range items {
 		status := it.Status
 		if status == "" {
-			status = "pending"
+			status = trackingPending
+		}
+		if v, ok := prior[it.IType+"\x00"+it.Content]; ok {
+			// The workflow re-sends its own default; the human's answer outranks it.
+			status = v.status
+			if v.reviewPoint != "" {
+				it.ReviewPoint = v.reviewPoint
+			}
 		}
 		if _, err := s.exec(`INSERT INTO tracking_items(report_id,symbol,itype,content,status,review_point,created_at)
 			VALUES(?,?,?,?,?,?,?)`, reportID, symbol, it.IType, it.Content, status, it.ReviewPoint, now); err != nil {
