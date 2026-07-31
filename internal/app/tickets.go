@@ -48,6 +48,8 @@ func (s *Store) UserUrgentUnlimited(username string) bool {
 // the per-group max-queued cap).
 func (s *Store) ActiveJobCount(username string) int {
 	var n sql.NullInt64
+	// No account-instance floor here: DeleteUser cancels whatever was still live, so a deleted
+	// namesake leaves nothing in these three statuses for the next holder of the name to inherit.
 	s.queryRow("SELECT COUNT(*) FROM batch_jobs WHERE created_by=? AND status IN ('queued','running','cancelling')", username).Scan(&n)
 	return int(n.Int64)
 }

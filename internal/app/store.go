@@ -787,6 +787,14 @@ func (s *Store) SetUserRole(name, role string) error {
 // what must outlive the person, and it carries no grant, so nothing is inherited through it.
 func (s *Store) DeleteUser(name string) error {
 	principal := userPrincipal(name)
+	// batch_jobs stays — it is the run history an operator audits — but it must stop being LIVE
+	// state. A job left queued is still dispatched to Dify, and billed, for an account that no
+	// longer exists; and the two counters below read this table, so an unfinished job would also
+	// count against whoever takes the username next.
+	if _, err := s.exec(`UPDATE batch_jobs SET status='cancelled', finished_at=?
+		WHERE created_by=? AND status IN ('queued','running','cancelling')`, nowStr(), name); err != nil {
+		return err
+	}
 	// recurring_runs is a child of recurring_tasks, so it has to go first and by subquery —
 	// sweeping the parent by name and leaving the audit rows would recreate, one level down,
 	// exactly the orphan this function exists to prevent.
