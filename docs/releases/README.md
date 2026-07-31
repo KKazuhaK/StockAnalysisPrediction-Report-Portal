@@ -10,6 +10,8 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.7](v0.4.7.md) | 2026-07-31 | The public URL moves to General |
+| [v0.4.6](v0.4.6.md) | 2026-07-31 | The leftovers, closed |
 | [v0.4.5](v0.4.5.md) | 2026-07-31 | Organizational units you can actually read |
 | [v0.4.4](v0.4.4.md) | 2026-07-31 | Login modes, an OU tree, and the audit that followed |
 | [v0.4.3](v0.4.3.md) | 2026-07-31 | The audit release |
