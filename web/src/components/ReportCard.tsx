@@ -1,6 +1,6 @@
 import { Card, Space, Tag, Typography } from 'antd'
 import { CalendarOutlined, FileTextOutlined } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { Group } from '../api/types'
 import { formatReportDateTime, isInstant } from '../lib/datetime'

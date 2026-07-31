@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { AutoComplete, Grid, Input, Space, Tag, Typography } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, qs } from '../api/client'
 import type { SymbolInfo } from '../api/types'

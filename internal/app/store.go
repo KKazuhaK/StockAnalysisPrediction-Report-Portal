@@ -1110,6 +1110,17 @@ func (s *Store) SearchNew(f Filters, sc *ownerScope) ([]Rep, error) {
 // report plus every member on the latest matching date for each stock. It also
 // returns the count before that collapse. Doing the history collapse in SQL avoids
 // transferring and retaining every historical report merely to discard it in Go.
+// SearchNewLatest returns the newest run per symbol for the home feed.
+//
+// It returns EVERY match, with no LIMIT: the caller groups the rows in Go (buildGroups →
+// collapseLatestBySymbol) and only then pages. So the cost is linear in the total report count
+// rather than in the page size, and the window function makes it a full scan by construction.
+//
+// Measured on SQLite, 4000 symbols, warm: 8.5k reports → 28ms, 50k → 155ms, 200k → 622ms. Left
+// alone deliberately. Pushing latest-per-symbol and pagination into SQL means restructuring the
+// grouping pipeline, and at the size this portal actually runs at the query is 28ms — the rewrite
+// would trade a real risk against a cost nobody can perceive. Worth revisiting nearer 50k, which is
+// where it starts to be felt.
 func (s *Store) SearchNewLatest(f Filters, sc *ownerScope) ([]Rep, int, error) {
 	where, args := s.newReportFilter(f, sc)
 	q := `WITH filtered AS (

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { Alert, Button, Space, Modal, Typography } from 'antd'
 import type { AlertProps } from 'antd'
 import { useTranslation } from 'react-i18next'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import { useSite } from '../site'
 import type { AnnouncementLevel } from '../api/types'
 
