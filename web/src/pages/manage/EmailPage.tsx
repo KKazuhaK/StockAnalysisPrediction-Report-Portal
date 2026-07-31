@@ -12,7 +12,6 @@ interface EmailConfig {
   from: string
   security: string
   has_pass: boolean
-  public_url: string
 }
 
 // Admin SMTP config for password reset + run-done notifications. Feature settings
@@ -29,7 +28,6 @@ export default function EmailPage() {
   const [hasPass, setHasPass] = useState(false)
   const [from, setFrom] = useState('')
   const [security, setSecurity] = useState('starttls')
-  const [publicUrl, setPublicUrl] = useState('')
   const [testTo, setTestTo] = useState('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -42,7 +40,6 @@ export default function EmailPage() {
       setUser(r.user)
       setFrom(r.from)
       setSecurity(r.security || 'starttls')
-      setPublicUrl(r.public_url || '')
       setHasPass(r.has_pass)
       setPass('')
     })
@@ -53,7 +50,7 @@ export default function EmailPage() {
   const save = async () => {
     setSaving(true)
     try {
-      await api.post('/api/admin/email', { enabled, host, port, user, pass, from, security, public_url: publicUrl })
+      await api.post('/api/admin/email', { enabled, host, port, user, pass, from, security })
       message.success(t('common.saved'))
       load()
     } catch (e) {
@@ -113,11 +110,6 @@ export default function EmailPage() {
           />,
         )}
         {row(t('email.from'), <Input style={{ width: 260 }} value={from} onChange={(e) => setFrom(e.target.value)} placeholder="noreply@example.com" />)}
-        {row(t('email.publicUrl'), <Input style={{ width: 320 }} value={publicUrl} onChange={(e) => setPublicUrl(e.target.value)} placeholder="https://portal.example.com" />)}
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {t('email.publicUrlHint')}
-        </Typography.Text>
-
         <Divider style={{ margin: '4px 0' }} titlePlacement="left" plain>
           {t('email.test')}
         </Divider>

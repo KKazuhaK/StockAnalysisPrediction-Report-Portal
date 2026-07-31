@@ -508,6 +508,9 @@ export interface SettingsResp {
   oldUser: string
   hasPass: boolean
   timezone: string // '' = follow system zone
+  // The portal's canonical origin, used for reset links, SSO redirect/ACS URLs, the WebAuthn
+  // relying-party id, registration links and the captcha host check.
+  publicUrl: string
   siteTitle: string
   siteLogoUrl: string
   homeMoreStyle: HomeMoreStyle

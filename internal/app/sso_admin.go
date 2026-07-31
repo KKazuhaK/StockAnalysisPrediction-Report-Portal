@@ -169,7 +169,7 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 func (s *Server) validateProviderForEnable(p *SSOProvider) error {
 	base := s.publicBaseURL()
 	if base == "" {
-		return ssoError("set the Public URL (Manage → Email) before enabling SSO — the redirect and ACS URLs derive from it")
+		return ssoError("set the Public URL (Manage → General) before enabling SSO — the redirect and ACS URLs derive from it")
 	}
 	if p.Provisioning == "jit" {
 		if p.DefaultGroup == 0 {
