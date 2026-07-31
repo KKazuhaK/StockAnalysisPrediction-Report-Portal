@@ -224,7 +224,6 @@ func RunServer(cfgPath string) {
 	// Compare any two reports the caller may read (both ids are scoped).
 	mux.HandleFunc("GET /api/reports/diff", s.requireUserJSON(s.apiReportDiff))
 	mux.HandleFunc("GET /api/reports/comparable", s.requireUserJSON(s.apiComparableReports))
-	mux.HandleFunc("GET /api/repbody", s.requireUserJSON(s.apiRepBody))
 	mux.HandleFunc("POST /api/mermaid-cache", s.requireUserJSON(s.apiMermaidCache))
 
 	// ---- Admin API: session + admin ----

@@ -468,17 +468,6 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 	})
 }
 
-// apiRepBody fetches a single report body by id (frontend lazy-loads on tab switch, avoiding a full-page refetch).
-func (s *Server) apiRepBody(w http.ResponseWriter, r *http.Request, user string) {
-	id, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
-	rep := s.loadRep(user, id)
-	if rep == nil {
-		jsonErrorCode(w, http.StatusNotFound, "report_not_found", "报告不存在")
-		return
-	}
-	writeJSON(w, repJSON(rep, s.names.Get))
-}
-
 func repJSON(rep *Rep, nameOf func(string) string) map[string]any {
 	if rep == nil {
 		return nil
