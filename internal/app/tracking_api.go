@@ -85,3 +85,41 @@ func (s *Server) apiTrackingUpdate(w http.ResponseWriter, r *http.Request, user 
 	}
 	writeJSON(w, okJSON)
 }
+
+// GET /api/reports/diff?a=<id>&b=<id> — compare any two reports the caller may read.
+//
+// An arbitrary pair, not "this one and its predecessor". The useful comparisons are not all
+// chronological: an internal edition against the external one, this quarter against the same
+// quarter last year. The UI defaults to the previous report of the same kind; the capability
+// underneath does not need to care.
+//
+// Both ids are a READ, so both are scoped, and an unreadable report answers exactly as a missing
+// one does. Distinguishing them would turn this into a way to ask which report ids exist.
+func (s *Server) apiReportDiff(w http.ResponseWriter, r *http.Request, user string) {
+	q := r.URL.Query()
+	aID, err1 := strconv.ParseInt(q.Get("a"), 10, 64)
+	bID, err2 := strconv.ParseInt(q.Get("b"), 10, 64)
+	if err1 != nil || err2 != nil {
+		jsonError(w, http.StatusBadRequest, "a and b must be report ids")
+		return
+	}
+	sc := s.viewerScope(user)
+	a, _ := s.st.GetNew(aID, sc)
+	b, _ := s.st.GetNew(bID, sc)
+	if a == nil || b == nil {
+		jsonErrorCode(w, http.StatusNotFound, "report_not_found", "报告不存在")
+		return
+	}
+	sections := diffMarkdown(a.MD, b.MD)
+	changed := 0
+	for _, sec := range sections {
+		if sec.Status != "same" {
+			changed++
+		}
+	}
+	side := func(rep *Rep) map[string]any {
+		return map[string]any{"id": rep.ID, "title": displayTitle(rep.Title, rep.Symbol, rep.Name), "date": rep.Date,
+			"symbol": rep.Symbol, "name": rep.Name, "rtype": rep.RType, "version": rep.Version}
+	}
+	writeJSON(w, map[string]any{"a": side(a), "b": side(b), "sections": sections, "changed": changed})
+}
