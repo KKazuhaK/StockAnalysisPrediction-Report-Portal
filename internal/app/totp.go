@@ -147,14 +147,14 @@ func (s *Server) apiLoginTOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	u := s.st.GetUser(req.Username)
 	if u == nil || !u.Active || s.accountExpired(u) {
-		jsonError(w, http.StatusUnauthorized, "用户名或密码错误")
+		jsonErrorCode(w, http.StatusUnauthorized, "bad_credentials", "用户名或密码错误")
 		return
 	}
 	// The throttle covers this leg too, keyed by account, so codes cannot be brute-forced by
 	// replaying the first leg.
 	key, now := "2fa:"+strings.ToLower(u.Username), time.Now()
 	if s.loginThr != nil && s.loginThr.blocked(key, now) {
-		jsonError(w, http.StatusTooManyRequests, "尝试过于频繁，请稍后再试")
+		jsonErrorCode(w, http.StatusTooManyRequests, "rate_limited", "尝试过于频繁，请稍后再试")
 		return
 	}
 	secret, err := s.userTOTPSecret(u.Username)
@@ -162,7 +162,7 @@ func (s *Server) apiLoginTOTP(w http.ResponseWriter, r *http.Request) {
 		if s.loginThr != nil {
 			s.loginThr.record(key, now)
 		}
-		jsonError(w, http.StatusUnauthorized, "验证码不正确")
+		jsonErrorCode(w, http.StatusUnauthorized, "bad_totp_code", "验证码不正确")
 		return
 	}
 	if s.loginThr != nil {

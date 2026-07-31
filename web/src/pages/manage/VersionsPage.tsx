@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Empty, Input, Popconfirm, Select, Space, Tag, Typography } from 'antd'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api, ApiError } from '../../api/client'
+import { api, errText } from '../../api/client'
 
 // Report versions (ADR 0024). A report can be published in several written forms; each is produced
 // by its own run. This page registers the forms and decides, per form, who may read it and whose
@@ -48,7 +48,7 @@ export default function VersionsPage() {
         setGroups(r.groups ?? [])
         setUsers(r.users ?? [])
       })
-      .catch((e) => message.error(e instanceof ApiError ? e.message : String(e)))
+      .catch((e) => message.error(errText(e, t)))
       .finally(() => setLoading(false))
   }, [])
   useEffect(load, [load])
@@ -65,7 +65,7 @@ export default function VersionsPage() {
       message.success(t('versions.saved'))
       load()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : String(e))
+      message.error(errText(e, t))
     }
   }
 
@@ -123,7 +123,7 @@ export default function VersionsPage() {
                     await api.del(`/api/admin/versions/${encodeURIComponent(v.name)}`)
                     load()
                   } catch (e) {
-                    message.error(e instanceof ApiError ? e.message : String(e))
+                    message.error(errText(e, t))
                   }
                 }}
               >

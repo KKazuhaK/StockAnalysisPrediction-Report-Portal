@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, Card, Result, Spin } from 'antd'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { api, ApiError } from '../api/client'
+import { api, errText } from '../api/client'
 
 // The landing page for the emailed confirmation link. It posts the token once and reports the
 // outcome; the link is single-use on the server, so a second visit legitimately fails and says so
@@ -26,7 +26,7 @@ export default function VerifyEmailPage() {
       .post('/api/register/verify', { token })
       .then(() => setState('ok'))
       .catch((e) => {
-        setErr(e instanceof ApiError ? e.message : t('verify.failed'))
+        setErr(errText(e, t, 'verify.failed'))
         setState('bad')
       })
   }, [sp, t])

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { App, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import StickyActionBar from '../../components/StickyActionBar'
 
 interface EmailConfig {
@@ -57,7 +57,7 @@ export default function EmailPage() {
       message.success(t('common.saved'))
       load()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     } finally {
       setSaving(false)
     }
@@ -68,7 +68,7 @@ export default function EmailPage() {
       await api.post('/api/admin/email/test', { to: testTo })
       message.success(t('email.testSent'))
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     } finally {
       setTesting(false)
     }

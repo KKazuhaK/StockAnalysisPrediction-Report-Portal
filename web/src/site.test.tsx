@@ -76,8 +76,13 @@ describe('SiteProvider', () => {
       announcementTitle: '维护通知',
       announcementContent: '今晚维护',
     })
-    expect(document.title).toBe('智研平台')
-    expect(document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href).toContain('/brand/logo.png')
+    // document.title and the favicon are written by a PASSIVE effect, one commit behind the DOM the
+    // waitFor above was watching. Asserting them synchronously read the previous commit's values
+    // (title still 'brand') whenever the effect had not flushed yet — about one run in twenty.
+    await waitFor(() => {
+      expect(document.title).toBe('智研平台')
+      expect(document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href).toContain('/brand/logo.png')
+    })
   })
 
   it('refreshes settings on demand and falls back to the localized brand title when unset', async () => {

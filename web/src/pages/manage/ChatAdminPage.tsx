@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { App, Button, Card, Drawer, Empty, Grid, Input, InputNumber, Popconfirm, Space, Spin, Switch, Table, Tag, Tooltip, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import { formatReportTime } from '../../lib/datetime'
 import { startVisiblePoll } from '../../lib/visiblePoll'
 import Markdown from '../../components/Markdown'
@@ -89,7 +89,7 @@ export default function ChatAdminPage() {
     api
       .get<{ turns: ChatTurn[] }>(`/api/admin/chat/conversations/${c.id}/messages`)
       .then((r) => setViewTurns(r.turns || []))
-      .catch((e) => message.error((e as Error).message || 'failed'))
+      .catch((e) => message.error(errText(e, t)))
       .finally(() => setViewLoading(false))
   }
   const filteredConvs = useMemo(() => {
@@ -105,7 +105,7 @@ export default function ChatAdminPage() {
       message.success(t('chatAdmin.stopped'))
       load()
     } catch (e) {
-      message.error((e as Error).message || 'failed')
+      message.error(errText(e, t))
     }
   }
 

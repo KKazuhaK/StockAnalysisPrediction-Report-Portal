@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { App, Button, Card, Checkbox, Input, InputNumber, Select, Space, Tag, Typography, Upload } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { PlayCircleOutlined, UploadOutlined } from '@ant-design/icons'
-import { api } from '../api/client'
+import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
 import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
@@ -110,7 +110,7 @@ export default function BatchConsole() {
       setNotify(false)
       loadTickets() // an urgent run may have spent a ticket; the embedded queue self-refreshes
     } catch (e) {
-      message.error((e as Error).message || t('batch.msg.startFailed'))
+      message.error(errText(e, t) || t('batch.msg.startFailed'))
     } finally {
       setSubmitting(false)
     }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
-import { api, ApiError } from '../../api/client'
+import { api, errText } from '../../api/client'
 
 // Login protection and self-service registration.
 //
@@ -69,7 +69,7 @@ export default function SecurityPage() {
         setEmailOK(r.email_configured)
         setSecret(null)
       })
-      .catch((e) => message.error(e instanceof ApiError ? e.message : String(e)))
+      .catch((e) => message.error(errText(e, t)))
   }, [])
   useEffect(load, [load])
 
@@ -96,7 +96,7 @@ export default function SecurityPage() {
       message.success(t('common.saved'))
       load()
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : String(e))
+      message.error(errText(e, t))
     } finally {
       setBusy(false)
     }

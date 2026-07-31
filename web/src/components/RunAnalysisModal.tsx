@@ -3,7 +3,7 @@ import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, T
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
 import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
@@ -158,7 +158,7 @@ export default function RunAnalysisModal({
       reset()
       onClose()
     } catch (e) {
-      message.error((e as Error).message || t('run.startFailed'))
+      message.error(errText(e, t) || t('run.startFailed'))
     } finally {
       setSubmitting(false)
     }

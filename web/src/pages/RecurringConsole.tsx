@@ -4,7 +4,7 @@ import { ClockCircleOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, Hi
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import { visibleOn } from '../lib/batchUi'
-import { api } from '../api/client'
+import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, RecurringDetail, RecurringRun, RecurringTask, RecurringTasksResp } from '../api/types'
 import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
@@ -166,7 +166,7 @@ export default function RecurringConsole() {
       setModalOpen(false)
       loadTasks()
     } catch (e) {
-      message.error((e as Error).message || t('recurring.errSave'))
+      message.error(errText(e, t) || t('recurring.errSave'))
     } finally {
       setSaving(false)
     }
@@ -177,7 +177,7 @@ export default function RecurringConsole() {
       await api.post(`/api/admin/batch/recurring/${task.id}/enable`, { enabled })
       loadTasks()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     }
   }
 

@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { BatchJob, BatchQueueSummary, BatchTarget } from '../api/types'
-import { InputsPreview, isTerminal, priorityTag, statusTag } from '../lib/batchUi'
+import { InputsPreview, isTerminal, statusTag } from '../lib/batchUi'
 import { startVisiblePoll } from '../lib/visiblePoll'
 
 // The header 队列 drawer (docs/adr/0007): a live glance at running / waiting /

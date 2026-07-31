@@ -3,7 +3,7 @@ import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, S
 import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import { difyModeTag, surfaceSupportsMode } from '../../lib/batchUi'
 import { ALL_SURFACES } from '../../api/types'
 import type { Surface } from '../../api/types'
@@ -81,7 +81,7 @@ export default function BatchAdminPage() {
       setEditingId(tg.id)
       setTargetOpen(true)
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     }
   }
 
@@ -108,7 +108,7 @@ export default function BatchAdminPage() {
       else message.success(t('batch.dify.probed', { name: r.name }))
     } catch (e) {
       setProbed(null)
-      message.error(t('batch.dify.probeFailed', { error: (e as Error).message }))
+      message.error(t('batch.dify.probeFailed', { error: errText(e, t) }))
     } finally {
       setProbing(false)
     }
@@ -154,7 +154,7 @@ export default function BatchAdminPage() {
       setTargetOpen(false)
       loadTargets()
     } catch (e) {
-      message.error((e as Error).message)
+      message.error(errText(e, t))
     } finally {
       setSaving(false)
     }
@@ -168,7 +168,7 @@ export default function BatchAdminPage() {
         message.success(t('batch.admin.msgImported'))
         loadPlugins()
       } catch (e) {
-        message.error(`${t('batch.admin.msgImportFailed')}：${(e as Error).message || ''}`)
+        message.error(`${t('batch.admin.msgImportFailed')}：${errText(e, t) || ''}`)
       }
     }
     reader.readAsText(file)
