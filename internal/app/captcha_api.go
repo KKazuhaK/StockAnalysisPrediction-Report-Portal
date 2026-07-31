@@ -130,7 +130,8 @@ func (s *Server) requireCaptcha(w http.ResponseWriter, r *http.Request, ctx capt
 	}
 	if err != nil || !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "captcha is required or incorrect", "captcha_required": true})
+		writeJSON(w, map[string]any{"error": "captcha is required or incorrect",
+			"code": "captcha_failed", "captcha_required": true})
 		return false
 	}
 	return true

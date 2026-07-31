@@ -27,10 +27,11 @@ describe('useVersionCheck', () => {
   it('stays false while the server keeps reporting the same build', async () => {
     get.mockResolvedValue(build())
     const { result } = renderHook(() => useVersionCheck(5))
-    // let several poll cycles run against an unchanged build
-    await new Promise((r) => setTimeout(r, 40))
+    // Wait for the SECOND poll rather than sleeping and hoping. A fixed sleep asserts that the
+    // machine scheduled two intervals inside 40ms, which is a claim about the CPU, not about this
+    // hook — and it lost that race whenever the rest of the suite was busy.
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(1))
     expect(result.current).toBe(false)
-    expect(get.mock.calls.length).toBeGreaterThan(1) // it really did poll more than once
   })
 
   it('flips to true once the server reports a new build', async () => {

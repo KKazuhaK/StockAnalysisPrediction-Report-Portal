@@ -212,7 +212,9 @@ describe('LoginPage login modes', () => {
     try {
       mockMode('sso_redirect', false, true)
       renderLogin()
-      await new Promise((r) => setTimeout(r, 50))
+      // Wait for the fetch the redirect decision hangs off, so this asserts "it decided not to go"
+      // rather than "50ms elapsed and nothing had happened yet".
+      await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/sso/providers'))
       expect(navMock.hardNavigate).not.toHaveBeenCalled()
     } finally {
       authMock.user = null

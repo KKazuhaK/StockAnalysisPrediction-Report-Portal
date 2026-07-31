@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth'
 import type { SSOProviderInfo } from '../api/types'
 import { usePrefs } from '../prefs'
-import { api, ApiError } from '../api/client'
+import { api, errText } from '../api/client'
 import { passkeySupported } from '../lib/webauthn'
 import { hardNavigate } from '../lib/hardNavigate'
 import CaptchaField, { type CaptchaValue } from '../components/CaptchaField'
@@ -133,7 +133,7 @@ export default function LoginPage() {
     } catch (e) {
       // The pending token is single-use, so a wrong code means starting over rather than
       // retrying against the same challenge.
-      setErr(e instanceof ApiError ? e.message : t('login.error'))
+      setErr(errText(e, t, 'login.error'))
       setTotpToken('')
       setTotpCode('')
     } finally {
@@ -160,7 +160,7 @@ export default function LoginPage() {
       // A dismissed browser prompt is a change of mind, not a failure worth an error banner — and
       // it must not clear the pending token, or the user would have to type their password again.
       if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return
-      setErr(e instanceof ApiError ? e.message : t('login.error'))
+      setErr(errText(e, t, 'login.error'))
     } finally {
       setBusy(false)
     }
@@ -177,7 +177,7 @@ export default function LoginPage() {
       }
       navigate('/')
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : t('login.error'))
+      setErr(errText(e, t, 'login.error'))
       // A challenge is consumed on use, so any refusal must re-arm the field — and a portal in
       // after-failures mode starts asking for one exactly here, on the attempt that crossed it.
       setCaptchaRound((n) => n + 1)

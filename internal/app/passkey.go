@@ -189,7 +189,7 @@ func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	username := string(session.UserID)
 	u := s.st.GetUser(username)
 	if u == nil || !u.Active || s.accountExpired(u) {
-		jsonError(w, http.StatusUnauthorized, "用户名或密码错误")
+		jsonErrorCode(w, http.StatusUnauthorized, "bad_credentials", "用户名或密码错误")
 		return
 	}
 	wa, err := s.webAuthn()

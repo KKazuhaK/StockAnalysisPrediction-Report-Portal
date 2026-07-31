@@ -44,5 +44,11 @@ export default defineConfig({
     globals: false,
     setupFiles: ['src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // Cap the worker pool. Left uncapped, vitest runs as many test files at once as there are
+    // cores, and the suite then competes with itself: assertions that wait for a React effect or a
+    // resolved promise lose the race and report the pre-update value as if it were final. The
+    // failures roamed — Markdown, site settings, types, version-check — which is the signature of
+    // CPU contention rather than of any one test being wrong.
+    maxWorkers: 4,
   },
 })

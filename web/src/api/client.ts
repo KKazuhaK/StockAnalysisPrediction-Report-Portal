@@ -2,11 +2,35 @@
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /**
+   * A stable machine-readable reason from the server, when it sent one. The `message` cannot be
+   * localized — the portal speaks three languages and the server writes the response before the
+   * browser's choice is known — so anything user-facing should render the CODE through t() and
+   * fall back to the message. See jsonErrorCode in internal/app/apiui.go.
+   */
+  code?: string
+  constructor(status: number, message: string, code?: string) {
     super(message)
     this.status = status
+    this.code = code
     this.name = 'ApiError'
   }
+}
+
+/**
+ * errText turns a thrown error into something worth showing a user: the translation of its server
+ * code when there is one, otherwise the server's own message, otherwise a generic line.
+ */
+export function errText(e: unknown, t: (k: string, o?: Record<string, unknown>) => string, fallbackKey = 'common.error'): string {
+  if (e instanceof ApiError) {
+    if (e.code) {
+      const key = `err.${e.code}`
+      const translated = t(key)
+      if (translated !== key) return translated // i18next echoes the key when it has no string
+    }
+    if (e.message) return e.message
+  }
+  return t(fallbackKey)
 }
 
 async function request<T>(method: string, url: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
@@ -29,7 +53,8 @@ async function request<T>(method: string, url: string, body?: unknown, extraHead
   }
   if (!res.ok) {
     const msg = (data && typeof data === 'object' && data.error) || res.statusText || 'request failed'
-    throw new ApiError(res.status, msg)
+    const code = data && typeof data === 'object' && typeof data.code === 'string' ? data.code : undefined
+    throw new ApiError(res.status, msg, code)
   }
   return data as T
 }
@@ -47,7 +72,8 @@ async function requestForm<T>(method: string, url: string, body: FormData): Prom
   }
   if (!res.ok) {
     const msg = (data && typeof data === 'object' && data.error) || res.statusText || 'request failed'
-    throw new ApiError(res.status, msg)
+    const code = data && typeof data === 'object' && typeof data.code === 'string' ? data.code : undefined
+    throw new ApiError(res.status, msg, code)
   }
   return data as T
 }
