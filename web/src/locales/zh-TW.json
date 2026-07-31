@@ -378,6 +378,7 @@
   "login.password": "密碼",
   "login.register": "註冊賬號",
   "login.ssoDivider": "或使用以下方式登入",
+  "login.ssoFailed": "單點登入未能完成（{{reason}}）。可在下方使用密碼登入，或聯絡管理員檢查身份提供方。",
   "login.ssoWith": "使用 {{name}} 登入",
   "login.submit": "登入",
   "login.title": "登入研報門戶",

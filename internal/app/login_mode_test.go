@@ -178,3 +178,29 @@ func TestAuthMethodsEndpointDrivesTheLoginPage(t *testing.T) {
 		}
 	}
 }
+
+// TestSSOOnlyIsInertWhenThePageOffersNoSSO closes a lockout the first version of this feature had.
+// The inertness check asked whether a provider was ENABLED, not whether the login page actually
+// offers it — so local_only + sso_only left every non-admin staring at a password form that always
+// returns 403, with no provider button anywhere on the page. The route still existed, but nothing
+// in the product led to it.
+func TestSSOOnlyIsInertWhenThePageOffersNoSSO(t *testing.T) {
+	s := loginModeServer(t)
+	withProvider(s)
+	s.st.SetSetting(setSSOOnly, "1")
+	s.st.SetSetting(setLoginMode, loginLocalOnly)
+
+	if s.ssoOnlyActive() {
+		t.Error("refusing passwords while the page offers no SSO leaves non-admins no way in")
+	}
+	if code := doLogin(t, s, "worker"); code != http.StatusOK {
+		t.Errorf("a non-admin under local_only+sso_only → %d, want 200", code)
+	}
+	// It must still bite in every mode that DOES surface the provider.
+	for _, mode := range []string{loginDual, loginSSOFirst, loginSSORedirect} {
+		s.st.SetSetting(setLoginMode, mode)
+		if code := doLogin(t, s, "worker"); code != http.StatusForbidden {
+			t.Errorf("mode %q with sso_only → %d, want 403", mode, code)
+		}
+	}
+}

@@ -39,6 +39,8 @@ export default function LoginPage() {
   })
   // sso_first hides the password form behind one deliberate click; this is that click.
   const [showLocal, setShowLocal] = useState(false)
+  // Why the last handshake failed, so a loop that used to be silent now explains itself.
+  const [ssoError, setSSOError] = useState('')
   const [captcha, setCaptcha] = useState<CaptchaValue>({})
   const [captchaRound, setCaptchaRound] = useState(0)
   const [account, setAccount] = useState('')
@@ -53,19 +55,28 @@ export default function LoginPage() {
       .then((r) => {
         const list = r.providers || []
         setProviders(list)
+        // Force-SSO sends the browser straight to the provider, and two things opt out of that.
+        // `?local=1` is the operator's escape. `?sso_error=…` is where ssoFail sends a failed
+        // handshake — without treating it as a bypass, sso_redirect plus ANY SSO failure is an
+        // unbreakable loop: the page bounces to the IdP, the IdP bounces back, the page bounces
+        // again. Browsers break SERVER-side redirect chains, never a JS-driven one.
+        const params = new URLSearchParams(window.location.search)
+        const bypass = params.has('local') || params.has('sso_error')
+        setSSOError(params.get('sso_error') || '')
+
         // `??`, not `||`: an explicit false from the server means local_only and must be honoured,
         // while an ABSENT field means the response predates these fields — fall back to the old
         // contract, which was simply "there are providers, so offer them".
         setOffers({
           mode: r.login_mode || 'dual',
-          local: r.local ?? true,
+          // A bypass reveals the password form whatever the mode says. That grants nothing —
+          // whether a password is ACCEPTED is the server's call on its own axis (sso_only, where
+          // admins are exempt) — and it is the difference between an escape hatch and a page whose
+          // only control is the identity provider that just failed.
+          local: (r.local ?? true) || bypass,
           sso: r.sso ?? list.length > 0,
         })
-        // Force-SSO sends the browser straight to the provider. `?local=1` opts out — it only skips
-        // this redirect and grants nothing, because whether a password is ACCEPTED is decided by the
-        // server (admins stay exempt). Without it a misconfigured IdP would make the page
-        // unreachable, and the escape has to work before anyone has proven who they are.
-        const bypass = new URLSearchParams(window.location.search).has('local')
+
         if (r.login_mode === 'sso_redirect' && !bypass && list.length === 1) {
           hardNavigate(`/api/auth/${list[0].kind}/${encodeURIComponent(list[0].slug)}/start`)
         }
@@ -263,6 +274,11 @@ export default function LoginPage() {
                   {t('login.usePassword')}
                 </Button>
               )
+            )}
+            {ssoError && (
+              <Typography.Text type="danger" style={{ display: 'block' }}>
+                {t('login.ssoFailed', { reason: ssoError })}
+              </Typography.Text>
             )}
             {!totpToken && offers.sso && providers.length > 0 && (
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
