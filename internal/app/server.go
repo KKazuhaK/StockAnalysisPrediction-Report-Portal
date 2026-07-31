@@ -277,6 +277,8 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargets))
 	mux.HandleFunc("PUT /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargetsSave))
 	mux.HandleFunc("GET /api/admin/settings", s.requireAdminJSON(s.apiAdminSettings))
+	// The audit log. requirePermJSON, not requireAdminJSON: see apiAdminAudit.
+	mux.HandleFunc("GET /api/admin/audit", s.requirePermJSON(PermManage, s.apiAdminAudit))
 	mux.HandleFunc("POST /api/admin/settings", s.requireAdminJSON(s.apiSettingsSave))
 	mux.HandleFunc("GET /api/admin/email", s.requireAdminJSON(s.apiEmailGet))
 	mux.HandleFunc("POST /api/admin/email", s.requireAdminJSON(s.apiEmailSave))
@@ -1045,11 +1047,27 @@ func repInList(reps []Rep, id int64) bool {
 // loadRep fetches a report including its body by id, SCOPED to the viewer: for a restricted user an
 // out-of-scope id returns nil (the callers' nil→404 then fails closed), so this is the single
 // viewer-aware chokepoint for every by-id read path (deep-link, run/stock body, md/pdf/zip export).
+// loadRep fetches one report for a person, scoped to what they may read — and records the read.
+//
+// Every path that serves a body to a human goes through here: the stock page, the run page, the
+// day export, the Markdown and PDF exports, and the version switcher. Recording at this one point
+// rather than in each of them is what makes the answer to "who read this report" complete, and
+// keeps a path added later from silently escaping the log.
+//
+// Only successful reads. A refusal is a different question — someone probing versus someone
+// following a stale link — and logging those here would fill the table from any 404.
 func (s *Server) loadRep(user string, id int64) *Rep {
 	if id <= 0 {
 		return nil
 	}
 	rep, _ := s.st.GetNew(id, s.viewerScope(user))
+	if rep != nil {
+		s.st.WriteAudit(AuditEntry{
+			Actor: user, ActorOU: s.st.PrimaryGroupOf(user), Action: AuditReportRead,
+			TargetType: "report", TargetID: strconv.FormatInt(rep.ID, 10),
+			Detail: auditJSON(map[string]any{"symbol": rep.Symbol, "date": rep.Date, "title": rep.Title}),
+		})
+	}
 	return rep
 }
 
