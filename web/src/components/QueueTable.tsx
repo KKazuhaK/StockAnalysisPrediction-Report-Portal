@@ -31,7 +31,7 @@ import {
   StopOutlined,
   SyncOutlined,
 } from '@ant-design/icons'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { Dayjs } from 'dayjs'
 import { api, errText } from '../api/client'

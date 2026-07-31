@@ -18,7 +18,7 @@ import {
   Typography,
 } from 'antd'
 import { DownOutlined, FolderOutlined } from '@ant-design/icons'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, qs } from '../api/client'

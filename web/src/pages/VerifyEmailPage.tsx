@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button, Card, Result, Spin } from 'antd'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../api/client'
 

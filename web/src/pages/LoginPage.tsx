@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button, Card, Form, Input, Modal, Segmented, Select, Space, Typography, theme } from 'antd'
 import { LockOutlined, UserOutlined } from '@ant-design/icons'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth'
 import type { SSOProviderInfo } from '../api/types'

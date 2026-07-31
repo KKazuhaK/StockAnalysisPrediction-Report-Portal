@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { App } from 'antd'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import LoginPage from './LoginPage'
 
 // vi.mock is hoisted above the file body, so the mocks it closes over must be hoisted too.

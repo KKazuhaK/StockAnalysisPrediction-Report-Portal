@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Form, Input, Result, Space, Typography, theme } from 'antd'
 import { LockOutlined, MailOutlined } from '@ant-design/icons'
-import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'

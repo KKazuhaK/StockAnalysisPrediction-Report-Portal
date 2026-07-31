@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router'
 import { App as AntdApp, ConfigProvider, Spin, theme } from 'antd'
 import { PrefsProvider, usePrefs } from './prefs'
 import { AuthProvider, useAuth } from './auth'

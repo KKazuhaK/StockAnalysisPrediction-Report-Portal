@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Button, Card, Form, Input, Result, Space, Typography, theme } from 'antd'
 import { LockOutlined } from '@ant-design/icons'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../api/client'
 

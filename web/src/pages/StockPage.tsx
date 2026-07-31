@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Empty, Grid, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined } from '@ant-design/icons'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { StockResp } from '../api/types'

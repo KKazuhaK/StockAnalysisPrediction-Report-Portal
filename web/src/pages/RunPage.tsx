@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Empty, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { ArrowLeftOutlined, DownloadOutlined } from '@ant-design/icons'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { RunResp, SubTab } from '../api/types'

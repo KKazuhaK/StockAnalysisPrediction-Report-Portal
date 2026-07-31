@@ -26,7 +26,7 @@ vi.mock('../api/client', () => ({
 }))
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router', () => ({
   useParams: () => ({ symbol: '001238' }),
   useSearchParams: () => [new URLSearchParams('date=2026-07-07'), vi.fn()],
   useNavigate: () => vi.fn(),

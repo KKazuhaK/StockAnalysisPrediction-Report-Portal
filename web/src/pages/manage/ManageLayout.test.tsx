@@ -5,7 +5,7 @@ import ManageLayout from './ManageLayout'
 const navigate = vi.fn()
 
 // The layout reads the active key off the path and navigates on menu click.
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router', () => ({
   useNavigate: () => navigate,
   useLocation: () => ({ pathname: '/manage/site' }),
   Outlet: () => null,
