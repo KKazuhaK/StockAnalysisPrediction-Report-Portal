@@ -37,6 +37,14 @@ func TestDiffClassifiesSectionsByHeading(t *testing.T) {
 	if s := got["催化剂"]; s.Status != "added" {
 		t.Errorf("new section reported as %q", s.Status)
 	}
+	// An added or removed section carries its body too: announcing only that a heading appeared
+	// tells a reader a section exists without telling them what it says.
+	if s := got["催化剂"]; len(s.Lines) != 1 || s.Lines[0].Op != "+" || s.Lines[0].Text != "三季报" {
+		t.Errorf("new section did not carry its content: %+v", s.Lines)
+	}
+	if s := got["估值"]; len(s.Lines) != 1 || s.Lines[0].Op != "-" || s.Lines[0].Text != "PE 20x" {
+		t.Errorf("dropped section did not carry what was lost: %+v", s.Lines)
+	}
 }
 
 func TestDiffShowsTheChangedLines(t *testing.T) {

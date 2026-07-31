@@ -714,3 +714,34 @@ export interface SSORulesResp {
   // server-side because the ordering rule lives there.
   shadowed: number[]
 }
+
+// ---- Comparing two editions of the same analysis ----
+
+/** One candidate to diff a report against: another edition of the same symbol + subtype. */
+export interface ComparableReport {
+  id: number
+  date: string
+  title: string
+  version: string
+}
+
+export interface DiffLine {
+  op: '+' | '-' | ' '
+  text: string
+}
+
+/** What happened to one section between the two documents. Matched on the documents' own headings,
+ *  so the comparison needs no schema and works across every report type. */
+export interface SectionDiff {
+  heading: string // '' for the text before the first heading
+  level: number
+  status: 'same' | 'changed' | 'added' | 'removed'
+  lines?: DiffLine[] // present for 'changed' only
+}
+
+export interface ReportDiff {
+  a: { id: number; title: string; date: string; symbol: string; name: string; rtype: string; version: string }
+  b: { id: number; title: string; date: string; symbol: string; name: string; rtype: string; version: string }
+  sections: SectionDiff[]
+  changed: number
+}

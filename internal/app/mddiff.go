@@ -84,7 +84,11 @@ func diffMarkdown(before, after string) []SectionDiff {
 	for _, ns := range new_ {
 		i := findOld(ns.heading)
 		if i < 0 {
-			out = append(out, SectionDiff{Heading: ns.heading, Level: ns.level, Status: "added"})
+			// A new section carries its whole body as additions. Announcing only that a heading
+			// appeared tells a reader a section exists without telling them what it says, which is
+			// the one thing they opened this to find out.
+			out = append(out, SectionDiff{Heading: ns.heading, Level: ns.level, Status: "added",
+				Lines: allLines("+", ns.body)})
 			continue
 		}
 		if bodyEqual(old[i].body, ns.body) {
@@ -96,8 +100,20 @@ func diffMarkdown(before, after string) []SectionDiff {
 	}
 	for i, os := range old {
 		if !used[i] {
-			out = append(out, SectionDiff{Heading: os.heading, Level: os.level, Status: "removed"})
+			out = append(out, SectionDiff{Heading: os.heading, Level: os.level, Status: "removed",
+				Lines: allLines("-", os.body)})
 		}
+	}
+	return out
+}
+
+// allLines marks a whole section body as one kind of change, for a section that is entirely new or
+// entirely gone.
+func allLines(op string, body []string) []DiffLine {
+	body = trimBlank(body)
+	out := make([]DiffLine, 0, len(body))
+	for _, l := range body {
+		out = append(out, DiffLine{op, l})
 	}
 	return out
 }

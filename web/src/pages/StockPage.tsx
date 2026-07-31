@@ -1,12 +1,13 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Empty, Grid, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
-import { ArrowLeftOutlined, ClockCircleOutlined, DownloadOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, ClockCircleOutlined, DiffOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { StockResp } from '../api/types'
 import Markdown from '../components/Markdown'
 import ReaderControls from '../components/ReaderControls'
+import CompareModal from '../components/CompareModal'
 import TimelinePanel from '../components/TimelinePanel'
 import { ExportPdfButton, ExportDayButton, ExportMenu } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
@@ -27,6 +28,8 @@ export default function StockPage() {
   const layoutVars = { '--rp-doc-max': wide ? '1440px' : '1080px' } as CSSProperties
   const [data, setData] = useState<StockResp | null>(null)
   const [loading, setLoading] = useState(true)
+  // Which report the compare dialog is open for; null when closed.
+  const [compareFor, setCompareFor] = useState<number | null>(null)
   const [notFound, setNotFound] = useState(false)
 
   const query = { date: sp.get('date') || '', kind: sp.get('kind') || '', r: sp.get('r') || '' }
@@ -177,6 +180,11 @@ export default function StockPage() {
                 extra={
                   rep ? (
                     <Space size={8} wrap>
+                      {rep && (
+                        <Button size="small" icon={<DiffOutlined />} onClick={() => setCompareFor(rep.id)}>
+                          {t('compare.button')}
+                        </Button>
+                      )}
                       {exportControls}
                       <ReaderControls />
                     </Space>
