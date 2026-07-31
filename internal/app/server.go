@@ -250,6 +250,10 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/users/bulk", s.requireAdminJSON(s.apiUsersBulk))
 	mux.HandleFunc("PUT /api/admin/users/{name}", s.requireAdminJSON(s.apiUserSave))
 	mux.HandleFunc("DELETE /api/admin/users/{name}", s.requireAdminJSON(s.apiUserDelete))
+	// Seeing and revoking the identity-provider binding on an account (ADR 0023). The store could do
+	// both from the day SSO shipped; nothing could reach either until now.
+	mux.HandleFunc("GET /api/admin/users/{name}/identity", s.requireAdminJSON(s.apiAdminUserIdentity))
+	mux.HandleFunc("DELETE /api/admin/users/{name}/identity", s.requireAdminJSON(s.apiAdminUserUnlink))
 	// Organizational user groups (labels; permissions still come from the role).
 	mux.HandleFunc("GET /api/admin/groups", s.requireAdminJSON(s.apiAdminGroups))
 	mux.HandleFunc("POST /api/admin/groups", s.requireAdminJSON(s.apiGroupAdd))

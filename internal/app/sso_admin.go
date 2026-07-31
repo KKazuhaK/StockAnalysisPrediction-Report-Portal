@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -363,5 +364,62 @@ func (s *Server) apiAdminSSORulesSave(w http.ResponseWriter, r *http.Request, us
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	writeJSON(w, okJSON)
+}
+
+// ---------- an account's identity-provider binding ----------
+
+// GET /api/admin/users/{name}/identity — which IdP account this person signs in as.
+//
+// The store could answer this from the day SSO shipped and nothing asked it, so an admin had no way
+// to see the binding, and no way to cut one except by deleting the account. The subject and issuer
+// are shown because they are the join key an operator has to match against the IdP's own console;
+// the stored attribute blob is not, since it is whatever the IdP last sent and may hold anything.
+func (s *Server) apiAdminUserIdentity(w http.ResponseWriter, r *http.Request, user string) {
+	name := r.PathValue("name")
+	if s.st.GetUser(name) == nil {
+		jsonError(w, http.StatusNotFound, "no such user")
+		return
+	}
+	ids := s.st.IdentitiesOf(name)
+	if len(ids) == 0 {
+		// Not an error: most accounts are local. The page needs to say "none", not fail.
+		writeJSON(w, map[string]any{"identity": nil})
+		return
+	}
+	id := ids[0]
+	writeJSON(w, map[string]any{"identity": map[string]any{
+		"provider": id.Provider, "issuer": id.Issuer, "subject": id.Subject, "slug": id.ProviderSlug,
+	}})
+}
+
+// DELETE /api/admin/users/{name}/identity — cut the binding, keep the account.
+//
+// Worth having separately from deleting the account: a link outlives the person's IdP account, and
+// while it stands, whoever the IdP later issues that same subject to would sign in as this account.
+// Unlinking also returns the row to local — a federated account has no usable password path — so an
+// admin should set a password afterwards if the person is to keep signing in.
+func (s *Server) apiAdminUserUnlink(w http.ResponseWriter, r *http.Request, user string) {
+	name := r.PathValue("name")
+	u := s.st.GetUser(name)
+	if u == nil {
+		jsonError(w, http.StatusNotFound, "no such user")
+		return
+	}
+	ids := s.st.IdentitiesOf(name)
+	if len(ids) == 0 {
+		writeJSON(w, okJSON) // already unlinked; a second click must not 500
+		return
+	}
+	id := ids[0]
+	if err := s.st.UnlinkIdentity(id.Provider, id.Issuer, id.Subject); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// The account is local again, and its sessions end: the person who held it via the IdP must not
+	// keep a live session on an account they can no longer prove they own.
+	s.st.SetUserSource(name, "local", "")
+	s.st.BumpSessionRev(name)
+	log.Printf("sso: admin %s revoked the %s/%s binding on %s", user, id.Provider, id.ProviderSlug, name)
 	writeJSON(w, okJSON)
 }
