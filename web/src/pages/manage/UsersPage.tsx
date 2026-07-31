@@ -207,6 +207,19 @@ export default function UsersPage() {
     [ouScoped, ouSelected, groups],
   )
 
+  // Delete the OU you are scoped to and the list would go permanently empty with nothing
+  // highlighted and nothing on screen explaining why. Prune the selection when the tree changes,
+  // and fall back to unscoped once it is empty rather than leaving a filter that matches nobody.
+  useEffect(() => {
+    if (groups.length === 0) return // not loaded yet; pruning here would clear a valid selection
+    setOuSelected((sel) => {
+      const kept = sel.filter((id) => groups.some((g) => g.id === id))
+      if (kept.length === sel.length) return sel
+      if (kept.length === 0) setOuScoped(false)
+      return kept
+    })
+  }, [groups])
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return (data?.users || []).filter((u) => {
@@ -525,6 +538,7 @@ export default function UsersPage() {
     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
       <OrgUnitPicker
         groups={groups}
+        unassigned={(data?.users || []).filter((u) => !u.primary_group).length}
         scoped={ouScoped}
         onScopedChange={setOuScoped}
         selected={ouSelected}

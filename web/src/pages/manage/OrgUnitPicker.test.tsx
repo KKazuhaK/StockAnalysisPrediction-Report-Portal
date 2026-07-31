@@ -51,6 +51,7 @@ describe('OrgUnitPicker', () => {
       <App>
         <OrgUnitPicker
           groups={TREE}
+          unassigned={0}
           scoped={false}
           onScopedChange={onScopedChange}
           selected={[]}
@@ -62,6 +63,34 @@ describe('OrgUnitPicker', () => {
     )
     return { ...r, onSelect, onScopedChange, onManage }
   }
+
+  // The number beside a node must be the number the click produces, or the console understates the
+  // population an OU governs — and understating it is the dangerous direction, since an OU carries
+  // report visibility, the run allow-list and the daily quota.
+  it('counts the whole subtree, and folds the unassigned into the Default OU', () => {
+    const sized = [
+      g(1, 'Root', 0, { is_default: true, members: 1 }),
+      g(2, 'Clients', 1, { members: 2 }),
+      g(4, 'Clients APAC', 2, { members: 3 }),
+    ]
+    render(
+      <App>
+        <OrgUnitPicker
+          groups={sized}
+          unassigned={10}
+          scoped={false}
+          onScopedChange={vi.fn()}
+          selected={[]}
+          onSelect={vi.fn()}
+          onManage={vi.fn()}
+        />
+      </App>,
+    )
+    // Root: 1 + 2 + 3 own/descendant members, plus the 10 accounts that inherit it.
+    expect(screen.getByText('16')).toBeTruthy()
+    expect(screen.getByText('5')).toBeTruthy() // Clients = 2 + 3
+    expect(screen.getByText('3')).toBeTruthy() // the leaf is only itself
+  })
 
   it('renders the hierarchy, not a flat list', () => {
     mount()

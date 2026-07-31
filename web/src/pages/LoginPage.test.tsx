@@ -203,6 +203,22 @@ describe('LoginPage login modes', () => {
   // page itself unreachable, before anyone can prove who they are.
   // The escape has to actually escape. Skipping the redirect onto a page whose only control is the
   // provider that just failed is a dead end, not a break-glass path.
+  // An already-signed-in visitor must be sent home, not thrown at the identity provider. The
+  // redirect used to fire from the fetch callback, which knows nothing about the session — and
+  // could even fire after the auth check had already unmounted this page.
+  it('sso_redirect does not redirect a visitor who is already signed in', async () => {
+    navMock.hardNavigate.mockReset()
+    authMock.user = 'alice'
+    try {
+      mockMode('sso_redirect', false, true)
+      renderLogin()
+      await new Promise((r) => setTimeout(r, 50))
+      expect(navMock.hardNavigate).not.toHaveBeenCalled()
+    } finally {
+      authMock.user = null
+    }
+  })
+
   it('sso_redirect with ?local=1 reveals the password form', async () => {
     navMock.hardNavigate.mockReset()
     window.history.replaceState({}, '', '/login?local=1')

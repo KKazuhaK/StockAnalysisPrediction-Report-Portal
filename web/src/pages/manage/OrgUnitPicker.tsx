@@ -40,6 +40,7 @@ interface TreeNode {
 
 export default function OrgUnitPicker({
   groups,
+  unassigned,
   scoped,
   onScopedChange,
   selected,
@@ -47,6 +48,8 @@ export default function OrgUnitPicker({
   onManage,
 }: {
   groups: UserGroupRow[]
+  /** Accounts with no primary group; they belong to the Default OU by inheritance. */
+  unassigned: number
   scoped: boolean
   onScopedChange: (v: boolean) => void
   selected: number[]
@@ -58,6 +61,14 @@ export default function OrgUnitPicker({
   const [collapsed, setCollapsed] = useState(false)
   const [multi, setMulti] = useState(false)
   const [q, setQ] = useState('')
+  // Controlled, so a search does not destroy the admin's own expand/collapse work. Keying the Tree
+  // on the query instead remounted it on every keystroke, re-ran defaultExpandAll, and left the
+  // scroll container parked on an unrelated node — with no way back to the view you had.
+  //
+  // null means "untouched": the tree starts fully expanded, which is what an OU hierarchy is for.
+  // The moment the admin expands or collapses anything, their choice is the state and it survives
+  // searching, clearing the search, and selecting.
+  const [expanded, setExpanded] = useState<React.Key[] | null>(null)
 
   const query = q.trim().toLowerCase()
 
@@ -77,6 +88,23 @@ export default function OrgUnitPicker({
     return keep
   }, [groups, query])
 
+  // The number on a node is the number of accounts selecting it produces — its own members plus
+  // every descendant's, and for the Default OU the accounts that inherit it by having no primary
+  // group. Showing only the direct count contradicted the click: a parent with three child OUs of
+  // ten read "0" and then listed thirty. In a console whose job is to make inheritance visible,
+  // that is the one number that must not understate the population an OU governs.
+  const reach = useMemo(() => {
+    const direct = new Map(groups.map((g) => [g.id, g.members || 0]))
+    const out = new Map<number, number>()
+    for (const g of groups) {
+      let n = 0
+      for (const id of subtreeOf(groups, [g.id])) n += direct.get(id) ?? 0
+      if (g.is_default) n += unassigned
+      out.set(g.id, n)
+    }
+    return out
+  }, [groups, unassigned])
+
   const nodes = useMemo(() => {
     const build = (parent: number): TreeNode[] =>
       groups
@@ -91,7 +119,7 @@ export default function OrgUnitPicker({
                 {g.is_default && <Tag color="green">{t('users.defaultGroupTag')}</Tag>}
                 {g.restricted_effective && <Tag color="volcano">{t('users.restrictedTag')}</Tag>}
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {g.members}
+                  {reach.get(g.id) ?? g.members}
                 </Typography.Text>
               </Space>
             ),
@@ -99,7 +127,7 @@ export default function OrgUnitPicker({
           }
         })
     return build(0)
-  }, [groups, visible, t])
+  }, [groups, visible, reach, t])
 
   if (collapsed) {
     return (
@@ -192,10 +220,10 @@ export default function OrgUnitPicker({
           <Tree
             blockNode
             multiple={multi}
-            defaultExpandAll
-            // Remounting on a search keeps expansion in step with the filtered shape, which an
-            // uncontrolled Tree otherwise gets wrong when nodes come and go.
-            key={query}
+            // Under a filter every kept ancestor is expanded — that is exactly what `visible`
+            // computes — and with no filter the admin's own expansion stands.
+            expandedKeys={query && visible ? [...visible] : (expanded ?? groups.map((g) => g.id))}
+            onExpand={setExpanded}
             treeData={nodes}
             selectedKeys={selected}
             onSelect={(keys) => {
