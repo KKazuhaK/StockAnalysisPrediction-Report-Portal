@@ -46,6 +46,8 @@ export default function OrgUnitPicker({
   selected,
   onSelect,
   onManage,
+  mode = 'filter',
+  onAdd,
 }: {
   groups: UserGroupRow[]
   /** Accounts with no primary group; they belong to the Default OU by inheritance. */
@@ -55,6 +57,12 @@ export default function OrgUnitPicker({
   selected: number[]
   onSelect: (ids: number[]) => void
   onManage: () => void
+  /**
+   * 'filter' scopes the account list — all-vs-selected, single or multi. 'manage' picks the one OU
+   * being edited beside it, so the scope radio and multi-select have nothing to mean there.
+   */
+  mode?: 'filter' | 'manage'
+  onAdd?: () => void
 }) {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -175,6 +183,7 @@ export default function OrgUnitPicker({
       </Space>
 
       <Space direction="vertical" size={10} style={{ padding: 12, width: '100%' }}>
+        {mode === 'filter' && (
         <Radio.Group
           value={scoped ? 'scoped' : 'all'}
           onChange={(e) => onScopedChange(e.target.value === 'scoped')}
@@ -184,6 +193,7 @@ export default function OrgUnitPicker({
             <Radio value="scoped">{t('ou.scopeSelected')}</Radio>
           </Space>
         </Radio.Group>
+        )}
 
         <Input
           allowClear
@@ -194,6 +204,7 @@ export default function OrgUnitPicker({
           onChange={(e) => setQ(e.target.value)}
         />
 
+        {mode === 'filter' && (
         <Segmented
           block
           size="small"
@@ -209,6 +220,7 @@ export default function OrgUnitPicker({
             { value: 'multi', label: t('ou.multi') },
           ]}
         />
+        )}
       </Space>
 
       <div style={{ padding: '0 8px 8px', maxHeight: 420, overflow: 'auto' }}>
@@ -228,19 +240,28 @@ export default function OrgUnitPicker({
             selectedKeys={selected}
             onSelect={(keys) => {
               const ids = keys.map(Number)
+              // In manage mode a click must never clear the selection, or the detail pane would
+              // vanish when you click the OU you are already editing.
+              if (mode === 'manage' && ids.length === 0) return
               onSelect(ids)
               // Picking an OU is the act of scoping — making the admin also flip the radio would
               // be a second step with no decision in it.
-              if (ids.length > 0) onScopedChange(true)
+              if (mode === 'filter' && ids.length > 0) onScopedChange(true)
             }}
           />
         )}
       </div>
 
       <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: 8 }}>
-        <Button type="link" size="small" block onClick={onManage}>
-          {t('ou.manage')}
-        </Button>
+        {mode === 'manage' ? (
+          <Button type="link" size="small" block onClick={onAdd}>
+            {t('ou.add')}
+          </Button>
+        ) : (
+          <Button type="link" size="small" block onClick={onManage}>
+            {t('ou.manage')}
+          </Button>
+        )}
       </div>
     </div>
   )
