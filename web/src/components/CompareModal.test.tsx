@@ -65,8 +65,15 @@ describe('CompareModal', () => {
   it('defaults to the most recent earlier edition and diffs against it', async () => {
     mount()
     await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/reports/diff?a=11&b=12'))
-    expect(await screen.findByText('目标价 55 元')).toBeTruthy()
-    expect(screen.getByText('目标价 48 元')).toBeTruthy()
+    // Asserted against the whole dialog's text rather than element-by-element. A diff line renders
+    // as <span>-</span> plus a text node, so no single element's textContent equals the line, and
+    // an element query over that has to guess which ancestor to match — which it did differently
+    // depending on how far the modal's enter animation had progressed.
+    await waitFor(() => {
+      const text = document.body.textContent ?? ''
+      expect(text).toContain('目标价 55 元') // the newer edition
+      expect(text).toContain('目标价 48 元') // and what it replaced
+    })
   })
 
   // Unchanged sections are most of a long report; leading with them would bury the news.
@@ -82,7 +89,7 @@ describe('CompareModal', () => {
   it('keeps the unchanged lines of a changed section as context', async () => {
     mount()
     // Without them a reader cannot see WHERE in the section the change is.
-    expect(await screen.findByText('维持')).toBeTruthy()
+    expect(await screen.findByText(/维持/)).toBeTruthy()
   })
 
   it('says so plainly when there is nothing to compare against', async () => {

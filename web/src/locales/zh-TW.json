@@ -507,6 +507,8 @@
   "ou.sectionTenancy": "租戶與可見性",
   "ou.single": "單選",
   "ou.systemDefault": "系統預設",
+  "ou.targetEnabled": "允許",
+  "ou.targetName": "工作流",
   "ou.title": "全部組織",
   "ou.unlimited": "不限",
   "ou.urgent.off": "關閉加急",

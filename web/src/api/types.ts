@@ -356,9 +356,17 @@ export interface UserGroupRow {
 }
 
 // Per-OU run allow-list matrix (ADR 0022 R3): which workflows a group may run, on which surfaces.
+/** One workflow an OU may be allowed to run, and the surfaces the workflow itself permits. */
+export interface GroupTargetRow {
+  id: number
+  name: string
+  surfaces: string[]
+  output_subtype?: string
+}
+
 export interface GroupTargetsResp {
   granted: { target_id: number; surfaces: string[] }[]
-  targets: { id: number; name: string; surfaces: string[]; output_subtype?: string }[]
+  targets: GroupTargetRow[]
 }
 
 // Daily run-quota balance for the run form (ADR 0022 R2). limited=false for internal users,

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { App, Breadcrumb, Button, Card, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Tag, Typography } from 'antd'
+import { App, Breadcrumb, Button, Card, Checkbox, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { DeleteOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
-import type { GroupTargetsResp, UserGroupRow } from '../../api/types'
+import type { GroupTargetRow, GroupTargetsResp, UserGroupRow } from '../../api/types'
 import InheritField from './InheritField'
 import { ouPath, resolveOU, type UrgentPolicy } from './ouSettings'
 
@@ -346,50 +346,106 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         {t('users.groupTargetsHint')}
       </Typography.Paragraph>
-      {data && data.targets.length === 0 && <Empty description={t('users.groupTargetsNoTargets')} />}
-      <Space direction="vertical" size={10} style={{ width: '100%' }}>
-        {(data?.targets || []).map((tg) => {
-          const on = granted[tg.id] != null
-          return (
-            <div key={tg.id}>
-              <Space wrap>
+      {data && data.targets.length === 0 ? (
+        <Empty description={t('users.groupTargetsNoTargets')} />
+      ) : (
+        // A matrix, not a list of expanding rows. Three things were wrong with the list: a
+        // CheckableTag looks nearly the same on as off, so the state was unreadable; the surfaces
+        // only appeared once the workflow was switched on, so you could not see what a workflow
+        // WOULD offer; and there was no way to compare one column across workflows, which is the
+        // question an admin actually has ("who can use 批量?").
+        <Table
+          size="small"
+          rowKey="id"
+          pagination={false}
+          dataSource={data?.targets ?? []}
+          columns={[
+            {
+              title: t('ou.targetEnabled'),
+              width: 64,
+              render: (_: unknown, tg: GroupTargetRow) => (
                 <Switch
                   size="small"
-                  checked={on}
+                  checked={granted[tg.id] != null}
                   onChange={(v) =>
                     setGranted((g) => {
                       const next = { ...g }
+                      // Enabling grants every surface the target itself allows — the common case,
+                      // and narrowing from there is one click. Enabling to nothing would be a
+                      // workflow that is on and still unusable.
                       if (v) next[tg.id] = tg.surfaces
                       else delete next[tg.id]
                       return next
                     })
                   }
                 />
-                <Typography.Text strong>{tg.name}</Typography.Text>
-                {tg.output_subtype && <Tag color="blue">{tg.output_subtype}</Tag>}
-              </Space>
-              {on && (
-                <Space wrap style={{ paddingLeft: 34, marginTop: 4 }}>
-                  {RUN_SURFACES.filter((sf) => tg.surfaces.includes(sf)).map((sf) => (
-                    <Tag.CheckableTag
-                      key={sf}
-                      checked={(granted[tg.id] || []).includes(sf)}
-                      onChange={(v) =>
-                        setGranted((g) => {
-                          const cur = g[tg.id] || []
-                          return { ...g, [tg.id]: v ? [...cur, sf] : cur.filter((x) => x !== sf) }
-                        })
-                      }
-                    >
-                      {t(`users.surface.${sf}`)}
-                    </Tag.CheckableTag>
-                  ))}
+              ),
+            },
+            {
+              title: t('ou.targetName'),
+              render: (_: unknown, tg: GroupTargetRow) => (
+                <Space size={6}>
+                  <Typography.Text>{tg.name}</Typography.Text>
+                  {tg.output_subtype && <Tag color="blue">{tg.output_subtype}</Tag>}
                 </Space>
-              )}
-            </div>
-          )
-        })}
-      </Space>
+              ),
+            },
+            ...RUN_SURFACES.map((sf) => ({
+              title: (
+                <Space direction="vertical" size={2} align="center">
+                  <span>{t(`users.surface.${sf}`)}</span>
+                  {/* Column-wide toggle: with a dozen workflows, "everyone may use 批量" is one
+                      click rather than a dozen. Only offered to targets that allow the surface. */}
+                  <Checkbox
+                    checked={(data?.targets ?? []).every(
+                      (tg) => !tg.surfaces.includes(sf) || (granted[tg.id] ?? []).includes(sf),
+                    )}
+                    onChange={(e) =>
+                      setGranted((g) => {
+                        const next = { ...g }
+                        for (const tg of data?.targets ?? []) {
+                          if (!tg.surfaces.includes(sf) || next[tg.id] == null) continue
+                          const cur = next[tg.id] ?? []
+                          next[tg.id] = e.target.checked
+                            ? cur.includes(sf)
+                              ? cur
+                              : [...cur, sf]
+                            : cur.filter((x) => x !== sf)
+                        }
+                        return next
+                      })
+                    }
+                  />
+                </Space>
+              ),
+              width: 92,
+              align: 'center' as const,
+              render: (_: unknown, tg: GroupTargetRow) =>
+                // A surface the TARGET does not allow is not an unchecked box you may tick — it is
+                // not applicable, and saying so beats a control that silently does nothing.
+                !tg.surfaces.includes(sf) ? (
+                  <Typography.Text type="secondary">—</Typography.Text>
+                ) : (
+                  <Checkbox
+                    // Visible but inert while the workflow is off, so the row still shows what it
+                    // would offer.
+                    disabled={granted[tg.id] == null}
+                    checked={(granted[tg.id] ?? []).includes(sf)}
+                    onChange={(e) =>
+                      setGranted((g) => {
+                        const cur = g[tg.id] ?? []
+                        return {
+                          ...g,
+                          [tg.id]: e.target.checked ? [...cur, sf] : cur.filter((x) => x !== sf),
+                        }
+                      })
+                    }
+                  />
+                ),
+            })),
+          ]}
+        />
+      )}
     </Card>
   )
 }

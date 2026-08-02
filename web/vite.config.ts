@@ -50,5 +50,11 @@ export default defineConfig({
     // failures roamed — Markdown, site settings, types, version-check — which is the signature of
     // CPU contention rather than of any one test being wrong.
     maxWorkers: 4,
+    // The other half of the same problem. Raising testing-library's async budget stopped assertions
+    // reporting a pre-update value, but each TEST still had vitest's 5s ceiling — and under a
+    // contended pool a whole test can legitimately take longer than that, which reports as
+    // "Test timed out" rather than as a wrong answer. Costs a passing run nothing: a test returns
+    // when it is done, and only a genuinely stuck one now takes longer to say so.
+    testTimeout: 20000,
   },
 })
