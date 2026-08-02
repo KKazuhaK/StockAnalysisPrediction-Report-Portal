@@ -507,6 +507,8 @@
   "ou.sectionTenancy": "Tenancy and visibility",
   "ou.single": "Single select",
   "ou.systemDefault": "the system default",
+  "ou.targetEnabled": "Allowed",
+  "ou.targetName": "Workflow",
   "ou.title": "All organizations",
   "ou.unlimited": "unlimited",
   "ou.urgent.off": "urgent runs disabled",
