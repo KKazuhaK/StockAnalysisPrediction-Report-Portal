@@ -695,6 +695,8 @@ export interface SSOProviderAdmin {
   allow_idp_initiated: boolean
   clock_skew_sec: number
   icon?: string
+  /** How an unlinked login finds an existing account: '' (identity link only) | 'username' | 'email'. */
+  link_by?: string
   sp_entity_id: string // derived; paste into the IdP
   sp_acs_url: string // derived; paste into the IdP
   sp_cert_pem: string

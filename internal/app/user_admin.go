@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // User-admin persistence: extended profile attributes (display name / email / active /
@@ -56,6 +57,31 @@ func (s *Store) SetUserProfile(username, displayName, email string) error {
 	_, err := s.exec(`UPDATE users SET display_name=?, email=? WHERE username=?`,
 		displayName, email, username)
 	return err
+}
+
+// UsersByEmail returns EVERY account carrying an email, case-insensitively. Every, not the first:
+// users.email has no unique index, so an SSO login that matched on it has to be able to tell an
+// unambiguous match from a choice it is not entitled to make.
+func (s *Store) UsersByEmail(email string) []string {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return nil
+	}
+	rows, err := s.query(`SELECT username FROM users
+		WHERE email IS NOT NULL AND email<>'' AND LOWER(email)=LOWER(?) ORDER BY username`, email)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil
+		}
+		out = append(out, u)
+	}
+	return out
 }
 
 // SetUserActive enables or disables a user (disabled accounts cannot log in).
