@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth'
 import type { SSOProviderInfo } from '../api/types'
 import { usePrefs } from '../prefs'
-import { api, errText } from '../api/client'
+import { api, ApiError, errText } from '../api/client'
 import { passkeySupported } from '../lib/webauthn'
 import { hardNavigate } from '../lib/hardNavigate'
 import CaptchaField, { type CaptchaValue } from '../components/CaptchaField'
@@ -26,6 +26,8 @@ export default function LoginPage() {
   const [forgotAcct, setForgotAcct] = useState('')
   const [forgotBusy, setForgotBusy] = useState(false)
   const [forgotSent, setForgotSent] = useState(false)
+  const [forgotCaptcha, setForgotCaptcha] = useState<CaptchaValue>({})
+  const [forgotErr, setForgotErr] = useState('')
   // Second-factor step: the password leg hands back a single-use token and issues no session.
   const [totpToken, setTotpToken] = useState('')
   const [totpCode, setTotpCode] = useState('')
@@ -109,19 +111,32 @@ export default function LoginPage() {
 
   const submitForgot = async () => {
     setForgotBusy(true)
+    setForgotErr('')
     try {
-      await api.post('/api/password/forgot', { account: forgotAcct.trim() })
-    } catch {
-      // ignore — always report "sent" so accounts can't be enumerated
+      await api.post('/api/password/forgot', { account: forgotAcct.trim(), ...forgotCaptcha })
+      setForgotSent(true)
+    } catch (e) {
+      // "Always report sent" exists so nobody can enumerate accounts, and it still holds for every
+      // failure that depends on WHICH account was named. A rejected captcha does not: the server
+      // decides it before it has looked anything up, so saying so leaks nothing — and saying
+      // "sent" instead loses the mail the admin is waiting for, silently, which is exactly how a
+      // working captcha toggle came to look like a switch that does nothing.
+      if (e instanceof ApiError && e.code === 'captcha_failed') {
+        setForgotErr(errText(e, t))
+        setCaptchaRound((n) => n + 1) // a challenge is consumed on use; re-arm it
+      } else {
+        setForgotSent(true)
+      }
     } finally {
       setForgotBusy(false)
-      setForgotSent(true)
     }
   }
   const closeForgot = () => {
     setForgotOpen(false)
     setForgotSent(false)
     setForgotAcct('')
+    setForgotErr('')
+    setForgotCaptcha({})
   }
 
   const submitTOTP = async () => {
@@ -352,6 +367,16 @@ export default function LoginPage() {
               onChange={(e) => setForgotAcct(e.target.value)}
               onPressEnter={submitForgot}
             />
+            {/* The form whose abuse is an outbound-mail flood at someone else's inbox — the one the
+                captcha toggle names — and it never asked for one. */}
+            <CaptchaField
+              context="forgot"
+              account={forgotAcct}
+              refresh={captchaRound}
+              value={forgotCaptcha}
+              onChange={setForgotCaptcha}
+            />
+            {forgotErr && <Typography.Text type="danger">{forgotErr}</Typography.Text>}
           </Space>
         )}
       </Modal>
