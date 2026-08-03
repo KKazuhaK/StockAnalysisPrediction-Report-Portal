@@ -44,6 +44,10 @@ type SSOProvider struct {
 	// built-in, or a /site-assets/ path this portal serves. Never a remote URL — the login page is
 	// unauthenticated, so a third-party fetch would announce every visitor before they sign in.
 	Icon string
+	// LinkBy is how an unlinked login finds an EXISTING account: "" (the default) means only the
+	// identity link and external_id, refusing a name collision; "username" and "email" mean this
+	// IdP is authoritative for those fields and may adopt the account they name.
+	LinkBy string
 
 	// Attribute mapping
 	AttrUPN, AttrEmail, AttrDisplay, AttrGroups, AttrExternalID string
@@ -75,7 +79,7 @@ const ssoProviderCols = `id,kind,slug,COALESCE(name,''),COALESCE(enabled,0),COAL
 	COALESCE(idp_metadata_url,''),COALESCE(idp_metadata_xml,''),COALESCE(idp_metadata_fetched_at,''),COALESCE(idp_metadata_error,''),COALESCE(idp_entity_id,''),COALESCE(idp_cert_pem,''),
 	COALESCE(sp_cert_pem,''),COALESCE(sp_cert_not_after,''),COALESCE(sp_key_enc,''),COALESCE(allow_idp_initiated,0),COALESCE(clock_skew_sec,60),
 	COALESCE(attr_upn,''),COALESCE(attr_email,''),COALESCE(attr_display,''),COALESCE(attr_groups,''),COALESCE(attr_external_id,''),
-	COALESCE(session_hours,0),COALESCE(icon,'')`
+	COALESCE(session_hours,0),COALESCE(icon,''),COALESCE(link_by,'')`
 
 func scanProvider(scan func(...any) error) (SSOProvider, error) {
 	var p SSOProvider
@@ -85,7 +89,7 @@ func scanProvider(scan func(...any) error) (SSOProvider, error) {
 		&p.Issuer, &p.ClientID, &p.ClientSecretEnc, &p.Scopes, &p.DiscoveryJSON, &p.DiscoveryFetched,
 		&p.IdPMetadataURL, &p.IdPMetadataXML, &p.IdPMetadataFetched, &p.IdPMetadataError, &p.IdPEntityID, &p.IdPCertPEM,
 		&p.SPCertPEM, &p.SPCertNotAfter, &p.SPKeyEnc, &allowIdPInit, &p.ClockSkewSec,
-		&p.AttrUPN, &p.AttrEmail, &p.AttrDisplay, &p.AttrGroups, &p.AttrExternalID, &p.SessionHours, &p.Icon)
+		&p.AttrUPN, &p.AttrEmail, &p.AttrDisplay, &p.AttrGroups, &p.AttrExternalID, &p.SessionHours, &p.Icon, &p.LinkBy)
 	if err != nil {
 		return SSOProvider{}, err
 	}
@@ -140,14 +144,14 @@ func (s *Store) SaveSSOProvider(p SSOProvider) (int64, error) {
 			issuer=?,client_id=?,client_secret_enc=?,scopes=?,discovery_json=?,discovery_fetched_at=?,
 			idp_metadata_url=?,idp_metadata_xml=?,idp_metadata_fetched_at=?,idp_metadata_error=?,idp_entity_id=?,idp_cert_pem=?,
 			sp_cert_pem=?,sp_cert_not_after=?,sp_key_enc=?,allow_idp_initiated=?,clock_skew_sec=?,
-			attr_upn=?,attr_email=?,attr_display=?,attr_groups=?,attr_external_id=?,session_hours=?,icon=?,updated_at=?
+			attr_upn=?,attr_email=?,attr_display=?,attr_groups=?,attr_external_id=?,session_hours=?,icon=?,link_by=?,updated_at=?
 			WHERE id=?`,
 			p.Kind, p.Name, boolInt(p.Enabled), p.Provisioning,
 			nullZero(p.DefaultGroup), p.DefaultRole, p.DefaultExpiryDays, boolInt(p.AllowAdminRole),
 			p.Issuer, p.ClientID, p.ClientSecretEnc, p.Scopes, p.DiscoveryJSON, p.DiscoveryFetched,
 			p.IdPMetadataURL, p.IdPMetadataXML, p.IdPMetadataFetched, p.IdPMetadataError, p.IdPEntityID, p.IdPCertPEM,
 			p.SPCertPEM, p.SPCertNotAfter, p.SPKeyEnc, boolInt(p.AllowIdPInit), p.ClockSkewSec,
-			p.AttrUPN, p.AttrEmail, p.AttrDisplay, p.AttrGroups, p.AttrExternalID, p.SessionHours, p.Icon,
+			p.AttrUPN, p.AttrEmail, p.AttrDisplay, p.AttrGroups, p.AttrExternalID, p.SessionHours, p.Icon, p.LinkBy,
 			nowStr(), p.ID)
 		return p.ID, err
 	}
@@ -156,14 +160,14 @@ func (s *Store) SaveSSOProvider(p SSOProvider) (int64, error) {
 		issuer,client_id,client_secret_enc,scopes,discovery_json,discovery_fetched_at,
 		idp_metadata_url,idp_metadata_xml,idp_metadata_fetched_at,idp_metadata_error,idp_entity_id,idp_cert_pem,
 		sp_cert_pem,sp_cert_not_after,sp_key_enc,allow_idp_initiated,clock_skew_sec,
-		attr_upn,attr_email,attr_display,attr_groups,attr_external_id,session_hours,icon,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		attr_upn,attr_email,attr_display,attr_groups,attr_external_id,session_hours,icon,link_by,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.Kind, p.Slug, p.Name, boolInt(p.Enabled), p.Provisioning,
 		nullZero(p.DefaultGroup), p.DefaultRole, p.DefaultExpiryDays, boolInt(p.AllowAdminRole),
 		p.Issuer, p.ClientID, p.ClientSecretEnc, p.Scopes, p.DiscoveryJSON, p.DiscoveryFetched,
 		p.IdPMetadataURL, p.IdPMetadataXML, p.IdPMetadataFetched, p.IdPMetadataError, p.IdPEntityID, p.IdPCertPEM,
 		p.SPCertPEM, p.SPCertNotAfter, p.SPKeyEnc, boolInt(p.AllowIdPInit), p.ClockSkewSec,
-		p.AttrUPN, p.AttrEmail, p.AttrDisplay, p.AttrGroups, p.AttrExternalID, p.SessionHours, p.Icon,
+		p.AttrUPN, p.AttrEmail, p.AttrDisplay, p.AttrGroups, p.AttrExternalID, p.SessionHours, p.Icon, p.LinkBy,
 		nowStr(), nowStr())
 }
 

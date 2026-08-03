@@ -45,7 +45,7 @@ func (s *Server) ssoProviderJSON(p SSOProvider) map[string]any {
 		// SAML
 		"idp_metadata_url": p.IdPMetadataURL, "idp_entity_id": p.IdPEntityID,
 		"has_idp_metadata":    strings.TrimSpace(p.IdPMetadataXML) != "",
-		"allow_idp_initiated": p.AllowIdPInit, "clock_skew_sec": p.ClockSkewSec, "icon": p.Icon,
+		"allow_idp_initiated": p.AllowIdPInit, "clock_skew_sec": p.ClockSkewSec, "icon": p.Icon, "link_by": p.LinkBy,
 		"sp_entity_id": s.samlEntityID(p.Slug), "sp_acs_url": s.samlACSURL(p.Slug),
 		"sp_cert_pem": p.SPCertPEM, "sp_cert_not_after": p.SPCertNotAfter, "has_sp_key": p.SPKeyEnc != "",
 		// Attribute mapping
@@ -95,6 +95,7 @@ type ssoProviderInput struct {
 	AllowIdPInit   bool   `json:"allow_idp_initiated"`
 	ClockSkewSec   int    `json:"clock_skew_sec"`
 	Icon           string `json:"icon"`
+	LinkBy         string `json:"link_by"`
 
 	AttrUPN        string `json:"attr_upn"`
 	AttrEmail      string `json:"attr_email"`
@@ -107,6 +108,12 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 	var in ssoProviderInput
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	in.LinkBy = strings.ToLower(strings.TrimSpace(in.LinkBy))
+	if !validLinkBy(in.LinkBy) {
+		jsonErrorCode(w, http.StatusBadRequest, "sso_bad_link_by",
+			"账号匹配方式只能是「仅身份绑定」、「用户名」或「邮箱」")
 		return
 	}
 	in.Icon = strings.TrimSpace(in.Icon)
@@ -136,7 +143,7 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 		IdPMetadataURL: strings.TrimSpace(in.IdPMetadataURL),
 		IdPMetadataXML: firstNonEmpty(strings.TrimSpace(in.IdPMetadataXML), prev.IdPMetadataXML),
 		IdPEntityID:    prev.IdPEntityID, IdPCertPEM: prev.IdPCertPEM,
-		AllowIdPInit: in.AllowIdPInit, ClockSkewSec: in.ClockSkewSec, Icon: in.Icon,
+		AllowIdPInit: in.AllowIdPInit, ClockSkewSec: in.ClockSkewSec, Icon: in.Icon, LinkBy: in.LinkBy,
 		SPCertPEM: prev.SPCertPEM, SPKeyEnc: prev.SPKeyEnc, SPCertNotAfter: prev.SPCertNotAfter,
 		AttrUPN: in.AttrUPN, AttrEmail: in.AttrEmail, AttrDisplay: in.AttrDisplay,
 		AttrGroups: in.AttrGroups, AttrExternalID: in.AttrExternalID,

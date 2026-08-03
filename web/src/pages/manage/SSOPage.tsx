@@ -18,7 +18,7 @@ import SSOIcon, { SSO_ICON_PRESETS } from '../../components/SSOIcon'
 const emptyProvider = (kind: 'oidc' | 'saml'): SSOProviderAdmin => ({
   id: 0, kind, slug: kind === 'oidc' ? 'oidc' : 'saml', name: '', enabled: false, provisioning: 'off',
   default_group: 0, default_role: 'user', default_expiry_days: 0, allow_admin_role: false, session_hours: 0,
-  icon: '',
+  icon: '', link_by: '',
   issuer: '', client_id: '', scopes: 'openid profile email', has_client_secret: false, redirect_url: '',
   idp_metadata_url: '', idp_entity_id: '', has_idp_metadata: false, allow_idp_initiated: false,
   clock_skew_sec: 60, sp_entity_id: '', sp_acs_url: '', sp_cert_pem: '', sp_cert_not_after: '', has_sp_key: false,
@@ -283,6 +283,18 @@ function ProviderForm({
       </Form.Item>
       <Form.Item name="attr_external_id" label={t('sso.attrExternalId')} extra={t('sso.attrExternalIdHint')}>
         <Input placeholder="oid" />
+      </Form.Item>
+
+      <Typography.Title level={5}>{t('sso.matchTitle')}</Typography.Title>
+      <Typography.Paragraph type="secondary">{t('sso.matchHint')}</Typography.Paragraph>
+      <Form.Item name="link_by" label={t('sso.linkBy')} extra={t('sso.linkByHint')}>
+        <Select
+          options={[
+            { value: '', label: t('sso.linkBySubject') },
+            { value: 'username', label: t('sso.linkByUsername') },
+            { value: 'email', label: t('sso.linkByEmail') },
+          ]}
+        />
       </Form.Item>
 
       <Typography.Title level={5}>{t('sso.provisioningTitle')}</Typography.Title>

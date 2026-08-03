@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/ssorules"
@@ -92,6 +93,26 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 
 // resolveSSOAccount finds — or, when the provider allows it, creates — the local account behind an
 // external identity. The order matters and is the whole of the linking policy.
+// How an unlinked login may be matched onto an account that already exists.
+//
+// The default refuses, and that is not timidity: adopting on a name the IdP asserts hands account
+// takeover to anyone who can make it assert one. The other two are an admin declaring that this IdP
+// IS authoritative for this portal's accounts — true for an internal deployment behind one company
+// IdP, and false for anything federated with the outside. It cannot be inferred, so it is chosen.
+const (
+	LinkBySubject  = ""         // identity link + external_id only; a collision is refused
+	LinkByUsername = "username" // the mapped username names the account
+	LinkByEmail    = "email"    // the mapped email names the account
+)
+
+func validLinkBy(v string) bool {
+	switch v {
+	case LinkBySubject, LinkByUsername, LinkByEmail:
+		return true
+	}
+	return false
+}
+
 func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (username string, created bool, err error) {
 	// 1. An existing link. This is the only lookup that runs on every login, and it is keyed on
 	// (provider, issuer, subject) — never on email.
@@ -102,6 +123,24 @@ func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (username stri
 	// immutable object id. This is why external_id ships with SSO rather than with SCIM.
 	if ext := id.claim(p.AttrExternalID); ext != "" {
 		if u, ok := s.st.FindUserByExternalID(p.Slug, ext); ok {
+			return u, false, nil
+		}
+	}
+	// 2b. Adoption by a field the admin has declared this IdP authoritative for. Off by default;
+	// see the LinkBy constants for why it has to be a decision rather than a default.
+	if p.LinkBy != LinkBySubject {
+		u, err := s.matchExistingAccount(p, id)
+		if err != nil {
+			return "", false, err
+		}
+		if u != "" {
+			// Bind it, so every later login takes step 1 and never matches on a mutable field again.
+			if err := s.st.LinkIdentity(Identity{
+				Username: u, Provider: id.Provider, Issuer: id.Issuer, Subject: id.Subject,
+				ProviderSlug: p.Slug, Attrs: id.attrs(),
+			}); err != nil {
+				return "", false, err
+			}
 			return u, false, nil
 		}
 	}
@@ -184,6 +223,55 @@ func (s *Server) ssoRules(providerID int64) []ssorules.Rule { return s.st.rulesF
 
 // Refusal reasons, kept internal: the caller maps all of them to one generic outcome so the login
 // page cannot be used to probe which accounts exist or how they are provisioned.
+// matchExistingAccount resolves p.LinkBy against the accounts that exist. An empty match is not an
+// error — the caller falls through to provisioning — but an AMBIGUOUS one is: users.email carries
+// no unique index, so two accounts can share an address, and choosing between them would be
+// authenticating someone as whichever row came back first.
+func (s *Server) matchExistingAccount(p SSOProvider, id ssoIdentity) (string, error) {
+	var candidate string
+	switch p.LinkBy {
+	case LinkByUsername:
+		// Folded, like every other username path: sanitizeSSOUsername lowercases, so an exact-match
+		// lookup here would miss the very collision the default refuses.
+		name, ok := sanitizeSSOUsername(firstNonEmpty(id.claim(p.AttrUPN), id.Subject))
+		if !ok {
+			return "", errUnusableUsername
+		}
+		u := s.st.GetUser(name)
+		if u == nil {
+			return "", nil
+		}
+		candidate = u.Username
+	case LinkByEmail:
+		email := strings.TrimSpace(id.claim(p.AttrEmail))
+		if email == "" {
+			// No claim is no match. Falling through to "any account with an empty email" would
+			// adopt an unrelated account on a missing attribute.
+			return "", errNoEmailToMatch
+		}
+		names := s.st.UsersByEmail(email)
+		if len(names) == 0 {
+			return "", nil
+		}
+		if len(names) > 1 {
+			return "", ssoError("more than one account uses " + email + "; an SSO login cannot choose between them")
+		}
+		candidate = names[0]
+	default:
+		return "", nil
+	}
+	u := s.st.GetUser(candidate)
+	if u == nil || !u.Active {
+		return "", errInactiveAccount
+	}
+	return u.Username, nil
+}
+
+var (
+	errNoEmailToMatch  = ssoError("the assertion carried no email to match an account with")
+	errInactiveAccount = ssoError("that account is disabled")
+)
+
 var (
 	errNotProvisioned   = ssoError("no account for this identity and this provider does not create them")
 	errUnusableUsername = ssoError("the mapped username has no usable characters")
