@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
 import type { Role, SSOProviderAdmin, SSOProvidersResp, UserGroupRow, UsersResp } from '../../api/types'
 import SSORulesEditor from './SSORulesEditor'
+import SSOSetupGuide from './SSOSetupGuide'
 
 // SSO administration (ADR 0023). One SAML tab and one OIDC tab; the API is row-shaped, so adding
 // more providers later is a change here and nowhere else.
@@ -96,6 +97,18 @@ function ProviderForm({
   return (
     <Form form={form} layout="vertical" style={{ maxWidth: 720 }}>
       {!publicUrl && <Alert type="warning" showIcon style={{ marginBottom: 16 }} message={t('sso.needPublicUrl')} />}
+
+      {/* Above everything, because the first question an admin has on this page is not "what is my
+          ACS URL" — the page already answered that — but "which of the IdP's boxes does it go in". */}
+      <SSOSetupGuide
+        kind={kind}
+        values={
+          kind === 'saml'
+            ? { entityId: provider.sp_entity_id, acs: provider.sp_acs_url }
+            : { redirect: provider.redirect_url }
+        }
+        configured={provider.enabled && (kind === 'saml' ? provider.has_idp_metadata : !!provider.issuer)}
+      />
 
       <Form.Item name="enabled" valuePropName="checked" label={t('sso.enable')} extra={t('sso.enableHint')}>
         <Switch />
