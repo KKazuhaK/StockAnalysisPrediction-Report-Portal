@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { auditTime } from '../../lib/auditTime'
+import { formatRegion } from '../../lib/geo'
 import { Alert, Card, DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { SearchOutlined } from '@ant-design/icons'
@@ -106,15 +107,24 @@ export default function AuditPage() {
           {/* Under the actor, because on a failed sign-in it is the only identity there is: no
               account has authenticated, and the address is who to look at. Click to filter. */}
           {r.ip && (
-            <Typography.Link
-              style={{ fontSize: 11 }}
-              onClick={() => {
-                setIP(r.ip ?? '')
-                setPage(1)
-              }}
-            >
-              {r.ip}
-            </Typography.Link>
+            <Space size={4} wrap>
+              <Typography.Link
+                style={{ fontSize: 11 }}
+                onClick={() => {
+                  setIP(r.ip ?? '')
+                  setPage(1)
+                }}
+              >
+                {r.ip}
+              </Typography.Link>
+              {/* Only when a database resolved it. No database, a LAN address, or an
+                  address nobody has mapped all render as the bare address. */}
+              {formatRegion(r.geo) && (
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  {formatRegion(r.geo)}
+                </Typography.Text>
+              )}
+            </Space>
           )}
         </Space>
       ),
