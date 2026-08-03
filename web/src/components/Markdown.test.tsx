@@ -1,5 +1,5 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Markdown from './Markdown'
 
 const { renderMermaid, parseMermaid, initializeMermaid, loadMermaid, cacheMermaidSVG } = vi.hoisted(() => {
@@ -30,7 +30,12 @@ vi.mock('../lib/flattenSvg', () => ({
 }))
 
 describe('Markdown', () => {
-  afterEach(() => {
+  // BEFORE each, not after. The cache write is a passive effect that runs a commit AFTER the SVG
+  // lands, so a slow machine can leave it pending when the test ends — and unmounting during
+  // testing-library's cleanup then flushes it, i.e. AFTER an afterEach clear. That call showed up
+  // as the next test's first call, which is how CI failed with one test's chart source asserted
+  // against another test's expectation. Clearing at the start of a test cannot be outrun.
+  beforeEach(() => {
     document.documentElement.dataset.theme = 'light'
     renderMermaid.mockClear()
     parseMermaid.mockReset()
@@ -74,18 +79,26 @@ describe('Markdown', () => {
         secure: expect.arrayContaining(['htmlLabels']),
       }),
     )
-    expect(cacheMermaidSVG).toHaveBeenCalledWith(
-      expect.stringContaining('xychart-beta'),
-      '<svg><text>flattened</text></svg>',
-      'light',
+    // Waited for, not merely asserted: the SVG appearing is one commit EARLIER than the effect
+    // that writes the cache, so checking straight after waitFor(svg) is a race the test loses on a
+    // loaded machine.
+    await waitFor(() =>
+      expect(cacheMermaidSVG).toHaveBeenCalledWith(
+        expect.stringContaining('xychart-beta'),
+        '<svg><text>flattened</text></svg>',
+        'light',
+      ),
     )
   })
 
   it('uses parser-normalized source as the cache key for an indented mermaid fence', async () => {
     render(<Markdown md={'  ```mermaid\n  flowchart LR\n  A --> B\n  ```'} />)
 
-    await waitFor(() => expect(cacheMermaidSVG).toHaveBeenCalled())
-    expect(cacheMermaidSVG).toHaveBeenCalledWith('flowchart LR\nA --> B', expect.any(String), 'light')
+    // Waits for THIS call, not for any call: "was called at all" is satisfied by a leftover from
+    // another test, which is exactly what made the failure read as a wrong cache key.
+    await waitFor(() =>
+      expect(cacheMermaidSVG).toHaveBeenCalledWith('flowchart LR\nA --> B', expect.any(String), 'light'),
+    )
   })
 
   it('zooms, pans, and resets a rendered mermaid chart', async () => {
