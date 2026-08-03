@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.15](v0.4.15.md) | 2026-08-04 | The audit log actually covers what it claimed to |
 | [v0.4.14](v0.4.14.md) | 2026-08-03 | The account list shows activity, not just sign-ins |
 | [v0.4.13](v0.4.13.md) | 2026-08-03 | The SSO page tells you which claim to map |
 | [v0.4.12](v0.4.12.md) | 2026-08-03 | SAML actually signs in, and says why when it does not |
