@@ -501,6 +501,12 @@ func (s *Store) baseSchemaStmts() []string {
 		// concrete baselines. allow_urgent / max_queued / run_window are per-group governance:
 		// NULL on a non-default group means "inherit the Default group"; the Default group's NULL
 		// means the permissive baseline (urgent allowed, no queue cap, any hour).
+		// run_quota_period is the window daily_run_quota is measured over: day | week | month |
+		// total. NULL/"" means day, which is what every row written before the column meant, so an
+		// existing deployment keeps its behaviour with no backfill. It is declared with no SQL
+		// comment beside it on purpose — ensureColumns parses column names out of this very string
+		// and would try to ALTER TABLE ADD COLUMN "--".
+		//
 		// parent_id/restricted/daily_run_quota (ADR 0022) promote the group into the OU tree:
 		// parent_id (NULL = root) builds the tenant hierarchy; restricted flags an external OU
 		// (inherited down the tree); daily_run_quota is the R2 per-day run cap (NULL = inherit,
@@ -509,7 +515,8 @@ func (s *Store) baseSchemaStmts() []string {
 			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER,
 			urgent_unlimited INTEGER, is_default INTEGER DEFAULT 0,
 			allow_urgent INTEGER, max_queued INTEGER, run_window TEXT, priority TEXT,
-			parent_id BIGINT, restricted INTEGER DEFAULT 0, daily_run_quota INTEGER)`, pk),
+			parent_id BIGINT, restricted INTEGER DEFAULT 0, daily_run_quota INTEGER,
+			run_quota_period TEXT)`, pk),
 		// report_versions (ADR 0024): the registry of written forms a report can be published in.
 		// `name` is a stable id stored on report rows; `label` is what users see, so renaming the
 		// display name can never orphan a report. `visibility` decides WHOSE reports of this version a

@@ -62,7 +62,7 @@ func TestRunQuotaGate(t *testing.T) {
 	ou, _ := st.CreateUserGroup("ext-org", "", 0)
 	st.SetGroupParent(ou, root)
 	st.SetGroupRestricted(ou, true)
-	st.SetGroupDailyQuota(ou, quotaPtr(2))
+	st.SetGroupDailyQuota(ou, quotaPtr(2), QuotaDay)
 
 	st.UpsertUser(User{Username: "ext", PasswordHash: "h", Role: "operator"})
 	st.SetPrimaryGroup("ext", ou)
@@ -97,7 +97,7 @@ func TestRunQuotaGate(t *testing.T) {
 	}
 
 	// quota 0 = unlimited.
-	st.SetGroupDailyQuota(ou, quotaPtr(0))
+	st.SetGroupDailyQuota(ou, quotaPtr(0), QuotaDay)
 	if _, _, ok := s.runQuotaCheck("ext", 50); !ok {
 		t.Error("a quota of 0 means unlimited")
 	}
@@ -113,7 +113,7 @@ func TestApiBatchJobCreateEnforcesQuota(t *testing.T) {
 	ou, _ := st.CreateUserGroup("ext-org", "", 0)
 	st.SetGroupParent(ou, root)
 	st.SetGroupRestricted(ou, true)
-	st.SetGroupDailyQuota(ou, quotaPtr(2))
+	st.SetGroupDailyQuota(ou, quotaPtr(2), QuotaDay)
 	st.UpsertUser(User{Username: "ext", PasswordHash: "h", Role: "operator"})
 	st.SetPrimaryGroup("ext", ou)
 	st.UpsertUser(User{Username: "staff", PasswordHash: "h", Role: "operator"})

@@ -28,7 +28,7 @@ func TestEffectiveGroupSettingsOuTree(t *testing.T) {
 	if err := st.SetGroupRestricted(org, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetGroupDailyQuota(org, quotaPtr(2)); err != nil {
+	if err := st.SetGroupDailyQuota(org, quotaPtr(2), QuotaDay); err != nil {
 		t.Fatal(err)
 	}
 	team, _ := st.CreateUserGroup("ext-team", "", 0)
@@ -46,7 +46,7 @@ func TestEffectiveGroupSettingsOuTree(t *testing.T) {
 	}
 
 	// A leaf override wins over the inherited value.
-	st.SetGroupDailyQuota(team, quotaPtr(5))
+	st.SetGroupDailyQuota(team, quotaPtr(5), QuotaDay)
 	if gs := st.EffectiveGroupSettings("ext"); gs.DailyRunQuota != 5 {
 		t.Errorf("overridden quota = %d, want 5", gs.DailyRunQuota)
 	}

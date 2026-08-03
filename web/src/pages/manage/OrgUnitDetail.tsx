@@ -8,6 +8,9 @@ import InheritField from './InheritField'
 import { ouPath, resolveOU, type UrgentPolicy } from './ouSettings'
 
 const RUN_SURFACES = ['run', 'batch', 'recurring', 'chat'] as const
+// The windows a run cap can be measured over. "total" is the life of the ACCOUNT — a trial with a
+// fixed number of runs — and is the one that never refills.
+const QUOTA_PERIODS = ['day', 'week', 'month', 'total'] as const
 
 // Everything about ONE organizational unit, beside the tree that selects it.
 //
@@ -31,6 +34,7 @@ interface Draft {
   restricted: boolean
   quotaInherit: boolean
   dailyQuota: number
+  quotaPeriod: string
 }
 
 function draftOf(g: UserGroupRow, def?: UserGroupRow): Draft {
@@ -51,6 +55,7 @@ function draftOf(g: UserGroupRow, def?: UserGroupRow): Draft {
     restricted: !!g.restricted,
     quotaInherit: !isDefault && g.daily_run_quota == null,
     dailyQuota: r.dailyQuota.value,
+    quotaPeriod: g.run_quota_period || 'day',
   }
 }
 
@@ -81,6 +86,7 @@ export default function OrgUnitDetail({
       max_queued: null,
       run_window: null,
       daily_run_quota: null,
+      run_quota_period: 'day',
       priority: '',
     } as UserGroupRow,
     def,
@@ -113,6 +119,7 @@ export default function OrgUnitDetail({
         priority: d.priority == null ? '' : String(d.priority),
         restricted: isDefault ? false : d.restricted,
         daily_run_quota: d.quotaInherit ? null : d.dailyQuota,
+        run_quota_period: d.quotaPeriod,
         ...(isDefault ? {} : { parent_id: d.parent_id }),
       })
       message.success(t('common.saved'))
@@ -277,7 +284,18 @@ export default function OrgUnitDetail({
             inheriting={d.quotaInherit}
             onInheritingChange={(v) => set('quotaInherit', v)}
           >
-            <InputNumber size="small" min={0} max={999} value={d.dailyQuota} onChange={(v) => set('dailyQuota', v ?? 0)} />
+            <Space size={6}>
+              <InputNumber size="small" min={0} max={999} value={d.dailyQuota} onChange={(v) => set('dailyQuota', v ?? 0)} />
+              {/* The number and the window are one setting — "20" alone does not say 20 of what —
+                  so they sit together and are stored together. */}
+              <Select
+                size="small"
+                style={{ width: 118 }}
+                value={d.quotaPeriod}
+                onChange={(v) => set('quotaPeriod', v)}
+                options={QUOTA_PERIODS.map((p) => ({ value: p, label: t(`ou.period.${p}`) }))}
+              />
+            </Space>
           </InheritField>
         </Card>
       )}

@@ -42,8 +42,9 @@ type UserGroup struct {
 	// ancestor already restricts this group even when its own flag is off.
 	Restricted          bool
 	RestrictedEffective bool
-	ParentID            int64 // 0 = a root OU; the tree the inherited settings resolve along
-	DailyRunQuota       int   // runs/day cap for members; 0 = unlimited
+	ParentID            int64  // 0 = a root OU; the tree the inherited settings resolve along
+	DailyRunQuota       int    // run cap for members over QuotaPeriod; 0 = unlimited
+	QuotaPeriod         string // day | week | month | total; "" = day
 	DailyQuotaInherit   bool
 }
 
@@ -188,11 +189,13 @@ func (s *Store) EnsureDefaultGroup() int64 {
 func (s *Store) ListUserGroups() []UserGroup {
 	rows, err := s.query(`SELECT g.id, g.name, COALESCE(g.description,''), COALESCE(g.created_at,''),
 			COALESCE(g.is_default,0), g.weight, g.urgent_unlimited, g.allow_urgent, g.max_queued, g.run_window,
-			COALESCE(g.priority,''), COALESCE(g.restricted,0), g.daily_run_quota, g.parent_id, COUNT(u.username)
+			COALESCE(g.priority,''), COALESCE(g.restricted,0), g.daily_run_quota,
+			COALESCE(g.run_quota_period,''), g.parent_id, COUNT(u.username)
 		FROM user_groups g
 		LEFT JOIN users u ON u.group_id=g.id
 		GROUP BY g.id, g.name, g.description, g.created_at, g.is_default, g.weight, g.urgent_unlimited,
-			g.allow_urgent, g.max_queued, g.run_window, g.priority, g.restricted, g.daily_run_quota, g.parent_id
+			g.allow_urgent, g.max_queued, g.run_window, g.priority, g.restricted, g.daily_run_quota,
+			g.run_quota_period, g.parent_id
 		ORDER BY g.is_default DESC, g.name`)
 	if err != nil {
 		return nil
@@ -205,9 +208,10 @@ func (s *Store) ListUserGroups() []UserGroup {
 		var g UserGroup
 		var isDefault, restricted int
 		var weight, urgent, allowUrgent, maxQueued, dailyQuota, parent sql.NullInt64
-		var runWindow sql.NullString
+		var runWindow, quotaPeriod sql.NullString
 		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Created, &isDefault, &weight, &urgent,
-			&allowUrgent, &maxQueued, &runWindow, &g.Priority, &restricted, &dailyQuota, &parent, &g.Members); err != nil {
+			&allowUrgent, &maxQueued, &runWindow, &g.Priority, &restricted, &dailyQuota, &quotaPeriod,
+			&parent, &g.Members); err != nil {
 			continue
 		}
 		g.IsDefault = isDefault != 0
@@ -219,6 +223,10 @@ func (s *Store) ListUserGroups() []UserGroup {
 		g.RunWindow, g.RunWindowInherit = runWindow.String, !runWindow.Valid && !g.IsDefault
 		g.Restricted = restricted != 0
 		g.DailyRunQuota, g.DailyQuotaInherit = int(dailyQuota.Int64), !dailyQuota.Valid && !g.IsDefault
+		g.QuotaPeriod = quotaPeriod.String
+		if g.QuotaPeriod == "" {
+			g.QuotaPeriod = QuotaDay // a row written before the column existed meant per-day
+		}
 		g.ParentID = parent.Int64
 		parents[g.ID], restrictedOwn[g.ID] = parent.Int64, g.Restricted
 		out = append(out, g)
@@ -295,19 +303,22 @@ type GroupSettings struct {
 	MaxQueued       int    // cap on active (queued+running) jobs per user; 0 = unlimited
 	RunWindow       string // "" = any hour, else "startHour-endHour" (panel timezone)
 	Restricted      bool   // external OU: owner-scoped reads + run allow-list apply (sticky down the tree)
-	DailyRunQuota   int    // cap on runs/day for a restricted user; 0 = unlimited
+	DailyRunQuota   int    // cap on runs for a restricted user in QuotaPeriod; 0 = unlimited
+	QuotaPeriod     string // day | week | month | total; "" = day
 }
 
 // rawGroupSettings holds one group's un-coalesced governance columns (NULL = unset).
 type rawGroupSettings struct {
 	weight, urgent, allowUrgent, maxQueued, restricted, dailyQuota sql.NullInt64
-	runWindow                                                      sql.NullString
+	runWindow, quotaPeriod                                         sql.NullString
 }
 
 func (s *Store) rawGroupSettings(id int64) rawGroupSettings {
 	var g rawGroupSettings
-	s.queryRow("SELECT weight, urgent_unlimited, allow_urgent, max_queued, run_window, restricted, daily_run_quota FROM user_groups WHERE id=?", id).
-		Scan(&g.weight, &g.urgent, &g.allowUrgent, &g.maxQueued, &g.runWindow, &g.restricted, &g.dailyQuota)
+	s.queryRow(`SELECT weight, urgent_unlimited, allow_urgent, max_queued, run_window, restricted,
+			daily_run_quota, run_quota_period FROM user_groups WHERE id=?`, id).
+		Scan(&g.weight, &g.urgent, &g.allowUrgent, &g.maxQueued, &g.runWindow, &g.restricted,
+			&g.dailyQuota, &g.quotaPeriod)
 	return g
 }
 
@@ -339,6 +350,11 @@ func (s *Store) EffectiveGroupSettings(username string) GroupSettings {
 		}
 		if g.dailyQuota.Valid {
 			res.DailyRunQuota = int(g.dailyQuota.Int64)
+		}
+		// The period travels with the number rather than resolving separately: inheriting "20" from
+		// one OU and "month" from another would produce a cap neither of them configured.
+		if g.dailyQuota.Valid && g.quotaPeriod.Valid {
+			res.QuotaPeriod = g.quotaPeriod.String
 		}
 	}
 	for _, gid := range s.groupChain(username) {
@@ -397,9 +413,23 @@ func (s *Store) SetGroupRestricted(id int64, restricted bool) error {
 	return err
 }
 
-// SetGroupDailyQuota sets an OU's per-day run cap; nil stores NULL (inherit the parent), 0 = unlimited.
-func (s *Store) SetGroupDailyQuota(id int64, quota *int) error {
-	_, err := s.exec(`UPDATE user_groups SET daily_run_quota=? WHERE id=?`, nullInt(quota), id)
+// SetGroupDailyQuota sets an OU's run cap and the window it is measured over; nil quota stores NULL
+// (inherit the parent), 0 = unlimited.
+//
+// The two are written together because they are one setting. Storing a period without a number
+// configures nothing, and letting them be set separately would allow a cap of "20" from one OU to
+// be inherited alongside a period of "month" from another — a limit neither of them chose.
+func (s *Store) SetGroupDailyQuota(id int64, quota *int, period string) error {
+	if !validQuotaPeriod(period) {
+		period = QuotaDay
+	}
+	// The period is NULL exactly when the quota is, so the pair inherits or overrides as one.
+	var p any
+	if quota != nil {
+		p = period
+	}
+	_, err := s.exec(`UPDATE user_groups SET daily_run_quota=?, run_quota_period=? WHERE id=?`,
+		nullInt(quota), p, id)
 	return err
 }
 

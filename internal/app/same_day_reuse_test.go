@@ -78,7 +78,7 @@ func TestApiBatchJobCreateReusesSameDayReport(t *testing.T) {
 	// Declare what the target produces and which input carries the stock code; reuse needs both.
 	st.UpdateTarget(tgtA, "A", `{"output_subtype":"val","symbol_input":"code"}`)
 	st.SetGroupTargets(org, []GroupTarget{{TargetID: tgtA, Surfaces: ""}})
-	st.SetGroupDailyQuota(org, quotaPtr(2))
+	st.SetGroupDailyQuota(org, quotaPtr(2), QuotaDay)
 	// The target declares no version, so it produces the default one — and reuse only hands back a
 	// version the requester is granted (ADR 0024), so the OU is granted it here.
 	st.SetVersionGrants(st.DefaultVersion(), []string{groupPrincipal(org)})
