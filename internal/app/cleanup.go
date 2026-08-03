@@ -118,8 +118,9 @@ func (c cleanupConfig) cutoffs(now time.Time) (batchCut, tokenCut string, report
 	batchCut = now.AddDate(0, 0, -c.BatchDays).Format("2006-01-02 15:04:05")
 	tokenCut = now.AddDate(0, 0, -c.TokensGraceDays).Format("2006-01-02 15:04:05")
 	reportsCut = now.UTC().AddDate(0, 0, -c.ReportsDays)
-	// audit_log.at is written by nowStr(), i.e. system-local wall clock, so its cutoff is a local
-	// time — the same reasoning as batch and tokens, not the UTC instant reports uses.
+	// A plain instant. audit_log.at is UTC RFC3339 since v0.4.15 and local wall clock before it, and
+	// auditBefore compares each row against a cutoff in its own format — so this passes the moment,
+	// not a rendering of it, and the store decides how to spell it.
 	auditCut = now.AddDate(0, 0, -c.AuditDays)
 	return
 }

@@ -818,6 +818,8 @@ export interface AuditEntry {
   target_type: string
   target_id: string
   detail: string // JSON
+  /** Source address; '' for a writer with no request (CLI, scheduler). */
+  ip?: string
 }
 
 export interface AuditResp {
@@ -826,4 +828,6 @@ export interface AuditResp {
   /** The action values actually present, so rows written by an older build still filter. */
   actions: string[]
   ou_names: Record<string, string>
+  /** The portal's business timezone; '' means follow the reader's. Stamps are UTC. */
+  timezone?: string
 }

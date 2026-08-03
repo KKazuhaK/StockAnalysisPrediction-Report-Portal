@@ -113,7 +113,11 @@ const (
 func (s *Store) WriteAudit(e AuditEntry) {
 	at := e.At
 	if at == "" {
-		at = nowStr()
+		// A UTC instant, in the RFC3339 form the rest of the portal already uses for instants
+		// (a report's sent_at, /api/v1/now). It used to be the host's local wall clock, so lining an
+		// audit row up against a Dify run — the sandbox is UTC — meant knowing the server's timezone,
+		// which nothing recorded. The client renders it in the panel timezone.
+		at = time.Now().UTC().Format(time.RFC3339)
 	}
 	s.exec(`INSERT INTO audit_log(at,actor,actor_ou,action,target_type,target_id,detail,ip)
 		VALUES(?,?,?,?,?,?,?,?)`, at, e.Actor, e.ActorOU, e.Action, e.TargetType, e.TargetID, e.Detail, e.IP)
@@ -215,17 +219,34 @@ func (s *Store) ListAudit(f AuditFilter) ([]AuditEntry, int) {
 	return out, total
 }
 
-// DeleteAuditBefore drops entries older than the cutoff. `at` is written by nowStr() (local
-// "2006-01-02 15:04:05"), so a lexical compare is a correct chronological one.
+// DeleteAuditBefore drops entries older than the cutoff.
 func (s *Store) DeleteAuditBefore(cutoff time.Time) (int64, error) {
-	res, err := s.exec("DELETE FROM audit_log WHERE at <> '' AND at < ?",
-		cutoff.Format("2006-01-02 15:04:05"))
+	cond, args := auditBefore(cutoff)
+	res, err := s.exec("DELETE FROM audit_log WHERE "+cond, args...)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
 }
+
+// auditBefore is the retention predicate, and it handles BOTH stamp formats explicitly rather than
+// relying on them happening to sort compatibly.
+//
+// Rows written before v0.4.15 are the host's local wall clock ("2006-01-02 15:04:05"); rows written
+// since are UTC RFC3339. A single lexical cutoff would be wrong for one of them by the host's UTC
+// offset — harmless at a 30-day retention, but the kind of nearly-right that survives until the day
+// somebody sets retention to one day. Matching each row against a cutoff in its OWN format is exact
+// for both, and needs no rewrite of existing rows: an instant that was never recorded as UTC cannot
+// be converted to UTC without assuming an offset nobody wrote down.
+func auditBefore(cutoff time.Time) (string, []any) {
+	return "at <> '' AND ((at " + likeT + " AND at < ?) OR (at NOT " + likeT + " AND at < ?))",
+		[]any{cutoff.UTC().Format(time.RFC3339), cutoff.Format("2006-01-02 15:04:05")}
+}
+
+// likeT distinguishes the two formats: an RFC3339 stamp has a T between the date and the time, a
+// legacy one has a space.
+const likeT = "LIKE '%T%'"
 
 // AuditActions lists the action values actually present, so the filter is built from the data
 // rather than from the constants above — a log written by an older build still filters correctly.
@@ -259,8 +280,8 @@ func auditJSON(v map[string]any) string {
 // pass before it runs, and a preview that counted differently from the delete would be a lie.
 func (s *Store) CountAuditBefore(cutoff time.Time) (int64, error) {
 	var n int64
-	err := s.queryRow("SELECT COUNT(*) FROM audit_log WHERE at <> '' AND at < ?",
-		cutoff.Format("2006-01-02 15:04:05")).Scan(&n)
+	cond, args := auditBefore(cutoff)
+	err := s.queryRow("SELECT COUNT(*) FROM audit_log WHERE "+cond, args...).Scan(&n)
 	return n, err
 }
 
@@ -276,6 +297,7 @@ func (s *Server) apiAdminAudit(w http.ResponseWriter, r *http.Request, user stri
 		Action:     strings.TrimSpace(q.Get("action")),
 		TargetType: strings.TrimSpace(q.Get("target_type")),
 		TargetID:   strings.TrimSpace(q.Get("target_id")),
+		IP:         strings.TrimSpace(q.Get("ip")),
 		Q:          strings.TrimSpace(q.Get("q")),
 		Since:      strings.TrimSpace(q.Get("since")),
 		Limit:      limit,
@@ -290,5 +312,8 @@ func (s *Server) apiAdminAudit(w http.ResponseWriter, r *http.Request, user stri
 		"items": rows, "total": total,
 		"actions":  s.st.AuditActions(), // built from the data, so an older build's rows still filter
 		"ou_names": ouNames,
+		// The stamps are UTC; the panel timezone is what they are READ in. Sent with the page rather
+		// than fetched separately, because a time column cannot render without it.
+		"timezone": s.st.GetSetting("timezone", ""),
 	})
 }
