@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.12](v0.4.12.md) | 2026-08-03 | SAML actually signs in, and says why when it does not |
 | [v0.4.11](v0.4.11.md) | 2026-08-03 | First-time SAML setup is no longer a deadlock |
 | [v0.4.10](v0.4.10.md) | 2026-08-03 | The SSO guide works before you have configured SSO |
 | [v0.4.9](v0.4.9.md) | 2026-08-03 | An audit log, and quotas that fit the billing cycle |
