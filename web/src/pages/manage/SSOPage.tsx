@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Tabs, Tag, Typography, Upload } from 'antd'
+import { Alert, App, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
@@ -110,6 +110,65 @@ function IconPicker({ kind, value, onChange }: { kind: 'oidc' | 'saml'; value?: 
         <SSOIcon icon={value} />
       </span>
     </Space>
+  )
+}
+
+/**
+ * The claim names the identity provider actually sent, on the most recent sign-in.
+ *
+ * Every field below this is a claim NAME, and providers disagree wildly about them: Entra and ADFS
+ * send long URN forms, Okta and Keycloak short ones. Guessing wrong fails the login with a message
+ * about accounts, which points nowhere near the blank field that caused it. The endpoint for this
+ * shipped with SSO and nothing ever called it — so the guesswork it was written to end went on.
+ */
+function LastSeenClaims({ slug }: { slug: string }) {
+  const { t } = useTranslation()
+  const [claims, setClaims] = useState<{ name: string; preview: string }[] | null>(null)
+  const [seen, setSeen] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (!slug) return
+    api
+      .get<{ seen: boolean; claims?: { name: string; preview: string }[] }>(
+        `/api/admin/sso/providers/${encodeURIComponent(slug)}/last-seen`,
+      )
+      .then((r) => {
+        setSeen(r.seen)
+        setClaims(r.claims ?? [])
+      })
+      .catch(() => setSeen(false))
+  }, [slug])
+
+  if (seen === null) return null
+  if (!seen || !claims?.length) {
+    return (
+      <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('sso.claimsNoneYet')} />
+    )
+  }
+  return (
+    <Card size="small" title={t('sso.claimsTitle')} style={{ marginBottom: 16 }}>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+        {t('sso.claimsHint')}
+      </Typography.Paragraph>
+      <Table
+        size="small"
+        pagination={false}
+        rowKey="name"
+        dataSource={claims}
+        columns={[
+          {
+            title: t('sso.claimsName'),
+            dataIndex: 'name',
+            render: (v: string) => (
+              <Typography.Text code copyable style={{ wordBreak: 'break-all' }}>
+                {v}
+              </Typography.Text>
+            ),
+          },
+          { title: t('sso.claimsValue'), dataIndex: 'preview', width: '38%' },
+        ]}
+      />
+    </Card>
   )
 }
 
@@ -269,6 +328,7 @@ function ProviderForm({
 
       <Typography.Title level={5}>{t('sso.mappingTitle')}</Typography.Title>
       <Typography.Paragraph type="secondary">{t('sso.mappingHint')}</Typography.Paragraph>
+      <LastSeenClaims slug={provider.slug} />
       <Form.Item name="attr_upn" label={t('sso.attrUpn')} extra={t('sso.attrUpnHint')}>
         <Input placeholder={kind === 'saml' ? 'nameid' : 'preferred_username'} />
       </Form.Item>

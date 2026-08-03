@@ -122,3 +122,47 @@ func TestLinkByRefusesADisabledAccount(t *testing.T) {
 		t.Fatal("a disabled account was adopted")
 	}
 }
+
+// Matching by email with no email claim mapped is a CONFIGURATION failure, and the login page has
+// to say so. It used to arrive as not_provisioned, whose message asserts a cause that is not the
+// real one — "this provider does not create accounts" — so an admin who had set everything up
+// correctly except one blank field was told to look somewhere else entirely.
+//
+// Safe to name because it is decided before anything is looked up: it says nothing about whether
+// the person has an account. Every refusal that DOES depend on that stays indistinguishable.
+func TestNoEmailClaimIsReportedAsConfigurationNotAsMissingAccount(t *testing.T) {
+	s := linkByServer(t)
+	p := SSOProvider{Kind: "saml", Slug: "saml", LinkBy: LinkByEmail} // AttrEmail deliberately unset
+	_, _, err := s.resolveSSOAccount(p, ssoIdentity{Provider: "saml", Issuer: "https://idp", Subject: "opaque",
+		Claims: map[string]any{"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": "kazuha@corp.example"}})
+	if err == nil {
+		t.Fatal("an unmapped email claim silently matched something")
+	}
+	if got := resolveFailCode(err); got != "sso_no_email_claim" {
+		t.Errorf("login page told %q, want sso_no_email_claim — the admin needs the real cause", got)
+	}
+}
+
+// And everything that depends on WHO is asking stays one indistinguishable answer.
+func TestUserDependentRefusalsStayIndistinguishable(t *testing.T) {
+	s := linkByServer(t)
+	p := SSOProvider{Kind: "saml", Slug: "saml", LinkBy: LinkByEmail, AttrEmail: "email"}
+
+	// Ambiguous email: naming it would reveal that two accounts share an address.
+	s.st.UpsertUser(User{Username: "kazuha2", PasswordHash: "x", Role: "user"})
+	s.st.SetUserProfile("kazuha2", "Dup", "kazuha@corp.example")
+	_, _, ambiguous := s.resolveSSOAccount(p, ssoIdentity{Provider: "saml", Issuer: "https://idp", Subject: "o",
+		Claims: map[string]any{"email": "kazuha@corp.example"}})
+
+	// No such account at all.
+	_, _, missing := s.resolveSSOAccount(p, ssoIdentity{Provider: "saml", Issuer: "https://idp", Subject: "o",
+		Claims: map[string]any{"email": "stranger@corp.example"}})
+
+	if ambiguous == nil || missing == nil {
+		t.Fatal("both of these must refuse")
+	}
+	if resolveFailCode(ambiguous) != "not_provisioned" || resolveFailCode(missing) != "not_provisioned" {
+		t.Errorf("the login page can tell them apart: %q vs %q",
+			resolveFailCode(ambiguous), resolveFailCode(missing))
+	}
+}
