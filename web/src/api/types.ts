@@ -833,6 +833,15 @@ export interface AuditEntry {
   geo?: GeoLocation
 }
 
+/** The IP-database download's progress. Never carries the URL: it holds a vendor credential. */
+export interface GeoUpdateState {
+  updating: boolean
+  last_error?: string
+  last_file?: string
+  last_at?: string
+  has_url: boolean
+}
+
 export interface AuditResp {
   items: AuditEntry[]
   total: number

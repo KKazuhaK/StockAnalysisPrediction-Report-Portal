@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { auditTime } from '../../lib/auditTime'
 import { formatRegion } from '../../lib/geo'
-import { Alert, Card, DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import { Alert, App, Button, Card, DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
-import type { AuditEntry, AuditResp } from '../../api/types'
+import type { AuditEntry, AuditResp, GeoUpdateState } from '../../api/types'
 
 // The audit log: who read what, and who changed who can read it.
 //
@@ -61,6 +61,116 @@ const ACTION_COLOR: Record<string, string> = {
   'webhook.create': 'red',
   'webhook.delete': 'default',
   'target.change': 'purple',
+}
+
+/**
+ * The IP database: what is loaded, where to put one, and where to fetch one from.
+ *
+ * It lives here rather than in a settings page because this is the only screen that shows an IP
+ * address — somebody wondering why a row has no location is looking at the row.
+ *
+ * The source URL is write-only. Every vendor puts a credential in its query string, so the server
+ * reports only WHETHER one is configured; the field starts blank and blank means "leave it alone",
+ * the same rule the SMTP password and the SSO client secrets already follow.
+ */
+function GeoPanel({ geo, onChanged }: { geo: NonNullable<AuditResp['geo']>; onChanged: () => void }) {
+  const { t } = useTranslation()
+  const { message } = App.useApp()
+  const [url, setUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [upd, setUpd] = useState<GeoUpdateState | null>(null)
+
+  const poll = useCallback(() => {
+    api
+      .get<{ update: GeoUpdateState }>('/api/admin/geoip')
+      .then((r) => setUpd(r.update))
+      .catch(() => {})
+  }, [])
+  useEffect(poll, [poll])
+
+  // Only while a download runs, and it stops on its own: a page left open must not poll for ever.
+  useEffect(() => {
+    if (!upd?.updating) return
+    const id = setInterval(() => {
+      api
+        .get<{ update: GeoUpdateState }>('/api/admin/geoip')
+        .then((r) => {
+          setUpd(r.update)
+          if (!r.update.updating) onChanged() // the database changed; reload the rows with it
+        })
+        .catch(() => {})
+    }, 3000)
+    return () => clearInterval(id)
+  }, [upd?.updating, onChanged])
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.post('/api/admin/geoip', { url: url.trim() })
+      setUrl('')
+      message.success(t('common.saved'))
+      poll()
+    } catch (e) {
+      message.error(errText(e, t))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const update = async () => {
+    try {
+      await api.post('/api/admin/geoip/update', {})
+      poll()
+    } catch (e) {
+      message.error(errText(e, t))
+    }
+  }
+
+  return (
+    <Card size="small" style={{ marginTop: 16 }} title={t('audit.geoTitle')}>
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {geo.loaded
+            ? t('audit.geoLoaded', {
+                file: geo.file,
+                type: geo.info?.type || '—',
+                // How OLD the data is, which is the thing that decides whether to press the
+                // button — not when the file was copied in.
+                built: geo.info?.build_epoch
+                  ? new Date(geo.info.build_epoch * 1000).toISOString().slice(0, 10)
+                  : '—',
+              })
+            : t('audit.geoMissing', { dir: geo.dir })}
+        </Typography.Text>
+        <Space.Compact style={{ width: '100%', maxWidth: 640 }}>
+          <Input
+            placeholder={upd?.has_url ? t('audit.geoUrlSet') : t('audit.geoUrlPlaceholder')}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <Button onClick={save} loading={busy}>
+            {t('common.save')}
+          </Button>
+          <Button type="primary" onClick={update} loading={!!upd?.updating} disabled={!upd?.has_url}>
+            {t('audit.geoUpdate')}
+          </Button>
+        </Space.Compact>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t('audit.geoUrlHint')}
+        </Typography.Text>
+        {upd?.last_error && (
+          <Typography.Text type="danger" style={{ fontSize: 12 }}>
+            {upd.last_error}
+          </Typography.Text>
+        )}
+        {!upd?.last_error && upd?.last_file && (
+          <Typography.Text type="success" style={{ fontSize: 12 }}>
+            {t('audit.geoLastUpdate', { file: upd.last_file })}
+          </Typography.Text>
+        )}
+      </Space>
+    </Card>
+  )
 }
 
 export default function AuditPage() {
@@ -272,13 +382,7 @@ export default function AuditPage() {
       {/* A footnote, not a banner: it is reference rather than a problem. Without it, "no IP
           database installed" and "installed, but nothing public has shown up yet" look identical,
           because both render as bare addresses. */}
-      {geo && (
-        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
-          {geo.loaded
-            ? t('audit.geoLoaded', { file: geo.file, type: geo.info?.type || '—' })
-            : t('audit.geoMissing', { dir: geo.dir })}
-        </Typography.Text>
-      )}
+      {geo && <GeoPanel geo={geo} onChanged={load} />}
     </Card>
   )
 }
