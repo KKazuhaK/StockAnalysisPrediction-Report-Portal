@@ -19,7 +19,26 @@ const { apiMock, authMock, webauthnMock, navMock } = vi.hoisted(() => ({
   navMock: { hardNavigate: vi.fn() },
 }))
 
-vi.mock('../api/client', () => ({ api: apiMock, ApiError: class extends Error {} }))
+// ApiError carries a code here, because the forgot dialog branches on one: a captcha refusal is
+// the single failure it may report, and every other one still has to read as "sent". Hoisted with
+// the mocks, since vi.mock's factory runs before the file body.
+const { FakeApiError } = vi.hoisted(() => ({
+  FakeApiError: class extends Error {
+    status: number
+    code?: string
+    constructor(status: number, message: string, code?: string) {
+      super(message)
+      this.status = status
+      this.code = code
+    }
+  },
+}))
+vi.mock('../api/client', () => ({
+  api: apiMock,
+  ApiError: FakeApiError,
+  errText: (e: unknown, t: (k: string) => string) =>
+    e instanceof FakeApiError && e.code ? t(`err.${e.code}`) : t('common.error'),
+}))
 vi.mock('../auth', () => ({ useAuth: () => authMock }))
 vi.mock('../lib/webauthn', () => webauthnMock)
 vi.mock('../lib/hardNavigate', () => navMock)
@@ -264,5 +283,82 @@ describe('LoginPage login modes', () => {
     } finally {
       window.history.replaceState({}, '', '/')
     }
+  })
+})
+
+// The 找回密码 dialog and the captcha toggle that governs it.
+//
+// The toggle was working the whole time — the server refuses a proofless request with 400
+// captcha_failed. The dialog never rendered a captcha and never sent one, and it swallowed every
+// error to avoid leaking which accounts exist, so it reported "sent" over a refusal. From the
+// admin's chair that is indistinguishable from a switch that does nothing, and the reset mail they
+// were waiting for never left.
+describe('LoginPage — the forgot-password captcha', () => {
+  beforeEach(() => {
+    apiMock.get.mockReset()
+    apiMock.post.mockReset()
+    apiMock.get.mockImplementation((url: string) => {
+      // Exactly the configuration reported: the 找回密码 form gated, the login form not. It also
+      // keeps one captcha on screen, so a query for it cannot match the login form's by accident.
+      if (url.startsWith('/api/captcha')) {
+        return Promise.resolve(
+          url.includes('ctx=forgot')
+            ? { required: true, provider: 'image', captcha_id: 'c1', image: 'data:image/png;base64,x' }
+            : { required: false, provider: 'image' },
+        )
+      }
+      if (url === '/api/sso/providers') return Promise.resolve({ providers: [], local: true, sso: false })
+      return Promise.resolve({})
+    })
+    apiMock.post.mockResolvedValue({ ok: true })
+  })
+
+  const openForgot = async () => {
+    renderLogin()
+    fireEvent.click(await screen.findByText('login.forgot'))
+    return screen.findByPlaceholderText('login.forgotAccount')
+  }
+
+  it('asks for the captcha the server says it needs', async () => {
+    await openForgot()
+    await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith(expect.stringContaining('ctx=forgot')))
+    expect(await screen.findByPlaceholderText('captcha.placeholder')).toBeTruthy()
+  })
+
+  it('sends the answer with the request', async () => {
+    const acct = await openForgot()
+    fireEvent.change(acct, { target: { value: 'kazuha' } })
+    fireEvent.change(await screen.findByPlaceholderText('captcha.placeholder'), { target: { value: '4271' } })
+    fireEvent.click(screen.getByText('login.forgotSend'))
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith('/api/password/forgot', {
+        account: 'kazuha',
+        captcha_id: 'c1',
+        captcha_answer: '4271',
+      }),
+    )
+  })
+
+  // "Always say sent" exists so nobody can enumerate accounts. A wrong captcha is not an account
+  // fact, so reporting it leaks nothing — and reporting success instead is a lie that loses mail.
+  it('says the captcha was wrong instead of claiming the mail was sent', async () => {
+    const acct = await openForgot()
+    fireEvent.change(acct, { target: { value: 'kazuha' } })
+    fireEvent.change(await screen.findByPlaceholderText('captcha.placeholder'), { target: { value: 'nope' } })
+    apiMock.post.mockRejectedValueOnce(new FakeApiError(400, 'captcha is required or incorrect', 'captcha_failed'))
+    fireEvent.click(screen.getByText('login.forgotSend'))
+
+    expect(await screen.findByText('err.captcha_failed')).toBeTruthy()
+    expect(screen.queryByText('login.forgotSent')).toBeNull()
+  })
+
+  // Any other refusal still reports "sent": that one IS account-dependent.
+  it('still reports sent when the failure could reveal whether the account exists', async () => {
+    const acct = await openForgot()
+    fireEvent.change(acct, { target: { value: 'kazuha' } })
+    fireEvent.change(await screen.findByPlaceholderText('captcha.placeholder'), { target: { value: '4271' } })
+    apiMock.post.mockRejectedValueOnce(new FakeApiError(500, 'boom'))
+    fireEvent.click(screen.getByText('login.forgotSend'))
+    expect(await screen.findByText('login.forgotSent')).toBeTruthy()
   })
 })
