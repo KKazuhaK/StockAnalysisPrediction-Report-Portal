@@ -92,6 +92,29 @@ describe('OrgUnitDetail', () => {
     expect(screen.queryByText('ou.deleteOu')).toBeNull()
   })
 
+  // The quota is a number AND a window, and both have to survive the round trip together — the
+  // server refuses to inherit one without the other, so a panel that sent only the number would
+  // silently reset a monthly cap to daily.
+  it('saves the quota period alongside the number', async () => {
+    mount(g({ id: 2, restricted: true, restricted_effective: true, daily_run_quota: 20, run_quota_period: 'month' }))
+    fireEvent.click(screen.getAllByText('common.save')[0]) // a restricted OU also renders the allow-list's save
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const body = put.mock.calls[0][1] as Record<string, unknown>
+    expect(body.daily_run_quota).toBe(20)
+    expect(body.run_quota_period).toBe('month')
+  })
+
+  // The quota inherits down the OU TREE, so the hint has to name the ancestor's cap. It used to
+  // fall back to 0 and offer "inherit — unlimited" under a parent that caps its subtree at 20.
+  it('offers the ancestor’s cap, with its window, as what inheriting would mean', () => {
+    const clients = g({ id: 2, name: 'Clients', parent_id: 1, daily_run_quota: 20, run_quota_period: 'month' })
+    const acme = g({ id: 3, name: 'Acme', parent_id: 2, restricted: true, restricted_effective: true })
+    mount(acme, [DEF, clients, acme])
+    const labels = screen.getAllByText(/ou\.inheritedAs/).map((n) => n.textContent ?? '')
+    expect(labels.some((l) => l.includes('20 ou.period.month'))).toBe(true)
+    expect(labels.some((l) => l.includes('ou.unlimited') && l.includes('users.parentOu'))).toBe(false)
+  })
+
   it('shows the allow-list only for a restricted OU, where it governs anything', () => {
     mount(g({ id: 2 }))
     expect(screen.queryByText('ou.sectionTargets')).toBeNull()
