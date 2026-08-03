@@ -8,6 +8,7 @@ import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import RegisterPage from './pages/RegisterPage'
+import ForgotPage from './pages/ForgotPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 
 // Route pages are lazy-loaded (Suspense boundary lives in AppLayout), so the first
@@ -79,6 +80,7 @@ function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/reset" element={<ResetPasswordPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/forgot" element={<ForgotPage />} />
       <Route path="/verify" element={<VerifyEmailPage />} />
       <Route
         element={

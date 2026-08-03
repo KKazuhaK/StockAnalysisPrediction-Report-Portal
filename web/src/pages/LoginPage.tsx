@@ -10,6 +10,7 @@ import { api, ApiError, errText } from '../api/client'
 import { passkeySupported } from '../lib/webauthn'
 import { hardNavigate } from '../lib/hardNavigate'
 import CaptchaField, { type CaptchaValue } from '../components/CaptchaField'
+import SSOIcon from '../components/SSOIcon'
 import { SiteLogo, useSite } from '../site'
 import { AutoIcon, MoonIcon, SunIcon } from '../components/icons'
 
@@ -22,12 +23,6 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const [forgotOpen, setForgotOpen] = useState(false)
-  const [forgotAcct, setForgotAcct] = useState('')
-  const [forgotBusy, setForgotBusy] = useState(false)
-  const [forgotSent, setForgotSent] = useState(false)
-  const [forgotCaptcha, setForgotCaptcha] = useState<CaptchaValue>({})
-  const [forgotErr, setForgotErr] = useState('')
   // Second-factor step: the password leg hands back a single-use token and issues no session.
   const [totpToken, setTotpToken] = useState('')
   const [totpCode, setTotpCode] = useState('')
@@ -109,35 +104,6 @@ export default function LoginPage() {
 
   if (!loading && user) return <Navigate to="/" replace />
 
-  const submitForgot = async () => {
-    setForgotBusy(true)
-    setForgotErr('')
-    try {
-      await api.post('/api/password/forgot', { account: forgotAcct.trim(), ...forgotCaptcha })
-      setForgotSent(true)
-    } catch (e) {
-      // "Always report sent" exists so nobody can enumerate accounts, and it still holds for every
-      // failure that depends on WHICH account was named. A rejected captcha does not: the server
-      // decides it before it has looked anything up, so saying so leaks nothing — and saying
-      // "sent" instead loses the mail the admin is waiting for, silently, which is exactly how a
-      // working captcha toggle came to look like a switch that does nothing.
-      if (e instanceof ApiError && e.code === 'captcha_failed') {
-        setForgotErr(errText(e, t))
-        setCaptchaRound((n) => n + 1) // a challenge is consumed on use; re-arm it
-      } else {
-        setForgotSent(true)
-      }
-    } finally {
-      setForgotBusy(false)
-    }
-  }
-  const closeForgot = () => {
-    setForgotOpen(false)
-    setForgotSent(false)
-    setForgotAcct('')
-    setForgotErr('')
-    setForgotCaptcha({})
-  }
 
   const submitTOTP = async () => {
     setErr('')
@@ -328,14 +294,17 @@ export default function LoginPage() {
                       hardNavigate(`/api/auth/${p.kind}/${encodeURIComponent(p.slug)}/start`)
                     }}
                   >
-                    {t('login.ssoWith', { name: p.name })}
+                    <Space size={8}>
+                      <SSOIcon icon={p.icon} />
+                      {t('login.ssoWith', { name: p.name })}
+                    </Space>
                   </Button>
                 ))}
               </Space>
             )}
             {!totpToken && (
               <div style={{ textAlign: 'center', marginTop: -8 }}>
-                <Button type="link" size="small" onClick={() => setForgotOpen(true)}>
+                <Button type="link" size="small" onClick={() => navigate('/forgot')}>
                   {t('login.forgot')}
                 </Button>
               </div>
@@ -344,42 +313,6 @@ export default function LoginPage() {
         </Card>
       </div>
 
-      <Modal
-        open={forgotOpen}
-        title={t('login.forgotTitle')}
-        onCancel={closeForgot}
-        onOk={submitForgot}
-        confirmLoading={forgotBusy}
-        okText={t('login.forgotSend')}
-        cancelText={t('common.cancel')}
-        footer={forgotSent ? null : undefined}
-        destroyOnHidden
-      >
-        {forgotSent ? (
-          <Typography.Paragraph>{t('login.forgotSent')}</Typography.Paragraph>
-        ) : (
-          <Space direction="vertical" style={{ width: '100%' }}>
-            <Typography.Text type="secondary">{t('login.forgotHint')}</Typography.Text>
-            <Input
-              prefix={<UserOutlined />}
-              placeholder={t('login.forgotAccount')}
-              value={forgotAcct}
-              onChange={(e) => setForgotAcct(e.target.value)}
-              onPressEnter={submitForgot}
-            />
-            {/* The form whose abuse is an outbound-mail flood at someone else's inbox — the one the
-                captcha toggle names — and it never asked for one. */}
-            <CaptchaField
-              context="forgot"
-              account={forgotAcct}
-              refresh={captchaRound}
-              value={forgotCaptcha}
-              onChange={setForgotCaptcha}
-            />
-            {forgotErr && <Typography.Text type="danger">{forgotErr}</Typography.Text>}
-          </Space>
-        )}
-      </Modal>
     </div>
   )
 }

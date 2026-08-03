@@ -142,7 +142,10 @@ func (s *Server) oidcRedirectURL(slug string) string {
 func (s *Server) apiSSOProviders(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0)
 	for _, p := range s.st.EnabledSSOProviders() {
-		out = append(out, map[string]any{"slug": p.Slug, "kind": p.Kind, "name": firstNonEmpty(p.Name, p.Slug)})
+		// icon joins the thin public projection. It is the only stored field the login page renders,
+		// and validSSOIcon has already guaranteed it cannot make the browser call anyone else.
+		out = append(out, map[string]any{"slug": p.Slug, "kind": p.Kind,
+			"name": firstNonEmpty(p.Name, p.Slug), "icon": p.Icon})
 	}
 	mode, local, sso := s.loginOffers()
 	writeJSON(w, map[string]any{"providers": out, "login_mode": mode, "local": local, "sso": sso})

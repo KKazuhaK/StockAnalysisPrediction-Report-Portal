@@ -666,6 +666,8 @@ export interface SSOProviderInfo {
   slug: string
   kind: 'saml' | 'oidc'
   name: string
+  /** Login-button icon: '' | 'preset:<name>' | a /site-assets/ path. Never a remote URL. */
+  icon?: string
 }
 
 // Admin view of an SSO provider (ADR 0023). Note what is NOT here: no client secret, no SP
@@ -692,6 +694,7 @@ export interface SSOProviderAdmin {
   has_idp_metadata: boolean
   allow_idp_initiated: boolean
   clock_skew_sec: number
+  icon?: string
   sp_entity_id: string // derived; paste into the IdP
   sp_acs_url: string // derived; paste into the IdP
   sp_cert_pem: string

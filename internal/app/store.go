@@ -345,7 +345,7 @@ func (s *Store) baseSchemaStmts() []string {
 			issuer TEXT, client_id TEXT, client_secret_enc TEXT,
 			scopes TEXT DEFAULT 'openid profile email', discovery_json TEXT, discovery_fetched_at TEXT,
 			attr_upn TEXT, attr_email TEXT, attr_display TEXT, attr_groups TEXT, attr_external_id TEXT,
-			session_hours INTEGER, created_at TEXT, updated_at TEXT)`, pk),
+			session_hours INTEGER, created_at TEXT, updated_at TEXT, icon TEXT)`, pk),
 		// Short-lived single-use state for EVERY interactive auth ceremony: the SAML AuthnRequest id,
 		// the OIDC nonce + PKCE verifier, the 2FA pending-login step and the WebAuthn challenge. They
 		// are one problem (single-use, restart-safe, cross-instance), so they get one table, one

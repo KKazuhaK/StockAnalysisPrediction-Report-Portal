@@ -28,7 +28,7 @@ func (s *Server) apiSiteAssetUpload(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	kind := strings.TrimSpace(r.FormValue("kind"))
-	if kind != "logo" && kind != "pwaIcon" {
+	if kind != "logo" && kind != "pwaIcon" && kind != "ssoIconSaml" && kind != "ssoIconOidc" {
 		jsonErrorCode(w, http.StatusBadRequest, "bad_asset_kind", "无效的资源类型")
 		return
 	}
@@ -123,8 +123,13 @@ func (s *Server) removeSiblingSiteAssets(kind, keep string) {
 }
 
 func siteAssetBaseName(kind string) string {
-	if kind == "pwaIcon" {
+	switch kind {
+	case "pwaIcon":
 		return "pwa-icon"
+	case "ssoIconSaml":
+		return "sso-icon-saml"
+	case "ssoIconOidc":
+		return "sso-icon-oidc"
 	}
 	return "logo"
 }
