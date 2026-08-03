@@ -166,3 +166,50 @@ func TestUserDependentRefusalsStayIndistinguishable(t *testing.T) {
 			resolveFailCode(ambiguous), resolveFailCode(missing))
 	}
 }
+
+// An emailAddress-format NameID IS the email. Entra sends the configured unique identifier as the
+// subject — for a normal tenant that is the UPN, which is an address — so an admin who chose email
+// matching and left the claim unmapped had the value sitting right there and was refused anyway.
+//
+// The sibling branch already works this way: username matching falls back to the subject when the
+// UPN claim is unmapped. Email matching not doing the same was an inconsistency, not a safeguard.
+func TestLinkByEmailFallsBackToAnEmailSubject(t *testing.T) {
+	s := linkByServer(t)
+	p := SSOProvider{Kind: "saml", Slug: "saml", LinkBy: LinkByEmail} // no AttrEmail mapped
+	name, created, err := s.resolveSSOAccount(p, ssoIdentity{
+		Provider: "saml", Issuer: "https://idp", Subject: "KAZUHA@CORP.EXAMPLE"})
+	if err != nil {
+		t.Fatalf("an email-shaped subject was not used: %v", err)
+	}
+	if created || name != "kazuha" {
+		t.Errorf("adopted %q created=%v, want kazuha/false", name, created)
+	}
+}
+
+// A mapped claim still wins: the fallback is for the unmapped case, not an override.
+func TestLinkByEmailPrefersTheMappedClaimOverTheSubject(t *testing.T) {
+	s := linkByServer(t)
+	s.st.UpsertUser(User{Username: "other", PasswordHash: "x", Role: "user"})
+	s.st.SetUserProfile("other", "Other", "other@corp.example")
+	p := SSOProvider{Kind: "saml", Slug: "saml", LinkBy: LinkByEmail, AttrEmail: "email"}
+	name, _, err := s.resolveSSOAccount(p, ssoIdentity{Provider: "saml", Issuer: "https://idp",
+		Subject: "kazuha@corp.example", Claims: map[string]any{"email": "other@corp.example"}})
+	if err != nil || name != "other" {
+		t.Errorf("adopted %q (%v), want other — the mapped claim decides", name, err)
+	}
+}
+
+// An opaque subject is not an address, so it cannot silently become one. This is what keeps the
+// fallback from matching anything by accident.
+func TestLinkByEmailIgnoresASubjectThatIsNotAnAddress(t *testing.T) {
+	s := linkByServer(t)
+	p := SSOProvider{Kind: "saml", Slug: "saml", LinkBy: LinkByEmail}
+	_, _, err := s.resolveSSOAccount(p, ssoIdentity{Provider: "saml", Issuer: "https://idp",
+		Subject: "AAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"})
+	if err == nil {
+		t.Fatal("an opaque subject was treated as an email address")
+	}
+	if got := resolveFailCode(err); got != "sso_no_email_claim" {
+		t.Errorf("code %q, want sso_no_email_claim — there is still no email to match on", got)
+	}
+}

@@ -245,9 +245,18 @@ func (s *Server) matchExistingAccount(p SSOProvider, id ssoIdentity) (string, er
 		candidate = u.Username
 	case LinkByEmail:
 		email := strings.TrimSpace(id.claim(p.AttrEmail))
+		if email == "" && looksLikeEmail(id.Subject) {
+			// An emailAddress-format NameID IS the email, and Entra sends the configured unique
+			// identifier as the subject — for a normal tenant, the UPN, which is an address. The
+			// username branch above already falls back to the subject when its claim is unmapped;
+			// not doing the same here refused a login whose email was sitting right there.
+			//
+			// Guarded on the shape, so an opaque subject cannot silently become an address.
+			email = strings.TrimSpace(id.Subject)
+		}
 		if email == "" {
-			// No claim is no match. Falling through to "any account with an empty email" would
-			// adopt an unrelated account on a missing attribute.
+			// No claim and no address to fall back to. Falling through to "any account with an
+			// empty email" would adopt an unrelated account on a missing attribute.
 			return "", errNoEmailToMatch
 		}
 		names := s.st.UsersByEmail(email)
@@ -284,6 +293,24 @@ func resolveFailCode(err error) string {
 		return "sso_no_email_claim"
 	}
 	return "not_provisioned"
+}
+
+// looksLikeEmail is a shape check, not validation: exactly one @, something either side, a dot in
+// the domain, and no spaces. It decides only whether a NameID may stand in for an unmapped email
+// claim, and the lookup that follows is an exact match against a stored address — so the cost of
+// being slightly permissive is a miss, never a wrong match.
+func looksLikeEmail(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.ContainsAny(v, " \t\r\n") {
+		return false
+	}
+	at := strings.Index(v, "@")
+	if at <= 0 || at != strings.LastIndex(v, "@") || at == len(v)-1 {
+		return false
+	}
+	domain := v[at+1:]
+	dot := strings.Index(domain, ".")
+	return dot > 0 && dot < len(domain)-1
 }
 
 var (
