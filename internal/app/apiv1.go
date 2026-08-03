@@ -46,6 +46,25 @@ func (s *Server) v1ReportByPathID(id string, sc *ownerScope) *Rep {
 	return rep
 }
 
+// recordV1Read logs a body served over the machine API.
+//
+// loadRep covers every path that serves a body to a person through the SPA; this covers the other
+// door. It matters because it is not hypothetical: apiAppToken mints a `query` token to any
+// non-restricted logged-in user, so every downloadable app reads reports through here, and those
+// reads were invisible.
+//
+// The actor is the cookie user when there is one and "" for a token — which the console already
+// renders as "(API token)" — and `via` says which door it came through, so an operator can tell an
+// app's fetch from a person opening the page.
+func (s *Server) recordV1Read(r *http.Request, rep Rep) {
+	s.st.WriteAudit(AuditEntry{
+		Actor: s.currentActiveUser(r), ActorOU: s.st.PrimaryGroupOf(s.currentActiveUser(r)),
+		Action: AuditReportRead, TargetType: "report", TargetID: strconv.FormatInt(rep.ID, 10),
+		Detail: auditJSON(map[string]any{"symbol": rep.Symbol, "date": rep.Date, "title": rep.Title, "via": "api"}),
+		IP:     s.auditIP(r),
+	})
+}
+
 // ingestInstant is the real time-of-day stamped onto a report's sent_at. It is a
 // UTC RFC3339 instant, server-stamped by default so same-day reports always order
 // correctly; a client-supplied `time` is honored only when it parses as a full
@@ -220,6 +239,11 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		v1err(w, http.StatusInternalServerError, "db_error", "database error")
 		return
 	}
+	// created says whether this was a new report or an overwrite of an existing one — the identity
+	// key upserts, so "the report changed and nobody knows when" is otherwise unanswerable.
+	s.recordChange(r, "", AuditReportIngest, "report", strconv.FormatInt(id, 10), map[string]any{
+		"created": created, "symbol": in.Symbol, "date": in.Date, "subtype": rtype,
+		"version": in.Version, "run_id": in.RunID})
 	// Stamp the generating OU first-writer-wins from the signed owner_token (ADR 0022 R1). A missing
 	// or invalid token leaves owner_group NULL (internal/unattributed), which fails closed for
 	// restricted viewers. Ownership is never taken from a plain client-supplied field.
@@ -316,6 +340,14 @@ func (s *Server) v1QueryReports(w http.ResponseWriter, r *http.Request) {
 	for _, rp := range reps {
 		items = append(items, s.v1RepJSON(rp, withBody))
 	}
+	// Only when bodies were actually served. A list of titles is a search; a list of bodies is a
+	// read of each one, and the app bridge fetches exactly this way — so without these rows the
+	// table's own claim ("who read this report") is false for every app.
+	if withBody {
+		for _, rp := range reps {
+			s.recordV1Read(r, rp)
+		}
+	}
 	writeJSON(w, map[string]any{"ok": true, "count": len(items), "total": total, "offset": offset, "limit": limit, "items": items})
 }
 
@@ -330,6 +362,7 @@ func (s *Server) v1GetReport(w http.ResponseWriter, r *http.Request) {
 		v1err(w, http.StatusNotFound, "not_found", "no report with that id")
 		return
 	}
+	s.recordV1Read(r, *rep)
 	m := s.v1RepJSON(*rep, true)
 	m["ok"] = true
 	m["body_html"] = htmlOf(*rep)
@@ -354,6 +387,11 @@ func (s *Server) v1DeleteReport(w http.ResponseWriter, r *http.Request) {
 		log.Printf("v1 delete db error: %v", err)
 		v1err(w, http.StatusInternalServerError, "db_error", "database error")
 		return
+	}
+	// Only when something was actually removed: a repeat of an idempotent delete is not an event.
+	// A deletion nobody can attribute is the worst case this table exists for.
+	if n > 0 {
+		s.recordChange(r, "", AuditReportDelete, "report", strconv.FormatInt(id, 10), nil)
 	}
 	writeJSON(w, map[string]any{"ok": true, "deleted": n})
 }
