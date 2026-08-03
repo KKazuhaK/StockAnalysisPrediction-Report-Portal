@@ -41,6 +41,7 @@ type Server struct {
 	st                 *Store
 	names              *Names
 	pdf                *template.Template
+	geo                *geoService                                                                // IP → place for the audit log; nil-safe, empty until a .mmdb is installed
 	seenAt             sync.Map                                                                   // username -> time.Time of the last activity stamp WRITTEN (throttle; see touchSeen)
 	jobRuns            sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
 	itemCancels        sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
@@ -120,6 +121,7 @@ func RunServer(cfgPath string) {
 	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute), loginThr: newLoginThrottle(),
 		trustedNets: trustedNets, captchaSvc: captcha.New()}
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
+	s.geo = newGeoService(config.DirOf(cfg.DBPath))
 	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()
 

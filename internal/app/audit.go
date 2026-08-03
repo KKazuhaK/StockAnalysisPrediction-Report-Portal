@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/geoip"
 )
 
 // The audit log (retention is the storage-cleanup subsystem's Target D, ADR 0017).
@@ -33,6 +35,10 @@ type AuditEntry struct {
 	// try" — is an equality lookup, and detail is only reachable through an unindexed substring
 	// match that would also hit a target_id containing the same bytes.
 	IP string `json:"ip"`
+	// Geo is resolved when the log is READ, never stored. A database improves and an
+	// address changes hands, so a place written beside the row would be a snapshot of what
+	// one build once thought, shown later as fact. The address is the record.
+	Geo *geoip.Location `json:"geo,omitempty"`
 }
 
 // AuditFilter narrows the log. The zero value is everything.
@@ -307,6 +313,13 @@ func (s *Server) apiAdminAudit(w http.ResponseWriter, r *http.Request, user stri
 	ouNames := map[string]string{}
 	for _, g := range s.st.ListUserGroups() {
 		ouNames[strconv.FormatInt(g.ID, 10)] = g.Name
+	}
+	// Resolved here rather than in the store, so the log stays a log and the place stays a
+	// rendering. One memory-mapped lookup per row, no network, no cache to keep coherent.
+	for i := range rows {
+		if loc := s.geo.Lookup(rows[i].IP); !loc.Empty() {
+			rows[i].Geo = &loc
+		}
 	}
 	writeJSON(w, map[string]any{
 		"items": rows, "total": total,

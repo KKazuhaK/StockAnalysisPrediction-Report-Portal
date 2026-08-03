@@ -808,6 +808,15 @@ export interface TrackingResp {
 
 // ---- Audit log ----
 
+/** A resolved IP address. Every field is optional: a country-level database fills the
+ *  first two, and an address the database does not know fills none. */
+export interface GeoLocation {
+  country_code?: string
+  country?: string
+  region?: string
+  city?: string
+}
+
 export interface AuditEntry {
   id: number
   at: string
@@ -820,6 +829,8 @@ export interface AuditEntry {
   detail: string // JSON
   /** Source address; '' for a writer with no request (CLI, scheduler). */
   ip?: string
+  /** Where the address resolves to. Resolved server-side at READ time, never stored. */
+  geo?: GeoLocation
 }
 
 export interface AuditResp {
