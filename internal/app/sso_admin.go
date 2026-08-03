@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -167,7 +168,14 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 	// a draft but never offered on the login page.
 	if p.Enabled {
 		if err := s.validateProviderForEnable(&p); err != nil {
-			jsonError(w, http.StatusBadRequest, err.Error())
+			// The code, not just the sentence: every one of these is read by an admin mid-setup, on
+			// a screen that may not be in English.
+			var c ssoCoded
+			if errors.As(err, &c) {
+				jsonErrorCode(w, http.StatusBadRequest, c.code, c.msg)
+			} else {
+				jsonError(w, http.StatusBadRequest, err.Error())
+			}
 			return
 		}
 	}
@@ -180,49 +188,55 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
+// ssoCoded is a refusal the client can translate. The message is the fallback for a client with no
+// string for the code — never the only thing the admin gets.
+type ssoCoded struct{ code, msg string }
+
+func (e ssoCoded) Error() string { return e.msg }
+
 // validateProviderForEnable refuses to put a provider in front of users until it can actually work.
 // Failing here is much kinder than failing mid-login with an opaque error.
 func (s *Server) validateProviderForEnable(p *SSOProvider) error {
 	base := s.publicBaseURL()
 	if base == "" {
-		return ssoError("set the Public URL (Manage → General) before enabling SSO — the redirect and ACS URLs derive from it")
+		return ssoCoded{"sso_need_public_url", "set the Public URL (Manage \u2192 General) before enabling SSO \u2014 the redirect and ACS URLs derive from it"}
 	}
 	if p.Provisioning == "jit" {
 		if p.DefaultGroup == 0 {
-			return ssoError("choose a default group: a just-in-time account must land in a known group")
+			return ssoCoded{"sso_need_default_group", "choose a default group: a just-in-time account must land in a known group"}
 		}
 		if !s.st.GroupExists(p.DefaultGroup) {
-			return ssoError("the default group no longer exists")
+			return ssoCoded{"sso_group_gone", "the default group no longer exists"}
 		}
 		// The default group must be an EXTERNAL one. Landing a self-provisioned account in an
 		// unrestricted group would give whoever the IdP admits the run of the portal — the exact
 		// outcome the external-user model (ADR 0022) exists to prevent, reached by an easy
 		// misconfiguration rather than an attack.
 		if !s.st.GroupRestrictedEffective(p.DefaultGroup) {
-			return ssoError("the default group must be an external (restricted) group — otherwise a self-created account could see everything")
+			return ssoCoded{"sso_group_not_restricted", "the default group must be an external (restricted) group \u2014 otherwise a self-created account could see everything"}
 		}
 	}
 	switch p.Kind {
 	case "oidc":
 		if p.Issuer == "" || p.ClientID == "" || p.ClientSecretEnc == "" {
-			return ssoError("issuer, client id and client secret are required")
+			return ssoCoded{"sso_oidc_incomplete", "issuer, client id and client secret are required"}
 		}
 		// Fetch discovery through the SSRF guard, so a bad or hostile issuer fails at save time.
 		if err := s.ssoClient().checkURL(p.Issuer + "/.well-known/openid-configuration"); err != nil {
-			return ssoError("issuer is not reachable: " + err.Error())
+			return ssoCoded{"sso_issuer_unreachable", "issuer is not reachable: " + err.Error()}
 		}
 	case "saml":
 		if !strings.HasPrefix(base, "https://") {
-			return ssoError("SAML requires an https Public URL: the assertion is posted cross-site, so its cookie must be Secure")
+			return ssoCoded{"sso_need_https", "SAML requires an https Public URL: the assertion is posted cross-site, so its cookie must be Secure"}
 		}
 		if strings.TrimSpace(p.IdPMetadataXML) == "" {
-			return ssoError("fetch or paste the IdP metadata first")
+			return ssoCoded{"sso_need_metadata", "fetch or paste the IdP metadata first"}
 		}
 		if _, err := parseIdPMetadata(p.IdPMetadataXML); err != nil {
-			return ssoError("IdP metadata is not usable: " + err.Error())
+			return ssoCoded{"sso_metadata_unusable", "IdP metadata is not usable: " + err.Error()}
 		}
 		if p.SPKeyEnc == "" {
-			return ssoError("the SP certificate has not been generated yet")
+			return ssoCoded{"sso_no_sp_cert", "the SP certificate has not been generated yet"}
 		}
 	}
 	return nil
@@ -231,26 +245,55 @@ func (s *Server) validateProviderForEnable(p *SSOProvider) error {
 // apiAdminSSOFetchMetadata pulls IdP metadata over the SSRF-guarded client. It FAILS CLOSED: a
 // failed fetch leaves the previously-stored document in place, because blanking the trust anchor
 // would take every login down and, worse, could be induced deliberately.
+//
+// It takes the URL from the REQUEST, falling back to the stored one, and creates a disabled draft
+// when no provider row exists yet. Both are needed to break a deadlock in first-time SAML setup:
+// enabling SAML requires stored metadata (validateProviderForEnable), so a provider with the enable
+// switch already on cannot be saved — and this endpoint used to require the very row that could not
+// be saved. An admin filling the form top to bottom got "no such provider" here and "fetch or paste
+// the IdP metadata first" from save, with nothing saying which order to do them in.
+//
+// The draft is DISABLED. Pressing fetch is not consent to put a provider in front of users.
 func (s *Server) apiAdminSSOFetchMetadata(w http.ResponseWriter, r *http.Request, user string) {
-	p, ok := s.st.SSOProviderBySlug(r.PathValue("slug"))
-	if !ok {
-		jsonError(w, http.StatusNotFound, "no such provider")
-		return
+	var in struct {
+		Kind           string `json:"kind"`
+		IdPMetadataURL string `json:"idp_metadata_url"`
+	}
+	_ = readJSON(r, &in) // an empty body is fine: it means "use what is stored"
+
+	slug := r.PathValue("slug")
+	p, existed := s.st.SSOProviderBySlug(slug)
+	if !existed {
+		kind := strings.TrimSpace(in.Kind)
+		if kind != "saml" {
+			jsonErrorCode(w, http.StatusBadRequest, "sso_bad_kind", "只有 SAML 提供商需要拉取元数据")
+			return
+		}
+		// Only the fields this endpoint owns. Everything else the admin typed is still in the form
+		// and lands on the next save — this draft exists so the metadata has somewhere to go.
+		p = SSOProvider{Slug: slug, Kind: kind, Enabled: false}
+	}
+	if u := strings.TrimSpace(in.IdPMetadataURL); u != "" {
+		p.IdPMetadataURL = u // what the admin just typed wins over what was stored
 	}
 	if p.IdPMetadataURL == "" {
-		jsonError(w, http.StatusBadRequest, "no metadata URL configured")
+		jsonErrorCode(w, http.StatusBadRequest, "sso_no_metadata_url", "请先填写 IdP 元数据地址")
 		return
 	}
 	body, err := s.ssoClient().fetch(p.IdPMetadataURL, 2<<20)
 	if err != nil {
-		s.st.NoteSSOMetadataError(p.ID, err.Error())
-		jsonError(w, http.StatusBadGateway, "could not fetch the metadata: "+err.Error())
+		if p.ID != 0 {
+			s.st.NoteSSOMetadataError(p.ID, err.Error())
+		}
+		jsonErrorCode(w, http.StatusBadGateway, "sso_metadata_unreachable", "无法拉取元数据："+err.Error())
 		return
 	}
 	meta, err := parseIdPMetadata(string(body))
 	if err != nil {
-		s.st.NoteSSOMetadataError(p.ID, err.Error())
-		jsonError(w, http.StatusBadRequest, "the metadata is not usable: "+err.Error())
+		if p.ID != 0 {
+			s.st.NoteSSOMetadataError(p.ID, err.Error())
+		}
+		jsonErrorCode(w, http.StatusBadRequest, "sso_metadata_unusable", "元数据无法使用："+err.Error())
 		return
 	}
 	p.IdPMetadataXML, p.IdPEntityID = string(body), meta.EntityID

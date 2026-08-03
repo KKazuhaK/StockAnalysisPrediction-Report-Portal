@@ -10,6 +10,21 @@ import (
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
+// A minimal IdP metadata document: one IDPSSODescriptor, which is the only thing
+// parseIdPMetadata requires.
+const testIdPMetadata = `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example">
+	<IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+		<SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example/sso"/>
+	</IDPSSODescriptor></EntityDescriptor>`
+
+// allowSSOFetchTo opens the SSRF guard just far enough to reach a loopback httptest server over
+// plain http. Both switches are the ones production already has: the private-address setting a
+// self-hosted IdP needs, and the test-only insecure flag.
+func (s *Server) allowSSOFetchTo(_ string) {
+	s.st.SetSetting("sso_allow_private", "1")
+	s.ssoInsecureForTest = true
+}
+
 func adminSSOServer(t *testing.T) *Server {
 	t.Helper()
 	st := newTestStore(t)
@@ -87,6 +102,99 @@ func TestSSOAdminDefaultsMatchTheSavedProvider(t *testing.T) {
 		if resp.Providers[0][k] != resp.Defaults["saml"][k] {
 			t.Errorf("%s: stored %v, default %v — they must be one string", k, resp.Providers[0][k], resp.Defaults["saml"][k])
 		}
+	}
+}
+
+// First-time SAML setup deadlocked. Enabling SAML requires stored IdP metadata
+// (validateProviderForEnable), and fetching that metadata required a stored provider row — but the
+// row cannot be saved while "enabled" is on and the metadata is missing. With the enable switch at
+// the TOP of the form, an admin who turns it on before filling anything in gets "no such provider"
+// from the fetch button and "fetch or paste the IdP metadata first" from save, and neither says
+// which order to do them in. The fetch button now carries the URL itself and creates the draft.
+func TestFetchMetadataWorksBeforeTheProviderIsSaved(t *testing.T) {
+	s := adminSSOServer(t)
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(testIdPMetadata))
+	}))
+	defer idp.Close()
+	s.allowSSOFetchTo(idp.URL)
+
+	rec := httptest.NewRecorder()
+	body := `{"kind":"saml","idp_metadata_url":"` + idp.URL + `/federationmetadata.xml"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/sso/providers/saml/metadata", strings.NewReader(body))
+	req.SetPathValue("slug", "saml")
+	s.apiAdminSSOFetchMetadata(rec, req, "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fetch before save → %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// It stored a DRAFT: the metadata is in place, and the provider is not offered on the login page
+	// just because someone pressed fetch.
+	p, ok := s.st.SSOProviderBySlug("saml")
+	if !ok {
+		t.Fatal("fetch did not create the provider row")
+	}
+	if p.Enabled {
+		t.Error("fetching metadata enabled the provider; it must save a draft")
+	}
+	if strings.TrimSpace(p.IdPMetadataXML) == "" || p.IdPEntityID == "" {
+		t.Errorf("metadata not stored: xml=%d entity=%q", len(p.IdPMetadataXML), p.IdPEntityID)
+	}
+	if p.IdPMetadataURL == "" {
+		t.Error("the URL the admin typed was not kept, so the next fetch would have nothing to use")
+	}
+}
+
+// An edited URL must be the one fetched. Reading it from the stored row meant retyping the URL and
+// pressing fetch silently re-fetched the OLD address.
+func TestFetchMetadataUsesTheURLTheAdminJustTyped(t *testing.T) {
+	s := adminSSOServer(t)
+	hits := make(chan string, 4)
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits <- r.URL.Path
+		w.Write([]byte(testIdPMetadata))
+	}))
+	defer idp.Close()
+	s.allowSSOFetchTo(idp.URL)
+	saveProvider(t, s, `{"kind":"saml","slug":"saml","name":"Corp","idp_metadata_url":"`+idp.URL+`/old.xml"}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/sso/providers/saml/metadata",
+		strings.NewReader(`{"idp_metadata_url":"`+idp.URL+`/new.xml"}`))
+	req.SetPathValue("slug", "saml")
+	s.apiAdminSSOFetchMetadata(rec, req, "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fetch → %d (%s)", rec.Code, rec.Body.String())
+	}
+	select {
+	case got := <-hits:
+		if got != "/new.xml" {
+			t.Errorf("fetched %q, want /new.xml — the typed URL, not the stored one", got)
+		}
+	default:
+		t.Fatal("the IdP was never contacted")
+	}
+	if p, _ := s.st.SSOProviderBySlug("saml"); p.IdPMetadataURL != idp.URL+"/new.xml" {
+		t.Errorf("stored URL = %q, want the new one", p.IdPMetadataURL)
+	}
+}
+
+// Every failure on this path is read by an admin mid-setup, so it must carry a code the client can
+// translate. A bare English sentence is what "no such provider" looked like on a Chinese screen.
+func TestFetchMetadataFailuresCarryACode(t *testing.T) {
+	s := adminSSOServer(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/sso/providers/saml/metadata", strings.NewReader(`{"kind":"saml"}`))
+	req.SetPathValue("slug", "saml")
+	s.apiAdminSSOFetchMetadata(rec, req, "admin")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("no URL at all → %d, want 400", rec.Code)
+	}
+	var out map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["code"] != "sso_no_metadata_url" {
+		t.Errorf("code = %v, want sso_no_metadata_url (got body %s)", out["code"], rec.Body.String())
 	}
 }
 
