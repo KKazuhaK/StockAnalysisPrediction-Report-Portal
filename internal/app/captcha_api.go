@@ -311,6 +311,14 @@ func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, us
 	s.st.SetSetting(setRegDomains, strings.TrimSpace(in.Registration.Domains))
 	s.st.SetSetting(setRegGroup, strings.TrimSpace(in.Registration.DefaultGroup))
 	s.st.SetSetting(setRegExpiryDays, strings.TrimSpace(in.Registration.ExpiryDays))
+	// Who may sign in and how — login mode, sso_only, the captcha gates, self-service
+	// registration. Values here are policy rather than secrets, except the captcha secret key,
+	// which is not among them.
+	s.recordChange(r, user, AuditPolicyChange, "security", "", map[string]any{
+		"captcha_provider": provider, "captcha_login": in.Captcha.Login,
+		"captcha_forgot": in.Captcha.Forgot, "captcha_register": in.Captcha.Register,
+		"registration": in.Registration.Enabled,
+	})
 	writeJSON(w, okJSON)
 }
 

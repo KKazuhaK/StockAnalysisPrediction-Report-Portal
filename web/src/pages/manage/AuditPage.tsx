@@ -20,12 +20,47 @@ import type { AuditEntry, AuditResp } from '../../api/types'
 
 // Colour carries the KIND of event, so a wall of rows reads as a shape before it reads as text.
 // Anything the portal does not know about renders neutral rather than being hidden.
+// Colour by CONSEQUENCE, not by subsystem: a reader scanning a page should see refusals and
+// access changes without reading them. Red is "somebody's access changed or somebody was turned
+// away", orange is "an account or an OU was edited", purple is configuration, blue is a read,
+// green is an ordinary successful sign-in, and everything unlisted is grey.
 const ACTION_COLOR: Record<string, string> = {
   'report.read': 'blue',
   'grant.change': 'red',
   'user.change': 'orange',
   'group.change': 'orange',
   'policy.change': 'purple',
+
+  'auth.login': 'green',
+  'auth.login_failed': 'red',
+  'auth.lockout': 'red',
+  'auth.logout': 'default',
+  'auth.password_change': 'orange',
+  'auth.password_reset': 'orange',
+  'auth.mfa_change': 'red',
+  'auth.identity_link': 'red',
+  'auth.identity_unlink': 'red',
+
+  'user.create': 'orange',
+  'user.delete': 'red',
+  'group.create': 'orange',
+  'group.delete': 'red',
+
+  'report.ingest': 'cyan',
+  'report.delete': 'red',
+
+  'run.submit': 'geekblue',
+  'run.cancel': 'default',
+  'run.change': 'default',
+  'run.delete': 'default',
+
+  'token.create': 'red',
+  'token.delete': 'default',
+  'app.install': 'purple',
+  'app.delete': 'default',
+  'webhook.create': 'red',
+  'webhook.delete': 'default',
+  'target.change': 'purple',
 }
 
 export default function AuditPage() {

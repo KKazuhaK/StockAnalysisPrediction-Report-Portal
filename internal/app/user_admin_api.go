@@ -230,6 +230,8 @@ func (s *Server) apiGroupAdd(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.recordChange(r, user, AuditGroupCreate, "group", itoa64(id),
+		map[string]any{"name": name, "parent": in.ParentID})
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -266,6 +268,12 @@ func (s *Server) apiGroupSave(w http.ResponseWriter, r *http.Request, user strin
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// An OU's settings decide what its members may run and what they may see, so this is an
+	// access change even when it looks like a rename. The fields that carry consequences are
+	// named; the row says which knobs moved, not their whole prior state.
+	s.recordChange(r, user, AuditGroupChange, "group", itoa64(id), map[string]any{
+		"name": name, "parent": in.ParentID, "restricted": restricted,
+		"quota": quota, "quota_period": in.quotaPeriod(), "priority": in.Priority})
 	writeJSON(w, okJSON)
 }
 
@@ -308,10 +316,23 @@ func (s *Server) apiGroupTargetsSave(w http.ResponseWriter, r *http.Request, use
 		}
 		rows = append(rows, GroupTarget{TargetID: g.TargetID, Surfaces: sub})
 	}
-	if err := s.st.SetGroupTargets(pathID(r, "id"), rows); err != nil {
+	gid := pathID(r, "id")
+	// Both sides, like every other grant row: the current allow-list answers "what may this OU
+	// run now", and only the log answers "when did it gain that, and who granted it".
+	before := make([]map[string]any, 0)
+	for _, g := range s.st.GroupTargets(gid) {
+		before = append(before, map[string]any{"target_id": g.TargetID, "surfaces": TargetSurfaces(g.Surfaces)})
+	}
+	if err := s.st.SetGroupTargets(gid, rows); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	after := make([]map[string]any, 0, len(rows))
+	for _, g := range rows {
+		after = append(after, map[string]any{"target_id": g.TargetID, "surfaces": TargetSurfaces(g.Surfaces)})
+	}
+	s.recordChange(r, user, AuditGrantChange, "group", itoa64(gid),
+		map[string]any{"kind": "run_allowlist", "before": before, "after": after})
 	writeJSON(w, okJSON)
 }
 
@@ -327,10 +348,22 @@ func clampWeight(w int) int {
 }
 
 func (s *Server) apiGroupDelete(w http.ResponseWriter, r *http.Request, user string) {
-	if err := s.st.DeleteUserGroup(pathID(r, "id")); err != nil {
+	id := pathID(r, "id")
+	// Read before the delete: afterwards there is no name to record, and an id alone means
+	// nothing to whoever reads the row later.
+	name := ""
+	for _, g := range s.st.ListUserGroups() {
+		if g.ID == id {
+			name = g.Name
+			break
+		}
+	}
+	if err := s.st.DeleteUserGroup(id); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Deleting an OU takes its grants and viewer rows with it, so this is an access change too.
+	s.recordChange(r, user, AuditGroupDelete, "group", itoa64(id), map[string]any{"name": name})
 	writeJSON(w, okJSON)
 }
 

@@ -937,6 +937,8 @@ func (s *Server) apiUserAdd(w http.ResponseWriter, r *http.Request, user string)
 	if expiry != "" {
 		s.st.SetUserExpiry(name, expiry)
 	}
+	s.recordChange(r, user, AuditUserCreate, "user", name, map[string]any{
+		"via": "admin", "role": validRole(in.Role), "primary_group": in.PrimaryGroup})
 	writeJSON(w, okJSON)
 }
 
@@ -1035,6 +1037,10 @@ func (s *Server) apiUserDelete(w http.ResponseWriter, r *http.Request, user stri
 	u := s.st.GetUser(name)
 	if u != nil && name != user && !(u.IsAdmin() && s.st.CountAdmins() <= 1) {
 		s.st.DeleteUser(name)
+		// After the delete, so a refusal (last admin, or deleting yourself) records nothing.
+		// The row outlives the account on purpose: "who removed this" is asked precisely when
+		// the account is gone.
+		s.recordChange(r, user, AuditUserDelete, "user", name, map[string]any{"role": u.Role})
 	}
 	writeJSON(w, okJSON)
 }
@@ -1195,6 +1201,10 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	if in.AnnouncementContent != nil {
 		s.st.SetSetting("announcement_content", strings.TrimSpace(*in.AnnouncementContent))
 	}
+	// Field NAMES, never values. Half this payload is settings whose values are of no
+	// forensic interest and the other half includes an SMTP password; recording which knobs
+	// an admin touched is the useful half and carries none of the risk.
+	s.recordChange(r, user, AuditPolicyChange, "settings", "", map[string]any{"fields": changedSettingFields(in)})
 	writeJSON(w, okJSON)
 }
 
@@ -1283,11 +1293,18 @@ func (s *Server) apiTokenAdd(w http.ResponseWriter, r *http.Request, user string
 		jsonError(w, http.StatusInternalServerError, "could not create token")
 		return
 	}
+	// The NAME, scope and expiry — never the token. A credential in an audit row is a
+	// credential in every backup of it, and the row exists to say one was minted, not to
+	// be a second place to find it.
+	s.recordChange(r, user, AuditTokenCreate, "token", strings.TrimSpace(in.Name),
+		map[string]any{"scope": in.Scope, "expires": exp})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, map[string]any{"ok": true, "token": token})
 }
 
 func (s *Server) apiTokenDelete(w http.ResponseWriter, r *http.Request, user string) {
-	s.st.DeleteToken(pathID(r, "id"))
+	id := pathID(r, "id")
+	s.st.DeleteToken(id)
+	s.recordChange(r, user, AuditTokenDelete, "token", itoa64(id), nil)
 	writeJSON(w, okJSON)
 }

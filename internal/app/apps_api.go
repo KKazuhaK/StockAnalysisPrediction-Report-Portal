@@ -97,6 +97,10 @@ func (s *Server) apiAppInstall(w http.ResponseWriter, r *http.Request, user stri
 		return
 	}
 	log.Printf("app installed: %s (%s) by %s, %d files", app.ID, app.Version, user, len(files))
+	// An app runs in the browser against a scoped token it never sees, so what it may reach is
+	// decided by its manifest's scopes. Those are the part worth a row.
+	s.recordChange(r, user, AuditAppInstall, "app", app.ID,
+		map[string]any{"version": app.Version, "scopes": app.Scopes, "files": len(files)})
 	writeJSON(w, map[string]any{"ok": true, "app": appJSON(app)})
 }
 
@@ -107,6 +111,7 @@ func (s *Server) apiAppDelete(w http.ResponseWriter, r *http.Request, user strin
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordChange(r, user, AuditAppDelete, "app", id, nil)
 	writeJSON(w, okJSON)
 }
 

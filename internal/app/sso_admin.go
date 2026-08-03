@@ -200,6 +200,12 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 		return
 	}
 	_ = existed
+	// Which provider, and whether it is now offered on the login page. Never the client secret
+	// or the SP key — the response shape already refuses to return them, and a row is a place
+	// they would live in every backup.
+	s.recordChange(r, user, AuditPolicyChange, "sso_provider", p.Slug, map[string]any{
+		"kind": p.Kind, "enabled": p.Enabled, "provisioning": p.Provisioning,
+		"link_by": p.LinkBy, "existed": existed})
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -403,10 +409,12 @@ func previewClaim(v any) string {
 }
 
 func (s *Server) apiAdminSSODelete(w http.ResponseWriter, r *http.Request, user string) {
-	if err := s.st.DeleteSSOProvider(pathID(r, "id")); err != nil {
+	id := pathID(r, "id")
+	if err := s.st.DeleteSSOProvider(id); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordChange(r, user, AuditPolicyChange, "sso_provider", itoa64(id), map[string]any{"op": "delete"})
 	writeJSON(w, okJSON)
 }
 
@@ -467,6 +475,10 @@ func (s *Server) apiAdminSSORulesSave(w http.ResponseWriter, r *http.Request, us
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// These rules assign roles and OUs to whoever the IdP admits, so they are access control
+	// that runs without a person in the loop. The count and the order, because order IS the
+	// contract — the first match decides.
+	s.recordChange(r, user, AuditPolicyChange, "sso_rules", "", map[string]any{"rules": len(rules)})
 	writeJSON(w, okJSON)
 }
 

@@ -94,6 +94,11 @@ func (s *Server) apiBatchDifyTargetAdd(w http.ResponseWriter, r *http.Request, u
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// A target is where reports come FROM: its base URL and key decide which external service
+	// the portal hands stock codes to and trusts the answers of. The name and the address,
+	// never the api_key.
+	s.recordChange(r, user, AuditTargetChange, "target", itoa64(id),
+		map[string]any{"op": "create", "name": name, "base_url": in.BaseURL})
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -174,6 +179,11 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Both sides of the address, because repointing a target at a different service is the
+	// change that matters here and it is invisible in a row that only says "edited".
+	s.recordChange(r, user, AuditTargetChange, "target", itoa64(tgt.ID), map[string]any{
+		"op": "update", "name": name, "base_url_from": cur.BaseURL, "base_url_to": base,
+		"key_rotated": key != cur.APIKey})
 	writeJSON(w, okJSON)
 }
 
