@@ -130,7 +130,9 @@ export default function StoragePage() {
 
   const doRun = async (targets: string[]) => {
     const r = await api.post<CleanupResult>('/api/admin/cleanup/run', { targets })
-    message.success(t('storage.cleaned', { batch: r.batch, reports: r.reports, tokens: r.tokens }))
+    // Every target the run could have touched. Leaving audit out reported an audit purge as
+    // "cleaned 0 of everything" — the one category whose rows cannot be regenerated.
+    message.success(t('storage.cleaned', { batch: r.batch, reports: r.reports, tokens: r.tokens, audit: r.audit ?? 0 }))
     loadUsage()
     loadHistory()
     loadConfig()
@@ -165,7 +167,10 @@ export default function StoragePage() {
       return
     }
     const r = await api.post<CleanupResult>('/api/admin/cleanup/preview', { targets: [key] })
-    const n = key === 'batch' ? r.batch : r.tokens
+    // Keyed, not a ternary. With two targets a two-way choice was total; the third and fourth
+    // silently fell through to the tokens count, so the audit confirm promised to delete however
+    // many TOKENS had expired.
+    const n = r[key as 'batch' | 'tokens' | 'reports' | 'audit'] ?? 0
     modal.confirm({
       title: t('storage.confirmTitle'),
       content: t('storage.confirmBody', { n, days, cat: t(`storage.cat.${key}`) }),
@@ -251,7 +256,13 @@ export default function StoragePage() {
     {
       title: t('storage.histResult'),
       key: 'result',
-      render: (_: unknown, r: CleanupRun) => t('storage.resultLine', { batch: r.batch_deleted, tokens: r.tokens_deleted, reports: r.reports_deleted }),
+      render: (_: unknown, r: CleanupRun) =>
+        t('storage.resultLine', {
+          batch: r.batch_deleted,
+          tokens: r.tokens_deleted,
+          reports: r.reports_deleted,
+          audit: r.audit_deleted ?? 0,
+        }),
     },
     {
       title: t('storage.histStatus'),

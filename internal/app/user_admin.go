@@ -348,13 +348,18 @@ func (s *Store) EffectiveGroupSettings(username string) GroupSettings {
 		if g.restricted.Valid && g.restricted.Int64 != 0 {
 			res.Restricted = true // sticky OR: never un-set by a descendant
 		}
+		// The period travels with the number rather than resolving separately: inheriting "20" from
+		// one OU and "month" from another would produce a cap neither of them configured. So the
+		// window is REPLACED whenever the number is, including when this row has no period of its
+		// own — a cap written before the column existed means the day window, not whatever window
+		// an ancestor happens to set. Skipping the reset there is how a legacy 5-per-day child
+		// silently became 5-per-month the moment someone put a monthly cap on its parent.
 		if g.dailyQuota.Valid {
 			res.DailyRunQuota = int(g.dailyQuota.Int64)
-		}
-		// The period travels with the number rather than resolving separately: inheriting "20" from
-		// one OU and "month" from another would produce a cap neither of them configured.
-		if g.dailyQuota.Valid && g.quotaPeriod.Valid {
-			res.QuotaPeriod = g.quotaPeriod.String
+			res.QuotaPeriod = QuotaDay
+			if validQuotaPeriod(g.quotaPeriod.String) {
+				res.QuotaPeriod = g.quotaPeriod.String
+			}
 		}
 	}
 	for _, gid := range s.groupChain(username) {

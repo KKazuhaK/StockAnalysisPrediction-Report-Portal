@@ -11,8 +11,10 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../../api/client', () => ({ api: apiMock }))
 
+// Same convention as every other test file here: an interpolated string keeps its arguments, so a
+// test can assert the NUMBERS a confirm dialog states, not merely that a dialog appeared.
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (k: string) => k }),
+  useTranslation: () => ({ t: (k: string, o?: Record<string, unknown>) => (o ? `${k}:${JSON.stringify(o)}` : k) }),
 }))
 
 const config = {
@@ -77,7 +79,7 @@ describe('StoragePage', () => {
     expect((await screen.findAllByText('storage.cat.batch')).length).toBeGreaterThan(0)
     expect(screen.getAllByText('storage.cat.reports').length).toBeGreaterThan(0)
     // eligible → an "N to clean" tag; a not-eligible category shows "nothing to clean"; chat is view-only
-    expect(screen.getByText('storage.eligibleN')).toBeTruthy()
+    expect(screen.getByText(/storage\.eligibleN/)).toBeTruthy()
     expect(screen.getAllByText('storage.noCleanup').length).toBeGreaterThan(0)
     expect(screen.getByText('storage.ruleChat')).toBeTruthy()
     // failed history row surfaces its error text
@@ -87,10 +89,35 @@ describe('StoragePage', () => {
   it('the self-describing clean button previews then opens a confirm', async () => {
     const user = userEvent.setup()
     renderPage()
-    const cleanBtn = await screen.findByText('storage.act') // only batch is eligible
+    const cleanBtn = await screen.findByText(/storage\.act/) // only batch is eligible
     await user.click(cleanBtn)
     await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/api/admin/cleanup/preview', { targets: ['batch'] }))
     expect((await screen.findAllByText('storage.confirmTitle')).length).toBeGreaterThan(0)
+  })
+
+  // The confirm restates the live count, and a destructive confirm that states the WRONG count is
+  // worse than one that states none: it reads as a checked fact. The count was picked with a
+  // two-way ternary, so every target that is not batch showed the TOKENS number — including audit,
+  // added later, whose rows are the one thing on this page that cannot be regenerated.
+  it('counts the category being cleaned, not whichever one the ternary fell through to', async () => {
+    const user = userEvent.setup()
+    apiMock.get.mockImplementation((url: string) => {
+      if (url.includes('/cleanup/config')) return Promise.resolve({ ...config, audit_enabled: true, audit_days: 90 })
+      if (url.includes('/cleanup/usage'))
+        return Promise.resolve({
+          ...usage,
+          categories: [...usage.categories, { key: 'audit', rows: 900, bytes: 700, eligible: 640, oldest: '', newest: '' }],
+        })
+      if (url.includes('/cleanup/history')) return Promise.resolve({ ...history })
+      return Promise.resolve({})
+    })
+    apiMock.post.mockResolvedValue({ batch: 3, tokens: 0, reports: 2, audit: 640, ok: true, at: '', trigger: 'preview', dry_run: true, error: '', duration_ms: 1 })
+    renderPage()
+    const buttons = await screen.findAllByText(/storage\.act/)
+    await user.click(buttons[buttons.length - 1]) // audit is the last eligible category
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith('/api/admin/cleanup/preview', { targets: ['audit'] }))
+    // 640 is the audit count; 0 is the tokens count the old ternary would have shown.
+    await waitFor(() => expect(screen.getByText(/storage\.confirmBody.*"n":640/)).toBeTruthy())
   })
 
   it('enabling reports auto-delete previews the live count and opens the danger confirm', async () => {

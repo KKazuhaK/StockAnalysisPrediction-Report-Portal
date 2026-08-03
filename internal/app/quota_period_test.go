@@ -116,6 +116,35 @@ func TestQuotaPeriodTravelsWithTheNumber(t *testing.T) {
 	}
 }
 
+// The row an UPGRADE produces: a cap written by the old binary, so the number is set and the period
+// column is NULL. Resolution has to read that as "this OU says day", not as "this OU says nothing
+// about the period" — otherwise the number comes from here and the window comes from an ancestor,
+// which is the mixed cap the whole design exists to prevent, and it tightens a 5-per-day child to
+// 5-per-month the moment an admin puts a monthly cap on the parent.
+func TestLegacyQuotaRowDoesNotBorrowAnAncestorsWindow(t *testing.T) {
+	s := quotaServer(t)
+	st := s.st
+	root := st.EnsureDefaultGroup()
+	st.SetGroupDailyQuota(root, quotaPtr(100), QuotaMonth)
+
+	child, _ := st.CreateUserGroup("clients", "", 0)
+	st.SetGroupParent(child, root)
+	st.UpsertUser(User{Username: "c", PasswordHash: "h", Role: "user"})
+	st.SetPrimaryGroup("c", child)
+
+	// Exactly what ensureColumns leaves behind: the cap the old binary wrote, no period.
+	st.exec("UPDATE user_groups SET daily_run_quota=5, run_quota_period=NULL WHERE id=?", child)
+
+	eff := st.EffectiveGroupSettings("c")
+	if eff.DailyRunQuota != 5 {
+		t.Fatalf("quota = %d, want the child's 5", eff.DailyRunQuota)
+	}
+	if eff.QuotaPeriod != QuotaDay {
+		t.Errorf("period = %q, want %q — the child's own row is what set the number, so it sets the window too",
+			eff.QuotaPeriod, QuotaDay)
+	}
+}
+
 // The reset instant the 429 and the run form show. A lifetime cap never refills, so there is no
 // date to print and the API must say so rather than invent one.
 func TestQuotaResetsAt(t *testing.T) {

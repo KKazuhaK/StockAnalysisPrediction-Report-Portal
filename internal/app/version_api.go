@@ -60,23 +60,32 @@ func (s *Server) apiAdminVersionSave(w http.ResponseWriter, r *http.Request, use
 		jsonError(w, http.StatusBadRequest, "a version needs a name")
 		return
 	}
+	// Captured before the write, because the write is what destroys the answer. Reading a version
+	// takes BOTH a grant and a visibility that admits you (ADR 0024), so the two together are the
+	// read permission and the line has to carry both — recording only the grants meant flipping a
+	// version from owner-only to everyone logged a row whose before and after were identical.
+	beforeVis := versionVisibility(s.st.Versions(), name)
+	beforeGrants := s.st.VersionGrants(name)
 	if err := s.st.SaveVersion(ReportVersion{
 		Name: name, Label: in.Label, Ord: in.Ord, Visibility: Visibility(in.Visibility),
 	}); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// The grant list IS the read permission (ADR 0024), so a change to it is the single most
-	// consequential thing an admin does here. Recorded with both sides, because "who can read this
-	// now" is answerable from the current state — "when did they gain it, and who gave it" is not.
-	before := s.st.VersionGrants(name)
-	s.st.WriteAudit(AuditEntry{Actor: user, ActorOU: s.st.PrimaryGroupOf(user), Action: AuditGrantChange,
-		TargetType: "version", TargetID: name,
-		Detail: auditJSON(map[string]any{"before": before, "after": in.Grants})})
 	if err := s.st.SetVersionGrants(name, in.Grants); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Written AFTER the change lands, not before. An audit line asserting an access change that
+	// then failed is worse than a missing one: it is evidence of something that never happened.
+	// Recorded with both sides, because "who can read this now" is answerable from the current
+	// state — "when did they gain it, and who gave it" is not.
+	s.st.WriteAudit(AuditEntry{Actor: user, ActorOU: s.st.PrimaryGroupOf(user), Action: AuditGrantChange,
+		TargetType: "version", TargetID: name,
+		Detail: auditJSON(map[string]any{
+			"before": beforeGrants, "after": in.Grants,
+			"visibility_before": string(beforeVis), "visibility_after": in.Visibility,
+		})})
 	writeJSON(w, okJSON)
 }
 
@@ -174,4 +183,15 @@ func (s *Store) VersionsOfReport(rep Rep, sc *ownerScope) []Rep {
 		}
 	}
 	return out
+}
+
+// versionVisibility is the stored visibility of one version, or "" when it does not exist yet — a
+// creation, whose "before" is genuinely nothing rather than a default worth printing.
+func versionVisibility(all []ReportVersion, name string) Visibility {
+	for _, v := range all {
+		if v.Name == name {
+			return v.Visibility
+		}
+	}
+	return ""
 }

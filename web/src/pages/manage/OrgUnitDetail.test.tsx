@@ -5,8 +5,9 @@ import OrgUnitDetail from './OrgUnitDetail'
 import type { UserGroupRow } from '../../api/types'
 
 const put = vi.hoisted(() => vi.fn())
+const get = vi.hoisted(() => vi.fn())
 vi.mock('../../api/client', () => ({
-  api: { get: vi.fn().mockResolvedValue({ targets: [], granted: [] }), put, post: vi.fn(), del: vi.fn() },
+  api: { get, put, post: vi.fn(), del: vi.fn() },
   errText: (e: unknown) => String(e),
 }))
 vi.mock('react-i18next', () => ({
@@ -28,7 +29,10 @@ const mount = (target: UserGroupRow, groups: UserGroupRow[] = [DEF, target]) =>
   )
 
 describe('OrgUnitDetail', () => {
-  beforeEach(() => put.mockReset().mockResolvedValue({}))
+  beforeEach(() => {
+    put.mockReset().mockResolvedValue({})
+    get.mockReset().mockResolvedValue({ targets: [], granted: [] })
+  })
 
   // The whole point of the rewrite: an inheriting setting must show WHAT it inherits and FROM
   // WHERE. The old form showed a switch labelled "inherit from the default group" above a greyed
@@ -113,6 +117,34 @@ describe('OrgUnitDetail', () => {
     const labels = screen.getAllByText(/ou\.inheritedAs/).map((n) => n.textContent ?? '')
     expect(labels.some((l) => l.includes('20 ou.period.month'))).toBe(true)
     expect(labels.some((l) => l.includes('ou.unlimited') && l.includes('users.parentOu'))).toBe(false)
+  })
+
+  // The column header is the only way to revoke a surface across a dozen workflows, and it was
+  // computed over ALL rows while acting on only the enabled ones. One workflow switched off left
+  // the header permanently unchecked, so clicking it could grant the surface and never take it back.
+  it('the column toggle reflects — and can clear — the rows it actually governs', async () => {
+    get.mockResolvedValue({
+      targets: [
+        { id: 1, name: 'A', surfaces: ['run', 'batch'] },
+        { id: 2, name: 'B', surfaces: ['run', 'batch'] }, // left OFF: the toggle must ignore it
+      ],
+      granted: [{ target_id: 1, surfaces: ['run'] }],
+    })
+    mount(g({ id: 3, restricted: true, restricted_effective: true }))
+    await screen.findByText('A')
+
+    // Every row the toggle governs (only workflow A) already has 'run', so it reads as checked.
+    const runHeader = screen.getByText('users.surface.run').closest('th')!
+    const box = runHeader.querySelector('input[type="checkbox"]') as HTMLInputElement
+    expect(box.checked).toBe(true)
+
+    // And unticking it revokes, rather than being a no-op that can only ever grant.
+    fireEvent.click(box)
+    await waitFor(() => expect((runHeader.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false))
+    fireEvent.click(screen.getAllByText('common.save')[1])
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const body = put.mock.calls[put.mock.calls.length - 1][1] as { granted: { target_id: number; surfaces: string[] }[] }
+    expect(body.granted.find((x) => x.target_id === 1)?.surfaces).toEqual([])
   })
 
   it('shows the allow-list only for a restricted OU, where it governs anything', () => {
