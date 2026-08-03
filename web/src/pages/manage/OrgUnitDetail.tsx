@@ -37,8 +37,8 @@ interface Draft {
   quotaPeriod: string
 }
 
-function draftOf(g: UserGroupRow, def?: UserGroupRow): Draft {
-  const r = resolveOU(g, def)
+function draftOf(g: UserGroupRow, def: UserGroupRow | undefined, groups: UserGroupRow[]): Draft {
+  const r = resolveOU(g, def, groups)
   const isDefault = !!g.is_default
   return {
     name: g.name,
@@ -55,7 +55,7 @@ function draftOf(g: UserGroupRow, def?: UserGroupRow): Draft {
     restricted: !!g.restricted,
     quotaInherit: !isDefault && g.daily_run_quota == null,
     dailyQuota: r.dailyQuota.value,
-    quotaPeriod: g.run_quota_period || 'day',
+    quotaPeriod: r.quotaPeriod.value,
   }
 }
 
@@ -86,22 +86,25 @@ export default function OrgUnitDetail({
       max_queued: null,
       run_window: null,
       daily_run_quota: null,
-      run_quota_period: 'day',
+      run_quota_period: '',
       priority: '',
     } as UserGroupRow,
     def,
+    groups,
   )
 
-  const [d, setD] = useState<Draft>(() => draftOf(group, def))
+  const [d, setD] = useState<Draft>(() => draftOf(group, def, groups))
   const [saving, setSaving] = useState(false)
   // Re-seed when the tree selection moves, or the pane would keep the previous OU's draft.
-  useEffect(() => setD(draftOf(group, def)), [group, def])
+  useEffect(() => setD(draftOf(group, def, groups)), [group, def, groups])
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((p) => ({ ...p, [k]: v }))
 
   // Who the inherited values come from. Run governance falls back to the Default group; the OU tree
   // is not involved, which is a distinction the old screen never drew and this label has to.
   const from = def?.name ?? t('users.defaultGroupTag')
   const num = (n: number) => (n > 0 ? String(n) : t('ou.unlimited'))
+  // "20" does not say 20 of what, and "0 per month" is a contradiction — unlimited has no window.
+  const quotaLabel = (n: number, period: string) => (n > 0 ? `${n} ${t(`ou.period.${period}`)}` : t('ou.unlimited'))
 
   const save = async () => {
     setSaving(true)
@@ -280,7 +283,7 @@ export default function OrgUnitDetail({
             label={t('users.dailyRunQuota')}
             hint={t('users.dailyRunQuotaHint')}
             from={t('users.parentOu')}
-            inherited={num(wouldInherit.dailyQuota.value)}
+            inherited={quotaLabel(wouldInherit.dailyQuota.value, wouldInherit.quotaPeriod.value)}
             inheriting={d.quotaInherit}
             onInheritingChange={(v) => set('quotaInherit', v)}
           >

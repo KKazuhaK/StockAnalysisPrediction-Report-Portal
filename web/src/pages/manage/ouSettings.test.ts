@@ -82,3 +82,45 @@ describe('ouPath', () => {
     expect(ouPath([g({ id: 1, name: 'A', parent_id: 2 }), g({ id: 2, name: 'B', parent_id: 1 })], 1)).toHaveLength(2)
   })
 })
+
+// The quota is the one setting that inherits down the OU TREE (ADR 0022) — the server walks root →
+// primary group and takes the deepest non-NULL. The panel resolved it like the flat group-model-B
+// settings and fell back to 0, so an OU under a capped parent was offered "inherit — 0 (unlimited)"
+// when saving that inherit would have given its members the parent's cap.
+describe('resolveOU — the quota inherits down the OU tree, not from Default', () => {
+  const ROOT = g({ id: 1, name: 'Default', is_default: true, daily_run_quota: null })
+  const CLIENTS = g({ id: 2, name: 'Clients', parent_id: 1, daily_run_quota: 20, run_quota_period: 'month' })
+  const ACME = g({ id: 3, name: 'Acme', parent_id: 2 })
+  const TREE = [ROOT, CLIENTS, ACME]
+
+  it('reports the nearest ancestor that sets one', () => {
+    const r = resolveOU(ACME, ROOT, TREE)
+    expect(r.dailyQuota).toEqual({ value: 20, inherited: true })
+  })
+
+  it('carries the period from the SAME ancestor as the number', () => {
+    // Resolving them apart would let a cap of 20 meet a period of "day" and show a limit nobody set.
+    expect(resolveOU(ACME, ROOT, TREE).quotaPeriod.value).toBe('month')
+  })
+
+  it('still prefers the OU’s own cap over an ancestor’s', () => {
+    const own = g({ id: 4, name: 'Sub', parent_id: 2, daily_run_quota: 3, run_quota_period: 'week' })
+    const r = resolveOU(own, ROOT, [...TREE, own])
+    expect(r.dailyQuota).toEqual({ value: 3, inherited: false })
+    expect(r.quotaPeriod.value).toBe('week')
+  })
+
+  it('falls back to unlimited when no ancestor caps anything', () => {
+    const loose = g({ id: 5, name: 'Loose', parent_id: 1 })
+    const r = resolveOU(loose, ROOT, [ROOT, loose])
+    expect(r.dailyQuota).toEqual({ value: 0, inherited: true })
+    expect(r.quotaPeriod.value).toBe('day')
+  })
+
+  it('survives a parent cycle rather than hanging the panel', () => {
+    // The server refuses cycles; this runs on whatever it sent.
+    const a = g({ id: 6, name: 'A', parent_id: 7 })
+    const b = g({ id: 7, name: 'B', parent_id: 6 })
+    expect(resolveOU(a, ROOT, [a, b]).dailyQuota.value).toBe(0)
+  })
+})
