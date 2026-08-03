@@ -1044,31 +1044,41 @@ func repInList(reps []Rep, id int64) bool {
 	return false
 }
 
-// loadRep fetches a report including its body by id, SCOPED to the viewer: for a restricted user an
-// out-of-scope id returns nil (the callers' nil→404 then fails closed), so this is the single
-// viewer-aware chokepoint for every by-id read path (deep-link, run/stock body, md/pdf/zip export).
-// loadRep fetches one report for a person, scoped to what they may read — and records the read.
+// loadRep fetches one report for a person by id, SCOPED to what they may read — an out-of-scope id
+// returns nil and the callers' nil→404 then fails closed — and records the read.
 //
-// Every path that serves a body to a human goes through here: the stock page, the run page, the
+// Every path that serves ONE body to a human goes through here: the stock page, the run page, the
 // day export, the Markdown and PDF exports, and the version switcher. Recording at this one point
 // rather than in each of them is what makes the answer to "who read this report" complete, and
 // keeps a path added later from silently escaping the log.
 //
-// Only successful reads. A refusal is a different question — someone probing versus someone
-// following a stale link — and logging those here would fill the table from any 404.
+// The comparison view is the one path that does not, because it reads a PAIR and needs both bodies
+// before it can answer at all; it scopes them itself and records through recordReportRead, which is
+// the same writer. Anything that serves a body must call one of the two.
 func (s *Server) loadRep(user string, id int64) *Rep {
 	if id <= 0 {
 		return nil
 	}
 	rep, _ := s.st.GetNew(id, s.viewerScope(user))
 	if rep != nil {
-		s.st.WriteAudit(AuditEntry{
-			Actor: user, ActorOU: s.st.PrimaryGroupOf(user), Action: AuditReportRead,
-			TargetType: "report", TargetID: strconv.FormatInt(rep.ID, 10),
-			Detail: auditJSON(map[string]any{"symbol": rep.Symbol, "date": rep.Date, "title": rep.Title}),
-		})
+		s.recordReportRead(user, rep)
 	}
 	return rep
+}
+
+// recordReportRead logs that `user` was served this report's body.
+//
+// Only successful reads. A refusal is a different question — someone probing versus someone
+// following a stale link — and logging those would fill the table from any 404.
+func (s *Server) recordReportRead(user string, rep *Rep) {
+	if rep == nil {
+		return
+	}
+	s.st.WriteAudit(AuditEntry{
+		Actor: user, ActorOU: s.st.PrimaryGroupOf(user), Action: AuditReportRead,
+		TargetType: "report", TargetID: strconv.FormatInt(rep.ID, 10),
+		Detail: auditJSON(map[string]any{"symbol": rep.Symbol, "date": rep.Date, "title": rep.Title}),
+	})
 }
 
 // ---------- Export ----------

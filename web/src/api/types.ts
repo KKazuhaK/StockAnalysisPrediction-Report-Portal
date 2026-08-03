@@ -415,6 +415,7 @@ export interface CleanupResult {
   batch: number
   tokens: number
   reports: number
+  audit: number
   duration_ms: number
 }
 
@@ -443,6 +444,7 @@ export interface CleanupRun {
   batch_deleted: number
   tokens_deleted: number
   reports_deleted: number
+  audit_deleted: number
   duration_ms: number
 }
 

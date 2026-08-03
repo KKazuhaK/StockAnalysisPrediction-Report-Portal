@@ -288,16 +288,19 @@ type CleanupRun struct {
 	BatchDeleted   int64  `json:"batch_deleted"`
 	TokensDeleted  int64  `json:"tokens_deleted"`
 	ReportsDeleted int64  `json:"reports_deleted"`
-	DurationMs     int64  `json:"duration_ms"`
+	// The fourth target (ADR 0017). Same shape as the other three rather than a JSON blob, because
+	// the history table is read as columns and one target does not justify migrating the other three.
+	AuditDeleted int64 `json:"audit_deleted"`
+	DurationMs   int64 `json:"duration_ms"`
 }
 
 // InsertCleanupRun appends an audit row and trims the ring buffer to the most recent
 // cleanupRunsKeep rows.
 func (s *Store) InsertCleanupRun(c CleanupRun) (int64, error) {
-	id, err := s.insertID(`INSERT INTO cleanup_runs(ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,duration_ms)
-		VALUES(?,?,?,?,?,?,?,?,?)`,
+	id, err := s.insertID(`INSERT INTO cleanup_runs(ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,audit_deleted,duration_ms)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		c.RanAt, c.Trigger, boolInt(c.DryRun), boolInt(c.OK), c.Error,
-		c.BatchDeleted, c.TokensDeleted, c.ReportsDeleted, c.DurationMs)
+		c.BatchDeleted, c.TokensDeleted, c.ReportsDeleted, c.AuditDeleted, c.DurationMs)
 	if err != nil {
 		return 0, err
 	}
@@ -317,7 +320,8 @@ func (s *Store) ListCleanupRuns(limit int) ([]CleanupRun, error) {
 	if limit <= 0 || limit > cleanupRunsKeep {
 		limit = cleanupRunsKeep
 	}
-	rows, err := s.query(`SELECT id,ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,duration_ms
+	rows, err := s.query(`SELECT id,ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,
+		COALESCE(audit_deleted,0),duration_ms
 		FROM cleanup_runs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -327,7 +331,8 @@ func (s *Store) ListCleanupRuns(limit int) ([]CleanupRun, error) {
 	for rows.Next() {
 		var c CleanupRun
 		var dry, ok int64
-		if err := rows.Scan(&c.ID, &c.RanAt, &c.Trigger, &dry, &ok, &c.Error, &c.BatchDeleted, &c.TokensDeleted, &c.ReportsDeleted, &c.DurationMs); err != nil {
+		if err := rows.Scan(&c.ID, &c.RanAt, &c.Trigger, &dry, &ok, &c.Error, &c.BatchDeleted, &c.TokensDeleted,
+			&c.ReportsDeleted, &c.AuditDeleted, &c.DurationMs); err != nil {
 			return nil, err
 		}
 		c.DryRun = dry != 0

@@ -236,6 +236,25 @@ func TestDeleteExpiredTokensBefore(t *testing.T) {
 	}
 }
 
+// The history row has to carry every target the run could have touched. Audit was added as the
+// fourth target with nowhere to record its count, so a pass that deleted 900 audit rows was
+// remembered as having deleted nothing — and the audit log is the one target whose rows cannot be
+// regenerated, so its history entry is the only evidence the purge happened at all.
+func TestCleanupHistoryRemembersEveryTarget(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.InsertCleanupRun(CleanupRun{RanAt: nowStr(), Trigger: "manual", OK: true,
+		BatchDeleted: 1, TokensDeleted: 2, ReportsDeleted: 3, AuditDeleted: 900}); err != nil {
+		t.Fatalf("InsertCleanupRun: %v", err)
+	}
+	runs, err := st.ListCleanupRuns(1)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("ListCleanupRuns = %d,%v; want 1", len(runs), err)
+	}
+	if runs[0].AuditDeleted != 900 {
+		t.Errorf("AuditDeleted = %d, want 900", runs[0].AuditDeleted)
+	}
+}
+
 // The audit ring buffer keeps only the most recent cleanupRunsKeep rows.
 func TestCleanupRunsRingTrim(t *testing.T) {
 	st := newTestStore(t)

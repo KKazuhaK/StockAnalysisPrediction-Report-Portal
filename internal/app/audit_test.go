@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -145,6 +146,49 @@ func TestReadingAReportIsRecorded(t *testing.T) {
 	}
 }
 
+// The comparison view serves the substance of BOTH documents — diffLines keeps unchanged lines as
+// context and a wholly added section comes back with its body — so it is a read of two reports, and
+// side B is normally one the reader never opened. A log that answers "who read this report" while
+// that path exists answers it wrongly, which is worse than not answering.
+func TestComparingTwoReportsIsRecordedAsReadingBoth(t *testing.T) {
+	s := tenancyServer(t)
+	a, _, _ := s.st.UpsertReport(Rep{Symbol: "600519", Date: "2026-06-30", RType: "投资决策", Title: "六月", MD: "# 估值\n目标价 48 元\n"})
+	b, _, _ := s.st.UpsertReport(Rep{Symbol: "600519", Date: "2026-07-31", RType: "投资决策", Title: "七月", MD: "# 估值\n目标价 55 元\n"})
+	s.st.UpsertUser(User{Username: "alice", PasswordHash: "h", Role: "user"})
+
+	rec := httptest.NewRecorder()
+	s.apiReportDiff(rec, httptest.NewRequest("GET", fmt.Sprintf("/api/reports/diff?a=%d&b=%d", a, b), nil), "alice")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("diff → %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	rows, total := s.st.ListAudit(AuditFilter{Action: AuditReportRead})
+	if total != 2 {
+		t.Fatalf("comparing two reports logged %d reads, want 2", total)
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		seen[r.TargetID] = true
+		if r.Actor != "alice" {
+			t.Errorf("actor = %q, want alice", r.Actor)
+		}
+	}
+	if !seen[itoa(a)] || !seen[itoa(b)] {
+		t.Errorf("logged %v, want both %d and %d — side B is the one nobody opened", seen, a, b)
+	}
+
+	// And a refused comparison is not a read, for the same reason a refused fetch is not.
+	s.st.SetUserRestricted("alice", true)
+	rec = httptest.NewRecorder()
+	s.apiReportDiff(rec, httptest.NewRequest("GET", fmt.Sprintf("/api/reports/diff?a=%d&b=%d", a, b), nil), "alice")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("a restricted account compared them anyway: %d", rec.Code)
+	}
+	if _, n := s.st.ListAudit(AuditFilter{Action: AuditReportRead}); n != 2 {
+		t.Errorf("a refused comparison was logged; total is now %d", n)
+	}
+}
+
 func TestChangingAGrantIsRecordedWithBothSides(t *testing.T) {
 	s := tenancyServer(t)
 	s.st.SaveVersion(ReportVersion{Name: "对外版", Ord: 1, Visibility: VisibilityOwner})
@@ -171,6 +215,33 @@ func TestChangingAGrantIsRecordedWithBothSides(t *testing.T) {
 
 // Only an admin may read the log — but gated on the PERMISSION, so a role granted it later works
 // without touching the handler. That is the seam for per-OU audit visibility.
+// Reading a version requires BOTH a grant and a visibility that admits you (ADR 0024), so a
+// visibility change is a read-permission change and the line has to say so. It recorded only the
+// grant list, which meant flipping 对外版 from owner-only to everyone produced an audit row whose
+// detail was "before == after" — a line that reads as "nothing changed" about the change itself.
+func TestChangingAVersionsVisibilityIsRecorded(t *testing.T) {
+	s := tenancyServer(t)
+	s.st.SaveVersion(ReportVersion{Name: "对外版", Ord: 1, Visibility: VisibilityOwner})
+	s.st.UpsertUser(User{Username: "admin", PasswordHash: "h", Role: "admin"})
+
+	body := `{"name":"对外版","ord":1,"visibility":"all","grants":[]}`
+	rec := httptest.NewRecorder()
+	s.apiAdminVersionSave(rec, httptest.NewRequest("POST", "/api/admin/versions", strings.NewReader(body)), "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save → %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	rows, total := s.st.ListAudit(AuditFilter{Action: AuditGrantChange})
+	if total != 1 {
+		t.Fatalf("logged %d lines, want 1", total)
+	}
+	for _, want := range []string{string(VisibilityOwner), string(VisibilityAll)} {
+		if !strings.Contains(rows[0].Detail, want) {
+			t.Errorf("detail %q lacks %q — the row cannot say what the change was", rows[0].Detail, want)
+		}
+	}
+}
+
 func TestAuditIsAdminOnly(t *testing.T) {
 	s := tenancyServer(t)
 	s.st.UpsertUser(User{Username: "worker", PasswordHash: "h", Role: "user"})

@@ -575,7 +575,7 @@ func (s *Store) baseSchemaStmts() []string {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS cleanup_runs(
 			id %s, ran_at TEXT, trigger TEXT, dry_run INTEGER DEFAULT 0, ok INTEGER DEFAULT 1, error TEXT DEFAULT '',
 			batch_deleted INTEGER DEFAULT 0, tokens_deleted INTEGER DEFAULT 0, reports_deleted INTEGER DEFAULT 0,
-			duration_ms INTEGER DEFAULT 0)`, pk),
+			duration_ms INTEGER DEFAULT 0, audit_deleted INTEGER DEFAULT 0)`, pk),
 		// The audit log: who did what to which object, and when.
 		//
 		// One table for two audiences. "Who read this report" is the question a client asks and the

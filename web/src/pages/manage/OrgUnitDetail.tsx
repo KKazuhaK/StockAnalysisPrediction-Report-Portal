@@ -411,21 +411,27 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
                 </Space>
               ),
             },
-            ...RUN_SURFACES.map((sf) => ({
+            ...RUN_SURFACES.map((sf) => {
+              // The rows this toggle governs: the workflow allows the surface AND its row is on.
+              // The state has to be read off the SAME set the click writes to. Reading it off every
+              // row instead left the header stuck unchecked whenever one workflow was switched off,
+              // so it could only ever grant the surface and never take it back.
+              const governed = (data?.targets ?? []).filter((tg) => tg.surfaces.includes(sf) && granted[tg.id] != null)
+              const on = governed.filter((tg) => (granted[tg.id] ?? []).includes(sf))
+              return {
               title: (
                 <Space direction="vertical" size={2} align="center">
                   <span>{t(`users.surface.${sf}`)}</span>
                   {/* Column-wide toggle: with a dozen workflows, "everyone may use 批量" is one
                       click rather than a dozen. Only offered to targets that allow the surface. */}
                   <Checkbox
-                    checked={(data?.targets ?? []).every(
-                      (tg) => !tg.surfaces.includes(sf) || (granted[tg.id] ?? []).includes(sf),
-                    )}
+                    disabled={governed.length === 0}
+                    checked={governed.length > 0 && on.length === governed.length}
+                    indeterminate={on.length > 0 && on.length < governed.length}
                     onChange={(e) =>
                       setGranted((g) => {
                         const next = { ...g }
-                        for (const tg of data?.targets ?? []) {
-                          if (!tg.surfaces.includes(sf) || next[tg.id] == null) continue
+                        for (const tg of governed) {
                           const cur = next[tg.id] ?? []
                           next[tg.id] = e.target.checked
                             ? cur.includes(sf)
@@ -463,7 +469,8 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
                     }
                   />
                 ),
-            })),
+              }
+            }),
           ]}
         />
       )}

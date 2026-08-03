@@ -224,7 +224,7 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 		s.st.InsertCleanupRun(CleanupRun{
 			RanAt: nowStr(), Trigger: trigger, DryRun: false, OK: res.OK, Error: res.Error,
 			BatchDeleted: res.Batch, TokensDeleted: res.Tokens, ReportsDeleted: res.Reports,
-			DurationMs: res.DurationMs,
+			AuditDeleted: res.Audit, DurationMs: res.DurationMs,
 		})
 		if b, err := json.Marshal(res); err == nil {
 			s.st.SetSetting("cleanup_last_result", string(b))

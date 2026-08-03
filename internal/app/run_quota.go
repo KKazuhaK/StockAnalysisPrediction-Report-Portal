@@ -30,10 +30,6 @@ func (s *Store) RunsToday(username string, since time.Time) int {
 	return int(n.Int64)
 }
 
-// panelMidnight is the start of today's civil day in the panel timezone, returned in the local
-// wall-clock form that batch_jobs.created_at is stored in. Going through the panel zone (not the
-// server zone) is what makes the reset land on the business day boundary; converting back to local
-// keeps it comparable with the stored timestamps, and using a real instant keeps it DST-safe.
 // The periods a run quota can be measured over. Stored on the OU; "" means day, which is what
 // every row written before this existed meant.
 const (
@@ -80,6 +76,10 @@ func (s *Server) quotaPeriodStart(period string, now time.Time) time.Time {
 	}
 }
 
+// panelMidnight is the start of today's civil day in the panel timezone, returned in the local
+// wall-clock form that batch_jobs.created_at is stored in. Going through the panel zone (not the
+// server zone) is what makes the reset land on the business day boundary; converting back to local
+// keeps it comparable with the stored timestamps, and using a real instant keeps it DST-safe.
 func (s *Server) panelMidnight(now time.Time) time.Time {
 	loc := s.panelLocation()
 	p := now.In(loc)
