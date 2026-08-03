@@ -523,6 +523,10 @@ func (s *Server) apiAdminUserUnlink(w http.ResponseWriter, r *http.Request, user
 	// keep a live session on an account they can no longer prove they own.
 	s.st.SetUserSource(name, "local", "")
 	s.st.BumpSessionRev(name)
+	// An administrator acting on somebody else's account, so the actor and the target differ — and
+	// the target is the account, so it lands on that account's timeline next to its sign-ins.
+	s.recordChange(r, user, AuditIdentityUnlink, "user", name,
+		map[string]any{"provider": id.Provider, "slug": id.ProviderSlug, "subject": id.Subject})
 	log.Printf("sso: admin %s revoked the %s/%s binding on %s", user, id.Provider, id.ProviderSlug, name)
 	writeJSON(w, okJSON)
 }

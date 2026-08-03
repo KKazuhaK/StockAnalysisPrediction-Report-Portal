@@ -104,6 +104,7 @@ func (s *Server) apiTOTPEnable(w http.ResponseWriter, r *http.Request, user stri
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordAuth(r, AuditMFAChange, user, user, map[string]any{"factor": "totp", "op": "enable"})
 	log.Printf("2fa enabled for %s", user)
 	// Shown once. They are password-equivalents, so only their hashes are kept.
 	writeJSON(w, map[string]any{"ok": true, "recovery_codes": codes})
@@ -129,6 +130,9 @@ func (s *Server) apiTOTPDisable(w http.ResponseWriter, r *http.Request, user str
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Removing a factor is the direction worth recording most: it is what an intruder does after
+	// getting in, and it is indistinguishable from the owner doing it unless the row exists.
+	s.recordAuth(r, AuditMFAChange, user, user, map[string]any{"factor": "totp", "op": "disable"})
 	log.Printf("2fa disabled for %s", user)
 	writeJSON(w, okJSON)
 }
@@ -154,11 +158,13 @@ func (s *Server) apiLoginTOTP(w http.ResponseWriter, r *http.Request) {
 	// replaying the first leg.
 	key, now := "2fa:"+strings.ToLower(u.Username), time.Now()
 	if s.loginThr != nil && s.loginThr.blocked(key, now) {
+		s.recordAuth(r, AuditLockout, "", u.Username, map[string]any{"scope": "totp"})
 		jsonErrorCode(w, http.StatusTooManyRequests, "rate_limited", "尝试过于频繁，请稍后再试")
 		return
 	}
 	secret, err := s.userTOTPSecret(u.Username)
 	if err != nil || !(s.totpValid(u.Username, secret, in.Code) || s.consumeRecoveryCode(u.Username, in.Code)) {
+		s.recordAuth(r, AuditLoginFailed, "", u.Username, map[string]any{"reason": "bad_totp"})
 		if s.loginThr != nil {
 			s.loginThr.record(key, now)
 		}
@@ -170,6 +176,7 @@ func (s *Server) apiLoginTOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSessionCookie(w, r, *u)
 	s.st.TouchLastLogin(u.Username)
+	s.recordAuth(r, AuditLogin, u.Username, u.Username, map[string]any{"method": "totp"})
 	log.Printf("login %s (2fa)", u.Username)
 	writeJSON(w, s.meJSON(u.Username))
 }

@@ -149,6 +149,9 @@ func (s *Server) apiResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	user := s.verifyResetToken(in.Token)
 	if user == "" {
+		// Deliberately NOT audited. This path is unauthenticated and has no throttle, so a row here
+		// would be a free table-filling primitive for anyone who can POST — and a bad token is
+		// overwhelmingly a mail scanner following a link, not an attack. Throttle first, then log.
 		jsonError(w, http.StatusBadRequest, "this reset link is invalid or has expired")
 		return
 	}
@@ -161,6 +164,7 @@ func (s *Server) apiResetPassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, "could not set password")
 		return
 	}
+	s.recordAuth(r, AuditPasswordReset, user, user, nil)
 	if err := s.st.SetUserPassword(user, string(h)); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

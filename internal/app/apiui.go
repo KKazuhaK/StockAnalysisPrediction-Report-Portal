@@ -248,12 +248,17 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		u = nil
 	}
 	if u == nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(in.Password)) != nil {
+		// Recorded for a name nobody holds too. Refusing to log those would hide the enumeration
+		// sweep this row exists to reveal, and it is not an oracle: only an admin who can already
+		// list the accounts ever sees it.
+		s.recordAuth(r, AuditLoginFailed, "", uname, map[string]any{"reason": "bad_password"})
 		if thr != nil {
 			thr.record(ipKey, now)
 			thr.record(userKey, now)
 			// An account under sustained wrong-password pressure rejects further WRONG guesses; a
 			// correct password would have passed above, so this only rate-limits an attacker.
 			if thr.blocked(userKey, now) {
+				s.recordAuth(r, AuditLockout, "", uname, map[string]any{"scope": "login"})
 				jsonErrorCode(w, http.StatusTooManyRequests, "rate_limited", "尝试过于频繁，请稍后再试")
 				return
 			}
@@ -262,10 +267,12 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !u.Active {
+		s.recordAuth(r, AuditLoginFailed, "", u.Username, map[string]any{"reason": "disabled"})
 		jsonErrorCode(w, http.StatusForbidden, "account_disabled", "账号已停用")
 		return
 	}
 	if s.accountExpired(u) {
+		s.recordAuth(r, AuditLoginFailed, "", u.Username, map[string]any{"reason": "expired"})
 		jsonErrorCode(w, http.StatusForbidden, "account_expired", "账号已过期")
 		return
 	}
@@ -273,6 +280,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	// accounts are privileged: a wrong password fails identically either way. Admins are exempt —
 	// this endpoint is the break-glass path when the IdP is the thing that is broken.
 	if s.localLoginRefused(u) {
+		s.recordAuth(r, AuditLoginFailed, "", u.Username, map[string]any{"reason": "sso_only"})
 		jsonErrorCode(w, http.StatusForbidden, "local_login_refused", "本站已限制使用密码登录，请通过单点登录进入")
 		return
 	}
@@ -288,11 +296,17 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSessionCookie(w, r, *u)
 	s.st.TouchLastLogin(u.Username)
+	s.recordAuth(r, AuditLogin, u.Username, u.Username, map[string]any{"method": "password"})
 	log.Printf("login %s", u.Username)
 	writeJSON(w, s.meJSON(u.Username))
 }
 
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
+	// Read before the cookie is cleared: after it, there is nobody to attribute the row to. A
+	// request with no valid session logs nothing rather than an anonymous sign-out.
+	if u := s.currentActiveUser(r); u != "" {
+		s.recordAuth(r, AuditLogout, u, u, nil)
+	}
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
 	writeJSON(w, okJSON)
 }

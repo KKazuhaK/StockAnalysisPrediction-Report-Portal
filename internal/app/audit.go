@@ -28,6 +28,11 @@ type AuditEntry struct {
 	TargetType string `json:"target_type"`
 	TargetID   string `json:"target_id"`
 	Detail     string `json:"detail"` // JSON
+	// IP is the request's source address, "" for a writer with no request (CLI, scheduler loops).
+	// A column rather than a detail field because the question it answers — "what else did this host
+	// try" — is an equality lookup, and detail is only reachable through an unindexed substring
+	// match that would also hit a target_id containing the same bytes.
+	IP string `json:"ip"`
 }
 
 // AuditFilter narrows the log. The zero value is everything.
@@ -36,6 +41,7 @@ type AuditFilter struct {
 	Action     string
 	TargetType string
 	TargetID   string
+	IP         string
 	Q          string // substring of the detail
 	Since      string // "YYYY-MM-DD"; inclusive
 	Limit      int
@@ -44,12 +50,60 @@ type AuditFilter struct {
 
 // The action vocabulary the portal itself writes. Kept as constants so a rename is a compile error
 // rather than a filter that silently stops matching.
+// Naming: <object>.<verb>, one dot, lowercase. The verb is create/change/delete/read where CRUD
+// describes it, and a domain verb where CRUD would lie (login, submit, install).
+//
+// Two rules settle the cases that look ambiguous:
+//
+//   - auth.* is what a principal does to its OWN authentication; user.change is what an
+//     administrator does to somebody ELSE's account. Both carry the username as the target, so one
+//     target_id filter is a complete per-account timeline no matter who acted.
+//   - A subsystem that already keeps durable, admin-visible history (batch_items, cleanup_runs)
+//     gets a row for the human DECISION and none for the machine outcome. That is what keeps run.*
+//     at human rate instead of scheduler rate.
+//
+// The five original strings keep their exact spelling: rows written by older builds have to go on
+// filtering, and the console's dropdown is SELECT DISTINCT action, so new ones need no migration.
 const (
 	AuditReportRead   = "report.read"
 	AuditGrantChange  = "grant.change"
 	AuditUserChange   = "user.change"
 	AuditGroupChange  = "group.change"
 	AuditPolicyChange = "policy.change"
+
+	// Authentication — the principal acting on its own credentials.
+	AuditLogin          = "auth.login"
+	AuditLoginFailed    = "auth.login_failed"
+	AuditLockout        = "auth.lockout"
+	AuditLogout         = "auth.logout"
+	AuditPasswordChange = "auth.password_change"
+	AuditPasswordReset  = "auth.password_reset"
+	AuditMFAChange      = "auth.mfa_change"
+	AuditIdentityLink   = "auth.identity_link"
+	AuditIdentityUnlink = "auth.identity_unlink"
+
+	// Accounts and the OU tree, acted on by an administrator.
+	AuditUserCreate  = "user.create"
+	AuditUserDelete  = "user.delete"
+	AuditGroupCreate = "group.create"
+	AuditGroupDelete = "group.delete"
+
+	// Reports and runs.
+	AuditReportIngest = "report.ingest"
+	AuditReportDelete = "report.delete"
+	AuditRunSubmit    = "run.submit"
+	AuditRunCancel    = "run.cancel"
+	AuditRunChange    = "run.change"
+	AuditRunDelete    = "run.delete"
+
+	// Credentials and egress — the things that let something out of the portal.
+	AuditTokenCreate   = "token.create"
+	AuditTokenDelete   = "token.delete"
+	AuditAppInstall    = "app.install"
+	AuditAppDelete     = "app.delete"
+	AuditWebhookCreate = "webhook.create"
+	AuditWebhookDelete = "webhook.delete"
+	AuditTargetChange  = "target.change"
 )
 
 // WriteAudit records one action. Deliberately best-effort and never returns an error to its caller:
@@ -61,8 +115,43 @@ func (s *Store) WriteAudit(e AuditEntry) {
 	if at == "" {
 		at = nowStr()
 	}
-	s.exec(`INSERT INTO audit_log(at,actor,actor_ou,action,target_type,target_id,detail)
-		VALUES(?,?,?,?,?,?,?)`, at, e.Actor, e.ActorOU, e.Action, e.TargetType, e.TargetID, e.Detail)
+	s.exec(`INSERT INTO audit_log(at,actor,actor_ou,action,target_type,target_id,detail,ip)
+		VALUES(?,?,?,?,?,?,?,?)`, at, e.Actor, e.ActorOU, e.Action, e.TargetType, e.TargetID, e.Detail, e.IP)
+}
+
+// recordChange records an administrative action: one principal acting on something that is not
+// its own credentials. r may be nil for a writer with no request (CLI, scheduler).
+//
+// Two recorders rather than one WriteAudit everywhere, because the two things every call site got
+// wrong are the two these fill in: the actor's OU AT THE TIME, and the source address.
+func (s *Server) recordChange(r *http.Request, actor, action, targetType, targetID string, detail map[string]any) {
+	s.st.WriteAudit(AuditEntry{
+		Actor: actor, ActorOU: s.st.PrimaryGroupOf(actor), Action: action,
+		TargetType: targetType, TargetID: targetID,
+		Detail: auditJSON(detail), IP: s.auditIP(r),
+	})
+}
+
+// recordAuth records something a principal did to its own authentication. The target is the account
+// either way, so an account's timeline is one target_id filter whether the actor was its holder or
+// an administrator — and for a FAILED sign-in the actor may be empty while the target is not, which
+// is the case that matters: nobody has authenticated yet, but a name was tried.
+func (s *Server) recordAuth(r *http.Request, action, actor, account string, detail map[string]any) {
+	s.st.WriteAudit(AuditEntry{
+		Actor: actor, ActorOU: s.st.PrimaryGroupOf(actor), Action: action,
+		TargetType: "user", TargetID: account,
+		Detail: auditJSON(detail), IP: s.auditIP(r),
+	})
+}
+
+// auditIP resolves the source address through the same trusted-proxy configuration the throttle
+// uses, so the two agree about who a request came from. Behind a misconfigured proxy they would
+// otherwise disagree, and the log would exonerate whoever the throttle blocked.
+func (s *Server) auditIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return clientIP(r, s.trustedNets)
 }
 
 // ListAudit returns one page newest-first, plus the total matching the filter.
@@ -83,6 +172,9 @@ func (s *Store) ListAudit(f AuditFilter) ([]AuditEntry, int) {
 	}
 	if f.TargetID != "" {
 		add("target_id=?", f.TargetID)
+	}
+	if f.IP != "" {
+		add("ip=?", f.IP)
 	}
 	if q := strings.TrimSpace(f.Q); q != "" {
 		add("(detail "+s.likeOp()+" ? OR target_id "+s.likeOp()+" ? OR actor "+s.likeOp()+" ?)",
@@ -105,7 +197,7 @@ func (s *Store) ListAudit(f AuditFilter) ([]AuditEntry, int) {
 		offset = 0
 	}
 	rows, err := s.query(fmt.Sprintf(`SELECT id,at,COALESCE(actor,''),COALESCE(actor_ou,0),action,
-			COALESCE(target_type,''),COALESCE(target_id,''),COALESCE(detail,'')
+			COALESCE(target_type,''),COALESCE(target_id,''),COALESCE(detail,''),COALESCE(ip,'')
 		FROM audit_log WHERE %s ORDER BY at DESC, id DESC LIMIT %d OFFSET %d`, cond, limit, offset), args...)
 	if err != nil {
 		return nil, total
@@ -115,7 +207,7 @@ func (s *Store) ListAudit(f AuditFilter) ([]AuditEntry, int) {
 	for rows.Next() {
 		var e AuditEntry
 		var ou sql.NullInt64
-		if rows.Scan(&e.ID, &e.At, &e.Actor, &ou, &e.Action, &e.TargetType, &e.TargetID, &e.Detail) == nil {
+		if rows.Scan(&e.ID, &e.At, &e.Actor, &ou, &e.Action, &e.TargetType, &e.TargetID, &e.Detail, &e.IP) == nil {
 			e.ActorOU = ou.Int64
 			out = append(out, e)
 		}

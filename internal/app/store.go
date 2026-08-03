@@ -592,12 +592,15 @@ func (s *Store) baseSchemaStmts() []string {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS audit_log(
 			id %s, at TEXT, actor TEXT DEFAULT '', actor_ou BIGINT DEFAULT 0,
 			action TEXT, target_type TEXT DEFAULT '', target_id TEXT DEFAULT '',
-			detail TEXT DEFAULT '')`, pk),
+			detail TEXT DEFAULT '', ip TEXT DEFAULT '')`, pk),
 		// The three questions the log is read with: the time feed, this object's history, and what
 		// one person did. Each is a leading-column match, so each is a range scan rather than a scan.
 		`CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type, target_id, at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor, at DESC)`,
+		// action leads, because the console's most-used filter is one action ordered by time. Without
+		// it every page of a filtered view scans the table, and report.read alone is 70% of the rows.
+		`CREATE INDEX IF NOT EXISTS idx_audit_action_at ON audit_log(action, at DESC)`,
 		// Recurring tasks (scheduled tasks; docs/adr/0018-recurring-tasks.md): a saved job template + a
 		// daily/weekly/monthly cadence a background loop fires into the run queue, indefinitely, until
 		// disabled. rows is the JSON job template (the exact shape CreateBatchJob takes: 1 row = a
