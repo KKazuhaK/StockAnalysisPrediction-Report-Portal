@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -315,6 +316,77 @@ func TestOIDCEnablesOnTheFirstSave(t *testing.T) {
 	p, ok := s.st.SSOProviderBySlug("oidc")
 	if !ok || !p.Enabled || p.Name != "Corp" || p.ClientSecretEnc == "" {
 		t.Errorf("stored provider is wrong: ok=%v enabled=%v name=%q secret=%v", ok, p.Enabled, p.Name, p.ClientSecretEnc != "")
+	}
+}
+
+// The login-page button icon (ADR 0023). It is stored on the provider and it is the ONLY field on
+// this surface that the unauthenticated login page renders, so what it may contain is a security
+// question, not a formatting one: a remote URL would make every visitor's browser announce itself
+// to a third party before anyone has signed in. Two shapes are allowed and nothing else — a
+// built-in preset name, or a path under /site-assets/ that this portal serves itself.
+func TestSSOIconRefusesAnythingItWouldHaveToFetch(t *testing.T) {
+	s := adminSSOServer(t)
+	for _, tc := range []struct {
+		icon string
+		ok   bool
+		why  string
+	}{
+		{"", true, "no icon is the default"},
+		{"preset:entra", true, "a built-in"},
+		{"/site-assets/sso-icon-saml.png", true, "an upload this portal serves"},
+		{"https://cdn.example.com/logo.png", false, "a remote URL leaks the visitor's address"},
+		{"//cdn.example.com/logo.png", false, "protocol-relative is still remote"},
+		{"http://127.0.0.1/x.png", false, "still a fetch, still not ours to make"},
+		{"preset:not-a-real-one", false, "an unknown preset would render nothing"},
+		{"/site-assets/../../etc/passwd", false, "path traversal dressed as an asset"},
+		{"javascript:alert(1)", false, "a scheme is not a path"},
+		{"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", false, "inline SVG is a script vector on a public page"},
+	} {
+		body := `{"kind":"saml","slug":"saml","name":"Corp","icon":` + strconv.Quote(tc.icon) + `}`
+		rec := saveProvider(t, s, body)
+		if tc.ok && rec.Code != http.StatusOK {
+			t.Errorf("icon %q (%s) → %d %s, want 200", tc.icon, tc.why, rec.Code, rec.Body.String())
+		}
+		if !tc.ok && rec.Code != http.StatusBadRequest {
+			t.Errorf("icon %q (%s) → %d, want 400", tc.icon, tc.why, rec.Code)
+		}
+		if !tc.ok {
+			// And it did not land in the store on the way to being refused.
+			if p, _ := s.st.SSOProviderBySlug("saml"); p.Icon == tc.icon {
+				t.Errorf("icon %q was stored despite the refusal", tc.icon)
+			}
+		}
+	}
+}
+
+// The icon has to reach the login page, which is unauthenticated and sees a deliberately thin
+// projection of a provider. An icon nobody can read is not an icon.
+func TestSSOIconReachesTheLoginPage(t *testing.T) {
+	s := adminSSOServer(t)
+	s.st.SetSetting("public_url", "https://portal.example")
+	saveProvider(t, s, `{"kind":"saml","slug":"saml","name":"Kazuha Hub SSO","icon":"preset:entra"}`)
+	p, _ := s.st.SSOProviderBySlug("saml")
+	p.Enabled = true
+	p.IdPMetadataXML = testIdPMetadata
+	s.st.SaveSSOProvider(p)
+
+	rec := httptest.NewRecorder()
+	s.apiSSOProviders(rec, httptest.NewRequest(http.MethodGet, "/api/sso/providers", nil))
+	var out struct {
+		Providers []map[string]any `json:"providers"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if len(out.Providers) != 1 {
+		t.Fatalf("login page sees %d providers, want 1 (%s)", len(out.Providers), rec.Body.String())
+	}
+	if out.Providers[0]["icon"] != "preset:entra" {
+		t.Errorf("icon = %v, want preset:entra", out.Providers[0]["icon"])
+	}
+	// And the thin projection stays thin: nothing about the IdP config comes with it.
+	for _, leak := range []string{"idp_metadata_url", "idp_metadata_xml", "attr_upn", "provisioning"} {
+		if _, bad := out.Providers[0][leak]; bad {
+			t.Errorf("the public list leaked %q", leak)
+		}
 	}
 }
 

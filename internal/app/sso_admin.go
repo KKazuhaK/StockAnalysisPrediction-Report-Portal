@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -44,7 +45,7 @@ func (s *Server) ssoProviderJSON(p SSOProvider) map[string]any {
 		// SAML
 		"idp_metadata_url": p.IdPMetadataURL, "idp_entity_id": p.IdPEntityID,
 		"has_idp_metadata":    strings.TrimSpace(p.IdPMetadataXML) != "",
-		"allow_idp_initiated": p.AllowIdPInit, "clock_skew_sec": p.ClockSkewSec,
+		"allow_idp_initiated": p.AllowIdPInit, "clock_skew_sec": p.ClockSkewSec, "icon": p.Icon,
 		"sp_entity_id": s.samlEntityID(p.Slug), "sp_acs_url": s.samlACSURL(p.Slug),
 		"sp_cert_pem": p.SPCertPEM, "sp_cert_not_after": p.SPCertNotAfter, "has_sp_key": p.SPKeyEnc != "",
 		// Attribute mapping
@@ -93,6 +94,7 @@ type ssoProviderInput struct {
 	IdPMetadataXML string `json:"idp_metadata_xml"`
 	AllowIdPInit   bool   `json:"allow_idp_initiated"`
 	ClockSkewSec   int    `json:"clock_skew_sec"`
+	Icon           string `json:"icon"`
 
 	AttrUPN        string `json:"attr_upn"`
 	AttrEmail      string `json:"attr_email"`
@@ -105,6 +107,12 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 	var in ssoProviderInput
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	in.Icon = strings.TrimSpace(in.Icon)
+	if !validSSOIcon(in.Icon) {
+		jsonErrorCode(w, http.StatusBadRequest, "sso_bad_icon",
+			"图标只能是内置图标，或上传到本门户的图片")
 		return
 	}
 	in.Slug = strings.ToLower(strings.TrimSpace(in.Slug))
@@ -128,7 +136,7 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 		IdPMetadataURL: strings.TrimSpace(in.IdPMetadataURL),
 		IdPMetadataXML: firstNonEmpty(strings.TrimSpace(in.IdPMetadataXML), prev.IdPMetadataXML),
 		IdPEntityID:    prev.IdPEntityID, IdPCertPEM: prev.IdPCertPEM,
-		AllowIdPInit: in.AllowIdPInit, ClockSkewSec: in.ClockSkewSec,
+		AllowIdPInit: in.AllowIdPInit, ClockSkewSec: in.ClockSkewSec, Icon: in.Icon,
 		SPCertPEM: prev.SPCertPEM, SPKeyEnc: prev.SPKeyEnc, SPCertNotAfter: prev.SPCertNotAfter,
 		AttrUPN: in.AttrUPN, AttrEmail: in.AttrEmail, AttrDisplay: in.AttrDisplay,
 		AttrGroups: in.AttrGroups, AttrExternalID: in.AttrExternalID,
@@ -186,6 +194,35 @@ func (s *Server) apiAdminSSOSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	_ = existed
 	writeJSON(w, map[string]any{"ok": true, "id": id})
+}
+
+// The built-in login-button icons. Server-side only as an allow-list — the drawing lives in the
+// SPA — because this value is rendered on the unauthenticated login page and an unknown name would
+// render nothing, which looks like a broken deployment rather than a rejected setting.
+var ssoIconPresets = map[string]bool{
+	"entra": true, "google": true, "okta": true, "keycloak": true,
+	"github": true, "gitlab": true, "auth0": true, "key": true, "shield": true,
+}
+
+// validSSOIcon accepts exactly two shapes and nothing that could cause a fetch.
+//
+// The login page is unauthenticated, so anything it loads from another host announces every
+// visitor to that host before they have signed in. A path this portal serves itself does not, and
+// a preset is not a resource at all. Refusing a data: URI is a separate reason: an inline SVG on a
+// public page is a script vector.
+func validSSOIcon(icon string) bool {
+	switch {
+	case icon == "":
+		return true
+	case strings.HasPrefix(icon, "preset:"):
+		return ssoIconPresets[strings.TrimPrefix(icon, "preset:")]
+	case strings.HasPrefix(icon, "/site-assets/"):
+		name := strings.TrimPrefix(icon, "/site-assets/")
+		// One path segment, no traversal, no query. The asset handler does its own base-name check;
+		// this refuses at the door so a nonsense value never reaches the login page at all.
+		return name != "" && name == path.Base(name) && !strings.ContainsAny(name, "?#\\")
+	}
+	return false
 }
 
 // ssoCoded is a refusal the client can translate. The message is the fallback for a client with no

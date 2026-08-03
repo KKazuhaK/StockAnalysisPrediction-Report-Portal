@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Tabs, Tag, Typography } from 'antd'
+import { Alert, App, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Tabs, Tag, Typography, Upload } from 'antd'
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
 import type { Role, SSOProviderAdmin, SSOProvidersResp, UserGroupRow, UsersResp } from '../../api/types'
 import SSORulesEditor from './SSORulesEditor'
 import SSOSetupGuide from './SSOSetupGuide'
+import SSOIcon, { SSO_ICON_PRESETS } from '../../components/SSOIcon'
 
 // SSO administration (ADR 0023). One SAML tab and one OIDC tab; the API is row-shaped, so adding
 // more providers later is a change here and nowhere else.
@@ -17,6 +18,7 @@ import SSOSetupGuide from './SSOSetupGuide'
 const emptyProvider = (kind: 'oidc' | 'saml'): SSOProviderAdmin => ({
   id: 0, kind, slug: kind === 'oidc' ? 'oidc' : 'saml', name: '', enabled: false, provisioning: 'off',
   default_group: 0, default_role: 'user', default_expiry_days: 0, allow_admin_role: false, session_hours: 0,
+  icon: '',
   issuer: '', client_id: '', scopes: 'openid profile email', has_client_secret: false, redirect_url: '',
   idp_metadata_url: '', idp_entity_id: '', has_idp_metadata: false, allow_idp_initiated: false,
   clock_skew_sec: 60, sp_entity_id: '', sp_acs_url: '', sp_cert_pem: '', sp_cert_not_after: '', has_sp_key: false,
@@ -39,6 +41,75 @@ function CopyField({ label, value, hint }: { label: string; value: string; hint?
         />
       </Space.Compact>
     </Form.Item>
+  )
+}
+
+/**
+ * Picks the login button's icon: one of the built-ins, or an image uploaded to this portal.
+ *
+ * No URL field on purpose. The login page is unauthenticated, so an image on someone else's host
+ * would announce every visitor to them before anyone signs in — the server refuses to store one,
+ * and offering a box for it would only teach the refusal.
+ */
+function IconPicker({ kind, value, onChange }: { kind: 'oidc' | 'saml'; value?: string; onChange?: (v: string) => void }) {
+  const { t } = useTranslation()
+  const { message } = App.useApp()
+  const [busy, setBusy] = useState(false)
+  const uploaded = value && value.startsWith('/site-assets/') ? value : ''
+
+  const upload = async (file: File) => {
+    setBusy(true)
+    try {
+      const body = new FormData()
+      body.append('kind', kind === 'saml' ? 'ssoIconSaml' : 'ssoIconOidc')
+      body.append('file', file)
+      const r = await api.upload<{ url: string }>('/api/admin/site-asset', body)
+      // Cache-busted: the filename is fixed per kind, so a replacement reuses the same URL.
+      onChange?.(r.url)
+      message.success(t('common.saved'))
+    } catch (e) {
+      message.error(errText(e, t))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Space wrap align="center">
+      <Select
+        style={{ width: 200 }}
+        value={uploaded ? '__upload' : value || ''}
+        onChange={(v) => onChange?.(v === '__upload' ? uploaded : v)}
+        options={[
+          { value: '', label: t('sso.iconNone') },
+          ...SSO_ICON_PRESETS.map((n) => ({
+            value: `preset:${n}`,
+            label: (
+              <Space size={8}>
+                <SSOIcon icon={`preset:${n}`} />
+                {n}
+              </Space>
+            ),
+          })),
+          ...(uploaded ? [{ value: '__upload', label: t('sso.iconUploaded') }] : []),
+        ]}
+      />
+      <Upload
+        accept="image/*"
+        showUploadList={false}
+        beforeUpload={(f) => {
+          void upload(f)
+          return false // handled here; antd's own XHR would not carry the session or the kind
+        }}
+      >
+        <Button size="small" loading={busy}>
+          {t('sso.iconUpload')}
+        </Button>
+      </Upload>
+      <span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 18 }}>
+        <SSOIcon icon={value} />
+      </span>
+    </Space>
   )
 }
 
@@ -134,6 +205,9 @@ function ProviderForm({
       </Form.Item>
       <Form.Item name="name" label={t('sso.displayName')} extra={t('sso.displayNameHint')}>
         <Input placeholder={kind === 'oidc' ? 'Entra ID' : 'Corporate SSO'} />
+      </Form.Item>
+      <Form.Item name="icon" label={t('sso.icon')} extra={t('sso.iconHint')}>
+        <IconPicker kind={kind} />
       </Form.Item>
 
       {kind === 'oidc' ? (
