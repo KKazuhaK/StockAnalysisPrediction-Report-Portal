@@ -97,6 +97,7 @@ export default function AuditPage() {
   useEffect(load, [load])
 
   const ouNames = data?.ou_names ?? {}
+  const geo = data?.geo
 
   const columns: ColumnsType<AuditEntry> = [
     {
@@ -268,6 +269,16 @@ export default function AuditPage() {
           onChange: setPage,
         }}
       />
+      {/* A footnote, not a banner: it is reference rather than a problem. Without it, "no IP
+          database installed" and "installed, but nothing public has shown up yet" look identical,
+          because both render as bare addresses. */}
+      {geo && (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
+          {geo.loaded
+            ? t('audit.geoLoaded', { file: geo.file, type: geo.info?.type || '—' })
+            : t('audit.geoMissing', { dir: geo.dir })}
+        </Typography.Text>
+      )}
     </Card>
   )
 }

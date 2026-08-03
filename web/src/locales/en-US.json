@@ -119,6 +119,8 @@
   "audit.actor": "Who",
   "audit.at": "When",
   "audit.detail": "Detail",
+  "audit.geoLoaded": "IP locations from {{file}} ({{type}}).",
+  "audit.geoMissing": "No IP database. Put a MaxMind-format .mmdb in {{dir}} to show where an address is; it is read locally and no address is ever sent anywhere.",
   "audit.intro": "Who read which report, and who changed who may read it. Retention is configured under Storage — leave the audit target off and nothing is ever deleted.",
   "audit.ip": "Source",
   "audit.ipFilter": "IP address",

@@ -356,5 +356,9 @@ func (s *Server) apiAdminAudit(w http.ResponseWriter, r *http.Request, user stri
 		// The stamps are UTC; the panel timezone is what they are READ in. Sent with the page rather
 		// than fetched separately, because a time column cannot render without it.
 		"timezone": s.st.GetSetting("timezone", ""),
+		// Whether an IP database is loaded, and which. Without this the page cannot tell "no
+		// database installed" from "installed but every address so far is on the LAN" — and an
+		// operator who copied a file in has no way to find out it was rejected.
+		"geo": s.geo.Status(),
 	})
 }

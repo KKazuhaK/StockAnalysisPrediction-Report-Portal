@@ -119,6 +119,8 @@
   "audit.actor": "操作者",
   "audit.at": "時間",
   "audit.detail": "詳情",
+  "audit.geoLoaded": "IP 歸屬地來自 {{file}}（{{type}}）。",
+  "audit.geoMissing": "未安裝 IP 庫。把 MaxMind 格式的 .mmdb 放到 {{dir}} 即可顯示歸屬地；它在本地讀取，任何地址都不會外發。",
   "audit.intro": "誰讀了哪篇報告，以及誰改動了誰能讀。保留策略在「儲存」裡配置——審計目標保持關閉即永不刪除。",
   "audit.ip": "來源",
   "audit.ipFilter": "IP 地址",
