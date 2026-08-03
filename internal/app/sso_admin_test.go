@@ -292,6 +292,32 @@ func TestSSOAdminValidatesBeforeEnabling(t *testing.T) {
 	}
 }
 
+// OIDC must be configurable in ONE save. Everything its enable check needs — issuer, client id,
+// client secret — is a field on the same form, so unlike SAML there is no round trip to the IdP in
+// the middle and therefore no order an admin has to discover. This pins that: it is the reason the
+// SAML deadlock had no OIDC twin, and the reason is a property of the code, not an accident.
+func TestOIDCEnablesOnTheFirstSave(t *testing.T) {
+	s := adminSSOServer(t)
+	s.ssoInsecureForTest = true
+	s.st.SetSetting("sso_allow_private", "1")
+	op := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"issuer":"x"}`))
+	}))
+	defer op.Close()
+
+	body := `{"kind":"oidc","slug":"oidc","name":"Corp","enabled":true,` +
+		`"issuer":"` + op.URL + `","client_id":"c","client_secret":"s","scopes":"openid profile email"}`
+	if rec := saveProvider(t, s, body); rec.Code != http.StatusOK {
+		t.Fatalf("first save with enabled=true → %d (%s); OIDC must not need a draft round trip",
+			rec.Code, rec.Body.String())
+	}
+	p, ok := s.st.SSOProviderBySlug("oidc")
+	if !ok || !p.Enabled || p.Name != "Corp" || p.ClientSecretEnc == "" {
+		t.Errorf("stored provider is wrong: ok=%v enabled=%v name=%q secret=%v", ok, p.Enabled, p.Name, p.ClientSecretEnc != "")
+	}
+}
+
 // TestSSORulesRoundTripPreservesOrder proves order survives a save, because order IS the contract:
 // the first matching rule decides the role and OU.
 func TestSSORulesRoundTripPreservesOrder(t *testing.T) {

@@ -446,7 +446,7 @@
   "login.password": "Password",
   "login.register": "Create an account",
   "login.ssoDivider": "or continue with",
-  "login.ssoFailed": "Single sign-on did not complete ({{reason}}). Sign in with a password below, or ask an administrator to check the identity provider.",
+  "login.ssoFailed": "Single sign-on did not complete ({{reason}}). Use the username and password form instead, or ask an administrator to check the identity provider.",
   "login.ssoWith": "Sign in with {{name}}",
   "login.submit": "Sign in",
   "login.title": "Sign in",

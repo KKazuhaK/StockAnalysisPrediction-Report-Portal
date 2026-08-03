@@ -59,10 +59,25 @@ function ProviderForm({
   const { message } = App.useApp()
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
+  // What the last metadata fetch returned, held locally. Reloading the page's providers after a
+  // fetch would re-seed this form from the server — and the draft the fetch endpoint creates knows
+  // only the URL, so every field the admin had typed and not yet saved came back blank. The button
+  // name was the one people noticed; the attribute mappings and the enable switch went the same way.
+  const [fetched, setFetched] = useState<{ entity_id: string } | null>(null)
 
+  // Keyed on WHICH provider this is, not on the object. forKind() builds a fresh object on every
+  // parent render (it spreads the server defaults over a literal), so depending on the reference
+  // re-seeded the form from the server on any re-render at all — including the one antd does to
+  // show the success toast, which is why the fetch appeared to clear the fields it never touched.
+  const identity = `${provider.kind}:${provider.slug}:${provider.id}`
   useEffect(() => {
     form.setFieldsValue({ ...provider, client_secret: '' })
-  }, [provider, form])
+    setFetched(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity, form])
+
+  const hasMetadata = !!fetched || provider.has_idp_metadata
+  const metadataEntityID = fetched?.entity_id || provider.idp_entity_id
 
   const save = async () => {
     const v = await form.validateFields()
@@ -91,7 +106,9 @@ function ProviderForm({
         { kind, idp_metadata_url: (form.getFieldValue('idp_metadata_url') || '').trim() },
       )
       message.success(t('sso.metadataFetched', { id: r.entity_id }))
-      onSaved()
+      // Deliberately NOT onSaved(): the fetch's own answer is all the confirmation this needs, and
+      // reloading is exactly what discarded the form.
+      setFetched({ entity_id: r.entity_id })
     } catch (e) {
       message.error(errText(e, t))
     }
@@ -148,8 +165,8 @@ function ProviderForm({
             <Button icon={<ReloadOutlined />} onClick={fetchMetadata}>
               {t('sso.fetchMetadata')}
             </Button>
-            {provider.has_idp_metadata ? (
-              <Tag color="green">{provider.idp_entity_id || t('sso.metadataPresent')}</Tag>
+            {hasMetadata ? (
+              <Tag color="green">{metadataEntityID || t('sso.metadataPresent')}</Tag>
             ) : (
               <Tag>{t('sso.metadataMissing')}</Tag>
             )}
