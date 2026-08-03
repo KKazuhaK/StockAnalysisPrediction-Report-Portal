@@ -83,9 +83,12 @@ function ProviderForm({
 
   const fetchMetadata = async () => {
     try {
+      // The URL as it is in the FORM, not as it was last saved — this button is normally pressed
+      // before anything has been saved at all, and after editing the field it must fetch what the
+      // admin is looking at. The kind lets the server create the draft the metadata lands in.
       const r = await api.post<{ entity_id: string }>(
         `/api/admin/sso/providers/${encodeURIComponent(provider.slug)}/metadata`,
-        {},
+        { kind, idp_metadata_url: (form.getFieldValue('idp_metadata_url') || '').trim() },
       )
       message.success(t('sso.metadataFetched', { id: r.entity_id }))
       onSaved()
