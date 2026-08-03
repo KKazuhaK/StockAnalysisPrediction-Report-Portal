@@ -14,6 +14,10 @@ import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPreset
 // discovered inputs, choose when to run (now / a preset low-peak window / an explicit 定时 time)
 // and the priority lane (加急 / 队列空闲), with the live queue depth shown inline. The run-time +
 // priority controls are the shared RunScheduleControls, reused by the batch console.
+// An unknown period reads as the daily one: that is what every pre-period deployment meant, and it
+// is the phrasing that overstates the allowance least.
+const quotaPeriod = (p?: string) => (p === 'week' || p === 'month' || p === 'total' ? p : 'day')
+
 export default function RunAnalysisModal({
   open,
   onClose,
@@ -225,11 +229,15 @@ export default function RunAnalysisModal({
           </Form>
         )}
 
-        {/* Daily run quota (ADR 0022 R2): shown only to a capped (external) member, so internal
-            users and admins see the form exactly as before. */}
+        {/* Run quota (ADR 0022 R2): shown only to a capped (external) member, so internal users
+            and admins see the form exactly as before. The window is part of the sentence — "2 of 5
+            left" is a different fact depending on whether it refills tomorrow or never. */}
         {quota?.limited && (
           <Typography.Text type={(quota.remaining ?? 0) <= 0 ? 'danger' : 'secondary'}>
-            {t('run.quotaRemaining', { remaining: quota.remaining ?? 0, limit: quota.limit ?? 0 })}
+            {t(`run.quotaRemaining.${quotaPeriod(quota.period)}`, {
+              remaining: quota.remaining ?? 0,
+              limit: quota.limit ?? 0,
+            })}
           </Typography.Text>
         )}
 
