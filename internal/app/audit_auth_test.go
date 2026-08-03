@@ -20,6 +20,9 @@ import (
 func auditServer(t *testing.T) *Server {
 	t.Helper()
 	s := tenancyServer(t)
+	// Wired as RunServer wires it, so the tests exercise the shape production has rather than a
+	// nil service that answers differently.
+	s.geo = newGeoService(t.TempDir())
 	s.st.UpsertUser(User{Username: "kazuha", PasswordHash: mustHash("correct-horse-battery"), Role: "user"})
 	return s
 }
@@ -228,5 +231,37 @@ func TestEveryDeclaredActionIsEmittedSomewhere(t *testing.T) {
 		if !strings.Contains(src, m[1]) {
 			t.Errorf("%s is declared but nothing emits it — either write it or delete it", m[1])
 		}
+	}
+}
+
+// The console has to be able to say whether an IP database is loaded.
+//
+// Without it, "no database installed" and "installed, but every address so far has been on the
+// LAN" look identical — both show bare addresses — so an operator who copied a file in and got
+// it wrong has no way to find out. The status was written and then reachable from nowhere, which
+// is the same defect as a declared action nobody emits.
+func TestAuditResponseSaysWhetherAnIPDatabaseIsLoaded(t *testing.T) {
+	s := auditServer(t)
+	s.st.UpsertUser(User{Username: "admin", PasswordHash: mustHash("admin-password-here"), Role: "admin"})
+
+	rec := httptest.NewRecorder()
+	s.apiAdminAudit(rec, httptest.NewRequest(http.MethodGet, "/api/admin/audit", nil), "admin")
+	var out struct {
+		Geo struct {
+			Dir    string `json:"dir"`
+			Loaded bool   `json:"loaded"`
+			File   string `json:"file"`
+		} `json:"geo"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if out.Geo.Loaded {
+		t.Error("claimed a database is loaded with none installed")
+	}
+	// The DIRECTORY is reported even with nothing installed, because the first question an
+	// operator has is where the file goes.
+	if out.Geo.Dir == "" {
+		t.Error("the response does not say where to put the database")
 	}
 }

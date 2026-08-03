@@ -841,4 +841,12 @@ export interface AuditResp {
   ou_names: Record<string, string>
   /** The portal's business timezone; '' means follow the reader's. Stamps are UTC. */
   timezone?: string
+  /** Whether an IP database is loaded, and where one goes if not. */
+  geo?: {
+    dir: string
+    file?: string
+    loaded: boolean
+    modified?: string
+    info?: { type?: string; build_epoch?: number; granularity?: string }
+  }
 }
