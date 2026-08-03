@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -21,7 +22,7 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 	username, created, err := s.resolveSSOAccount(p, id)
 	if err != nil {
 		log.Printf("sso: %s/%s login refused for subject %q: %v", p.Kind, p.Slug, id.Subject, err)
-		s.ssoFail(w, r, "not_provisioned")
+		s.ssoFail(w, r, resolveFailCode(err))
 		return
 	}
 
@@ -265,6 +266,24 @@ func (s *Server) matchExistingAccount(p SSOProvider, id ssoIdentity) (string, er
 		return "", errInactiveAccount
 	}
 	return u.Username, nil
+}
+
+// resolveFailCode decides what the login page is told.
+//
+// Almost everything collapses to not_provisioned on purpose: unknown subject, a name a local
+// account already holds, disabled, expired, no rule matched — telling those apart would turn the
+// login page into a user-enumeration oracle against the IdP, which is the whole reason this
+// function is deliberately blunt.
+//
+// The exception is a refusal decided BEFORE anything is looked up. "This provider has no email
+// claim mapped, so email matching cannot run" is a fact about the configuration, not about any
+// person; it reveals nothing an attacker could not read off the login page anyway, and it is the
+// only way an admin will ever find out — the generic answer names a cause that is not theirs.
+func resolveFailCode(err error) string {
+	if errors.Is(err, errNoEmailToMatch) {
+		return "sso_no_email_claim"
+	}
+	return "not_provisioned"
 }
 
 var (

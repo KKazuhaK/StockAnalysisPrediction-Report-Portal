@@ -47,6 +47,7 @@ describe('SSOPage', () => {
       if (url === '/api/admin/sso/providers') {
         return Promise.resolve({ providers: [], public_url: 'https://p.example', sp_defaults: SP_DEFAULTS })
       }
+      if (url.includes('/last-seen')) return Promise.resolve({ seen: false })
       return Promise.resolve({ groups: [], roles: [] })
     })
     apiMock.post.mockResolvedValue({ ok: true, entity_id: 'https://sts.windows.net/e72914d3/' })
@@ -99,6 +100,43 @@ describe('SSOPage', () => {
         idp_metadata_url: 'https://login.microsoftonline.com/x/federationmetadata.xml',
       }),
     )
+  })
+
+  // The endpoint for this shipped with SSO and nothing ever called it, so the guesswork it was
+  // written to end went on — and cost a real sign-in, whose failure message pointed at accounts
+  // rather than at the blank claim field that caused it.
+  it('shows the claim names the identity provider actually sent', async () => {
+    apiMock.get.mockImplementation((url: string) => {
+      if (url === '/api/admin/sso/providers') {
+        return Promise.resolve({ providers: [], public_url: 'https://p.example', sp_defaults: SP_DEFAULTS })
+      }
+      if (url.includes('/last-seen')) {
+        return Promise.resolve({
+          seen: true,
+          claims: [
+            { name: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress', preview: 'me@kazuha.org' },
+          ],
+        })
+      }
+      return Promise.resolve({ groups: [], roles: [] })
+    })
+    render(
+      <App>
+        <SSOPage />
+      </App>,
+    )
+    expect(
+      await screen.findByText('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'),
+    ).toBeTruthy()
+  })
+
+  it('says how to make the claim names appear when nothing has signed in yet', async () => {
+    render(
+      <App>
+        <SSOPage />
+      </App>,
+    )
+    expect(await screen.findByText('sso.claimsNoneYet')).toBeTruthy()
   })
 
   it('confirms the metadata arrived without asking the server again', async () => {
