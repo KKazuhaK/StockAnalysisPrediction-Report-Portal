@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -152,6 +154,32 @@ func (s *Server) recordAuth(r *http.Request, action, actor, account string, deta
 		TargetType: "user", TargetID: account,
 		Detail: auditJSON(detail), IP: s.auditIP(r),
 	})
+}
+
+// changedSettingFields lists the fields a partial-update payload actually carried.
+//
+// Every field on those payloads is a pointer precisely so that "omitted" and "cleared" are
+// different, which makes the set of non-nil fields exactly the set an admin touched. The NAMES
+// go in the row and the values do not: half of them are of no forensic interest and one of them
+// is an SMTP password, so "which knobs moved" is the useful half and carries none of the risk.
+func changedSettingFields(in any) []string {
+	v := reflect.ValueOf(in)
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+	t := v.Type()
+	out := make([]string, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		f := v.Field(i)
+		if f.Kind() == reflect.Pointer && !f.IsNil() {
+			out = append(out, t.Field(i).Name)
+		}
+	}
+	sort.Strings(out) // stable, so two identical saves read identically in the log
+	return out
 }
 
 // auditIP resolves the source address through the same trusted-proxy configuration the throttle

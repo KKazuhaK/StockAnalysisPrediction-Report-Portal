@@ -45,14 +45,20 @@ func (s *Server) apiWebhookAdd(w http.ResponseWriter, r *http.Request, user stri
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// A webhook is an egress: report data starts leaving the portal for an address somebody
+	// chose. The URL and the events, never the signing secret.
+	s.recordChange(r, user, AuditWebhookCreate, "webhook", itoa64(id),
+		map[string]any{"url": strings.TrimSpace(in.URL), "events": in.Events})
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
 func (s *Server) apiWebhookDelete(w http.ResponseWriter, r *http.Request, user string) {
-	if err := s.st.DeleteWebhook(pathID(r, "id")); err != nil {
+	id := pathID(r, "id")
+	if err := s.st.DeleteWebhook(id); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordChange(r, user, AuditWebhookDelete, "webhook", itoa64(id), nil)
 	writeJSON(w, okJSON)
 }
 

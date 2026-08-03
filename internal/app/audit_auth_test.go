@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -183,5 +186,47 @@ func TestAuditEndpointFiltersByIP(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &out)
 	if out.Timezone != "Asia/Shanghai" {
 		t.Errorf("timezone = %q; the console has no zone to render the stamps in", out.Timezone)
+	}
+}
+
+// Every action the vocabulary declares must be written by something.
+//
+// This is the defect that started the whole pass: group.change and policy.change were declared,
+// rendered a filter option, and emitted by nothing — so the console offered a filter that could
+// only ever return nothing, which reads as "this never happens" rather than "this is not recorded".
+// A constant nobody writes is worse than a missing one.
+func TestEveryDeclaredActionIsEmittedSomewhere(t *testing.T) {
+	dir := "."
+	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body strings.Builder
+	for _, f := range files {
+		base := filepath.Base(f)
+		// The declarations live in audit.go, and tests are not emitters.
+		if base == "audit.go" || strings.HasSuffix(base, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body.Write(b)
+	}
+	src := body.String()
+
+	decls, err := os.ReadFile(filepath.Join(dir, "audit.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := regexp.MustCompile(`(?m)^\s*(Audit[A-Za-z]+)\s*=\s*"`).FindAllStringSubmatch(string(decls), -1)
+	if len(names) < 20 {
+		t.Fatalf("found only %d action constants; the regex has stopped matching", len(names))
+	}
+	for _, m := range names {
+		if !strings.Contains(src, m[1]) {
+			t.Errorf("%s is declared but nothing emits it — either write it or delete it", m[1])
+		}
 	}
 }

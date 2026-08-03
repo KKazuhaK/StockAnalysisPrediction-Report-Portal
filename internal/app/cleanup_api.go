@@ -128,6 +128,10 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 	if in.ReportsEnabled != nil {
 		s.st.SetSetting("cleanup_reports_enabled", strconv.Itoa(boolInt(*in.ReportsEnabled)))
 	}
+	// Retention decides when evidence stops existing — including this table's own. A change to
+	// it has to be in the record that the change shortens.
+	s.recordChange(r, user, AuditPolicyChange, "cleanup_config", "",
+		map[string]any{"fields": changedSettingFields(in)})
 	writeJSON(w, okJSON)
 }
 

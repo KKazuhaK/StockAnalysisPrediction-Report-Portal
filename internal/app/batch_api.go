@@ -335,10 +335,17 @@ func (s *Server) apiBatchTargetAdd(w http.ResponseWriter, r *http.Request, user 
 }
 
 func (s *Server) apiBatchTargetDelete(w http.ResponseWriter, r *http.Request, user string) {
-	if err := s.st.DeleteTarget(pathID(r, "id")); err != nil {
+	id := pathID(r, "id")
+	name := ""
+	if t, ok := s.st.GetTarget(id); ok {
+		name = t.Name // read first: afterwards an id alone means nothing to whoever reads the row
+	}
+	if err := s.st.DeleteTarget(id); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordChange(r, user, AuditTargetChange, "target", itoa64(id),
+		map[string]any{"op": "delete", "name": name})
 	writeJSON(w, okJSON)
 }
 
