@@ -22,6 +22,11 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 	username, created, err := s.resolveSSOAccount(p, id)
 	if err != nil {
 		log.Printf("sso: %s/%s login refused for subject %q: %v", p.Kind, p.Slug, id.Subject, err)
+		// The subject, not a username: there is no local account, and the subject is the only
+		// identifier the refusal has. Without this row an IdP that stops matching looks like
+		// nothing happening at all.
+		s.recordAuth(r, AuditLoginFailed, "", id.Subject, map[string]any{
+			"reason": resolveFailCode(err), "provider": p.Kind, "slug": p.Slug})
 		s.ssoFail(w, r, resolveFailCode(err))
 		return
 	}
@@ -87,6 +92,8 @@ func (s *Server) completeSSOLogin(w http.ResponseWriter, r *http.Request, p SSOP
 		log.Printf("sso: %s/%s could not link identity for %q: %v", p.Kind, p.Slug, username, err)
 	}
 	s.st.TouchLastLogin(username)
+	s.recordAuth(r, AuditLogin, username, username, map[string]any{
+		"method": "sso", "provider": p.Kind, "slug": p.Slug, "created": created})
 	s.issueSession(w, r, *u, p)
 	log.Printf("sso login %s via %s/%s", username, p.Kind, p.Slug)
 	http.Redirect(w, r, safeReturnPath(target), http.StatusFound)
@@ -142,6 +149,10 @@ func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (username stri
 			}); err != nil {
 				return "", false, err
 			}
+			// A binding created by MATCHING is the one worth a row: from here on this IdP subject
+			// reaches this account, and the decision was made by a rule rather than by a person.
+			s.recordChange(nil, "", AuditIdentityLink, "user", u, map[string]any{
+				"provider": p.Kind, "slug": p.Slug, "subject": id.Subject, "matched_by": p.LinkBy})
 			return u, false, nil
 		}
 	}

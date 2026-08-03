@@ -72,6 +72,9 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Every session invalidated and a credential replaced. Under suspicion this is the row that
+	// says whether the account holder did it or somebody who had already got in.
+	s.recordAuth(r, AuditPasswordChange, user, user, nil)
 	// Everyone else is out, including the caller — so re-issue the caller's own session at the new
 	// revision, or they would be signed out of the page they are standing on.
 	//

@@ -119,6 +119,8 @@ func (s *Server) apiPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request
 		return
 	}
 	label := strings.TrimSpace(r.URL.Query().Get("label"))
+	s.recordAuth(r, AuditMFAChange, user, user, map[string]any{
+		"factor": "passkey", "op": "add", "label": firstNonEmpty(label, "Passkey")})
 	if err := s.st.AddPasskey(user, firstNonEmpty(label, "Passkey"), cred); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -205,6 +207,7 @@ func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	cred, err := wa.FinishLogin(pu, *session, r)
 	if err != nil {
 		log.Printf("passkey: login for %s rejected: %v", username, err)
+		s.recordAuth(r, AuditLoginFailed, "", username, map[string]any{"reason": "passkey_rejected"})
 		jsonError(w, http.StatusUnauthorized, "that passkey was not accepted")
 		return
 	}
@@ -212,12 +215,16 @@ func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	// the credential has been cloned. Refuse and tell the operator.
 	if cred.Authenticator.CloneWarning {
 		log.Printf("passkey: CLONE WARNING for %s — the authenticator's sign counter went backwards", username)
+		// Its own reason, because this one is not a typo or a dismissed prompt: a counter that went
+		// backwards means the credential exists in two places, and an operator has to see it.
+		s.recordAuth(r, AuditLoginFailed, "", username, map[string]any{"reason": "cloned_authenticator"})
 		jsonError(w, http.StatusUnauthorized, "that passkey was not accepted")
 		return
 	}
 	s.st.TouchPasskey(cred.ID, cred.Authenticator.SignCount)
 	s.setSessionCookie(w, r, *u)
 	s.st.TouchLastLogin(username)
+	s.recordAuth(r, AuditLogin, username, username, map[string]any{"method": "passkey"})
 	log.Printf("login %s (passkey)", username)
 	writeJSON(w, s.meJSON(username))
 }
@@ -239,6 +246,8 @@ func (s *Server) apiPasskeyDelete(w http.ResponseWriter, r *http.Request, user s
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordAuth(r, AuditMFAChange, user, user, map[string]any{
+		"factor": "passkey", "op": "remove", "cred_id": pathID(r, "id")})
 	writeJSON(w, okJSON)
 }
 
