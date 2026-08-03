@@ -14,6 +14,20 @@ import SSOIcon from '../components/SSOIcon'
 import { SiteLogo, useSite } from '../site'
 import { AutoIcon, MoonIcon, SunIcon } from '../components/icons'
 
+/**
+ * Turns a failure code from ssoFail into a sentence. Falls back to the bare code, which is what the
+ * page used to print for every failure — nine different SAML rejections all arrived as
+ * "bad_response", so the one thing the reader needed was the one thing it never said.
+ *
+ * Every code here describes the portal's own trust configuration, never anything about the person
+ * signing in, so naming them cannot be used to learn whether an account exists.
+ */
+function ssoReason(code: string, t: (k: string) => string): string {
+  const key = `login.ssoReason.${code}`
+  const s = t(key)
+  return s === key ? code : s
+}
+
 export default function LoginPage() {
   const { t } = useTranslation()
   const { title } = useSite()
@@ -275,7 +289,7 @@ export default function LoginPage() {
             )}
             {ssoError && (
               <Typography.Text type="danger" style={{ display: 'block' }}>
-                {t('login.ssoFailed', { reason: ssoError })}
+                {t('login.ssoFailed', { reason: ssoReason(ssoError, t) })}
               </Typography.Text>
             )}
             {!totpToken && offers.sso && providers.length > 0 && (

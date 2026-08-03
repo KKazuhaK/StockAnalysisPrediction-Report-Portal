@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -69,6 +70,17 @@ func (s *Server) samlSP(p SSOProvider) (*saml.ServiceProvider, error) {
 		// IdP-initiated login disables crewjam's InResponseTo check entirely, so it stays off
 		// unless an operator explicitly accepts that trade.
 		AllowIDPInitiated: p.AllowIdPInit,
+		// MUST be set. crewjam reads an empty AuthnNameIDFormat as TRANSIENT ("to maintain library
+		// back-compat", service_provider.go), so leaving it unset made every AuthnRequest demand a
+		// NameID that changes on every login — which samlSubject then refuses, because a value like
+		// that cannot key an account. The portal was asking for exactly what it would reject, and no
+		// IdP configuration could satisfy it.
+		//
+		// Unspecified rather than persistent: crewjam maps it to an OMITTED NameIDPolicy, which
+		// lets the IdP send whatever its admin configured as the unique identifier. That is the
+		// interoperable choice — Entra sends the configured claim, usually the UPN; demanding
+		// persistent would instead get an opaque pairwise id that no operator recognises.
+		AuthnNameIDFormat: saml.UnspecifiedNameIDFormat,
 	}, nil
 }
 
@@ -272,19 +284,19 @@ func (s *Server) samlACS(w http.ResponseWriter, r *http.Request) {
 	// absent (service_provider.go:1008). Require it ourselves so absence is a rejection.
 	if err := requireDestination(raw, s.samlACSURL(slug)); err != nil {
 		log.Printf("sso: saml %s destination: %v", slug, err)
-		s.ssoFail(w, r, "bad_response")
+		s.ssoFail(w, r, "saml_destination")
 		return
 	}
 	// Algorithm policy and the encryption refusal both run BEFORE parsing: a signature must never be
 	// accepted on the strength of SHA-1, and the SP private key must never be handed a ciphertext.
 	if err := rejectWeakSignatureAlgs(raw); err != nil {
 		log.Printf("sso: saml %s signature algorithm: %v", slug, err)
-		s.ssoFail(w, r, "bad_response")
+		s.ssoFail(w, r, "saml_weak_signature")
 		return
 	}
 	if err := rejectEncryptedAssertion(raw); err != nil {
 		log.Printf("sso: saml %s: %v", slug, err)
-		s.ssoFail(w, r, "bad_response")
+		s.ssoFail(w, r, "saml_encrypted")
 		return
 	}
 	sp, err := s.samlSP(p)
@@ -295,26 +307,26 @@ func (s *Server) samlACS(w http.ResponseWriter, r *http.Request) {
 	assertion, err := sp.ParseXMLResponse(raw, []string{req.ReqID}, *mustURL(s.samlACSURL(slug)))
 	if err != nil {
 		log.Printf("sso: saml %s assertion rejected: %v", slug, err)
-		s.ssoFail(w, r, "bad_response")
+		s.ssoFail(w, r, "saml_assertion_rejected")
 		return
 	}
 	// Replay: crewjam has no assertion cache. This must happen BEFORE a session is minted, and it
 	// is insert-or-nothing so two concurrent posts of one assertion produce exactly one winner.
 	if !s.st.MarkAssertionSeen(sp.IDPMetadata.EntityID, assertion.ID, assertionExpiry(assertion)) {
 		log.Printf("sso: saml %s replayed assertion %s", slug, assertion.ID)
-		s.ssoFail(w, r, "bad_response")
+		s.ssoFail(w, r, "saml_replay")
 		return
 	}
 	subject, format, err := samlSubject(assertion)
 	if err != nil {
 		log.Printf("sso: saml %s subject: %v", slug, err)
-		s.ssoFail(w, r, "bad_response")
+		s.ssoFail(w, r, subjectFailCode(err))
 		return
 	}
 	claims, err := samlClaims(assertion)
 	if err != nil {
 		log.Printf("sso: saml %s attributes: %v", slug, err)
-		s.ssoFail(w, r, "bad_response")
+		s.ssoFail(w, r, "saml_attributes")
 		return
 	}
 	claims["nameid"] = subject
@@ -425,20 +437,40 @@ func rejectEncryptedAssertion(raw []byte) error {
 	}
 }
 
+// errTransientNameID and errNoNameID are distinguished because they are the two subject failures an
+// admin can actually fix, and they are fixed in different places.
+var (
+	errTransientNameID = errors.New("transient NameID cannot identify an account; set the IdP's NameID format to persistent, emailAddress or unspecified")
+	errNoNameID        = errors.New("the assertion carried no NameID; the IdP must send a unique user identifier")
+)
+
+// subjectFailCode maps a subject failure to the reason shown on the login page. Every code here
+// describes the portal's own trust configuration, never anything about the person signing in, so
+// none of them can be used to learn whether an account exists.
+func subjectFailCode(err error) string {
+	switch {
+	case errors.Is(err, errTransientNameID):
+		return "saml_transient_nameid"
+	case errors.Is(err, errNoNameID):
+		return "saml_no_nameid"
+	}
+	return "saml_bad_subject"
+}
+
 // samlSubject extracts the NameID, refusing formats that cannot serve as a stable account key. A
 // transient NameID is a new value on every login, so linking to it would create an account per
 // sign-in.
 func samlSubject(a *saml.Assertion) (subject, format string, err error) {
 	if a.Subject == nil || a.Subject.NameID == nil {
-		return "", "", fmt.Errorf("assertion has no NameID")
+		return "", "", errNoNameID
 	}
 	id := strings.TrimSpace(a.Subject.NameID.Value)
 	format = a.Subject.NameID.Format
 	if id == "" {
-		return "", "", fmt.Errorf("assertion has an empty NameID")
+		return "", "", errNoNameID
 	}
 	if strings.Contains(format, "transient") {
-		return "", "", fmt.Errorf("transient NameID cannot identify an account; configure a persistent format")
+		return "", "", errTransientNameID
 	}
 	return id, format, nil
 }

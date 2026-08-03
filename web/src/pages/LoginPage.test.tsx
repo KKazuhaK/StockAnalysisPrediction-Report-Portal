@@ -46,8 +46,18 @@ vi.mock('../prefs', () => ({
   usePrefs: () => ({ mode: 'light', setMode: vi.fn(), lang: 'en-US', setLang: vi.fn(), langs: [] }),
 }))
 vi.mock('../site', () => ({ useSite: () => ({ title: 'Portal' }), SiteLogo: () => null }))
+// i18next echoes a key it has no string for, and ssoReason branches on exactly that — so an
+// always-echoing mock cannot tell "translated" from "missing" and every code would look unknown.
+// This mock owns one real string, which is enough to exercise both sides.
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (k: string, o?: Record<string, unknown>) => (o ? `${k}:${JSON.stringify(o)}` : k) }),
+  useTranslation: () => ({
+    t: (k: string, o?: Record<string, unknown>) =>
+      k === 'login.ssoReason.saml_transient_nameid'
+        ? 'the identity provider sent a temporary user id'
+        : o
+          ? `${k}:${JSON.stringify(o)}`
+          : k,
+  }),
 }))
 
 const renderLogin = () =>
@@ -283,5 +293,30 @@ describe('LoginPage login modes', () => {
     } finally {
       window.history.replaceState({}, '', '/')
     }
+  })
+})
+
+// Nine different SAML rejections used to arrive as "bad_response", so the page printed a token
+// that named nothing. Each has its own reason now, and an unknown one still shows the raw code
+// rather than an empty parenthesis.
+describe('LoginPage — why single sign-on failed', () => {
+  beforeEach(() => {
+    apiMock.get.mockReset()
+    apiMock.get.mockResolvedValue({ providers: [], local: true, sso: false })
+    window.history.replaceState({}, '', '/login?sso_error=saml_transient_nameid')
+  })
+
+  it('names the reason instead of printing the code', async () => {
+    renderLogin()
+    const msg = await screen.findByText(/login\.ssoFailed/)
+    expect(msg.textContent).toContain('the identity provider sent a temporary user id')
+    expect(msg.textContent).not.toContain('"reason":"saml_transient_nameid"')
+  })
+
+  it('falls back to the raw code for one it has no string for', async () => {
+    window.history.replaceState({}, '', '/login?sso_error=something_new')
+    renderLogin()
+    const msg = await screen.findByText(/login\.ssoFailed/)
+    expect(msg.textContent).toContain('something_new')
   })
 })

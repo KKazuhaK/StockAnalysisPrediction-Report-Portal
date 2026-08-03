@@ -1,11 +1,14 @@
 package app
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/beevik/etree"
 	"github.com/crewjam/saml"
 )
 
@@ -144,6 +147,67 @@ func TestSPKeypairGeneration(t *testing.T) {
 	// And a provider with no certificate yet must fail cleanly rather than panic.
 	if _, _, err := s.samlKeypair(SSOProvider{Slug: "acme"}); err == nil {
 		t.Error("a provider without an SP certificate must report that clearly")
+	}
+}
+
+// samlTestServer / samlTestProvider give a provider complete enough for samlSP: a public URL, an
+// SP keypair (minted on save) and parseable IdP metadata.
+func samlTestServer(t *testing.T) *Server {
+	t.Helper()
+	st := newTestStore(t)
+	s := &Server{st: st, cfg: &config.Config{SecretKey: "0123456789abcdef0123456789abcdef"}}
+	st.EnsureDefaultGroup()
+	st.SetSetting("public_url", "https://portal.example")
+	return s
+}
+
+func samlTestProvider(t *testing.T, s *Server) SSOProvider {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	body := `{"kind":"saml","slug":"saml","name":"Corp"}`
+	s.apiAdminSSOSave(rec, httptest.NewRequest(http.MethodPost, "/api/admin/sso/providers", strings.NewReader(body)), "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fixture provider save → %d (%s)", rec.Code, rec.Body.String())
+	}
+	p, ok := s.st.SSOProviderBySlug("saml")
+	if !ok {
+		t.Fatal("fixture provider was not stored")
+	}
+	p.IdPMetadataXML = testIdPMetadata
+	if _, err := s.st.SaveSSOProvider(p); err != nil {
+		t.Fatalf("store metadata: %v", err)
+	}
+	p, _ = s.st.SSOProviderBySlug("saml")
+	return p
+}
+
+// The portal asked for exactly the thing it then refused.
+//
+// crewjam defaults AuthnNameIDFormat to TRANSIENT when it is unset — "to maintain library
+// back-compat", per its own comment — so every AuthnRequest carried a NameIDPolicy demanding a
+// transient NameID. A compliant IdP obeys, and samlSubject rejects transient because a value that
+// changes on every login cannot key an account. A closed loop: correct IdP configuration could
+// never satisfy it, and the only clue was "bad_response" on the login page.
+func TestAuthnRequestDoesNotAskForATransientNameID(t *testing.T) {
+	s := samlTestServer(t)
+	p := samlTestProvider(t, s)
+	sp, err := s.samlSP(p)
+	if err != nil {
+		t.Fatalf("samlSP: %v", err)
+	}
+	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(saml.HTTPRedirectBinding),
+		saml.HTTPRedirectBinding, saml.HTTPPostBinding)
+	if err != nil {
+		t.Fatalf("MakeAuthenticationRequest: %v", err)
+	}
+	doc := etree.NewDocument()
+	doc.SetRoot(req.Element())
+	xmlStr, err := doc.WriteToString()
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	if strings.Contains(xmlStr, "nameid-format:transient") {
+		t.Errorf("the AuthnRequest still demands a transient NameID:\n%s", xmlStr)
 	}
 }
 
