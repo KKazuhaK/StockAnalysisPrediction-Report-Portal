@@ -577,6 +577,11 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 		s.jobNotify.Store(jobID, true) // email the submitter on finish (best-effort, in-memory)
 	}
 	s.scheduleTick() // admit now if due + budget allows, else it waits (or waits for its schedule)
+	// The human decision, not the machine outcome: batch_items already records every row's fate and
+	// the console serves it, so a row per item would double the table to duplicate an existing one.
+	s.recordChange(r, user, AuditRunSubmit, "batch_job", itoa64(jobID), map[string]any{
+		"target_id": in.TargetID, "rows": len(in.Rows), "priority": priority,
+		"downgraded": downgraded, "run_at": runAt})
 	writeJSON(w, map[string]any{"ok": true, "job_id": jobID, "concurrency": conc, "priority": priority, "downgraded": downgraded, "run_at": runAt})
 }
 
@@ -744,6 +749,9 @@ func (s *Server) apiBatchItemsCancel(w http.ResponseWriter, r *http.Request, use
 	writeJSON(w, map[string]any{"cancelled": n})
 }
 
+// itoa64 renders a job id for the audit target, which is a string column.
+func itoa64(v int64) string { return strconv.FormatInt(v, 10) }
+
 func (s *Server) apiBatchJobCancel(w http.ResponseWriter, r *http.Request, user string) {
 	id := pathID(r, "id")
 	job, ok := s.st.GetBatchJob(id)
@@ -767,6 +775,7 @@ func (s *Server) apiBatchJobCancel(w http.ResponseWriter, r *http.Request, user 
 	// strand in 'cancelling'. finalizeJob is a no-op if runs are still in flight (their
 	// afterItem finalizes later) or the job was already terminal.
 	s.finalizeJob(id)
+	s.recordChange(r, user, AuditRunCancel, "batch_job", itoa64(id), map[string]any{"owner": job.CreatedBy})
 	writeJSON(w, okJSON)
 }
 
@@ -784,6 +793,7 @@ func (s *Server) apiBatchJobRetry(w http.ResponseWriter, r *http.Request, user s
 		return
 	}
 	s.scheduleTick() // re-enqueued — the scheduler re-admits it by priority
+	s.recordChange(r, user, AuditRunChange, "batch_job", itoa64(id), map[string]any{"op": "retry", "requeued": n})
 	writeJSON(w, map[string]any{"ok": true, "requeued": n})
 }
 
@@ -807,6 +817,7 @@ func (s *Server) apiBatchJobReprioritize(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	s.scheduleTick()
+	s.recordChange(r, user, AuditRunChange, "batch_job", itoa64(id), map[string]any{"op": "priority", "to": norm})
 	writeJSON(w, map[string]any{"ok": true, "priority": norm})
 }
 
@@ -836,7 +847,9 @@ func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user stri
 // apiBatchClearFinished deletes every terminal (finished/cancelled) job at once. Admin-
 // only (like single delete); active jobs are left running.
 func (s *Server) apiBatchClearFinished(w http.ResponseWriter, r *http.Request, user string) {
-	writeJSON(w, map[string]any{"ok": true, "n": s.st.DeleteFinishedJobs()})
+	n := s.st.DeleteFinishedJobs()
+	s.recordChange(r, user, AuditRunDelete, "batch_job", "", map[string]any{"op": "clear_finished", "count": n})
+	writeJSON(w, map[string]any{"ok": true, "n": n})
 }
 
 // apiBatchJobDelete removes a terminal job (finished/cancelled) and its rows. An
@@ -857,6 +870,7 @@ func (s *Server) apiBatchJobDelete(w http.ResponseWriter, r *http.Request, user 
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.recordChange(r, user, AuditRunDelete, "batch_job", itoa64(id), map[string]any{"op": "one", "owner": job.CreatedBy})
 	writeJSON(w, okJSON)
 }
 
@@ -892,5 +906,6 @@ func (s *Server) apiBatchJobSchedule(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	s.scheduleTick() // cleared/now-due → admit; still future → stays hidden
+	s.recordChange(r, user, AuditRunChange, "batch_job", itoa64(id), map[string]any{"op": "schedule", "to": runAt})
 	writeJSON(w, map[string]any{"ok": true, "run_at": runAt})
 }
