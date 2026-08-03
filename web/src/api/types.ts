@@ -707,6 +707,11 @@ export interface SSOProviderAdmin {
 export interface SSOProvidersResp {
   providers: SSOProviderAdmin[]
   public_url: string
+  /**
+   * The SP addresses for a provider that has not been saved yet, keyed by kind. They depend only on
+   * the public URL and the default slug, and the setup guide needs them before anything is stored.
+   */
+  sp_defaults?: Record<string, { sp_entity_id?: string; sp_acs_url?: string; redirect_url?: string }>
 }
 
 // One group rule. Order in the array is the contract — first match wins — so `ord` and `id` are

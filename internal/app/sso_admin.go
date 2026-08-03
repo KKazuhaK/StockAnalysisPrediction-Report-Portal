@@ -19,6 +19,14 @@ import (
 // whether one is set, and a blank secret on write keeps the stored value — the same pattern the
 // Dify api_key already uses, so admins do not have to re-enter credentials to rename something.
 
+// The slugs a provider gets when an admin saves the SAML or OIDC tab without renaming anything.
+// The admin UI offers one of each, so these are what the derived addresses are built from before
+// a row exists — and they must be the same strings the client seeds an unsaved provider with.
+const (
+	defaultSAMLSlug = "saml"
+	defaultOIDCSlug = "oidc"
+)
+
 // ssoProviderJSON is the admin view of a provider. Note what is absent: client_secret_enc,
 // sp_key_enc and any decrypted form of either.
 func (s *Server) ssoProviderJSON(p SSOProvider) map[string]any {
@@ -49,7 +57,15 @@ func (s *Server) apiAdminSSOProviders(w http.ResponseWriter, r *http.Request, us
 	for _, p := range s.st.ListSSOProviders() {
 		out = append(out, s.ssoProviderJSON(p))
 	}
-	writeJSON(w, map[string]any{"providers": out, "public_url": s.publicBaseURL()})
+	// The SP addresses for a provider that has NOT been saved yet. They depend only on the public
+	// URL and the default slug, and the setup guide needs them first: configuring the IdP is step
+	// one, saving the portal side is step four. Sending them only per stored row left a portal that
+	// had never touched SSO showing the guide with two empty boxes.
+	writeJSON(w, map[string]any{"providers": out, "public_url": s.publicBaseURL(),
+		"sp_defaults": map[string]any{
+			"saml": map[string]any{"sp_entity_id": s.samlEntityID(defaultSAMLSlug), "sp_acs_url": s.samlACSURL(defaultSAMLSlug)},
+			"oidc": map[string]any{"redirect_url": s.oidcRedirectURL(defaultOIDCSlug)},
+		}})
 }
 
 // ssoProviderInput is the write shape. Secrets are pointers so "absent" (keep) is distinct from
