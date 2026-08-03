@@ -19,13 +19,14 @@ const SAML = { entityId: 'https://p.example.com/api/auth/saml/saml/metadata', ac
 const mount = (props: Partial<React.ComponentProps<typeof SSOSetupGuide>> = {}) =>
   render(
     <App>
-      <SSOSetupGuide kind="saml" values={SAML} configured={false} {...props} />
+      <SSOSetupGuide kind="saml" values={SAML} {...props} />
     </App>,
   )
 
 describe('SSOSetupGuide', () => {
   it('pairs each portal value with the IdP box it belongs in', () => {
     mount()
+    fireEvent.click(screen.getByText('sso.guide.title'))
     const text = document.body.textContent ?? ''
     expect(text).toContain(SAML.acs)
     expect(text).toContain('Reply URL (Assertion Consumer Service URL)') // what Entra calls it
@@ -35,6 +36,7 @@ describe('SSOSetupGuide', () => {
   // field alone did not answer "填什么".
   it('renames the IdP fields when the vendor changes, without changing the values', () => {
     mount()
+    fireEvent.click(screen.getByText('sso.guide.title'))
     fireEvent.mouseDown(screen.getByRole('combobox'))
     fireEvent.click(screen.getByTitle('Okta'))
     const text = document.body.textContent ?? ''
@@ -47,11 +49,13 @@ describe('SSOSetupGuide', () => {
     // Entra offers "Upload metadata file", which fills three boxes at once — but only if you know
     // the URL you were told to paste as an Entity ID is also that file.
     mount()
+    fireEvent.click(screen.getByText('sso.guide.title'))
     expect(screen.getByText(/sso\.guide\.saml\.metadataShortcut/)).toBeTruthy()
   })
 
   it('shows the OIDC redirect URI and none of the SAML steps', () => {
     mount({ kind: 'oidc', values: { redirect: 'https://p.example.com/api/auth/oidc/oidc/callback' } })
+    fireEvent.click(screen.getByText('sso.guide.title'))
     const text = document.body.textContent ?? ''
     expect(text).toContain('https://p.example.com/api/auth/oidc/oidc/callback')
     expect(text).toContain('Redirect URI (Web)')
@@ -62,17 +66,26 @@ describe('SSOSetupGuide', () => {
   // to paste into Entra is worse than handing them nothing: it looks like a value.
   it('withholds the values, rather than offering a relative path, when there is no public URL', () => {
     mount({ values: { entityId: '/api/auth/saml/saml/metadata', acs: '/api/auth/saml/saml/acs' } })
+    fireEvent.click(screen.getByText('sso.guide.title'))
     expect(document.body.textContent).not.toContain('/api/auth/saml/saml/acs')
     expect(screen.getByText(/sso\.guide\.needPublicUrl/)).toBeTruthy()
   })
 
-  it('starts folded once the provider is already working, and open while it is not', () => {
+  // Folded until asked for. It is reference material an admin needs once; the settings underneath
+  // are what they come back to, and those should not start a screen further down the page.
+  it('starts folded', () => {
     // Exact, not a prefix match: the step's own body key is 'sso.guide.saml.step1.<vendor>'.
-    const step1 = (): HTMLElement | null => screen.queryByText('sso.guide.saml.step1')
-    const { unmount } = mount({ configured: true })
-    expect(step1()).toBeNull()
-    unmount()
-    mount({ configured: false })
-    expect(step1()).toBeTruthy()
+    mount()
+    expect(screen.queryByText('sso.guide.saml.step1')).toBeNull()
+    fireEvent.click(screen.getByText('sso.guide.title'))
+    expect(screen.getByText('sso.guide.saml.step1')).toBeTruthy()
+  })
+
+  // An empty box with a copy button beside it is the same lie as a relative path: it looks like a
+  // value. This is what a portal that had never saved a provider actually showed.
+  it('withholds the values when the server had none to give', () => {
+    mount({ values: { entityId: '', acs: '' } })
+    fireEvent.click(screen.getByText('sso.guide.title'))
+    expect(screen.getByText(/sso\.guide\.needPublicUrl/)).toBeTruthy()
   })
 })

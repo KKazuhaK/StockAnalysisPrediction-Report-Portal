@@ -119,20 +119,18 @@ function FieldTable({ rows }: { rows: { field: string; value: string }[] }) {
 export default function SSOSetupGuide({
   kind,
   values,
-  configured,
 }: {
   kind: 'oidc' | 'saml'
   /** The portal-side values, already derived from the public URL by the server. */
   values: { entityId?: string; acs?: string; redirect?: string }
-  /** True once this provider is enabled and answering — the guide then starts folded. */
-  configured: boolean
 }) {
   const { t } = useTranslation()
   const [vendor, setVendor] = useState<Vendor>('entra')
 
-  // A value the server derived without a public URL is a bare path. It is copyable and it is
-  // wrong, which is the worst combination, so the guide refuses to show any of them.
-  const usable = Object.values(values).every((v) => !v || /^https?:\/\//i.test(v))
+  // Every value has to be an absolute URL. A bare path (no public URL configured) is copyable and
+  // wrong, and a blank is an empty box beside a copy button — both look like values and neither is
+  // one, so the guide shows none of them and says why instead.
+  const usable = Object.values(values).every((v) => /^https?:\/\//i.test(v ?? ''))
 
   const body = !usable ? (
     <Alert type="warning" showIcon message={t('sso.guide.needPublicUrl')} />
@@ -218,9 +216,8 @@ export default function SSOSetupGuide({
   return (
     <Collapse
       style={{ marginBottom: 16 }}
-      // Open while there is nothing configured, folded once there is: the guide is for the first
-      // time through, and an admin returning to change one attribute should not have to scroll past it.
-      defaultActiveKey={configured ? [] : ['guide']}
+      // Folded. It is reference material read once, and the settings underneath are what an admin
+      // comes back for — those should not start a screen further down than they used to.
       items={[{ key: 'guide', label: t('sso.guide.title'), children: body }]}
     />
   )

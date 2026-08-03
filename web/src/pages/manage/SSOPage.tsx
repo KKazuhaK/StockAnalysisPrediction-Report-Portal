@@ -107,7 +107,6 @@ function ProviderForm({
             ? { entityId: provider.sp_entity_id, acs: provider.sp_acs_url }
             : { redirect: provider.redirect_url }
         }
-        configured={provider.enabled && (kind === 'saml' ? provider.has_idp_metadata : !!provider.issuer)}
       />
 
       <Form.Item name="enabled" valuePropName="checked" label={t('sso.enable')} extra={t('sso.enableHint')}>
@@ -238,6 +237,7 @@ export default function SSOPage() {
   const [groups, setGroups] = useState<UserGroupRow[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [publicUrl, setPublicUrl] = useState('')
+  const [spDefaults, setSpDefaults] = useState<NonNullable<SSOProvidersResp['sp_defaults']>>({})
 
   const load = () => {
     api
@@ -245,6 +245,7 @@ export default function SSOPage() {
       .then((r) => {
         setProviders(r.providers || [])
         setPublicUrl(r.public_url || '')
+        setSpDefaults(r.sp_defaults || {})
       })
       .catch(() => {})
     api
@@ -260,7 +261,11 @@ export default function SSOPage() {
   }
   useEffect(load, [])
 
-  const forKind = (kind: 'oidc' | 'saml') => providers.find((p) => p.kind === kind) ?? emptyProvider(kind)
+  // A provider that has not been saved has no row, so its SP addresses come from the server's
+  // derived defaults instead. Without them the setup guide — the thing an admin reads BEFORE
+  // saving anything — showed two empty boxes on precisely the install that had never used SSO.
+  const forKind = (kind: 'oidc' | 'saml') =>
+    providers.find((p) => p.kind === kind) ?? { ...emptyProvider(kind), ...(spDefaults[kind] ?? {}) }
 
   return (
     <Card>

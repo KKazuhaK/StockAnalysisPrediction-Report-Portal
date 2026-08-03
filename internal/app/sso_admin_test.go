@@ -37,6 +37,59 @@ func listProviders(t *testing.T, s *Server) (string, []map[string]any) {
 	return rec.Body.String(), resp.Providers
 }
 
+// The addresses an admin pastes into the IdP depend on the public URL and the slug — not on
+// anything stored — and they are needed BEFORE a provider is saved, because configuring the IdP is
+// step one and saving the portal side is step four. Sending them only for stored rows left the
+// setup guide showing two empty boxes on exactly the install that had never configured SSO.
+func TestSSOAdminSendsSPAddressesBeforeAnythingIsSaved(t *testing.T) {
+	s := adminSSOServer(t)
+	rec := httptest.NewRecorder()
+	s.apiAdminSSOProviders(rec, httptest.NewRequest(http.MethodGet, "/api/admin/sso/providers", nil), "admin")
+
+	var resp struct {
+		Providers []map[string]any             `json:"providers"`
+		Defaults  map[string]map[string]string `json:"sp_defaults"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if len(resp.Providers) != 0 {
+		t.Fatalf("fixture should have no stored providers, got %d", len(resp.Providers))
+	}
+	for _, want := range []struct{ kind, key, url string }{
+		{"saml", "sp_entity_id", "https://portal.example/api/auth/saml/saml/metadata"},
+		{"saml", "sp_acs_url", "https://portal.example/api/auth/saml/saml/acs"},
+		{"oidc", "redirect_url", "https://portal.example/api/auth/oidc/oidc/callback"},
+	} {
+		if got := resp.Defaults[want.kind][want.key]; got != want.url {
+			t.Errorf("sp_defaults[%s][%s] = %q, want %q", want.kind, want.key, got, want.url)
+		}
+	}
+}
+
+// And a saved provider's addresses must be the SAME strings, or the guide would teach one value
+// while the server accepts another.
+func TestSSOAdminDefaultsMatchTheSavedProvider(t *testing.T) {
+	s := adminSSOServer(t)
+	saveProvider(t, s, `{"kind":"saml","slug":"saml","name":"Corp"}`)
+
+	rec := httptest.NewRecorder()
+	s.apiAdminSSOProviders(rec, httptest.NewRequest(http.MethodGet, "/api/admin/sso/providers", nil), "admin")
+	var resp struct {
+		Providers []map[string]any             `json:"providers"`
+		Defaults  map[string]map[string]string `json:"sp_defaults"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Providers) != 1 {
+		t.Fatalf("want 1 stored provider, got %d", len(resp.Providers))
+	}
+	for _, k := range []string{"sp_entity_id", "sp_acs_url"} {
+		if resp.Providers[0][k] != resp.Defaults["saml"][k] {
+			t.Errorf("%s: stored %v, default %v — they must be one string", k, resp.Providers[0][k], resp.Defaults["saml"][k])
+		}
+	}
+}
+
 // TestSSOAdminNeverReturnsSecrets is the invariant that matters most on this surface: the client
 // secret and the SP private key must never leave the server, in any field, on any read. Only
 // booleans saying whether they are set.
