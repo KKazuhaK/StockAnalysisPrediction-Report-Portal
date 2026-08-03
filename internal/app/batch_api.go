@@ -529,7 +529,9 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusTooManyRequests)
 			json.NewEncoder(w).Encode(map[string]any{
-				"error": "rate_limited", "limit": limit, "used": used, "resets_at": s.quotaResetsAt(time.Now()),
+				"error": "rate_limited", "limit": limit, "used": used,
+				"period":    s.st.EffectiveGroupSettings(user).QuotaPeriod,
+				"resets_at": s.quotaResetsAt(s.st.EffectiveGroupSettings(user).QuotaPeriod, time.Now()),
 			})
 			return
 		}
@@ -604,8 +606,11 @@ func (s *Server) apiRunQuota(w http.ResponseWriter, r *http.Request, user string
 	if remaining < 0 {
 		remaining = 0
 	}
+	period := s.st.EffectiveGroupSettings(user).QuotaPeriod
 	writeJSON(w, map[string]any{"limited": true, "limit": limit, "used": used,
-		"remaining": remaining, "resets_at": s.quotaResetsAt(time.Now())})
+		// The period travels too: "3 of 5 used" means nothing without knowing 5 of WHAT, and a
+		// lifetime cap has no reset instant at all.
+		"remaining": remaining, "period": period, "resets_at": s.quotaResetsAt(period, time.Now())})
 }
 
 func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user string) {

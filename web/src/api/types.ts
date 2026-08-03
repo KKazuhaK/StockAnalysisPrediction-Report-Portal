@@ -352,7 +352,9 @@ export interface UserGroupRow {
   // accounts for a restricted ancestor (restriction is sticky down the OU tree).
   restricted?: boolean
   restricted_effective?: boolean
-  daily_run_quota?: number | null // runs/day cap for members; null = inherit the parent OU, 0 = unlimited
+  daily_run_quota?: number | null // run cap for members; null = inherit the parent OU, 0 = unlimited
+  /** The window daily_run_quota is measured over: day | week | month | total. '' means day. */
+  run_quota_period?: string
 }
 
 // Per-OU run allow-list matrix (ADR 0022 R3): which workflows a group may run, on which surfaces.
