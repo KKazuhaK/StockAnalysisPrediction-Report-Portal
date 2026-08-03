@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // User-admin persistence: extended profile attributes (display name / email / active /
@@ -98,6 +99,17 @@ func (s *Store) SetUserExpiry(username, expiresAt string) error {
 		v = nil // NULL = never
 	}
 	_, err := s.exec(`UPDATE users SET expires_at=? WHERE username=?`, v, username)
+	return err
+}
+
+// TouchLastSeen stamps the user's last authenticated request at the given instant. Throttled by the
+// caller — this is the write, not the decision to make it.
+//
+// The instant is a parameter rather than nowStr() so that the value STORED is the one the throttle
+// recorded. Two clocks for one fact drift apart, and the drift is invisible until something has to
+// reason about both.
+func (s *Store) TouchLastSeen(username string, at time.Time) error {
+	_, err := s.exec(`UPDATE users SET last_seen=? WHERE username=?`, at.Format("2006-01-02 15:04:05"), username)
 	return err
 }
 

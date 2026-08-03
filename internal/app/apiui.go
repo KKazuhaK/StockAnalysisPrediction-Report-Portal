@@ -74,8 +74,34 @@ func (s *Server) requireUserJSON(h handler) http.HandlerFunc {
 			jsonError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		// Recorded HERE rather than in the handlers, so "last activity" means every authenticated
+		// call and not a list of endpoints somebody has to remember to extend.
+		s.touchSeen(u, time.Now())
 		h(w, r, u)
 	}
+}
+
+// lastSeenInterval is how stale the activity stamp is allowed to get. Writing on every request
+// would be a row update per page load per user; five minutes is far finer than the question the
+// column answers ("today, or last month?") and costs at most one write per user per interval.
+const lastSeenInterval = 5 * time.Minute
+
+// touchSeen records activity, at most once per interval per account.
+//
+// The throttle is in memory, so a restart lets the first request from each user through — which is
+// correct rather than merely acceptable: that request IS activity, and the point of the throttle is
+// volume, not precision. Per account, so one busy user cannot suppress everyone else's stamp.
+func (s *Server) touchSeen(user string, now time.Time) {
+	if user == "" {
+		return
+	}
+	if last, ok := s.seenAt.Load(user); ok {
+		if t, _ := last.(time.Time); now.Sub(t) < lastSeenInterval {
+			return
+		}
+	}
+	s.seenAt.Store(user, now)
+	s.st.TouchLastSeen(user, now)
 }
 
 func (s *Server) requireAdminJSON(h handler) http.HandlerFunc {
@@ -818,7 +844,7 @@ func (s *Server) apiTypesRestoreDefaults(w http.ResponseWriter, r *http.Request,
 func userJSON(u User, primaryGroup int64) map[string]any {
 	return map[string]any{
 		"username": u.Username, "role": u.EffRole(), "display_name": u.DisplayName,
-		"email": u.Email, "active": u.Active, "last_login": u.LastLogin, "primary_group": primaryGroup,
+		"email": u.Email, "active": u.Active, "last_login": u.LastLogin, "last_seen": u.LastSeen, "primary_group": primaryGroup,
 		"expires_at": u.ExpiresAt,
 		// Whether the account signs in through an IdP, and which one. The users page needs this to
 		// badge the row and to offer revoking the binding; without it an admin could not tell a

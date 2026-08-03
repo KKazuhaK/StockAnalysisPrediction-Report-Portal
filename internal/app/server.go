@@ -41,6 +41,7 @@ type Server struct {
 	st                 *Store
 	names              *Names
 	pdf                *template.Template
+	seenAt             sync.Map                                                                   // username -> time.Time of the last activity stamp WRITTEN (throttle; see touchSeen)
 	jobRuns            sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
 	itemCancels        sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
 	jobNotify          sync.Map                                                                   // jobID -> bool; opt-in to email the submitter when the job finishes
