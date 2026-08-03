@@ -127,7 +127,10 @@ export default function RegisterPage() {
       <Button type="primary" size="large" htmlType="submit" block loading={busy}>
         {t('register.submit')}
       </Button>
-      <Button type="link" size="small" block onClick={() => navigate('/login')}>
+      {/* Set off from the primary action rather than tucked under its edge: a link touching the
+          button it undoes is a misclick waiting to happen, and on the reset form the misclick
+          throws away a captcha the person has just typed. */}
+      <Button type="link" size="small" block style={{ marginTop: 12 }} onClick={() => navigate('/login')}>
         {t('register.backToLogin')}
       </Button>
     </Form>,
