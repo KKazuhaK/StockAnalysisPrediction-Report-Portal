@@ -149,3 +149,39 @@ func TestPasswordChangesRecordWhoChangedWhose(t *testing.T) {
 		t.Errorf("timeline for kazuha = %d rows, want both", total)
 	}
 }
+
+// The console sends ?ip=… — the filter has to be reachable through the API an admin actually uses,
+// not only through the store. This is the shape of defect e2e_check.py exists for: correct in the
+// store, unreachable from the page.
+func TestAuditEndpointFiltersByIP(t *testing.T) {
+	s := auditServer(t)
+	s.st.UpsertUser(User{Username: "admin", PasswordHash: mustHash("admin-password-here"), Role: "admin"})
+	postFrom(s.apiLogin, "/api/login", `{"username":"a","password":"x"}`, "203.0.113.9")
+	postFrom(s.apiLogin, "/api/login", `{"username":"b","password":"x"}`, "198.51.100.1")
+
+	rec := httptest.NewRecorder()
+	s.apiAdminAudit(rec, httptest.NewRequest(http.MethodGet, "/api/admin/audit?ip=203.0.113.9", nil), "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("audit → %d (%s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Items    []AuditEntry `json:"items"`
+		Total    int          `json:"total"`
+		Timezone string       `json:"timezone"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.Total != 1 || len(out.Items) != 1 {
+		t.Fatalf("?ip= returned %d/%d rows, want 1 — the parameter is not parsed", len(out.Items), out.Total)
+	}
+	if out.Items[0].IP != "203.0.113.9" {
+		t.Errorf("wrong row: %+v", out.Items[0])
+	}
+	// The page cannot render a UTC stamp without knowing which zone to read it in.
+	s.st.SetSetting("timezone", "Asia/Shanghai")
+	rec = httptest.NewRecorder()
+	s.apiAdminAudit(rec, httptest.NewRequest(http.MethodGet, "/api/admin/audit", nil), "admin")
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.Timezone != "Asia/Shanghai" {
+		t.Errorf("timezone = %q; the console has no zone to render the stamps in", out.Timezone)
+	}
+}

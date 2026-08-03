@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Card, DatePicker, Input, Select, Space, Table, Tag, Typography } from 'antd'
+import { auditTime } from '../../lib/auditTime'
+import { Alert, Card, DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -33,6 +34,7 @@ export default function AuditPage() {
   const [err, setErr] = useState('')
   const [action, setAction] = useState<string>()
   const [actor, setActor] = useState('')
+  const [ip, setIP] = useState('')
   const [q, setQ] = useState('')
   const [since, setSince] = useState<string>()
   const [page, setPage] = useState(1)
@@ -44,6 +46,7 @@ export default function AuditPage() {
     const qs = new URLSearchParams({ limit: String(pageSize), offset: String((page - 1) * pageSize) })
     if (action) qs.set('action', action)
     if (actor.trim()) qs.set('actor', actor.trim())
+    if (ip.trim()) qs.set('ip', ip.trim())
     if (q.trim()) qs.set('q', q.trim())
     if (since) qs.set('since', since)
     api
@@ -54,13 +57,39 @@ export default function AuditPage() {
       })
       .catch((e) => setErr(errText(e, t)))
       .finally(() => setLoading(false))
-  }, [action, actor, q, since, page, t])
+  }, [action, actor, ip, q, since, page, t])
   useEffect(load, [load])
 
   const ouNames = data?.ou_names ?? {}
 
   const columns: ColumnsType<AuditEntry> = [
-    { title: t('audit.at'), dataIndex: 'at', width: 165 },
+    {
+      title: t('audit.at'),
+      dataIndex: 'at',
+      width: 190,
+      // The panel timezone, with the reader's own beneath it only when the two differ — an operator
+      // abroad reading a log about a business day elsewhere needs both, and everyone else needs one.
+      render: (v: string) => {
+        const at = auditTime(v, data?.timezone ?? '')
+        return (
+          <Space direction="vertical" size={0}>
+            <Typography.Text style={{ fontSize: 12 }}>{at.text}</Typography.Text>
+            {at.local && (
+              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                {t('audit.yourTime', { at: at.local })}
+              </Typography.Text>
+            )}
+            {at.legacy && (
+              <Tooltip title={t('audit.legacyTimeHint')}>
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  {t('audit.legacyTime')}
+                </Typography.Text>
+              </Tooltip>
+            )}
+          </Space>
+        )
+      },
+    },
     {
       title: t('audit.actor'),
       width: 210,
@@ -73,6 +102,19 @@ export default function AuditPage() {
               {/* The OU they were in AT THE TIME — not where they are now. */}
               {ouNames[String(r.actor_ou)] ?? `OU ${r.actor_ou}`}
             </Typography.Text>
+          )}
+          {/* Under the actor, because on a failed sign-in it is the only identity there is: no
+              account has authenticated, and the address is who to look at. Click to filter. */}
+          {r.ip && (
+            <Typography.Link
+              style={{ fontSize: 11 }}
+              onClick={() => {
+                setIP(r.ip ?? '')
+                setPage(1)
+              }}
+            >
+              {r.ip}
+            </Typography.Link>
           )}
         </Space>
       ),
@@ -125,6 +167,18 @@ export default function AuditPage() {
             value={actor}
             onChange={(e) => {
               setActor(e.target.value)
+              setPage(1)
+            }}
+          />
+          {/* An equality filter, not the free-text one. "Which host tried nine accounts" is the
+              query that turns a pile of failed sign-ins into a single incident. */}
+          <Input
+            allowClear
+            style={{ width: 150 }}
+            placeholder={t('audit.ipFilter')}
+            value={ip}
+            onChange={(e) => {
+              setIP(e.target.value)
               setPage(1)
             }}
           />
