@@ -299,11 +299,21 @@ export default function UsersPage() {
       },
     },
     {
-      title: t('users.lastLogin'),
-      dataIndex: 'last_login',
+      // Activity, not sign-in. "Signed in Monday and used it all week" and "signed in Monday and
+      // never came back" are the two answers this column is consulted to tell apart, and showing
+      // the login time made them identical. The login time is still a fact worth having, so it is
+      // the tooltip rather than gone.
+      title: t('users.lastSeen'),
+      dataIndex: 'last_seen',
       width: 160,
-      render: (v: string) =>
-        v ? <Typography.Text style={{ fontSize: 12 }}>{v}</Typography.Text> : <Typography.Text type="secondary">{t('users.never')}</Typography.Text>,
+      render: (v: string, u) =>
+        v ? (
+          <Tooltip title={t('users.lastLoginWas', { at: u.last_login || t('users.never') })}>
+            <Typography.Text style={{ fontSize: 12 }}>{v}</Typography.Text>
+          </Tooltip>
+        ) : (
+          <Typography.Text type="secondary">{t('users.never')}</Typography.Text>
+        ),
     },
     {
       title: '',

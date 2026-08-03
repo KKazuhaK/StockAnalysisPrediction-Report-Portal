@@ -326,6 +326,8 @@ export interface UserRow {
   email?: string
   active: boolean
   last_login?: string
+  /** Last authenticated request, throttled server-side. A different fact from last_login. */
+  last_seen?: string
   expires_at?: string // account validity cutoff as a panel-tz civil date "YYYY-MM-DD"; "" = never (ADR 0022 R4)
   primary_group: number // primary group id, or 0 when the user inherits the Default group
   federated?: boolean // signs in through an identity provider; has no usable local password

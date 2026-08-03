@@ -320,7 +320,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// recovery codes are stored HASHED and single-use, because they are password-equivalents.
 		`CREATE TABLE IF NOT EXISTS users(
 			username TEXT PRIMARY KEY, password_hash TEXT, role TEXT DEFAULT 'user',
-			display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT, group_id BIGINT,
+			display_name TEXT, email TEXT, active INTEGER DEFAULT 1, last_login TEXT, last_seen TEXT, group_id BIGINT,
 			session_rev BIGINT DEFAULT 0, expires_at TEXT,
 			external_id TEXT, source TEXT DEFAULT 'local', source_ref TEXT DEFAULT '',
 			created_at TEXT, updated_at TEXT,
@@ -666,22 +666,23 @@ func (s *Store) execBaseSchema(indexes bool) error {
 // now that the profile attributes are nullable columns on users (folded from user_profiles,
 // ADR 0013): a NULL display_name/email/last_login reads as ” and a NULL active reads as 1.
 const userCols = `u.username,u.password_hash,u.role,
-	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,''),
+	COALESCE(u.display_name,''),COALESCE(u.email,''),COALESCE(u.active,1),COALESCE(u.last_login,''),COALESCE(u.last_seen,''),
 	COALESCE(u.session_rev,0),COALESCE(u.expires_at,''),
 	COALESCE(u.source,'local'),COALESCE(u.source_ref,''),COALESCE(u.external_id,''),COALESCE(u.totp_enabled,0),
 	COALESCE(u.restricted,0),COALESCE(u.created_at,'')`
 
 func scanUser(scan func(...any) error) (User, error) {
 	var u User
-	var role, dn, email, last, expires, source, sourceRef, externalID sql.NullString
+	var role, dn, email, last, seen, expires, source, sourceRef, externalID sql.NullString
 	var active, sessionRev, totp, restricted sql.NullInt64
 	var createdAt sql.NullString
-	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &sessionRev, &expires,
+	if err := scan(&u.Username, &u.PasswordHash, &role, &dn, &email, &active, &last, &seen, &sessionRev, &expires,
 		&source, &sourceRef, &externalID, &totp, &restricted, &createdAt); err != nil {
 		return User{}, err
 	}
 	u.Restricted = restricted.Int64 != 0
 	u.Role, u.DisplayName, u.Email, u.LastLogin = role.String, dn.String, email.String, last.String
+	u.LastSeen = seen.String
 	u.Active = !active.Valid || active.Int64 != 0
 	u.SessionRev = sessionRev.Int64
 	u.ExpiresAt = expires.String

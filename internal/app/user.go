@@ -27,8 +27,12 @@ type User struct {
 	Email        string //
 	Active       bool   // false = disabled; disabled accounts cannot log in
 	LastLogin    string // timestamp of the last successful login ("" = never)
-	ExpiresAt    string // account validity cutoff as a panel-tz civil date "YYYY-MM-DD" ("" = never); see Server.accountExpired (ADR 0022 R4)
-	SessionRev   int64  // incremented on password changes; signed sessions carry this revision
+	// LastSeen is the last authenticated REQUEST, throttled (see lastSeenInterval). A separate fact
+	// from LastLogin: "signed in Monday, still using it" and "signed in Monday, never came back"
+	// are the two answers an admin consults this column to tell apart.
+	LastSeen   string
+	ExpiresAt  string // account validity cutoff as a panel-tz civil date "YYYY-MM-DD" ("" = never); see Server.accountExpired (ADR 0022 R4)
+	SessionRev int64  // incremented on password changes; signed sessions carry this revision
 	// CreatedAt identifies this INSTANCE of the account. session_rev cannot survive a deletion — a
 	// recreated row is a fresh INSERT starting at zero again — so the signed session carries this
 	// too, and a cookie issued to the previous holder of a reusable username stops resolving.
