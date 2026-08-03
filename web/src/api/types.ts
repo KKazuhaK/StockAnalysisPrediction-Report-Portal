@@ -371,14 +371,16 @@ export interface GroupTargetsResp {
   targets: GroupTargetRow[]
 }
 
-// Daily run-quota balance for the run form (ADR 0022 R2). limited=false for internal users,
+// Run-quota balance for the run form (ADR 0022 R2). limited=false for internal users,
 // admins, and restricted OUs with no cap — the UI then omits the chip entirely.
 export interface RunQuota {
   limited: boolean
   limit?: number
   used?: number
   remaining?: number
-  resets_at?: string // next reset as a UTC instant; localized client-side
+  period?: string // the window the cap covers: day | week | month | total ('' = day)
+  resets_at?: string // next reset as a UTC instant; localized client-side. '' for a lifetime cap,
+  // which never refills — the UI must not invent a date for it.
 }
 
 // Storage-cleanup console (docs/adr/0017-storage-cleanup.md). Config + last-run summary; retention

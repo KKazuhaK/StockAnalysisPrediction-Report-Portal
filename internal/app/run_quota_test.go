@@ -146,8 +146,13 @@ func TestApiBatchJobCreateEnforcesQuota(t *testing.T) {
 	}
 	var payload map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &payload)
-	if payload["error"] != "rate_limited" {
-		t.Errorf("429 payload error = %v, want rate_limited", payload["error"])
+	// The machine token belongs in "code"; "error" is what the toast prints when the client has no
+	// translation for the code, so a raw "rate_limited" there is a user-visible bug.
+	if payload["code"] != "quota_exceeded" {
+		t.Errorf("429 payload code = %v, want quota_exceeded", payload["code"])
+	}
+	if msg, _ := payload["error"].(string); msg == "" || msg == "quota_exceeded" || msg == "rate_limited" {
+		t.Errorf("429 payload error = %q, want a human sentence", msg)
 	}
 	if payload["limit"] != float64(2) || payload["used"] != float64(2) {
 		t.Errorf("429 payload limit/used = %v/%v, want 2/2", payload["limit"], payload["used"])

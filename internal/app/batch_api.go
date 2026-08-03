@@ -520,18 +520,20 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 			writeJSON(w, map[string]any{"ok": true, "reused": true, "report_id": id, "key": key})
 			return
 		}
-		// Daily run quota for a restricted OU (ADR 0022 R2). MaxQueued above caps CONCURRENCY (it
-		// clears as runs finish); this caps daily VOLUME. Rows are counted, so a multi-row submit
-		// can't dodge it, and the window resets at the panel-tz civil midnight.
+		// Run quota for a restricted OU (ADR 0022 R2). MaxQueued above caps CONCURRENCY (it clears
+		// as runs finish); this caps VOLUME over the OU's quota period. Rows are counted, so a
+		// multi-row submit can't dodge it, and every boundary is a panel-tz civil one.
 		if limit, used, ok := s.runQuotaCheck(user, len(in.Rows)); !ok {
-			// Same "error" key every other handler uses (the SPA surfaces it), plus the numbers the
-			// run form needs to render "used/limit today, resets at ...".
+			// Shaped like jsonErrorCode — machine token in "code", human sentence in "error", which
+			// is what the toast prints — plus the numbers the run form needs. It used to send the
+			// token as the message, so an external user out of runs was shown "rate_limited".
+			period := s.st.EffectiveGroupSettings(user).QuotaPeriod
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusTooManyRequests)
 			json.NewEncoder(w).Encode(map[string]any{
-				"error": "rate_limited", "limit": limit, "used": used,
-				"period":    s.st.EffectiveGroupSettings(user).QuotaPeriod,
-				"resets_at": s.quotaResetsAt(s.st.EffectiveGroupSettings(user).QuotaPeriod, time.Now()),
+				"error": "已达到运行次数上限", "code": "quota_exceeded",
+				"limit": limit, "used": used,
+				"period": period, "resets_at": s.quotaResetsAt(period, time.Now()),
 			})
 			return
 		}
