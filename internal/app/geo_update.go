@@ -286,6 +286,42 @@ func (u *geoUpdater) run(ctx context.Context, urls []string, target string) (str
 //
 // Every error it returns is safe to show and to log: the URL carries a credential, so nothing
 // derived from it leaves this function unredacted.
+// vendorMessage is the vendor's own explanation of a rejection, made safe to show.
+//
+// The status alone does not say which thing was wrong: MaxMind answers a bad licence key with
+// exactly "Invalid license key", and an admin left with "401 Unauthorized" has nothing to act on.
+// What makes a rejection body unsafe to echo is that it can quote the request back, credential
+// included — so every query value we did not put there ourselves is scrubbed out of it first, and
+// an HTML page (noise, and the place a key is most likely to hide inside markup) is dropped whole.
+func vendorMessage(raw string, body io.Reader) string {
+	b, err := io.ReadAll(io.LimitReader(body, 1024))
+	if err != nil {
+		return ""
+	}
+	msg := strings.Join(strings.Fields(string(b)), " ") // one line, so it fits an error box
+	if msg == "" || strings.HasPrefix(msg, "<") {
+		return ""
+	}
+	if u, perr := url.Parse(raw); perr == nil {
+		for name, vals := range u.Query() {
+			// An allowlist, not a list of credential-looking names: a custom source may call its
+			// key anything, so anything we do not recognise is assumed to be one.
+			if name == "edition_id" || name == "suffix" {
+				continue
+			}
+			for _, v := range vals {
+				if v != "" {
+					msg = strings.ReplaceAll(msg, v, "\u2026")
+				}
+			}
+		}
+	}
+	if r := []rune(msg); len(r) > 200 {
+		msg = string(r[:200]) + "\u2026" // runes, so a multi-byte character is never cut in half
+	}
+	return msg
+}
+
 func (u *geoUpdater) download(ctx context.Context, raw, target string) (string, error) {
 	c := u.newClient()
 	if err := c.checkURL(raw); err != nil {
@@ -301,7 +337,9 @@ func (u *geoUpdater) download(ctx context.Context, raw, target string) (string, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		// The STATUS, not the body: a vendor's rejection page echoes the key back.
+		if msg := vendorMessage(raw, resp.Body); msg != "" {
+			return "", fmt.Errorf("%s returned %s: %s", redactURL(raw), resp.Status, msg)
+		}
 		return "", fmt.Errorf("%s returned %s", redactURL(raw), resp.Status)
 	}
 

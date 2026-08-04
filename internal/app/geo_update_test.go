@@ -76,6 +76,49 @@ func TestDownloadErrorsNeverCarryTheKey(t *testing.T) {
 	}
 }
 
+// The status alone does not say WHICH thing was wrong. MaxMind answers a bad licence key with
+// exactly "Invalid license key" — that one sentence is the whole diagnosis, and dropping it leaves
+// an admin staring at "401 Unauthorized" with nothing to act on.
+func TestDownloadErrorCarriesTheVendorsExplanation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("Invalid license key"))
+	}))
+	defer srv.Close()
+
+	u := newTestUpdater(t)
+	raw := srv.URL + "/db?edition_id=GeoLite2-City&license_key=SUPER_SECRET_KEY&suffix=tar.gz"
+	_, err := u.download(context.Background(), raw, "GeoLite2-City.mmdb")
+	if err == nil {
+		t.Fatal("a 401 was treated as success")
+	}
+	if !strings.Contains(err.Error(), "Invalid license key") {
+		t.Errorf("the vendor's explanation was dropped: %q", err)
+	}
+}
+
+// The edition reads as part of the vendor's sentence and is not a secret, so scrubbing must not be
+// so blunt that it eats it. Everything else in the query is treated as a credential — a custom
+// source can name its parameters anything, so the safe default is to keep only what we emit.
+func TestVendorMessageKeepsTheEditionAndDropsTheKey(t *testing.T) {
+	raw := "https://x/db?edition_id=GeoLite2-City&license_key=SUPER_SECRET_KEY"
+	msg := vendorMessage(raw, strings.NewReader("no subscription for GeoLite2-City with license_key=SUPER_SECRET_KEY"))
+	if strings.Contains(msg, "SUPER_SECRET_KEY") {
+		t.Errorf("the key survived the scrub: %q", msg)
+	}
+	if !strings.Contains(msg, "GeoLite2-City") {
+		t.Errorf("the edition was scrubbed too, leaving nothing to read: %q", msg)
+	}
+}
+
+// An HTML error page is noise rather than an explanation, and it is where a credential is most
+// likely to be quoted back inside markup the query-value scrub would not necessarily catch.
+func TestVendorMessageIgnoresAnHTMLErrorPage(t *testing.T) {
+	if msg := vendorMessage("https://x/db", strings.NewReader("<html><body>403 Forbidden</body></html>")); msg != "" {
+		t.Errorf("an HTML page was shown as the vendor's message: %q", msg)
+	}
+}
+
 // Extraction is tested directly rather than through a download, because a download now VALIDATES
 // what it got and a hand-made fixture is not a real database. Separating them also means each test
 // says one thing: this one is about unwrapping, the next about refusing to install rubbish.
