@@ -387,11 +387,16 @@ export default function StoragePage() {
         </div>
       </Card>
 
-      <Card title={t('storage.historyTitle')}>
-        <div style={{ overflowX: 'auto' }}>
-          <Table rowKey="id" size="small" pagination={false} dataSource={history} columns={histCols} locale={{ emptyText: t('storage.never') }} />
-        </div>
-      </Card>
+      {/* Absent until something has actually been deleted. The server stopped recording no-op
+          passes, so an empty history means nothing has ever been removed — a card saying that every
+          day is a card nobody reads, and the one that matters would be lost among them. */}
+      {history.length > 0 && (
+        <Card title={t('storage.historyTitle')}>
+          <div style={{ overflowX: 'auto' }}>
+            <Table rowKey="id" size="small" pagination={false} dataSource={history} columns={histCols} />
+          </div>
+        </Card>
+      )}
     </div>
   )
 }

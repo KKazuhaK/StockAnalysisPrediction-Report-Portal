@@ -275,3 +275,31 @@ func TestCleanupRunsRingTrim(t *testing.T) {
 		t.Errorf("newest run BatchDeleted = %d; want %d", runs[0].BatchDeleted, cleanupRunsKeep+24)
 	}
 }
+
+// Builds before v0.4.20 wrote a row for every scheduled pass, so an upgraded portal opens on a list
+// of identical all-zero rows. They stay in the table — a retention log is the last thing to go
+// rewriting — but they are not what the history is for, so they are not listed.
+func TestListCleanupRunsHidesTheOldNoOpRows(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.InsertCleanupRun(CleanupRun{RanAt: nowStr(), Trigger: "scheduled", OK: true}); err != nil {
+		t.Fatalf("seed no-op: %v", err)
+	}
+	if _, err := st.InsertCleanupRun(CleanupRun{RanAt: nowStr(), Trigger: "scheduled", OK: true, ReportsDeleted: 3}); err != nil {
+		t.Fatalf("seed real: %v", err)
+	}
+	// A failure deleted nothing either, and is exactly what an admin needs to see.
+	if _, err := st.InsertCleanupRun(CleanupRun{RanAt: nowStr(), Trigger: "scheduled", OK: false, Error: "disk full"}); err != nil {
+		t.Fatalf("seed failure: %v", err)
+	}
+
+	runs, err := st.ListCleanupRuns(50)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("listed %d runs, want the deletion and the failure: %+v", len(runs), runs)
+	}
+	if countRows(t, st, "cleanup_runs") != 3 {
+		t.Errorf("the hidden row was deleted; it should only be filtered on read")
+	}
+}

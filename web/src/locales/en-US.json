@@ -1096,7 +1096,6 @@
   "storage.histTrigger": "Trigger",
   "storage.historyTitle": "Cleanup history",
   "storage.monthday": "Day of month",
-  "storage.never": "No runs yet",
   "storage.noCleanup": "Nothing to clean",
   "storage.reportsDanger": "Deleting reports is permanent",
   "storage.reportsTarget": "Reports (danger zone)",

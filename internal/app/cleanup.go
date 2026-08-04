@@ -222,11 +222,19 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 	res.DurationMs = time.Since(start).Milliseconds()
 
 	if !dryRun {
-		s.st.InsertCleanupRun(CleanupRun{
-			RanAt: nowStr(), Trigger: trigger, DryRun: false, OK: res.OK, Error: res.Error,
-			BatchDeleted: res.Batch, TokensDeleted: res.Tokens, ReportsDeleted: res.Reports,
-			AuditDeleted: res.Audit, DurationMs: res.DurationMs,
-		})
+		// Only a pass that changed something — or failed trying — is history. A row per no-op pass
+		// fills the console with identical zeros, and because cleanup_runs is a ring buffer those
+		// rows evict the one an admin would ever come looking for: the pass that actually deleted
+		// their report. The last-run stamp below is written either way, so "the scheduler is alive
+		// and found nothing" is still on the page; it just is not worth a row a day.
+		deleted := res.Batch + res.Tokens + res.Reports + res.Audit
+		if !res.OK || deleted > 0 {
+			s.st.InsertCleanupRun(CleanupRun{
+				RanAt: nowStr(), Trigger: trigger, DryRun: false, OK: res.OK, Error: res.Error,
+				BatchDeleted: res.Batch, TokensDeleted: res.Tokens, ReportsDeleted: res.Reports,
+				AuditDeleted: res.Audit, DurationMs: res.DurationMs,
+			})
+		}
 		if b, err := json.Marshal(res); err == nil {
 			s.st.SetSetting("cleanup_last_result", string(b))
 		}

@@ -322,7 +322,14 @@ func (s *Store) ListCleanupRuns(limit int) ([]CleanupRun, error) {
 	}
 	rows, err := s.query(`SELECT id,ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,
 		COALESCE(audit_deleted,0),duration_ms
-		FROM cleanup_runs ORDER BY id DESC LIMIT ?`, limit)
+		FROM cleanup_runs
+		-- A successful pass that deleted nothing is not history, and builds before v0.4.20 recorded
+		-- one per scheduled run. They are left in the table rather than deleted -- a retention log
+		-- is the last thing to go rewriting -- but they are not shown: on a portal whose targets
+		-- never match, they are the entire list.
+		WHERE NOT (ok <> 0 AND batch_deleted = 0 AND tokens_deleted = 0
+			AND COALESCE(audit_deleted,0) = 0 AND reports_deleted = 0)
+		ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

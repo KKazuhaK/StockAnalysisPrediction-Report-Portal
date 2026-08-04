@@ -133,3 +133,28 @@ func TestApiCleanupConfigSaveRejectsBelowFloor(t *testing.T) {
 		t.Errorf("reports_days was persisted (%q) despite being below the floor", got)
 	}
 }
+
+// A pass that deleted nothing is not history. It used to write a row anyway, so a portal whose
+// targets never match anything filled the console with identical all-zero rows — and because
+// cleanup_runs is a ring buffer, those no-ops evict the one row an admin would ever need: the pass
+// that actually deleted something. Noise crowding out the signal is worse than no history at all.
+func TestNoOpCleanupWritesNoHistory(t *testing.T) {
+	st := newTestStore(t)
+	s := &Server{st: st}
+	st.SetSetting("cleanup_batch_enabled", "1")
+	st.SetSetting("cleanup_batch_days", "90")
+	seedJob(t, st, "finished", agoLocal(1)) // recent, so the pass matches nothing
+
+	res := s.runCleanup("scheduled", false, s.cleanupConfigLoad().scheduledTargets())
+	if !res.OK || res.Batch != 0 {
+		t.Fatalf("expected a clean no-op pass, got %+v", res)
+	}
+	if n := countRows(t, st, "cleanup_runs"); n != 0 {
+		t.Errorf("a pass that deleted nothing wrote %d history rows", n)
+	}
+	// The last-run stamp is still written: "the scheduler ran and found nothing" is worth knowing,
+	// it just is not worth a row per day. That is the whole distinction being drawn here.
+	if st.GetSetting("cleanup_last_result", "") == "" {
+		t.Errorf("cleanup_last_result blob not written, so the page cannot say when it last ran")
+	}
+}
