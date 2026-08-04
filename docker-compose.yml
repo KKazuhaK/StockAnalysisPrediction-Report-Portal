@@ -62,6 +62,14 @@ services:
       # Point the portal at the bundled Postgres. These override config.yaml.
       RP_DB_DRIVER: postgres
       RP_DB_DSN: "postgres://portal:${PG_PASSWORD:-portal}@db:5432/reports?sslmode=disable"
+      # Who may set X-Forwarded-For. Uncomment when a reverse proxy sits in front: the host's nginx
+      # reaches the published port through Docker's bridge, so the container sees the BRIDGE GATEWAY
+      # as the peer, not 127.0.0.1 — without this the audit log and the rate limiter record the
+      # gateway for every visitor. Find yours with:
+      #   docker network inspect <network> -f '{{(index .IPAM.Config 0).Gateway}}'
+      # Pin that /32 to trust nothing else, or take the whole range if you would rather it survive
+      # the network being recreated. The portal warns on the audit page while this is unset.
+      # RP_TRUSTED_PROXIES: "172.20.0.1/32"   # or "172.16.0.0/12"
       # Make ./config owned by you so it's editable on the host without sudo (set your id -u / id -g)
       # PUID: "1000"
       # PGID: "1000"

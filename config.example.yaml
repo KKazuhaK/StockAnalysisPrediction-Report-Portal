@@ -10,8 +10,6 @@
 
 listen: ":8790"
 
-# Only these reverse-proxy source IPs/CIDRs may supply X-Forwarded-For. Leave empty
-# for direct deployments. Configure the exact proxy address when using nginx/Caddy.
 # Which upstreams may set X-Forwarded-For on your behalf. Behind a reverse proxy this decides
 # whether the audit log and the rate limiter see your visitors or see the proxy.
 #   unset      trust loopback only (127.0.0.0/8, ::1) — right for nginx/Caddy on the same host
