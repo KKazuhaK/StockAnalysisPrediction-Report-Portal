@@ -148,6 +148,8 @@
   "audit.legacyTime": "server local time",
   "audit.legacyTimeHint": "Recorded before v0.4.15, when stamps were the server's local clock with no timezone written down. There is no honest way to convert it, so it is shown as stored.",
   "audit.machine": "(API token)",
+  "audit.proxyHintBody": "Requests are arriving with an X-Forwarded-For header from a peer that is not listed in trusted_proxies, so the portal will not believe it — otherwise anyone could claim any address. Add the proxy's address or subnet to trusted_proxies in config.yaml and restart; addresses recorded before that stay as they are.",
+  "audit.proxyHintTitle": "These addresses are your reverse proxy, not your visitors",
   "audit.search": "Search detail",
   "audit.since": "From date",
   "audit.target": "Object",

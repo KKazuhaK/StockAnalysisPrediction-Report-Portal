@@ -148,6 +148,8 @@
   "audit.legacyTime": "服务器本地时间",
   "audit.legacyTimeHint": "这条记录写于 v0.4.15 之前，当时时间戳是服务器本地时钟且没有记下时区。无法诚实地换算，因此按原样显示。",
   "audit.machine": "（API 令牌）",
+  "audit.proxyHintBody": "请求带着 X-Forwarded-For 到达，但来源不在 trusted_proxies 里，因此门户不予采信 —— 否则任何人都能声称自己是任意地址。请把反代的地址或网段加进 config.yaml 的 trusted_proxies 并重启；在那之前记录的地址保持原样。",
+  "audit.proxyHintTitle": "这里记录的是反向代理的地址，不是访客的",
   "audit.search": "搜索详情",
   "audit.since": "起始日期",
   "audit.target": "对象",
