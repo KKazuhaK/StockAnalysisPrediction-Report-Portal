@@ -330,3 +330,23 @@ func tarGZ(t *testing.T, files map[string]string) []byte {
 	gz.Close()
 	return buf.Bytes()
 }
+
+// filepath.Base("") is ".", so saving the "automatic" choice used to store a pick that names
+// nothing: the picker showed "." and the fallback only worked by accident, because a stat of the
+// geoip directory itself happens to be a directory and gets skipped.
+func TestSavingAutomaticStoresTheEmptyPick(t *testing.T) {
+	s := tenancyServer(t)
+	s.geo = newGeoService(t.TempDir())
+	s.geo.st = s.st
+	s.geoUp = newGeoUpdater(s.geo, s.st, func() *safeClient { return newSafeClient(false) })
+
+	req := httptest.NewRequest("POST", "/api/admin/geoip", strings.NewReader(`{"file":""}`))
+	rr := httptest.NewRecorder()
+	s.apiGeoSave(rr, req, "admin")
+	if rr.Code != 200 {
+		t.Fatalf("save: %d %s", rr.Code, rr.Body.String())
+	}
+	if got := s.st.GetSetting(setGeoFile, "unset"); got != "" {
+		t.Errorf("stored pick = %q, want the empty string", got)
+	}
+}

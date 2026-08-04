@@ -578,8 +578,15 @@ func (s *Server) apiGeoSave(w http.ResponseWriter, r *http.Request, user string)
 	setBool(setGeoEnabled, in.Enabled)
 	setBool(setGeoAuto, in.Auto)
 	// filepath.Base, because this names a file inside the geoip directory and arrives from a form.
+	// Not on the empty string, though: Base("") is ".", which would store a pick that is neither a
+	// filename nor "automatic" — the picker then shows "." and the admin's choice of automatic has
+	// silently become a lookup for a file called ".".
 	if in.File != nil {
-		s.st.SetSetting(setGeoFile, filepath.Base(strings.TrimSpace(*in.File)))
+		if v := strings.TrimSpace(*in.File); v == "" {
+			s.st.SetSetting(setGeoFile, "")
+		} else {
+			s.st.SetSetting(setGeoFile, filepath.Base(v))
+		}
 	}
 	set(setGeoSource, in.Source)
 	set(setGeoEdition, in.Edition)

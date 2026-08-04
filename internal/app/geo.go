@@ -105,7 +105,8 @@ type geoDBEntry struct {
 // activeFile is the database to use: the one the admin chose, or — when they have chosen nothing —
 // the most recently modified, which is what dropping a fresh file in means.
 func (g *geoService) activeFile() (path string, mod time.Time, size int64) {
-	if pick := strings.TrimSpace(g.pick()); pick != "" {
+	// "." is what an older build wrote for "automatic"; treat it as the empty choice it meant.
+	if pick := strings.TrimSpace(g.pick()); pick != "" && pick != "." {
 		// Base, because the value reaches here from a setting an admin typed.
 		p := filepath.Join(g.dir, filepath.Base(pick))
 		if info, err := os.Stat(p); err == nil && !info.IsDir() {

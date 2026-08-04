@@ -1,21 +1,61 @@
 import { useCallback, useEffect, useState } from 'react'
-import { App, Button, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
+import type { ReactNode } from 'react'
+import { Alert, App, Button, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
 import type { GeoStatus, GeoUpdateState } from '../../api/types'
 
+/**
+ * A source is described by what it needs, not by what it is called: the form asks for an edition
+ * and a credential only where they mean something. DB-IP publishes one free database and takes no
+ * account, so showing it a disabled "edition" box and a key box is three controls of noise.
+ */
 const GEO_SOURCES = [
-  { value: 'maxmind', label: 'MaxMind GeoLite2', edition: 'GeoLite2-City', needsKey: true },
-  { value: 'dbip', label: 'DB-IP Lite', edition: '', needsKey: false },
-  { value: 'ipinfo', label: 'IPinfo Lite', edition: 'ipinfo_lite', needsKey: true },
-  { value: 'custom', label: 'Custom URL', edition: '', needsKey: false },
-]
+  { value: 'maxmind', edition: 'GeoLite2-City', key: true, edit: true, label: 'audit.geoSrcMaxmind', keyLabel: 'audit.geoKeyLabelMaxmind' },
+  { value: 'dbip', edition: '', key: false, edit: false, label: 'audit.geoSrcDbip', keyLabel: '' },
+  { value: 'ipinfo', edition: 'ipinfo_lite', key: true, edit: true, label: 'audit.geoSrcIpinfo', keyLabel: 'audit.geoKeyLabelIpinfo' },
+  { value: 'custom', edition: '', key: false, edit: false, label: 'audit.geoSrcCustom', keyLabel: '' },
+] as const
+
+type TFn = (key: string, vars?: Record<string, unknown>) => string
+
+/**
+ * What one installed database is, as the single line that labels its option in the picker.
+ *
+ * Exported so it can be tested directly: the option list is rendered by antd's virtual list, which
+ * jsdom never lays out, and the formatting is the whole point of folding the old bullet list into
+ * the picker.
+ */
+export function describeDatabase(f: { file: string; ok: boolean; info?: { granularity?: string; build_epoch?: number } }, t: TFn): string {
+  if (!f.ok) return t('audit.geoUnreadable', { file: f.file })
+  const g = f.info?.granularity
+  const gran = g === 'city' ? t('audit.geoGranCity') : g === 'country' ? t('audit.geoGranCountry') : (g ?? '—')
+  const built = f.info?.build_epoch
+    ? ' · ' + t('audit.geoBuilt', { at: new Date(f.info.build_epoch * 1000).toISOString().slice(0, 10) })
+    : ''
+  return `${f.file} · ${gran}${built}`
+}
+
+/** A labelled control. Every box in this section says what it is above itself, because "a text box
+ *  between a dropdown and a password field" is not a question anybody can answer. */
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {label}
+      </Typography.Text>
+      {children}
+      {hint ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {hint}
+        </Typography.Text>
+      ) : null}
+    </div>
+  )
+}
 
 /**
  * The IP database: whether to resolve at all, which file to use, and where to get a new one.
- *
- * It lives on this page because this is the only screen that shows an IP address — somebody
- * wondering why a row has no location is looking at the row.
  *
  * The credential is write-only. It is sent only when the admin types a new one, which is what lets
  * the field say "saved, unchanged" rather than either echoing the key back or wiping it on every
@@ -51,7 +91,8 @@ export default function GeoSection() {
         setD((p) => ({
           ...p,
           enabled: r.status.enabled,
-          file: r.status.pick ?? '',
+          // "." is what an older build stored for "automatic"; show it as the automatic choice.
+          file: r.status.pick && r.status.pick !== '.' ? r.status.pick : '',
           auto: r.update.auto,
           auto_hours: r.update.auto_hours || 12,
           source: r.update.source || 'maxmind',
@@ -116,7 +157,7 @@ export default function GeoSection() {
   return (
     <>
       <Divider titlePlacement="left">{t('audit.geoTitle')}</Divider>
-      <Space direction="vertical" size={10} style={{ width: '100%' }}>
+      <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Space align="start">
           <Switch checked={d.enabled} onChange={(v) => setD({ ...d, enabled: v })} />
           <div>
@@ -129,35 +170,19 @@ export default function GeoSection() {
           </div>
         </Space>
 
-        <Space wrap>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t('audit.geoActive')}
-          </Typography.Text>
+        {/* One list, not two: what each installed database is belongs in the option that selects it,
+            not in a bullet list repeating the same filenames underneath. */}
+        <Field label={t('audit.geoActive')} hint={t('audit.geoActiveHint')}>
           <Select
-            size="small"
-            style={{ minWidth: 260 }}
+            style={{ width: 420, maxWidth: '100%' }}
             value={d.file}
             onChange={(v) => setD({ ...d, file: v })}
             options={[
               { value: '', label: t('audit.geoAuto') },
-              ...(geo.files ?? []).map((f) => ({
-                value: f.file,
-                label: f.ok ? `${f.file} · ${f.info?.granularity ?? ''}` : t('audit.geoUnreadable', { file: f.file }),
-              })),
+              ...(geo.files ?? []).map((f) => ({ value: f.file, label: describeDatabase(f, t) })),
             ]}
           />
-        </Space>
-        {(geo.files ?? []).map((f) => (
-          <Typography.Text key={f.file} type="secondary" style={{ fontSize: 12 }}>
-            {f.ok
-              ? `• ${f.file} — ${f.info?.granularity ?? '—'} · ${f.info?.type ?? '—'}${
-                  f.info?.build_epoch
-                    ? ' · ' + t('audit.geoBuilt', { at: new Date(f.info.build_epoch * 1000).toISOString().slice(0, 10) })
-                    : ''
-                }`
-              : `• ${t('audit.geoUnreadable', { file: f.file })}`}
-          </Typography.Text>
-        ))}
+        </Field>
 
         <Space align="start">
           <Switch checked={d.auto} onChange={(v) => setD({ ...d, auto: v })} />
@@ -165,13 +190,14 @@ export default function GeoSection() {
             <Typography.Text strong style={{ display: 'block' }}>
               {t('audit.geoAuto2')}
             </Typography.Text>
-            <Space size={6}>
+            <Space size={6} style={{ marginTop: 4 }}>
               <InputNumber
-                size="small"
                 min={1}
                 max={720}
+                style={{ width: 88 }}
                 value={d.auto_hours}
                 onChange={(v) => setD({ ...d, auto_hours: v ?? 12 })}
+                disabled={!d.auto}
               />
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {t('audit.geoIntervalHint')}
@@ -180,46 +206,61 @@ export default function GeoSection() {
           </div>
         </Space>
 
-        <Space wrap>
-          <Select
-            size="small"
-            style={{ width: 220 }}
-            value={d.source}
-            onChange={(v) => {
-              const n = GEO_SOURCES.find((x) => x.value === v)
-              setD({ ...d, source: v, edition: n?.edition ?? '' })
-            }}
-            options={GEO_SOURCES.map((x) => ({ value: x.value, label: x.label }))}
-          />
-          {d.source === 'custom' ? (
-            <Input
-              size="small"
-              style={{ width: 340 }}
-              placeholder={t('audit.geoUrlPlaceholder')}
-              value={d.url}
-              onChange={(e) => setD({ ...d, url: e.target.value })}
+        {/* Outside the auto-update switch on purpose: the source and the credential are what
+            "Download now" uses too, so an admin who never turns automatic updates on still needs
+            them. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
+          <Field label={t('audit.geoSourceLabel')}>
+            <Select
+              style={{ width: 300 }}
+              value={d.source}
+              onChange={(v) => {
+                // The edition follows the source: a leftover "GeoLite2-City" would send IPinfo
+                // looking for a database it does not publish.
+                const n = GEO_SOURCES.find((x) => x.value === v)
+                setD({ ...d, source: v, edition: n?.edition ?? '' })
+              }}
+              options={GEO_SOURCES.map((x) => ({ value: x.value, label: t(x.label) }))}
             />
-          ) : (
-            <Input
-              size="small"
-              style={{ width: 220 }}
-              placeholder={t('audit.geoEdition')}
-              value={d.edition}
-              onChange={(e) => setD({ ...d, edition: e.target.value })}
-              disabled={d.source === 'dbip'}
-            />
+          </Field>
+
+          {d.source === 'custom' && (
+            <Field label={t('audit.geoUrlLabel')} hint={t('audit.geoUrlFieldHint')}>
+              <Input
+                style={{ width: 380, maxWidth: '100%' }}
+                placeholder={t('audit.geoUrlPlaceholder')}
+                value={d.url}
+                onChange={(e) => setD({ ...d, url: e.target.value })}
+              />
+            </Field>
           )}
-          {src?.needsKey && (
-            <Input.Password
-              size="small"
-              style={{ width: 260 }}
-              placeholder={upd?.has_key && key === null ? t('audit.geoKeySaved') : t('audit.geoKey')}
-              value={key ?? ''}
-              onChange={(e) => setKey(e.target.value)}
-              autoComplete="new-password"
-            />
+
+          {src?.edit && (
+            <Field
+              label={t('audit.geoEditionLabel')}
+              hint={t('audit.geoEditionHint', { def: src.edition })}
+            >
+              <Input
+                style={{ width: 220 }}
+                placeholder={src.edition}
+                value={d.edition}
+                onChange={(e) => setD({ ...d, edition: e.target.value })}
+              />
+            </Field>
           )}
-        </Space>
+
+          {src?.key && (
+            <Field label={t(src.keyLabel)} hint={t('audit.geoKeyHint')}>
+              <Input.Password
+                style={{ width: 280 }}
+                placeholder={upd?.has_key && key === null ? t('audit.geoKeySaved') : t('audit.geoKey')}
+                value={key ?? ''}
+                onChange={(e) => setKey(e.target.value)}
+                autoComplete="new-password"
+              />
+            </Field>
+          )}
+        </div>
 
         <Space>
           <Button onClick={save} loading={busy}>
@@ -230,22 +271,17 @@ export default function GeoSection() {
           </Button>
         </Space>
 
+        {upd?.last_error ? (
+          <Alert type="error" showIcon message={t('audit.geoUpdateFailed')} description={upd.last_error} />
+        ) : upd?.last_file ? (
+          <Alert type="success" showIcon message={t('audit.geoLastUpdate', { file: upd.last_file })} />
+        ) : null}
+
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {t('audit.geoEulaHint')}
-        </Typography.Text>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {d.source === 'maxmind' ? t('audit.geoEulaHint') : t('audit.geoDownloadHint')}
+          {' '}
           {t('audit.geoAttribution')}
         </Typography.Text>
-        {upd?.last_error && (
-          <Typography.Text type="danger" style={{ fontSize: 12 }}>
-            {upd.last_error}
-          </Typography.Text>
-        )}
-        {!upd?.last_error && upd?.last_file && (
-          <Typography.Text type="success" style={{ fontSize: 12 }}>
-            {t('audit.geoLastUpdate', { file: upd.last_file })}
-          </Typography.Text>
-        )}
       </Space>
     </>
   )
