@@ -282,9 +282,46 @@ func auditBefore(cutoff time.Time) (string, []any) {
 // legacy one has a space.
 const likeT = "LIKE '%T%'"
 
-// AuditActions lists the action values actually present, so the filter is built from the data
-// rather than from the constants above — a log written by an older build still filters correctly.
+// auditVocabulary is every action this build can write. The filter offers these WHETHER OR NOT
+// they have happened, because a dropdown built only from the data cannot distinguish "not
+// recorded" from "has not happened yet" — a freshly upgraded portal would offer one option and
+// look like a log that records one thing.
+var auditVocabulary = []string{
+	AuditReportRead, AuditReportIngest, AuditReportDelete,
+	AuditLogin, AuditLoginFailed, AuditLockout, AuditLogout,
+	AuditPasswordChange, AuditPasswordReset, AuditMFAChange,
+	AuditIdentityLink, AuditIdentityUnlink,
+	AuditUserCreate, AuditUserChange, AuditUserDelete,
+	AuditGroupCreate, AuditGroupChange, AuditGroupDelete,
+	AuditGrantChange, AuditPolicyChange,
+	AuditRunSubmit, AuditRunCancel, AuditRunChange, AuditRunDelete,
+	AuditTokenCreate, AuditTokenDelete,
+	AuditAppInstall, AuditAppDelete,
+	AuditWebhookCreate, AuditWebhookDelete,
+	AuditTargetChange,
+}
+
+// AuditActions lists what the filter offers: this build's whole vocabulary, plus anything present
+// in the data that is not in it. The second half is what keeps a row written by an older build —
+// or by a build that has since retired an action — reachable instead of stranded.
 func (s *Store) AuditActions() []string {
+	seen := map[string]bool{}
+	for _, a := range auditVocabulary {
+		seen[a] = true
+	}
+	for _, a := range s.auditActionsPresent() {
+		seen[a] = true
+	}
+	out := make([]string, 0, len(seen))
+	for a := range seen {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// auditActionsPresent is what the data actually contains.
+func (s *Store) auditActionsPresent() []string {
 	rows, err := s.query("SELECT DISTINCT action FROM audit_log WHERE action <> '' ORDER BY 1")
 	if err != nil {
 		return nil

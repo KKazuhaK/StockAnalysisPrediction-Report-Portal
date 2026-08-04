@@ -12,9 +12,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/geoip"
 )
 
 // Downloading the IP database.
@@ -33,8 +36,114 @@ import (
 const (
 	geoDownloadTimeout = 5 * time.Minute
 	geoMaxDownload     = 512 << 20 // a ceiling, not an expectation: GeoLite2-City is ~60 MiB
-	setGeoURL          = "geoip_url"
+
+	setGeoEnabled    = "geoip_enabled"
+	setGeoFile       = "geoip_db_file"    // which .mmdb to use when several are present ("" = auto)
+	setGeoAuto       = "geoip_auto"       // run the updater on a timer
+	setGeoAutoHours  = "geoip_auto_hours" // how often, minimum 1
+	setGeoSource     = "geoip_source"     // maxmind | dbip | ipinfo | custom
+	setGeoEdition    = "geoip_edition"    // the vendor's product name, e.g. GeoLite2-City
+	setGeoToken      = "geoip_token"      // licence key / token; write-only on the API
+	setGeoURL        = "geoip_url"        // custom source only
+	geoDefaultHours  = 12
+	geoDefaultSource = "maxmind"
 )
+
+// geoSources is the set an admin may pick. candidateURLs implements exactly one branch per entry,
+// and a test walks this list to prove none has been added here without being handled there — the
+// two drifting apart would produce a source that saves and then fails at download time.
+var geoSources = []string{"maxmind", "dbip", "ipinfo", "custom"}
+
+func validGeoSource(v string) bool {
+	if strings.TrimSpace(v) == "" {
+		return true // means the default
+	}
+	for _, s := range geoSources {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// candidateURLs builds the download URL(s) and the filename to write, for the configured source.
+//
+// The URL is CONSTRUCTED rather than typed, because the shape is the vendor's business and the
+// admin only knows their own key: pasting a whole URL is how people end up with the wrong edition,
+// a missing suffix, or a key in their clipboard history.
+//
+// The target filename is derived from the EDITION, not from the archive, so an update replaces the
+// previous file instead of accumulating one per download and leaving the picker to guess.
+//
+// DB-IP publishes a month-stamped file with no "latest" alias, so early in a month the current
+// month may not exist yet — hence a list, tried in order.
+func candidateURLs(src, edition, token, custom string) (urls []string, target string, err error) {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		src = geoDefaultSource
+	}
+	edition, token, custom = strings.TrimSpace(edition), strings.TrimSpace(token), strings.TrimSpace(custom)
+	switch src {
+	case "maxmind":
+		if token == "" {
+			return nil, "", fmt.Errorf("MaxMind needs a licence key")
+		}
+		if edition == "" {
+			edition = "GeoLite2-City"
+		}
+		u := "https://download.maxmind.com/app/geoip_download?edition_id=" + url.QueryEscape(edition) +
+			"&license_key=" + url.QueryEscape(token) + "&suffix=tar.gz"
+		return []string{u}, filepath.Base(edition) + ".mmdb", nil
+	case "ipinfo":
+		if token == "" {
+			return nil, "", fmt.Errorf("IPinfo needs a token")
+		}
+		if edition == "" {
+			edition = "ipinfo_lite"
+		}
+		// The edition goes in the PATH here, so it is path-escaped; Base on the target is what
+		// stops an edition of "../../x" writing outside the directory.
+		u := "https://ipinfo.io/data/" + url.PathEscape(edition) + ".mmdb?token=" + url.QueryEscape(token)
+		return []string{u}, filepath.Base(edition) + ".mmdb", nil
+	case "dbip":
+		now := time.Now()
+		return []string{dbipURL(now), dbipURL(prevMonthOf(now))}, "dbip-city-lite.mmdb", nil
+	case "custom":
+		if custom == "" {
+			return nil, "", fmt.Errorf("a custom source needs a download URL")
+		}
+		return []string{custom}, customTarget(custom), nil
+	}
+	return nil, "", fmt.Errorf("unknown source %q", src)
+}
+
+func dbipURL(t time.Time) string {
+	return "https://download.db-ip.com/free/dbip-city-lite-" + t.Format("2006-01") + ".mmdb.gz"
+}
+
+// prevMonthOf is the month before t's. Written as "the 1st of this month, minus a day" rather than
+// AddDate(0,-1,0), which normalises the 31st back into the SAME month — silently making the
+// fallback URL identical to the one that just failed.
+func prevMonthOf(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location()).AddDate(0, 0, -1)
+}
+
+// customTarget derives a filename from an arbitrary URL: the base name without any .gz/.tar
+// wrapper. Base is what blocks traversal, and the query is dropped so a credential in it cannot
+// end up in a filename that appears in logs and directory listings.
+func customTarget(raw string) string {
+	u := raw
+	if i := strings.IndexByte(u, '?'); i >= 0 {
+		u = u[:i]
+	}
+	base := filepath.Base(u)
+	base = strings.TrimSuffix(base, ".gz")
+	base = strings.TrimSuffix(base, ".tar")
+	if !strings.HasSuffix(strings.ToLower(base), ".mmdb") || base == ".mmdb" {
+		base = "custom.mmdb"
+	}
+	return base
+}
 
 // geoUpdateState is what the admin page polls while a download runs.
 type geoUpdateState struct {
@@ -42,7 +151,14 @@ type geoUpdateState struct {
 	LastErr  string `json:"last_error,omitempty"`
 	LastFile string `json:"last_file,omitempty"`
 	LastAt   string `json:"last_at,omitempty"` // RFC3339 UTC; "" = never run
-	HasURL   bool   `json:"has_url"`           // whether a source is configured (never the URL itself)
+	HasKey   bool   `json:"has_key"`           // whether a credential is stored (never the credential)
+	// The rest of the configuration, so the form can bind to it. The credential is not here and
+	// never will be: has_key is the only thing this surface says about it.
+	Auto      bool   `json:"auto"`
+	AutoHours int    `json:"auto_hours"`
+	Source    string `json:"source"`
+	Edition   string `json:"edition"`
+	URL       string `json:"url"`
 }
 
 // geoUpdater owns the download. Separate from geoService, which owns the reader: one downloads a
@@ -73,9 +189,24 @@ func (u *geoUpdater) State() geoUpdateState {
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	hours := geoDefaultHours
+	if n, err := strconv.Atoi(strings.TrimSpace(u.st.GetSetting(setGeoAutoHours, ""))); err == nil && n >= 1 {
+		hours = n
+	}
+	src := u.st.GetSetting(setGeoSource, "")
+	if src == "" {
+		src = geoDefaultSource
+	}
 	st := geoUpdateState{
 		Updating: u.updating, LastErr: u.lastErr, LastFile: u.lastFile,
-		HasURL: strings.TrimSpace(u.st.GetSetting(setGeoURL, "")) != "",
+		HasKey:    strings.TrimSpace(u.st.GetSetting(setGeoToken, "")) != "",
+		Auto:      u.st.GetSetting(setGeoAuto, "0") == "1",
+		AutoHours: hours,
+		Source:    src,
+		Edition:   u.st.GetSetting(setGeoEdition, ""),
+		// The custom URL is shown back because it is the one source where the admin typed the whole
+		// thing and cannot re-derive it — and where a credential belongs in the token field, not here.
+		URL: u.st.GetSetting(setGeoURL, ""),
 	}
 	if !u.lastAt.IsZero() {
 		st.LastAt = u.lastAt.UTC().Format(time.RFC3339)
@@ -90,9 +221,9 @@ func (u *geoUpdater) Start() error {
 	if u == nil {
 		return fmt.Errorf("the updater is not configured")
 	}
-	raw := strings.TrimSpace(u.st.GetSetting(setGeoURL, ""))
-	if raw == "" {
-		return fmt.Errorf("set a database URL first")
+	urls, target, err := u.plan()
+	if err != nil {
+		return err
 	}
 	u.mu.Lock()
 	if u.updating {
@@ -102,36 +233,60 @@ func (u *geoUpdater) Start() error {
 	u.updating = true
 	u.mu.Unlock()
 
-	run := func() {
+	go func() {
 		// The portal has no graceful shutdown — it is ListenAndServe and nothing else — so there is
 		// no lifecycle to hang this off, and a download in flight dies with the process. That is
 		// survivable precisely because of the .part file: a killed download leaves a temp file and
-		// never a half-written database, and pressing the button again starts over.
+		// never a half-written database.
 		ctx, cancel := context.WithTimeout(context.Background(), geoDownloadTimeout+30*time.Second)
 		defer cancel()
-		file, err := u.download(ctx, raw)
+		file, err := u.run(ctx, urls, target)
 
 		u.mu.Lock()
 		u.updating = false
 		u.lastAt = time.Now()
 		if err != nil {
-			u.lastErr = err.Error() // already redacted by download
+			u.lastErr = err.Error() // already redacted
 			log.Printf("geoip: update failed: %v", err)
 		} else {
 			u.lastErr, u.lastFile = "", file
 			log.Printf("geoip: updated to %s", file)
 		}
 		u.mu.Unlock()
-	}
-	go run()
+	}()
 	return nil
 }
 
-// download fetches, unpacks and installs the database, returning the filename written.
+// plan resolves the configured source into URLs and a target filename, before anything is marked
+// as running — so a misconfiguration is an immediate error on the button rather than a background
+// failure the admin has to go and poll for.
+func (u *geoUpdater) plan() ([]string, string, error) {
+	return candidateURLs(
+		u.st.GetSetting(setGeoSource, ""),
+		u.st.GetSetting(setGeoEdition, ""),
+		u.st.GetSetting(setGeoToken, ""),
+		u.st.GetSetting(setGeoURL, ""),
+	)
+}
+
+// run tries each candidate in turn and installs the first that works.
+func (u *geoUpdater) run(ctx context.Context, urls []string, target string) (string, error) {
+	var last error
+	for _, raw := range urls {
+		name, err := u.download(ctx, raw, target)
+		if err == nil {
+			return name, nil
+		}
+		last = err
+	}
+	return "", last
+}
+
+// download fetches, unpacks, VALIDATES and installs one candidate.
 //
 // Every error it returns is safe to show and to log: the URL carries a credential, so nothing
 // derived from it leaves this function unredacted.
-func (u *geoUpdater) download(ctx context.Context, raw string) (string, error) {
+func (u *geoUpdater) download(ctx context.Context, raw, target string) (string, error) {
 	c := u.newClient()
 	if err := c.checkURL(raw); err != nil {
 		return "", fmt.Errorf("%s: %w", redactURL(raw), err)
@@ -146,43 +301,54 @@ func (u *geoUpdater) download(ctx context.Context, raw string) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		// The STATUS, not the body: a vendor's 401 page can echo the key back.
+		// The STATUS, not the body: a vendor's rejection page echoes the key back.
 		return "", fmt.Errorf("%s returned %s", redactURL(raw), resp.Status)
 	}
 
-	if err := os.MkdirAll(u.svc.Dir(), 0o755); err != nil {
-		return "", fmt.Errorf("cannot create %s: %w", u.svc.Dir(), err)
+	dir := u.svc.Dir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create %s: %w", dir, err)
 	}
-	// Written beside the target and renamed into place, so a download that dies half way leaves a
-	// .part behind and never a truncated .mmdb that the reader would then try to open.
-	tmp, err := os.CreateTemp(u.svc.Dir(), "download-*.part")
+	// The PID is in the temp name because the in-process single-flight does not span PROCESSES:
+	// during a rolling restart two of them can share the data volume, and without it they would
+	// write the same .part over each other. The rename at the end is atomic, so the later one wins
+	// cleanly rather than producing a torn file.
+	tmp := filepath.Join(dir, fmt.Sprintf("%s.part.%d", target, os.Getpid()))
+	f, err := os.Create(tmp)
 	if err != nil {
 		return "", err
 	}
-	tmpName := tmp.Name()
-	defer func() {
-		tmp.Close()
-		os.Remove(tmpName) // no-op once renamed
-	}()
+	cleanup := func() { f.Close(); os.Remove(tmp) }
 
 	body := io.LimitReader(resp.Body, geoMaxDownload+1)
-	name, err := extractMMDB(body, resp.Header.Get("Content-Type"), raw, tmp)
-	if err != nil {
+	if err := extractMMDB(body, raw, f); err != nil {
+		cleanup()
 		return "", err
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := f.Sync(); err != nil {
+		cleanup()
 		return "", err
 	}
-	if err := tmp.Close(); err != nil {
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
 		return "", err
 	}
-	dst := filepath.Join(u.svc.Dir(), name)
-	if err := os.Rename(tmpName, dst); err != nil {
+
+	// Parsed BEFORE the live file is replaced. A truncated download or an HTML error page served
+	// with a 200 would otherwise overwrite a working database with something unreadable, and the
+	// feature would go dark until somebody noticed.
+	if rd, oerr := geoip.Open(tmp); oerr != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("%s: the downloaded file is not a usable database: %w", redactURL(raw), oerr)
+	} else {
+		rd.Close()
+	}
+
+	if err := u.svc.replace(tmp, filepath.Join(dir, filepath.Base(target))); err != nil {
+		os.Remove(tmp)
 		return "", err
 	}
-	// The reader notices by itself on the next lookup — it compares the file's mtime and size —
-	// so there is nothing to signal and no restart.
-	return name, nil
+	return filepath.Base(target), nil
 }
 
 // extractMMDB writes the database out of whatever the vendor served.
@@ -190,57 +356,48 @@ func (u *geoUpdater) download(ctx context.Context, raw string) (string, error) {
 // MaxMind ships a .tar.gz with the .mmdb nested in a dated directory; ipinfo serves the .mmdb
 // directly. Sniffing the gzip magic rather than trusting Content-Type, because a CDN in front of
 // either will happily label a tarball application/octet-stream.
-func extractMMDB(r io.Reader, contentType, rawURL string, out io.Writer) (string, error) {
+func extractMMDB(r io.Reader, rawURL string, out io.Writer) error {
 	br := &peekReader{r: r}
 	magic, err := br.peek(2)
 	if err != nil {
-		return "", fmt.Errorf("%s: empty response", redactURL(rawURL))
+		return fmt.Errorf("%s: empty response", redactURL(rawURL))
 	}
-	if !(len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b) {
-		// Not gzip: a bare .mmdb. Name it from the URL's path so two vendors' files can coexist.
-		name := mmdbNameFromURL(rawURL)
-		if _, err := io.Copy(out, br); err != nil {
-			return "", err
-		}
-		return name, nil
+	gzipped := len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b
+	if !gzipped {
+		// A bare .mmdb, as IPinfo serves.
+		_, err := io.Copy(out, br)
+		return err
 	}
 	gz, err := gzip.NewReader(br)
 	if err != nil {
-		return "", fmt.Errorf("%s: not a usable archive", redactURL(rawURL))
+		return fmt.Errorf("%s: not a usable archive", redactURL(rawURL))
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
-	for {
-		h, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return "", fmt.Errorf("%s: the archive contains no .mmdb", redactURL(rawURL))
-		}
-		if err != nil {
-			return "", fmt.Errorf("%s: %w", redactURL(rawURL), err)
-		}
-		if h.Typeflag != tar.TypeReg || !strings.HasSuffix(strings.ToLower(h.Name), ".mmdb") {
-			continue
-		}
-		// The BASE name only. A tar entry's path is attacker-influenced in the general case, and
-		// "../../etc/something" is the classic way an archive writes outside its directory.
-		name := filepath.Base(h.Name)
-		if _, err := io.Copy(out, tr); err != nil {
-			return "", err
-		}
-		return name, nil
-	}
-}
 
-// mmdbNameFromURL derives a filename for a bare download. The query is dropped, which is also
-// what keeps the credential out of a filename that ends up in logs and directory listings.
-func mmdbNameFromURL(raw string) string {
-	name := "geoip.mmdb"
-	if u, err := url.Parse(raw); err == nil {
-		if b := filepath.Base(u.Path); strings.HasSuffix(strings.ToLower(b), ".mmdb") {
-			name = b
+	// Two gzip shapes: MaxMind wraps a tar, DB-IP gzips the database directly. Peek at the
+	// DECOMPRESSED stream for the tar magic ("ustar" at offset 257) rather than trusting the file
+	// extension, which a redirect or a CDN can make a liar of.
+	inner := &peekReader{r: gz}
+	head, _ := inner.peek(262)
+	if len(head) >= 262 && string(head[257:262]) == "ustar" {
+		tr := tar.NewReader(inner)
+		for {
+			h, err := tr.Next()
+			if errors.Is(err, io.EOF) {
+				return fmt.Errorf("%s: the archive contains no .mmdb", redactURL(rawURL))
+			}
+			if err != nil {
+				return fmt.Errorf("%s: %w", redactURL(rawURL), err)
+			}
+			if h.Typeflag != tar.TypeReg || !strings.HasSuffix(strings.ToLower(h.Name), ".mmdb") {
+				continue
+			}
+			_, err = io.Copy(out, tr)
+			return err
 		}
 	}
-	return name
+	_, err = io.Copy(out, inner)
+	return err
 }
 
 // peekReader lets extractMMDB sniff the first bytes without consuming them.
@@ -297,36 +454,109 @@ func redactURLErr(raw string, err error) error {
 	return errors.New(msg)
 }
 
+// autoLoop refreshes the database on a timer.
+//
+// MaxMind's GeoLite2 licence requires the data to be refreshed at least every 30 days, so leaving
+// this to a human is leaving it to a licence breach. It ticks every minute and compares elapsed
+// time against the configured interval rather than sleeping for the interval, so changing the
+// interval — or turning it on — takes effect within a minute instead of at the next restart.
+func (u *geoUpdater) autoLoop() {
+	for range time.Tick(time.Minute) {
+		if u.st.GetSetting(setGeoAuto, "0") != "1" {
+			continue
+		}
+		hours := geoDefaultHours
+		if n, err := strconv.Atoi(strings.TrimSpace(u.st.GetSetting(setGeoAutoHours, ""))); err == nil && n >= 1 {
+			hours = n
+		}
+		u.mu.Lock()
+		due := u.lastAt.IsZero() || time.Since(u.lastAt) >= time.Duration(hours)*time.Hour
+		running := u.updating
+		u.mu.Unlock()
+		if !due || running {
+			continue
+		}
+		// Start does its own single-flight and its own configuration check, so a missing key here
+		// is a recorded failure rather than a crash — and lastAt advances either way, which is what
+		// stops a broken configuration from retrying every minute for ever.
+		if err := u.Start(); err != nil {
+			u.mu.Lock()
+			u.lastErr, u.lastAt = err.Error(), time.Now()
+			u.mu.Unlock()
+		}
+	}
+}
+
 // GET /api/admin/geoip — what is loaded and how the last download went.
 func (s *Server) apiGeoStatus(w http.ResponseWriter, r *http.Request, user string) {
 	writeJSON(w, map[string]any{"status": s.geo.Status(), "update": s.geoUp.State()})
 }
 
-// POST /api/admin/geoip — set where the database is downloaded from.
+// POST /api/admin/geoip — save the settings.
 //
-// The URL carries the vendor's credential, so it is write-only on this surface: the status
-// endpoint reports whether one is configured and never what it is, the same rule the SMTP password
-// and every client secret already follow. An empty value clears it.
-func (s *Server) apiGeoSetURL(w http.ResponseWriter, r *http.Request, user string) {
+// The credential is a POINTER, so "omitted" and "cleared" are different: the form sends it only
+// when the admin actually typed a new one, which is what lets the field show "saved, unchanged"
+// instead of either echoing the key back or silently wiping it on every save. Same rule the SMTP
+// password and every client secret already follow.
+func (s *Server) apiGeoSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		URL string `json:"url"`
+		Enabled   *bool   `json:"enabled"`
+		File      *string `json:"file"`
+		Auto      *bool   `json:"auto"`
+		AutoHours *int    `json:"auto_hours"`
+		Source    *string `json:"source"`
+		Edition   *string `json:"edition"`
+		URL       *string `json:"url"`
+		Token     *string `json:"token"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	raw := strings.TrimSpace(in.URL)
-	if raw != "" {
-		if err := s.ssoClient().checkURL(raw); err != nil {
-			// Redacted, because an admin pasting a URL with a key in it should not get it echoed
-			// back into a toast that may be screenshotted.
-			jsonErrorCode(w, http.StatusBadRequest, "geoip_bad_url",
-				redactURL(raw)+"："+err.Error())
-			return
+	if in.Source != nil && !validGeoSource(*in.Source) {
+		jsonErrorCode(w, http.StatusBadRequest, "geoip_bad_source", "未知的更新来源")
+		return
+	}
+	if in.URL != nil {
+		if raw := strings.TrimSpace(*in.URL); raw != "" {
+			if err := s.ssoClient().checkURL(raw); err != nil {
+				// Redacted: an admin pasting a URL with a key in it should not get it echoed back
+				// into a toast that might be screenshotted.
+				jsonErrorCode(w, http.StatusBadRequest, "geoip_bad_url", redactURL(raw)+"："+err.Error())
+				return
+			}
 		}
 	}
-	s.st.SetSetting(setGeoURL, raw)
-	s.recordChange(r, user, AuditPolicyChange, "geoip", "", map[string]any{"op": "set_url", "configured": raw != ""})
+	set := func(key string, v *string) {
+		if v != nil {
+			s.st.SetSetting(key, strings.TrimSpace(*v))
+		}
+	}
+	setBool := func(key string, v *bool) {
+		if v != nil {
+			s.st.SetSetting(key, boolSetting(*v))
+		}
+	}
+	setBool(setGeoEnabled, in.Enabled)
+	setBool(setGeoAuto, in.Auto)
+	// filepath.Base, because this names a file inside the geoip directory and arrives from a form.
+	if in.File != nil {
+		s.st.SetSetting(setGeoFile, filepath.Base(strings.TrimSpace(*in.File)))
+	}
+	set(setGeoSource, in.Source)
+	set(setGeoEdition, in.Edition)
+	set(setGeoURL, in.URL)
+	set(setGeoToken, in.Token)
+	if in.AutoHours != nil {
+		h := *in.AutoHours
+		if h < 1 {
+			h = 1 // an interval of zero would be a download loop
+		}
+		s.st.SetSetting(setGeoAutoHours, strconv.Itoa(h))
+	}
+	// Field names, never the credential.
+	s.recordChange(r, user, AuditPolicyChange, "geoip", "",
+		map[string]any{"op": "save", "fields": changedSettingFields(in)})
 	writeJSON(w, okJSON)
 }
 

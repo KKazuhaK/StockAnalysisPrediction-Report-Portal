@@ -31,6 +31,7 @@ import (
 // geoService owns the active reader.
 type geoService struct {
 	dir string
+	st  *Store // settings: which file is active, and whether the feature is on at all
 
 	mu      sync.RWMutex
 	reader  *geoip.Reader
@@ -43,11 +44,81 @@ func newGeoService(dataDir string) *geoService {
 	return &geoService{dir: filepath.Join(dataDir, "geoip")}
 }
 
+// pick and enabled are read through the store on every call rather than cached, so a settings
+// change takes effect on the next request and not on the next restart.
+func (g *geoService) pick() string {
+	if g.st == nil {
+		return ""
+	}
+	return g.st.GetSetting(setGeoFile, "")
+}
+
+// Enabled reports whether locations should be resolved at all. Off means the log shows addresses
+// and nothing else — the database stays installed, so turning it back on costs nothing.
+func (g *geoService) Enabled() bool {
+	if g == nil || g.st == nil {
+		return true
+	}
+	return g.st.GetSetting(setGeoEnabled, "1") != "0"
+}
+
 // Dir is where an operator puts the .mmdb.
 func (g *geoService) Dir() string { return g.dir }
 
-// activeFile is the database to use: the most recently modified .mmdb in the dir.
+// available lists every .mmdb present, with what each one is, so the admin can pick between them
+// knowing which is which rather than by filename alone.
+func (g *geoService) available() []geoDBEntry {
+	entries, err := os.ReadDir(g.dir)
+	if err != nil {
+		return nil
+	}
+	out := make([]geoDBEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".mmdb") {
+			continue
+		}
+		item := geoDBEntry{File: e.Name()}
+		if info, err := e.Info(); err == nil {
+			item.Modified = info.ModTime().UTC().Format(time.RFC3339)
+		}
+		// Opened just to read the metadata. A file that will not open is listed anyway, marked —
+		// hiding it would leave the admin picking from a list that silently omits their file.
+		if rd, err := geoip.Open(filepath.Join(g.dir, e.Name())); err == nil {
+			item.Info = rd.Info()
+			item.OK = true
+			rd.Close()
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
+	return out
+}
+
+// geoDBEntry is one installed database, for the picker.
+type geoDBEntry struct {
+	File     string       `json:"file"`
+	Modified string       `json:"modified,omitempty"`
+	OK       bool         `json:"ok"` // false = present but unreadable
+	Info     geoip.DBInfo `json:"info"`
+}
+
+// activeFile is the database to use: the one the admin chose, or — when they have chosen nothing —
+// the most recently modified, which is what dropping a fresh file in means.
 func (g *geoService) activeFile() (path string, mod time.Time, size int64) {
+	if pick := strings.TrimSpace(g.pick()); pick != "" {
+		// Base, because the value reaches here from a setting an admin typed.
+		p := filepath.Join(g.dir, filepath.Base(pick))
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p, info.ModTime(), info.Size()
+		}
+		// A chosen file that has gone missing falls through to the automatic rule rather than
+		// turning the feature off: losing locations because a filename changed is worse than
+		// quietly using the other database that is sitting right there.
+	}
+	return g.newestFile()
+}
+
+func (g *geoService) newestFile() (path string, mod time.Time, size int64) {
 	entries, err := os.ReadDir(g.dir)
 	if err != nil {
 		return "", time.Time{}, 0
@@ -121,9 +192,25 @@ func (g *geoService) ensure() *geoip.Reader {
 	return rd
 }
 
-// Lookup resolves one address, or an empty location when there is no database.
+// replace swaps a validated download in for the active database.
+//
+// The live reader is closed and the rename done under the write lock, because a memory-mapped file
+// cannot be renamed over on Windows while a lookup holds it — and because clearing the cached path
+// here is what makes the next lookup reopen rather than keep serving the file that no longer exists.
+func (g *geoService) replace(tmp, final string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.reader != nil {
+		g.reader.Close()
+		g.reader = nil
+	}
+	g.path, g.modTime, g.size = "", time.Time{}, 0
+	return os.Rename(tmp, final)
+}
+
+// Lookup resolves one address, or an empty location when there is no database or the feature is off.
 func (g *geoService) Lookup(ip string) geoip.Location {
-	if g == nil {
+	if g == nil || !g.Enabled() {
 		return geoip.Location{}
 	}
 	return g.ensure().Lookup(ip)
@@ -133,6 +220,9 @@ func (g *geoService) Lookup(ip string) geoip.Location {
 // when nothing is installed, because the first question an operator has is where to
 // put the file.
 type geoStatus struct {
+	Enabled  bool         `json:"enabled"`
+	Pick     string       `json:"pick"` // the admin's choice; "" = automatic
+	Files    []geoDBEntry `json:"files"`
 	Dir      string       `json:"dir"`
 	File     string       `json:"file,omitempty"`
 	Loaded   bool         `json:"loaded"`
@@ -147,7 +237,7 @@ func (g *geoService) Status() geoStatus {
 	rd := g.ensure()
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	st := geoStatus{Dir: g.dir, Loaded: rd != nil}
+	st := geoStatus{Dir: g.dir, Loaded: rd != nil, Enabled: g.Enabled(), Pick: g.pick()}
 	if g.path != "" {
 		st.File = filepath.Base(g.path)
 		st.Modified = g.modTime.UTC().Format(time.RFC3339)
@@ -155,5 +245,8 @@ func (g *geoService) Status() geoStatus {
 	if rd != nil {
 		st.Info = rd.Info()
 	}
+	g.mu.RUnlock()
+	st.Files = g.available() // opens files, so not under the lock
+	g.mu.RLock()
 	return st
 }

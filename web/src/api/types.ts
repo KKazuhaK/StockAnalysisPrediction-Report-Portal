@@ -834,12 +834,30 @@ export interface AuditEntry {
 }
 
 /** The IP-database download's progress. Never carries the URL: it holds a vendor credential. */
+export interface GeoDBInfo {
+  type?: string
+  build_epoch?: number
+  granularity?: string
+}
+
+export interface GeoDBInfo {
+  type?: string
+  build_epoch?: number
+  granularity?: string
+}
+
 export interface GeoUpdateState {
   updating: boolean
   last_error?: string
   last_file?: string
   last_at?: string
-  has_url: boolean
+  /** Whether a credential is stored. The credential itself is never sent back. */
+  has_key: boolean
+  auto: boolean
+  auto_hours: number
+  source: string
+  edition?: string
+  url?: string
 }
 
 export interface AuditResp {
@@ -852,10 +870,14 @@ export interface AuditResp {
   timezone?: string
   /** Whether an IP database is loaded, and where one goes if not. */
   geo?: {
+    enabled: boolean
+    /** The admin's chosen file; '' = use the newest automatically. */
+    pick?: string
+    files?: { file: string; modified?: string; ok: boolean; info?: GeoDBInfo }[]
     dir: string
     file?: string
     loaded: boolean
     modified?: string
-    info?: { type?: string; build_epoch?: number; granularity?: string }
+    info?: GeoDBInfo
   }
 }
