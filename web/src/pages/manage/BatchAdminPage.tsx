@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { ApiOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
+import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
 import { difyModeTag, surfaceSupportsMode } from '../../lib/batchUi'
 import { ALL_SURFACES } from '../../api/types'
 import type { Surface } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
-import type { BatchPlugin, BatchTarget, DifyInput, DifyTargetEdit } from '../../api/types'
+import type { BatchPlugin, BatchTarget, DifyInput, DifyRefreshResult, DifyTargetEdit } from '../../api/types'
+import DifyRefreshModal from './DifyRefreshModal'
 
 export default function BatchAdminPage() {
   const { t } = useTranslation()
@@ -28,6 +29,10 @@ export default function BatchAdminPage() {
   const [inputs, setInputs] = useState<DifyInput[]>([])
   const [mode, setMode] = useState('') // Dify app mode: "" / "workflow" / "chat"
   const [newVar, setNewVar] = useState('')
+  // Pull-from-Dify preview (see DifyRefreshModal): results are read-only until confirmed.
+  const [refreshOpen, setRefreshOpen] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshResults, setRefreshResults] = useState<DifyRefreshResult[]>([])
 
   const isChat = mode !== '' && mode !== 'workflow'
 
@@ -101,7 +106,9 @@ export default function BatchAdminPage() {
         { base_url: v.base_url, api_key: v.api_key || '', target_id: editing ? editingId : undefined },
       )
       setProbed({ name: r.name, inputsError: r.inputs_error })
-      setInputs(r.inputs || [])
+      // Only when Dify actually answered. An empty list from a failed /parameters is "we could not
+      // ask", not "this workflow has no inputs", and writing it over a hand-built list loses work.
+      if (!r.inputs_error) setInputs(r.inputs || [])
       setMode(r.mode || '')
       if (!form.getFieldValue('name') && r.name) form.setFieldValue('name', r.name)
       if (r.inputs_error) message.warning(t('batch.dify.inputsManual'))
@@ -111,6 +118,35 @@ export default function BatchAdminPage() {
       message.error(t('batch.dify.probeFailed', { error: errText(e, t) }))
     } finally {
       setProbing(false)
+    }
+  }
+
+  // Ask Dify what each target's parameters look like NOW. Writes nothing — the modal decides.
+  const pullUpdate = async (ids?: number[]) => {
+    setRefreshing(true)
+    try {
+      const r = await api.post<{ results: DifyRefreshResult[] }>('/api/admin/batch/dify/refresh', { ids: ids ?? [] })
+      setRefreshResults(r.results || [])
+      setRefreshOpen(true)
+    } catch (e) {
+      message.error(errText(e, t))
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // The confirmed lists go back exactly as they were shown. No name in the payload: the endpoint
+  // has nowhere to put one.
+  const applyRefresh = async (picked: DifyRefreshResult[]) => {
+    try {
+      await api.post('/api/admin/batch/dify/refresh/apply', {
+        items: picked.map((r) => ({ id: r.id, mode: r.remote_mode || '', inputs: r.inputs || [] })),
+      })
+      message.success(t('batch.refresh.applied', { n: picked.length }))
+      setRefreshOpen(false)
+      loadTargets()
+    } catch (e) {
+      message.error(errText(e, t))
     }
   }
 
@@ -271,12 +307,21 @@ export default function BatchAdminPage() {
     { title: t('batch.admin.createdAt'), dataIndex: 'created_at', width: 170 },
     {
       title: t('batch.col.actions'),
-      width: 132,
+      width: 168,
       render: (_: unknown, tg: BatchTarget) => (
         <Space size={4}>
           <Button size="small" icon={<EyeOutlined />} title={t('batch.admin.surfacesTitle')} onClick={() => openSurfaces(tg)} />
           {tg.plugin_slug === 'dify' && (
-            <Button size="small" icon={<EditOutlined />} title={t('common.edit')} onClick={() => openEdit(tg)} />
+            <>
+              <Button
+                size="small"
+                icon={<CloudDownloadOutlined />}
+                title={t('batch.refresh.one')}
+                loading={refreshing}
+                onClick={() => pullUpdate([tg.id])}
+              />
+              <Button size="small" icon={<EditOutlined />} title={t('common.edit')} onClick={() => openEdit(tg)} />
+            </>
           )}
           <Popconfirm title={t('batch.admin.deleteTargetConfirm')} onConfirm={() => deleteTarget(tg.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} title={t('common.delete')} />
@@ -351,7 +396,10 @@ export default function BatchAdminPage() {
             label: t('batch.admin.targets'),
             children: (
               <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <Button icon={<CloudDownloadOutlined />} loading={refreshing} onClick={() => pullUpdate()}>
+                    {t('batch.refresh.all')}
+                  </Button>
                   <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
                     {t('batch.dify.newTarget')}
                   </Button>
@@ -390,6 +438,13 @@ export default function BatchAdminPage() {
             ),
           },
         ]}
+      />
+
+      <DifyRefreshModal
+        open={refreshOpen}
+        results={refreshResults}
+        onCancel={() => setRefreshOpen(false)}
+        onApply={applyRefresh}
       />
 
       {/* Create / edit a Dify workflow target */}
