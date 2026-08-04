@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { Button, Card, Empty, Grid, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
-import { ArrowLeftOutlined, ClockCircleOutlined, DiffOutlined, DownloadOutlined } from '@ant-design/icons'
+import { Button, Card, Empty, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
+import { ArrowLeftOutlined, ClockCircleOutlined, DiffOutlined } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
@@ -9,7 +9,7 @@ import Markdown from '../components/Markdown'
 import ReaderControls from '../components/ReaderControls'
 import CompareModal from '../components/CompareModal'
 import TimelinePanel from '../components/TimelinePanel'
-import { ExportPdfButton, ExportDayButton, ExportMenu } from '../components/ExportButtons'
+import { ExportMenu } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
 
@@ -18,7 +18,6 @@ export default function StockPage() {
   const { symbol = '' } = useParams()
   const [sp, setSp] = useSearchParams()
   const navigate = useNavigate()
-  const compact = !Grid.useBreakpoint().md // phone / small tablet — a hook, so it must run
   // unconditionally (before any early return below), not beside the data-dependent code.
   const { fontSize, fontWeight, wide } = useReaderPrefs()
   const readerVars = { '--md-fs': `${fontSize}px`, '--md-fw': String(fontWeight) } as CSSProperties
@@ -100,30 +99,18 @@ export default function StockPage() {
     </Space>
   )
 
-  // Export controls, shown in the report card header next to the reading settings. On a
-  // phone the three actions collapse into one "Export ▾" dropdown (three labeled buttons
-  // ate a whole row); desktop keeps the three standalone buttons since there's room.
+  // Export controls, in the report card header next to the reading settings. One "Export ▾"
+  // dropdown at every width: three labelled buttons ate a row on a phone, and on a desktop they
+  // pushed the header into a wrap that made the card title compete with its own toolbar. The three
+  // actions are one thing you do to a report, so they read better as one control anyway.
   const exportControls = rep ? (
-    compact ? (
-      <ExportMenu
-        id={rep.id}
-        report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
-        symbol={data.symbol}
-        date={data.selDate}
-        name={data.name}
-      />
-    ) : (
-      <>
-        <Button icon={<DownloadOutlined />} href={`/report/${rep.id}/md`}>
-          {t('stock.exportMd')}
-        </Button>
-        <ExportPdfButton
-          id={rep.id}
-          report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
-        />
-        <ExportDayButton symbol={data.symbol} date={data.selDate} name={data.name} />
-      </>
-    )
+    <ExportMenu
+      id={rep.id}
+      report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
+      symbol={data.symbol}
+      date={data.selDate}
+      name={data.name}
+    />
   ) : null
 
   return (
@@ -180,11 +167,9 @@ export default function StockPage() {
                 extra={
                   rep ? (
                     <Space size={8} wrap>
-                      {rep && (
-                        <Button size="small" icon={<DiffOutlined />} onClick={() => setCompareFor(rep.id)}>
-                          {t('compare.button')}
-                        </Button>
-                      )}
+                      <Button icon={<DiffOutlined />} onClick={() => setCompareFor(rep.id)}>
+                        {t('compare.button')}
+                      </Button>
                       {exportControls}
                       <ReaderControls />
                     </Space>
@@ -203,6 +188,11 @@ export default function StockPage() {
                 )}
                 {rep ? <Markdown md={rep.md} html={rep.html} /> : <Empty />}
               </Card>
+              {/* The button set this state from the day it shipped; nothing rendered the modal, so
+                  pressing it did nothing at all. */}
+              {compareFor !== null && (
+                <CompareModal reportId={compareFor} open onClose={() => setCompareFor(null)} />
+              )}
             </Space>
           </div>
           </div>
