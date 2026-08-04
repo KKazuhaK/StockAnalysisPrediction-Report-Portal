@@ -86,9 +86,52 @@ func (l *loginThrottle) reset(key string) {
 	delete(l.recs, key)
 }
 
+// parseTrustedProxies turns the configured list into the networks whose X-Forwarded-For the portal
+// will believe.
+//
+// UNSET MEANS LOOPBACK, not "nobody". A portal behind nginx or Caddy on the same host is the
+// ordinary deployment, and trusting nobody there records the proxy's address for every visitor
+// while looking like it works — which is exactly the failure this default exists to prevent. An
+// attacker cannot use it without already being on the host.
+//
+// Two tokens, neither combinable with a list, because a list plus a token is a contradiction and
+// silently picking one reading would hand an operator a policy they did not write:
+//
+//	all / *  trust every upstream. Correct when the listener cannot be reached except through the
+//	         proxy (a Docker network, a unix socket) and a hole anywhere else, so it is opt-in and
+//	         the server logs a warning at boot.
+//	none     trust nobody, not even loopback.
 func parseTrustedProxies(entries []string) ([]*net.IPNet, error) {
-	out := make([]*net.IPNet, 0, len(entries))
+	// Tokens first: they describe the whole policy, so they cannot share it.
+	var tokens, nets []string
 	for _, raw := range entries {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "":
+		case "all", "*", "none":
+			tokens = append(tokens, strings.ToLower(strings.TrimSpace(raw)))
+		default:
+			nets = append(nets, raw)
+		}
+	}
+	if len(tokens) > 0 {
+		if len(tokens) > 1 || len(nets) > 0 {
+			return nil, fmt.Errorf("trusted_proxies: %q cannot be combined with anything else", tokens[0])
+		}
+		if tokens[0] == "none" {
+			return nil, nil
+		}
+		_, v4, _ := net.ParseCIDR("0.0.0.0/0")
+		_, v6, _ := net.ParseCIDR("::/0")
+		return []*net.IPNet{v4, v6}, nil
+	}
+	if len(nets) == 0 {
+		_, v4, _ := net.ParseCIDR("127.0.0.0/8")
+		_, v6, _ := net.ParseCIDR("::1/128")
+		return []*net.IPNet{v4, v6}, nil
+	}
+
+	out := make([]*net.IPNet, 0, len(nets))
+	for _, raw := range nets {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue
@@ -108,6 +151,23 @@ func parseTrustedProxies(entries []string) ([]*net.IPNet, error) {
 		out = append(out, block)
 	}
 	return out, nil
+}
+
+// trustsEverything reports the "all" policy, so the server can say so at boot. A configuration that
+// believes any caller's claimed address is safe only behind an unreachable listener, and an
+// operator who set it for a Docker network and later exposed the port should be reminded.
+func trustsEverything(nets []*net.IPNet) bool {
+	var v4, v6 bool
+	for _, n := range nets {
+		ones, bits := n.Mask.Size()
+		if ones == 0 && bits == 32 {
+			v4 = true
+		}
+		if ones == 0 && bits == 128 {
+			v6 = true
+		}
+	}
+	return v4 && v6
 }
 
 func ipTrusted(ip net.IP, trusted []*net.IPNet) bool {
