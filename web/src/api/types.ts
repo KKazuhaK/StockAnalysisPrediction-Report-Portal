@@ -66,6 +66,30 @@ export interface BatchTarget {
 export type Surface = 'run' | 'batch' | 'recurring' | 'chat'
 export const ALL_SURFACES: Surface[] = ['run', 'batch', 'recurring', 'chat']
 
+// One target's row in the pull-from-Dify preview (POST /api/admin/batch/dify/refresh).
+//
+// The preview writes nothing. `inputs` is exactly what a confirm would store — and it is the ONLY
+// thing a confirm stores: remote_name is shown so an admin can tell the key still points at the
+// workflow they think it does, and is never written over the name they chose.
+export interface DifyRefreshResult {
+  id: number
+  local_name: string
+  remote_name?: string
+  local_mode?: string
+  remote_mode?: string
+  inputs?: DifyInput[]
+  added?: string[]
+  removed?: string[]
+  required_changed?: string[]
+  reordered?: boolean
+  changed?: boolean
+  name_differs?: boolean
+  // Losing the stock-code input silently disables same-day reuse (ADR 0022) rather than failing.
+  symbol_input_lost?: string
+  error?: string        // the probe failed outright; nothing to apply
+  inputs_error?: string // connected, but /parameters did not answer — an empty list is not an answer
+}
+
 // A Dify target's editable config, returned by GET /api/admin/batch/dify/targets/{id}.
 // The api_key is never sent back — has_key only reports whether one is stored.
 export interface DifyTargetEdit {
