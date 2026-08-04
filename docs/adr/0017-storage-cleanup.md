@@ -54,9 +54,14 @@ and the reconcile-not-retry `untracked` outcome (ADR 0015).
    was needed: every production `sent_at` parses, so a schema change was avoided.
 
 5. **Config lives in `meta`; only the audit history is a table.** All schedule/target/retention config
-   plus the last-run summary ride the existing `meta` k/v store. One new table, `cleanup_runs`, records
-   one row per real pass (scheduled or manual; previews are not recorded) for a durable, browsable trail
-   of what a destructive auto-delete removed — trimmed as a ring buffer to the last 200 rows.
+   plus the last-run summary ride the existing `meta` k/v store. One new table, `cleanup_runs`, is a
+   durable, browsable trail of what a destructive auto-delete removed — trimmed as a ring buffer to the
+   last 200 rows. **Revised in v0.4.20:** it records a pass that deleted something or failed, not every
+   pass. The original "one row per real pass" filled the table with identical all-zero rows on any
+   portal whose targets never match, and because the table is a ring buffer those no-ops evicted the
+   only rows it exists for. Passes before v0.4.20 are filtered on read rather than deleted. The
+   last-run stamp in `meta` is still written every pass, so "the scheduler ran and found nothing"
+   remains visible — that fact belongs in a stamp, not in a row a day.
    Idempotency of the scheduler stays in `meta['cleanup_last_run_period']`, **never** derived from the
    trimmed table.
 
