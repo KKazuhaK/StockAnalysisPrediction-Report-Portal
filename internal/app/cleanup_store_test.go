@@ -274,6 +274,13 @@ func TestCleanupRunsRingTrim(t *testing.T) {
 	if runs[0].BatchDeleted != int64(cleanupRunsKeep+24) {
 		t.Errorf("newest run BatchDeleted = %d; want %d", runs[0].BatchDeleted, cleanupRunsKeep+24)
 	}
+	// The stored bound and the readable bound are one constant, so a default list reaches every row
+	// the ring keeps. They drifted before: 200 kept against a hard-coded read of 50, which left three
+	// quarters of the table unreachable by anything.
+	all, err := st.ListCleanupRuns(0)
+	if err != nil || len(all) != cleanupRunsKeep {
+		t.Errorf("a default list returned %d of %d stored rows (%v)", len(all), cleanupRunsKeep, err)
+	}
 }
 
 // Builds before v0.4.20 wrote a row for every scheduled pass, so an upgraded portal opens on a list

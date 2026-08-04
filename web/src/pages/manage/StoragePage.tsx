@@ -393,7 +393,15 @@ export default function StoragePage() {
       {history.length > 0 && (
         <Card title={t('storage.historyTitle')}>
           <div style={{ overflowX: 'auto' }}>
-            <Table rowKey="id" size="small" pagination={false} dataSource={history} columns={histCols} />
+            {/* Paginated, not a full dump: this is a ring buffer of up to cleanupRunsKeep rows, and
+                a page you have to scroll past to reach anything below it is a page nobody reads. */}
+            <Table
+              rowKey="id"
+              size="small"
+              pagination={{ pageSize: 10, size: 'small', hideOnSinglePage: true, showSizeChanger: false }}
+              dataSource={history}
+              columns={histCols}
+            />
           </div>
         </Card>
       )}

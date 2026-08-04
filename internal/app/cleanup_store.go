@@ -54,6 +54,10 @@ const (
 )
 
 // cleanupRunsKeep bounds the audit ring buffer: only the most recent N cleanup_runs rows are kept.
+//
+// It is also the number the console asks for, deliberately — a stored bound larger than the readable
+// one is rows nothing can ever show, and the two had drifted to 200 kept against a hard-coded read of
+// 50. How many appear at once is the table's business, not this constant's: the console paginates.
 const cleanupRunsKeep = 200
 
 // ---------- Target A: batch history ----------
