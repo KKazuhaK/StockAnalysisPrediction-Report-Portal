@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.18](v0.4.18.md) | 2026-08-04 | The audit log records visitors, not your reverse proxy |
 | [v0.4.17](v0.4.17.md) | 2026-08-04 | The IP database is a feature, not a URL box |
 | [v0.4.16](v0.4.16.md) | 2026-08-04 | The IP database can fetch itself |
 | [v0.4.15](v0.4.15.md) | 2026-08-04 | The audit log actually covers what it claimed to |
