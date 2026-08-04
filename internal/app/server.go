@@ -123,8 +123,10 @@ func RunServer(cfgPath string) {
 		trustedNets: trustedNets, captchaSvc: captcha.New()}
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.geo = newGeoService(config.DirOf(cfg.DBPath))
+	s.geo.st = st
 	s.geoUp = newGeoUpdater(s.geo, st, s.ssoClient)
-	s.names.ensureFull() // if the full list is missing, do a best-effort background fetch once
+	go s.geoUp.autoLoop() // refreshes on a timer; MaxMind's licence requires a refresh every 30 days
+	s.names.ensureFull()  // if the full list is missing, do a best-effort background fetch once
 	s.parseTemplates()
 
 	if len(st.TypeConfigs()) == 0 { // on first run, seed our real report types so the Types page isn't empty
@@ -353,7 +355,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/cleanup/run", s.requireAdminJSON(s.apiCleanupRunNow))
 	// The IP database: where it lives, what is loaded, and a button to fetch a new one.
 	mux.HandleFunc("GET /api/admin/geoip", s.requireAdminJSON(s.apiGeoStatus))
-	mux.HandleFunc("POST /api/admin/geoip", s.requireAdminJSON(s.apiGeoSetURL))
+	mux.HandleFunc("POST /api/admin/geoip", s.requireAdminJSON(s.apiGeoSave))
 	mux.HandleFunc("POST /api/admin/geoip/update", s.requireAdminJSON(s.apiGeoUpdate))
 	mux.HandleFunc("GET /api/admin/cleanup/history", s.requireAdminJSON(s.apiCleanupHistory))
 

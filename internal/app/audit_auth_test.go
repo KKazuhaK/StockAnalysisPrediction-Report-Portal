@@ -265,3 +265,68 @@ func TestAuditResponseSaysWhetherAnIPDatabaseIsLoaded(t *testing.T) {
 		t.Error("the response does not say where to put the database")
 	}
 }
+
+// The action filter must offer what the portal CAN record, not only what it has recorded.
+//
+// Built from SELECT DISTINCT alone, a fresh portal offers one option — whatever happened to have
+// happened — and an admin cannot tell "this is not logged" from "this has not happened yet". That
+// is the same defect as a constant nothing emits, seen from the other side: the console has to
+// document the vocabulary. Actions present in the data still appear, so rows written by an older
+// build keep filtering even for actions this build no longer writes.
+func TestActionFilterOffersTheWholeVocabularyNotJustWhatHappened(t *testing.T) {
+	s := auditServer(t)
+	s.st.UpsertUser(User{Username: "admin", PasswordHash: mustHash("admin-password-here"), Role: "admin"})
+	// One row, of one action — the state a freshly upgraded portal is in.
+	s.recordAuth(nil, AuditReportRead, "kazuha", "1", nil)
+	// And one action no build writes any more, to prove history is not dropped.
+	s.st.WriteAudit(AuditEntry{Action: "legacy.retired", TargetType: "x", TargetID: "1"})
+
+	rec := httptest.NewRecorder()
+	s.apiAdminAudit(rec, httptest.NewRequest(http.MethodGet, "/api/admin/audit", nil), "admin")
+	var out struct {
+		Actions []string `json:"actions"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out)
+
+	has := map[string]bool{}
+	for _, a := range out.Actions {
+		has[a] = true
+	}
+	for _, want := range []string{AuditLogin, AuditLoginFailed, AuditRunSubmit, AuditUserCreate, AuditPolicyChange} {
+		if !has[want] {
+			t.Errorf("the filter does not offer %q, so an admin cannot tell it is recorded at all", want)
+		}
+	}
+	if !has["legacy.retired"] {
+		t.Error("an action present in the data was dropped from the filter; its rows became unreachable")
+	}
+	// Sorted and unique, or the dropdown shows duplicates for everything that has happened.
+	for i := 1; i < len(out.Actions); i++ {
+		if out.Actions[i-1] >= out.Actions[i] {
+			t.Fatalf("actions are not sorted/unique around %q", out.Actions[i])
+		}
+	}
+}
+
+// The vocabulary list and the constants must not drift. A constant added without being listed
+// would be written and then not offered as a filter — invisible in the console for as long as
+// nobody noticed.
+func TestVocabularyCoversEveryDeclaredAction(t *testing.T) {
+	decls, err := os.ReadFile("audit.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := regexp.MustCompile(`(?m)^\s*Audit[A-Za-z]+\s*=\s*"([^"]+)"`).FindAllStringSubmatch(string(decls), -1)
+	if len(names) < 20 {
+		t.Fatalf("found only %d actions; the regex has stopped matching", len(names))
+	}
+	inVocab := map[string]bool{}
+	for _, a := range auditVocabulary {
+		inVocab[a] = true
+	}
+	for _, m := range names {
+		if !inVocab[m[1]] {
+			t.Errorf("%q is declared but missing from auditVocabulary, so the console never offers it", m[1])
+		}
+	}
+}

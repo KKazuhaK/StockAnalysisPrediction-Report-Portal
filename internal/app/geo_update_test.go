@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Downloading the IP database.
@@ -63,7 +64,7 @@ func TestDownloadErrorsNeverCarryTheKey(t *testing.T) {
 
 	u := newTestUpdater(t)
 	raw := srv.URL + "/db?license_key=" + key
-	_, err := u.download(context.Background(), raw)
+	_, err := u.download(context.Background(), raw, "GeoLite2-City.mmdb")
 	if err == nil {
 		t.Fatal("a 401 was treated as success")
 	}
@@ -75,95 +76,156 @@ func TestDownloadErrorsNeverCarryTheKey(t *testing.T) {
 	}
 }
 
-func TestDownloadsABareMMDB(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("not-really-a-database-but-bytes"))
-	}))
-	defer srv.Close()
+// Extraction is tested directly rather than through a download, because a download now VALIDATES
+// what it got and a hand-made fixture is not a real database. Separating them also means each test
+// says one thing: this one is about unwrapping, the next about refusing to install rubbish.
 
-	u := newTestUpdater(t)
-	name, err := u.download(context.Background(), srv.URL+"/data/ipinfo_lite.mmdb?token=TKN")
-	if err != nil {
-		t.Fatalf("download: %v", err)
+func TestExtractsABareDatabase(t *testing.T) {
+	var out bytes.Buffer
+	if err := extractMMDB(strings.NewReader("raw-database-bytes"), "https://x/y.mmdb?token=T", &out); err != nil {
+		t.Fatalf("extract: %v", err)
 	}
-	if name != "ipinfo_lite.mmdb" {
-		t.Errorf("wrote %q, want the name from the URL path", name)
-	}
-	// The credential must not end up in a filename either — those show up in logs and listings.
-	if strings.Contains(name, "TKN") || strings.Contains(name, "?") {
-		t.Errorf("the query reached the filename: %q", name)
-	}
-	if _, err := os.Stat(filepath.Join(u.svc.Dir(), name)); err != nil {
-		t.Errorf("the file is not where the reader looks: %v", err)
-	}
-	// And no .part is left behind on success.
-	if parts, _ := filepath.Glob(filepath.Join(u.svc.Dir(), "*.part")); len(parts) != 0 {
-		t.Errorf("a temp file survived a successful download: %v", parts)
+	if out.String() != "raw-database-bytes" {
+		t.Errorf("got %q", out.String())
 	}
 }
 
 // MaxMind ships a .tar.gz with the database nested in a dated directory.
-func TestUnpacksTheMaxMindTarball(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(tarGZ(t, map[string]string{
-			"GeoLite2-City_20260801/COPYRIGHT.txt":      "(c)",
-			"GeoLite2-City_20260801/GeoLite2-City.mmdb": "database-bytes",
-		}))
+func TestExtractsFromTheMaxMindTarball(t *testing.T) {
+	var out bytes.Buffer
+	src := bytes.NewReader(tarGZ(t, map[string]string{
+		"GeoLite2-City_20260801/COPYRIGHT.txt":      "(c)",
+		"GeoLite2-City_20260801/GeoLite2-City.mmdb": "database-bytes",
 	}))
-	defer srv.Close()
-
-	u := newTestUpdater(t)
-	name, err := u.download(context.Background(), srv.URL+"/geoip_download?license_key=K&suffix=tar.gz")
-	if err != nil {
-		t.Fatalf("download: %v", err)
+	if err := extractMMDB(src, "https://x?license_key=K", &out); err != nil {
+		t.Fatalf("extract: %v", err)
 	}
-	if name != "GeoLite2-City.mmdb" {
-		t.Fatalf("wrote %q, want the .mmdb from inside the archive", name)
-	}
-	got, err := os.ReadFile(filepath.Join(u.svc.Dir(), name))
-	if err != nil || string(got) != "database-bytes" {
-		t.Errorf("contents = %q (%v); the wrong archive member was written", got, err)
+	if out.String() != "database-bytes" {
+		t.Errorf("got %q — the wrong archive member was taken", out.String())
 	}
 }
 
-// A tar entry's path is attacker-influenced, and "../" is how an archive writes outside its
-// directory. Only the base name is ever used.
-func TestArchivePathsCannotEscapeTheDirectory(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(tarGZ(t, map[string]string{"../../../../tmp/evil.mmdb": "pwned"}))
-	}))
-	defer srv.Close()
+// DB-IP gzips the database directly, with no tar around it. Told apart by the tar magic in the
+// DECOMPRESSED stream, not by the file extension, which a redirect can make a liar of.
+func TestExtractsFromAPlainGzip(t *testing.T) {
+	var gzbuf bytes.Buffer
+	zw := gzip.NewWriter(&gzbuf)
+	zw.Write([]byte("dbip-database-bytes"))
+	zw.Close()
 
-	u := newTestUpdater(t)
-	name, err := u.download(context.Background(), srv.URL+"/x?license_key=K")
-	if err != nil {
-		t.Fatalf("download: %v", err)
+	var out bytes.Buffer
+	if err := extractMMDB(&gzbuf, "https://download.db-ip.com/free/x.mmdb.gz", &out); err != nil {
+		t.Fatalf("extract: %v", err)
 	}
-	if strings.Contains(name, "/") || strings.Contains(name, "..") {
-		t.Fatalf("the archive's path was used verbatim: %q", name)
-	}
-	if _, err := os.Stat(filepath.Join(u.svc.Dir(), "evil.mmdb")); err != nil {
-		t.Errorf("the file did not land inside the geoip dir: %v", err)
+	if out.String() != "dbip-database-bytes" {
+		t.Errorf("got %q", out.String())
 	}
 }
 
-func TestArchiveWithNoDatabaseIsAnError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(tarGZ(t, map[string]string{"README.txt": "nothing here"}))
-	}))
-	defer srv.Close()
-
-	u := newTestUpdater(t)
-	if _, err := u.download(context.Background(), srv.URL+"/x?license_key=SECRET"); err == nil {
+func TestExtractRejectsAnArchiveWithNoDatabase(t *testing.T) {
+	var out bytes.Buffer
+	src := bytes.NewReader(tarGZ(t, map[string]string{"README.txt": "nothing here"}))
+	err := extractMMDB(src, "https://x?license_key=SECRET", &out)
+	if err == nil {
 		t.Fatal("an archive with no database was accepted")
-	} else if strings.Contains(err.Error(), "SECRET") {
+	}
+	if strings.Contains(err.Error(), "SECRET") {
 		t.Errorf("the key leaked: %q", err)
+	}
+}
+
+// The one that matters most about installing: a truncated download or an HTML error page served
+// with a 200 must not replace a database that works. Validation happens on the temp file, before
+// the swap.
+func TestRubbishNeverReplacesTheLiveDatabase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<html>upstream had a bad day</html>"))
+	}))
+	defer srv.Close()
+
+	u := newTestUpdater(t)
+	live := filepath.Join(u.svc.Dir(), "GeoLite2-City.mmdb")
+	if err := os.MkdirAll(u.svc.Dir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte("the working database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := u.download(context.Background(), srv.URL+"/x?license_key=SECRET", "GeoLite2-City.mmdb")
+	if err == nil {
+		t.Fatal("an HTML error page was installed as a database")
+	}
+	if strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("the key leaked: %q", err)
+	}
+	got, _ := os.ReadFile(live)
+	if string(got) != "the working database" {
+		t.Errorf("the live database was replaced with rubbish: %q", got)
+	}
+	// And nothing is left lying around for the picker to find.
+	if parts, _ := filepath.Glob(filepath.Join(u.svc.Dir(), "*.part*")); len(parts) != 0 {
+		t.Errorf("a temp file survived a failed download: %v", parts)
+	}
+}
+
+// Every selectable source must be handled by candidateURLs. The two drifting apart would give an
+// admin a source that saves and then fails only at download time.
+func TestEverySourceIsHandled(t *testing.T) {
+	for _, src := range geoSources {
+		if !validGeoSource(src) {
+			t.Errorf("%q is offered but not valid", src)
+		}
+		// Supplied with everything any source might need, so the only way to fail is being unhandled.
+		_, target, err := candidateURLs(src, "GeoLite2-City", "KEY", "https://example.com/db.mmdb")
+		if err != nil {
+			t.Errorf("%s: %v", src, err)
+		}
+		if !strings.HasSuffix(target, ".mmdb") {
+			t.Errorf("%s: target %q is not a database filename", src, target)
+		}
+		if strings.Contains(target, "/") || strings.Contains(target, "..") {
+			t.Errorf("%s: target %q could write outside the directory", src, target)
+		}
+	}
+	if _, _, err := candidateURLs("nonsense", "", "", ""); err == nil {
+		t.Error("an unknown source was accepted")
+	}
+}
+
+// A vendor that needs a credential must say so rather than fetching without one and failing oddly.
+func TestSourcesThatNeedACredentialSaySo(t *testing.T) {
+	for _, src := range []string{"maxmind", "ipinfo"} {
+		if _, _, err := candidateURLs(src, "", "", ""); err == nil {
+			t.Errorf("%s built a URL with no credential", src)
+		}
+	}
+	// DB-IP needs none, and publishes month-stamped files with no "latest" — so the current month
+	// and the previous one are both tried, because early in a month the current may not exist.
+	urls, _, err := candidateURLs("dbip", "", "", "")
+	if err != nil || len(urls) != 2 {
+		t.Fatalf("dbip gave %d urls (%v), want the current month and a fallback", len(urls), err)
+	}
+	if urls[0] == urls[1] {
+		t.Error("the fallback month is the same as the current one")
+	}
+}
+
+// AddDate(0,-1,0) normalises the 31st back into the same month, which would make the DB-IP
+// fallback identical to the URL that just failed.
+func TestPreviousMonthIsAlwaysADifferentMonth(t *testing.T) {
+	for _, d := range []string{"2026-03-31", "2026-05-31", "2026-01-31", "2026-03-01"} {
+		at, _ := time.Parse("2006-01-02", d)
+		if prev := prevMonthOf(at); prev.Month() == at.Month() {
+			t.Errorf("%s: previous month resolved to the same month", d)
+		}
 	}
 }
 
 // A second click must not start a second download onto the same temp file.
 func TestASecondUpdateIsRefusedWhileOneRuns(t *testing.T) {
 	u := newTestUpdater(t)
+	u.st.SetSetting(setGeoSource, "custom")
 	u.st.SetSetting(setGeoURL, "https://example.invalid/db.mmdb")
 	u.mu.Lock()
 	u.updating = true
@@ -181,14 +243,15 @@ func TestStartRefusesWithNoURLConfigured(t *testing.T) {
 	if err := u.Start(); err == nil {
 		t.Fatal("started an update with no source")
 	}
-	if u.State().HasURL {
-		t.Error("HasURL is true with nothing configured")
+	if u.State().HasKey {
+		t.Error("HasKey is true with nothing configured")
 	}
 	// The state says whether a source exists and never what it is.
-	u.st.SetSetting(setGeoURL, "https://download.maxmind.com/x?license_key=SECRET")
+	u.st.SetSetting(setGeoSource, "maxmind")
+	u.st.SetSetting(setGeoToken, "SECRET")
 	blob := u.State()
-	if !blob.HasURL {
-		t.Error("HasURL is false with a source configured")
+	if !blob.HasKey {
+		t.Error("HasKey is false with a key configured")
 	}
 	if strings.Contains(blob.LastErr+blob.LastFile, "SECRET") {
 		t.Error("the state carries the credential")
