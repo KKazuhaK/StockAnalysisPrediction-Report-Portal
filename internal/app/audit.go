@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"reflect"
 	"sort"
@@ -185,11 +186,35 @@ func changedSettingFields(in any) []string {
 // auditIP resolves the source address through the same trusted-proxy configuration the throttle
 // uses, so the two agree about who a request came from. Behind a misconfigured proxy they would
 // otherwise disagree, and the log would exonerate whoever the throttle blocked.
+//
+// It also NOTICES the misconfiguration. A request carrying X-Forwarded-For from a peer that is not
+// in trusted_proxies means there is a reverse proxy in front and the portal has not been told to
+// believe it — so every address recorded from here on is the proxy's own, identical for every
+// visitor. Refusing the header is correct (believing an unvouched-for peer would let anyone claim
+// any address), but staying silent about it is not: the column looks populated either way, and a
+// plausible wrong address is worse than none.
 func (s *Server) auditIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
+	if r.Header.Get("X-Forwarded-For") != "" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		if peer := net.ParseIP(host); peer != nil && !ipTrusted(peer, s.trustedNets) {
+			s.proxySeen.Store(true)
+		}
+	}
 	return clientIP(r, s.trustedNets)
+}
+
+// proxyHint reports whether a forwarded request has arrived that the portal was not configured to
+// trust. In memory and one-way: it is a nudge for the console, not a statistic, and a restart
+// re-learns it from the first request through the proxy.
+func (s *Server) proxyHint() bool {
+	v, _ := s.proxySeen.Load().(bool)
+	return v
 }
 
 // ListAudit returns one page newest-first, plus the total matching the filter.
@@ -397,5 +422,8 @@ func (s *Server) apiAdminAudit(w http.ResponseWriter, r *http.Request, user stri
 		// database installed" from "installed but every address so far is on the LAN" — and an
 		// operator who copied a file in has no way to find out it was rejected.
 		"geo": s.geo.Status(),
+		// True when a forwarded request arrived from an untrusted peer: every address in this table
+		// is then the proxy's, and the console has to say so rather than let it read as data.
+		"proxy_hint": s.proxyHint(),
 	})
 }

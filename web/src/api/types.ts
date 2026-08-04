@@ -883,4 +883,9 @@ export interface AuditResp {
   timezone?: string
   /** Whether an IP database is loaded, and where one goes if not. */
   geo?: GeoStatus
+  /**
+   * True when a forwarded request arrived from a peer that is not in trusted_proxies — meaning
+   * every address in the table is the reverse proxy's, identical for every visitor.
+   */
+  proxy_hint?: boolean
 }

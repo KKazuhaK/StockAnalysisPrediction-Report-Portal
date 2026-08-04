@@ -282,6 +282,17 @@ export default function AuditPage() {
       {/* A footnote, not a banner: it is reference rather than a problem. Without it, "no IP
           database installed" and "installed, but nothing public has shown up yet" look identical,
           because both render as bare addresses. */}
+      {/* Louder than the geo footnote, because it means the column is actively misleading: every
+          row shows the proxy's address, and it looks exactly like real data. */}
+      {data?.proxy_hint && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginTop: 16 }}
+          message={t('audit.proxyHintTitle')}
+          description={t('audit.proxyHintBody')}
+        />
+      )}
       {/* A footnote only: the controls live in 常规, but this is the page where somebody notices
           a row has no location, so it says what the state is. */}
       {geo && (

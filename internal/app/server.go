@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -43,6 +44,7 @@ type Server struct {
 	pdf                *template.Template
 	geoUp              *geoUpdater                                                                // downloads the IP database; the reader notices the new file by itself
 	geo                *geoService                                                                // IP → place for the audit log; nil-safe, empty until a .mmdb is installed
+	proxySeen          atomic.Value                                                               // bool: a forwarded request arrived from a peer not in trusted_proxies
 	seenAt             sync.Map                                                                   // username -> time.Time of the last activity stamp WRITTEN (throttle; see touchSeen)
 	jobRuns            sync.Map                                                                   // jobID -> *jobRun; shared cancel scope for a job's in-flight runs (ADR 0011)
 	itemCancels        sync.Map                                                                   // itemID -> context.CancelFunc; per-row cancel of an in-flight run (ADR 0011)
