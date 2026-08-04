@@ -834,6 +834,19 @@ export interface AuditEntry {
 }
 
 /** The IP-database download's progress. Never carries the URL: it holds a vendor credential. */
+/** What IP database is installed and active. */
+export interface GeoStatus {
+    enabled: boolean
+    /** The admin's chosen file; '' = use the newest automatically. */
+    pick?: string
+    files?: { file: string; modified?: string; ok: boolean; info?: GeoDBInfo }[]
+    dir: string
+    file?: string
+    loaded: boolean
+    modified?: string
+    info?: GeoDBInfo
+}
+
 export interface GeoDBInfo {
   type?: string
   build_epoch?: number
@@ -869,15 +882,5 @@ export interface AuditResp {
   /** The portal's business timezone; '' means follow the reader's. Stamps are UTC. */
   timezone?: string
   /** Whether an IP database is loaded, and where one goes if not. */
-  geo?: {
-    enabled: boolean
-    /** The admin's chosen file; '' = use the newest automatically. */
-    pick?: string
-    files?: { file: string; modified?: string; ok: boolean; info?: GeoDBInfo }[]
-    dir: string
-    file?: string
-    loaded: boolean
-    modified?: string
-    info?: GeoDBInfo
-  }
+  geo?: GeoStatus
 }

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { auditTime } from '../../lib/auditTime'
 import { formatRegion } from '../../lib/geo'
-import { Alert, App, Button, Card, DatePicker, Input, InputNumber, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
+import { Alert, Card, DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
-import type { AuditEntry, AuditResp, GeoUpdateState } from '../../api/types'
+import type { AuditEntry, AuditResp } from '../../api/types'
 
 // The audit log: who read what, and who changed who can read it.
 //
@@ -73,244 +73,6 @@ const ACTION_COLOR: Record<string, string> = {
  * reports only WHETHER one is configured; the field starts blank and blank means "leave it alone",
  * the same rule the SMTP password and the SSO client secrets already follow.
  */
-const GEO_SOURCES = [
-  { value: 'maxmind', label: 'MaxMind GeoLite2', edition: 'GeoLite2-City', needsKey: true },
-  { value: 'dbip', label: 'DB-IP Lite', edition: '', needsKey: false },
-  { value: 'ipinfo', label: 'IPinfo Lite', edition: 'ipinfo_lite', needsKey: true },
-  { value: 'custom', label: 'Custom URL', edition: '', needsKey: false },
-]
-
-/**
- * The IP database: whether to resolve at all, which file to use, and where to get a new one.
- *
- * It lives on this page because this is the only screen that shows an IP address — somebody
- * wondering why a row has no location is looking at the row.
- *
- * The credential is write-only. It is sent only when the admin types a new one, which is what lets
- * the field say "saved, unchanged" rather than either echoing the key back or wiping it on every
- * save — the rule the SMTP password and the SSO client secrets already follow.
- */
-function GeoPanel({ geo, onChanged }: { geo: NonNullable<AuditResp['geo']>; onChanged: () => void }) {
-  const { t } = useTranslation()
-  const { message } = App.useApp()
-  const [upd, setUpd] = useState<GeoUpdateState | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [d, setD] = useState({
-    enabled: geo.enabled,
-    file: geo.pick ?? '',
-    auto: false,
-    auto_hours: 12,
-    source: 'maxmind',
-    edition: 'GeoLite2-City',
-    url: '',
-  })
-  const [key, setKey] = useState<string | null>(null) // null = untouched, so it is not sent
-
-  const poll = useCallback(() => {
-    api
-      .get<{ update: GeoUpdateState }>('/api/admin/geoip')
-      .then((r) => {
-        setUpd(r.update)
-        setD((p) => ({
-          ...p,
-          auto: r.update.auto,
-          auto_hours: r.update.auto_hours || 12,
-          source: r.update.source || 'maxmind',
-          edition: r.update.edition ?? p.edition,
-          url: r.update.url ?? '',
-        }))
-      })
-      .catch(() => {})
-  }, [])
-  useEffect(poll, [poll])
-
-  // Only while a download runs, and it stops on its own: a page left open must not poll for ever.
-  useEffect(() => {
-    if (!upd?.updating) return
-    const id = setInterval(() => {
-      api
-        .get<{ update: GeoUpdateState }>('/api/admin/geoip')
-        .then((r) => {
-          setUpd(r.update)
-          if (!r.update.updating) onChanged() // the database changed; reload the rows with it
-        })
-        .catch(() => {})
-    }, 3000)
-    return () => clearInterval(id)
-  }, [upd?.updating, onChanged])
-
-  const body = () => ({ ...d, ...(key === null ? {} : { token: key }) })
-
-  const save = async () => {
-    setBusy(true)
-    try {
-      await api.post('/api/admin/geoip', body())
-      setKey(null)
-      message.success(t('common.saved'))
-      poll()
-      onChanged()
-    } catch (e) {
-      message.error(errText(e, t))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // Save first, then download — otherwise "Update now" after editing the key would fetch with the
-  // old one and report a failure the admin has already fixed on screen.
-  const update = async () => {
-    setBusy(true)
-    try {
-      await api.post('/api/admin/geoip', body())
-      setKey(null)
-      await api.post('/api/admin/geoip/update', {})
-      poll()
-    } catch (e) {
-      message.error(errText(e, t))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const src = GEO_SOURCES.find((x) => x.value === d.source)
-
-  return (
-    <Card size="small" style={{ marginTop: 16 }} title={t('audit.geoTitle')}>
-      <Space direction="vertical" size={10} style={{ width: '100%' }}>
-        <Space align="start">
-          <Switch checked={d.enabled} onChange={(v) => setD({ ...d, enabled: v })} />
-          <div>
-            <Typography.Text strong style={{ display: 'block' }}>
-              {t('audit.geoShow')}
-            </Typography.Text>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {t('audit.geoOfflineHint', { dir: geo.dir })}
-            </Typography.Text>
-          </div>
-        </Space>
-
-        <Space wrap>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t('audit.geoActive')}
-          </Typography.Text>
-          <Select
-            size="small"
-            style={{ minWidth: 260 }}
-            value={d.file}
-            onChange={(v) => setD({ ...d, file: v })}
-            options={[
-              { value: '', label: t('audit.geoAuto') },
-              ...(geo.files ?? []).map((f) => ({
-                value: f.file,
-                label: f.ok ? `${f.file} · ${f.info?.granularity ?? ''}` : t('audit.geoUnreadable', { file: f.file }),
-              })),
-            ]}
-          />
-        </Space>
-        {(geo.files ?? []).map((f) => (
-          <Typography.Text key={f.file} type="secondary" style={{ fontSize: 12 }}>
-            {f.ok
-              ? `• ${f.file} — ${f.info?.granularity ?? '—'} · ${f.info?.type ?? '—'}${
-                  f.info?.build_epoch
-                    ? ' · ' + t('audit.geoBuilt', { at: new Date(f.info.build_epoch * 1000).toISOString().slice(0, 10) })
-                    : ''
-                }`
-              : `• ${t('audit.geoUnreadable', { file: f.file })}`}
-          </Typography.Text>
-        ))}
-
-        <Space align="start">
-          <Switch checked={d.auto} onChange={(v) => setD({ ...d, auto: v })} />
-          <div>
-            <Typography.Text strong style={{ display: 'block' }}>
-              {t('audit.geoAuto2')}
-            </Typography.Text>
-            <Space size={6}>
-              <InputNumber
-                size="small"
-                min={1}
-                max={720}
-                value={d.auto_hours}
-                onChange={(v) => setD({ ...d, auto_hours: v ?? 12 })}
-              />
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {t('audit.geoIntervalHint')}
-              </Typography.Text>
-            </Space>
-          </div>
-        </Space>
-
-        <Space wrap>
-          <Select
-            size="small"
-            style={{ width: 220 }}
-            value={d.source}
-            onChange={(v) => {
-              const n = GEO_SOURCES.find((x) => x.value === v)
-              setD({ ...d, source: v, edition: n?.edition ?? '' })
-            }}
-            options={GEO_SOURCES.map((x) => ({ value: x.value, label: x.label }))}
-          />
-          {d.source === 'custom' ? (
-            <Input
-              size="small"
-              style={{ width: 340 }}
-              placeholder={t('audit.geoUrlPlaceholder')}
-              value={d.url}
-              onChange={(e) => setD({ ...d, url: e.target.value })}
-            />
-          ) : (
-            <Input
-              size="small"
-              style={{ width: 220 }}
-              placeholder={t('audit.geoEdition')}
-              value={d.edition}
-              onChange={(e) => setD({ ...d, edition: e.target.value })}
-              disabled={d.source === 'dbip'}
-            />
-          )}
-          {src?.needsKey && (
-            <Input.Password
-              size="small"
-              style={{ width: 260 }}
-              placeholder={upd?.has_key && key === null ? t('audit.geoKeySaved') : t('audit.geoKey')}
-              value={key ?? ''}
-              onChange={(e) => setKey(e.target.value)}
-              autoComplete="new-password"
-            />
-          )}
-        </Space>
-
-        <Space>
-          <Button onClick={save} loading={busy}>
-            {t('common.save')}
-          </Button>
-          <Button type="primary" onClick={update} loading={busy || !!upd?.updating}>
-            {t('audit.geoUpdate')}
-          </Button>
-        </Space>
-
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {t('audit.geoEulaHint')}
-        </Typography.Text>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {t('audit.geoAttribution')}
-        </Typography.Text>
-        {upd?.last_error && (
-          <Typography.Text type="danger" style={{ fontSize: 12 }}>
-            {upd.last_error}
-          </Typography.Text>
-        )}
-        {!upd?.last_error && upd?.last_file && (
-          <Typography.Text type="success" style={{ fontSize: 12 }}>
-            {t('audit.geoLastUpdate', { file: upd.last_file })}
-          </Typography.Text>
-        )}
-      </Space>
-    </Card>
-  )
-}
-
 export default function AuditPage() {
   const { t } = useTranslation()
   const [data, setData] = useState<AuditResp | null>(null)
@@ -520,7 +282,23 @@ export default function AuditPage() {
       {/* A footnote, not a banner: it is reference rather than a problem. Without it, "no IP
           database installed" and "installed, but nothing public has shown up yet" look identical,
           because both render as bare addresses. */}
-      {geo && <GeoPanel geo={geo} onChanged={load} />}
+      {/* A footnote only: the controls live in 常规, but this is the page where somebody notices
+          a row has no location, so it says what the state is. */}
+      {geo && (
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 12 }}>
+          {!geo.enabled
+            ? t('audit.geoOff')
+            : geo.loaded
+              ? t('audit.geoLoaded', {
+                  file: geo.file,
+                  type: geo.info?.type || '—',
+                  built: geo.info?.build_epoch
+                    ? new Date(geo.info.build_epoch * 1000).toISOString().slice(0, 10)
+                    : '—',
+                })
+              : t('audit.geoMissingShort')}
+        </Typography.Text>
+      )}
     </Card>
   )
 }

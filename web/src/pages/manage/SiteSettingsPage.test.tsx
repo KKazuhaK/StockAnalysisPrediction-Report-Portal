@@ -60,7 +60,10 @@ describe('SiteSettingsPage', () => {
     apiMock.post.mockReset()
     apiMock.upload.mockReset()
     refreshMock.mockReset()
-    apiMock.get.mockResolvedValue({ ...loadedSettings })
+    // The page now also renders the IP-database section, which fetches its own status.
+    apiMock.get.mockImplementation((url: string) =>
+      url.includes('/geoip') ? Promise.resolve({}) : Promise.resolve({ ...loadedSettings }),
+    )
     apiMock.post.mockResolvedValue({})
     refreshMock.mockResolvedValue({})
   })
