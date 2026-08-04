@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import StockPage from './StockPage'
 
 // StockPage renders a loading spinner first (data null), then re-renders with the report.
@@ -25,6 +26,13 @@ vi.mock('../api/client', () => ({
   ApiError: class extends Error {},
 }))
 
+// Desktop width. Without this jsdom reports no breakpoints at all, so `compact` is true and a test
+// about the DESKTOP layout would pass against the very code it is meant to reject.
+vi.mock('antd', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('antd')>()
+  return { ...actual, Grid: { ...actual.Grid, useBreakpoint: () => ({ xs: true, sm: true, md: true, lg: true, xl: true }) } }
+})
+
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
 vi.mock('react-router', () => ({
   useParams: () => ({ symbol: '001238' }),
@@ -36,6 +44,9 @@ vi.mock('../lib/datetime', () => ({ isInstant: () => false, formatReportDateTime
 vi.mock('../components/Markdown', () => ({ default: () => <div>md</div> }))
 vi.mock('../components/TimelinePanel', () => ({ default: () => <div>timeline</div> }))
 vi.mock('../components/ReaderControls', () => ({ default: () => <div>controls</div> }))
+vi.mock('../components/CompareModal', () => ({
+  default: ({ open, reportId }: { open: boolean; reportId: number }) => (open ? <div>compare-open:{reportId}</div> : null),
+}))
 vi.mock('../components/ExportButtons', () => ({
   ExportPdfButton: () => <div>pdf</div>,
   ExportDayButton: () => <div>day</div>,
@@ -50,5 +61,24 @@ describe('StockPage', () => {
     // displayTitle (company name folded in), not the bare stored title.
     expect(await screen.findByText('001238 Test Co Report Title')).toBeTruthy()
     expect(screen.getByText('stock.back')).toBeTruthy()
+  })
+
+  // The compare button set state that nothing read: CompareModal was imported and never rendered,
+  // so the button was inert. Clicking it has to put the modal on screen.
+  it('opens the compare modal when the compare button is pressed', async () => {
+    render(<StockPage />)
+    const btn = await screen.findByText('compare.button')
+    expect(screen.queryByText(/compare-open/)).toBeNull()
+    await userEvent.click(btn)
+    expect(await screen.findByText(/compare-open:1/)).toBeTruthy()
+  })
+
+  // Three labelled export buttons ate a row on desktop too. One menu everywhere — the same control
+  // the phone already had.
+  it('collapses the exports into one menu regardless of width', async () => {
+    render(<StockPage />)
+    expect(await screen.findByText('export-menu')).toBeTruthy()
+    expect(screen.queryByText('pdf')).toBeNull()
+    expect(screen.queryByText('day')).toBeNull()
   })
 })
