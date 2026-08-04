@@ -105,6 +105,15 @@ func RunServer(cfgPath string) {
 	if err != nil {
 		log.Fatalf("config: trusted_proxies: %v", err)
 	}
+	if trustsEverything(trustedNets) {
+		// Loud, because it is correct exactly once — behind a listener nothing but the proxy can
+		// reach — and an operator who set it for a Docker network and later published the port
+		// would have no other reminder that any caller can now claim any address.
+		log.Printf("WARNING: trusted_proxies is set to trust EVERY upstream. " +
+			"Any caller can then claim any address via X-Forwarded-For, which spoofs the rate " +
+			"limiter and the audit log. Only safe when the listen port is unreachable except " +
+			"through your proxy.")
+	}
 	if err := os.MkdirAll(config.DirOf(cfg.DBPath), 0o755); err != nil {
 		log.Fatal(err)
 	}
