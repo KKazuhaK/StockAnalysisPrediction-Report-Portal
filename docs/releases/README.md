@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.20](v0.4.20.md) | 2026-08-04 | The cleanup history records deletions, not days |
 | [v0.4.19](v0.4.19.md) | 2026-08-04 | The IP database form asks only what the source needs |
 | [v0.4.18](v0.4.18.md) | 2026-08-04 | The audit log records visitors, not your reverse proxy |
 | [v0.4.17](v0.4.17.md) | 2026-08-04 | The IP database is a feature, not a URL box |
