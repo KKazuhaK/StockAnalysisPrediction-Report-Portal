@@ -55,13 +55,18 @@ and the reconcile-not-retry `untracked` outcome (ADR 0015).
 
 5. **Config lives in `meta`; only the audit history is a table.** All schedule/target/retention config
    plus the last-run summary ride the existing `meta` k/v store. One new table, `cleanup_runs`, is a
-   durable, browsable trail of what a destructive auto-delete removed — trimmed as a ring buffer to the
-   last 200 rows. **Revised in v0.4.20:** it records a pass that deleted something or failed, not every
-   pass. The original "one row per real pass" filled the table with identical all-zero rows on any
-   portal whose targets never match, and because the table is a ring buffer those no-ops evicted the
-   only rows it exists for. Passes before v0.4.20 are filtered on read rather than deleted. The
-   last-run stamp in `meta` is still written every pass, so "the scheduler ran and found nothing"
-   remains visible — that fact belongs in a stamp, not in a row a day.
+   durable, browsable trail of what a destructive auto-delete removed — trimmed as a ring buffer to
+   `cleanupRunsKeep` rows, which is also the number the console reads — a stored bound larger than the
+   readable one is rows nothing can show, and they had drifted to 200 kept against a hard-coded read
+   of 50. Both are 200; how many rows appear at once is the table's business, and it paginates.
+
+   **Revised in v0.4.20:** it records a pass that deleted something or failed, not every pass. The
+   original "one row per real pass" filled the table with identical all-zero rows on any portal whose
+   targets never match, and because the table is a ring buffer those no-ops evicted the only rows it
+   exists for. Rows written before v0.4.20 are filtered on read rather than deleted — a retention log
+   is the last thing to go rewriting. The last-run stamp in `meta` is still written every pass, so
+   "the scheduler ran and found nothing" stays visible: that fact belongs in a stamp, not in a row a
+   day.
    Idempotency of the scheduler stays in `meta['cleanup_last_run_period']`, **never** derived from the
    trimmed table.
 

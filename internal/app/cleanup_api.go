@@ -249,7 +249,7 @@ func (s *Server) apiCleanupRunNow(w http.ResponseWriter, r *http.Request, user s
 // ---------- history ----------
 
 func (s *Server) apiCleanupHistory(w http.ResponseWriter, r *http.Request, user string) {
-	runs, err := s.st.ListCleanupRuns(50)
+	runs, err := s.st.ListCleanupRuns(cleanupRunsKeep)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "list failed")
 		return
