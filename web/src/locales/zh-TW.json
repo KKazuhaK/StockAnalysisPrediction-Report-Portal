@@ -1,8 +1,11 @@
 {
   "account.changePassword": "修改密碼",
   "account.confirmOk": "確認",
+  "account.confirmOrSSO": "或者：",
   "account.confirmPassword": "確認新密碼",
+  "account.confirmSSOOnly": "這項操作需要重新確認身份。本門戶配置為強制單點登入，因此請通過身份提供方驗證。",
   "account.confirmTitle": "確認身份",
+  "account.confirmViaSSO": "用 {{name}} 驗證",
   "account.confirmWithCode": "請輸入驗證器中的驗證碼或一個恢復碼以繼續。",
   "account.confirmWithPassword": "請輸入密碼以繼續。這項操作會改變你的登入方式，因此需要再次確認。",
   "account.currentPassword": "當前密碼",

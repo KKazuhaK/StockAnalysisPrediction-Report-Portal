@@ -1,8 +1,11 @@
 {
   "account.changePassword": "修改密码",
   "account.confirmOk": "确认",
+  "account.confirmOrSSO": "或者：",
   "account.confirmPassword": "确认新密码",
+  "account.confirmSSOOnly": "这项操作需要重新确认身份。本门户配置为强制单点登录，因此请通过身份提供方验证。",
   "account.confirmTitle": "确认身份",
+  "account.confirmViaSSO": "用 {{name}} 验证",
   "account.confirmWithCode": "请输入验证器中的验证码或一个恢复码以继续。",
   "account.confirmWithPassword": "请输入密码以继续。这项操作会改变你的登录方式，因此需要再次确认。",
   "account.currentPassword": "当前密码",

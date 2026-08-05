@@ -38,6 +38,16 @@ export interface BatchPlugin {
   config: PluginConfigField[]
 }
 
+// What the confirm-identity dialog may offer, decided by the server (GET /api/account/stepup/policy).
+// The login mode is a deployment policy, so which channels are open is not something the page can
+// work out from the account alone: under force-SSO the password box is not drawn at all.
+export interface StepUpPolicy {
+  password: boolean
+  sso: boolean
+  providers?: { slug: string; kind: string; name: string }[]
+  reason?: string // "sso_required" when the password channel is closed by the login mode
+}
+
 // A Dify workflow input field, discovered via /parameters (docs/adr/0006-dify-native.md).
 export interface DifyInput {
   variable: string

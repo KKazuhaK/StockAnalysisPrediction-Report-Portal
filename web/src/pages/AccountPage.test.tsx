@@ -51,6 +51,39 @@ describe('AccountPage', () => {
     authMock.passkeyCount = 0
   })
 
+  // Under force-SSO the portal has stopped accepting a password at the front door. Drawing a
+  // password box here would offer a credential the server will refuse — and would make re-proving
+  // identity weaker than signing in. The dialog says why instead of bouncing the user anywhere.
+  it('offers the provider instead of a password box when the login mode says so', async () => {
+    apiMock.get.mockImplementation((url: string) =>
+      url === '/api/account/stepup/policy'
+        ? Promise.resolve({ password: false, sso: true, reason: 'sso_required', providers: [{ slug: 'corp', kind: 'oidc', name: 'Corp SSO' }] })
+        : Promise.resolve({ passkeys: [] }),
+    )
+    renderPage()
+    fireEvent.click(await screen.findByText('account.totpEnable'))
+
+    await waitFor(() => expect(screen.getByText('account.confirmSSOOnly')).toBeTruthy())
+    expect(screen.getByText('account.confirmViaSSO:{"name":"Corp SSO"}')).toBeTruthy()
+    expect(screen.queryByText('account.confirmWithPassword')).toBeNull()
+    // Nothing to submit through, so the confirm button must not be sitting there looking usable.
+    expect(modalInput('input[type=password]')).toBeNull()
+  })
+
+  // Both channels open: the password box stays primary and the provider is an alternative.
+  it('offers both when the login mode allows both', async () => {
+    apiMock.get.mockImplementation((url: string) =>
+      url === '/api/account/stepup/policy'
+        ? Promise.resolve({ password: true, sso: true, providers: [{ slug: 'corp', kind: 'oidc', name: 'Corp SSO' }] })
+        : Promise.resolve({ passkeys: [] }),
+    )
+    renderPage()
+    fireEvent.click(await screen.findByText('account.totpEnable'))
+
+    await waitFor(() => expect(screen.getByText('account.confirmWithPassword')).toBeTruthy())
+    expect(screen.getByText('account.confirmViaSSO:{"name":"Corp SSO"}')).toBeTruthy()
+  })
+
   it('hides the local credential controls for a federated account', async () => {
     authMock.federated = true
     renderPage()
