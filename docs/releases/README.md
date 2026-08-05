@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.22](v0.4.22.md) | 2026-08-05 | Confirm your identity the way you sign in |
 | [v0.4.21](v0.4.21.md) | 2026-08-04 | Pull a workflow's parameters back; the compare button works |
 | [v0.4.20](v0.4.20.md) | 2026-08-04 | The cleanup history records deletions, not days |
 | [v0.4.19](v0.4.19.md) | 2026-08-04 | The IP database form asks only what the source needs |
