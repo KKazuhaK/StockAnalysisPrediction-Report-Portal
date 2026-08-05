@@ -265,7 +265,7 @@ func (s *Store) ListAudit(f AuditFilter) ([]AuditEntry, int) {
 	}
 	rows, err := s.query(fmt.Sprintf(`SELECT id,at,COALESCE(actor,''),COALESCE(actor_ou,0),action,
 			COALESCE(target_type,''),COALESCE(target_id,''),COALESCE(detail,''),COALESCE(ip,'')
-		FROM audit_log WHERE %s ORDER BY at DESC, id DESC LIMIT %d OFFSET %d`, cond, limit, offset), args...)
+		FROM audit_log WHERE %s ORDER BY (at LIKE '%%T%%') DESC, at DESC, id DESC LIMIT %d OFFSET %d`, cond, limit, offset), args...)
 	if err != nil {
 		return nil, total
 	}
@@ -302,6 +302,15 @@ func (s *Store) DeleteAuditBefore(cutoff time.Time) (int64, error) {
 // somebody sets retention to one day. Matching each row against a cutoff in its OWN format is exact
 // for both, and needs no rewrite of existing rows: an instant that was never recorded as UTC cannot
 // be converted to UTC without assuming an offset nobody wrote down.
+// Ordering has to survive the format change too, and it cannot do it by string comparison alone:
+// a legacy row carries a LOCAL wall-clock with no zone, so on a UTC+8 server an evening legacy row
+// sorts above a strictly newer UTC one purely because its calendar date has already rolled over.
+//
+// The format switched once and never switched back, so every legacy row predates every UTC row.
+// That fact is the ordering: UTC-format rows first, newest-first among themselves, then the legacy
+// rows the same way. It is deterministic in any server timezone, which string comparison was not —
+// the test for this passed or failed depending on the time of day it was run.
+
 func auditBefore(cutoff time.Time) (string, []any) {
 	return "at <> '' AND ((at " + likeT + " AND at < ?) OR (at NOT " + likeT + " AND at < ?))",
 		[]any{cutoff.UTC().Format(time.RFC3339), cutoff.Format("2006-01-02 15:04:05")}
