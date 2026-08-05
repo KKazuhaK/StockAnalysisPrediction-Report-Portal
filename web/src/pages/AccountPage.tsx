@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { formatReportDateTime } from '../lib/datetime'
+import type { StepUpPolicy } from '../api/types'
 import { createCredential, passkeySupported } from '../lib/webauthn'
 
 // Self-service account security (ADR 0023). The 2FA, recovery-code and passkey endpoints existed
@@ -151,6 +152,13 @@ function TwoFactorCard({ enabled, onChange }: { enabled: boolean; onChange: () =
   const [recovery, setRecovery] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
 
+  // The far side of a trip to the identity provider: the proof is a cookie the browser is already
+  // carrying, so the interrupted action runs with an empty typed proof.
+  useEffect(() => {
+    if (takeStepUpResume() === 'totp-enable') void beginEnrol('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const beginEnrol = async (proof: string) => {
     setBusy(true)
     try {
@@ -212,6 +220,7 @@ function TwoFactorCard({ enabled, onChange }: { enabled: boolean; onChange: () =
       <ProofModal
         open={stage === 'proof'}
         totpEnabled={enabled}
+        resume={enabled ? undefined : 'totp-enable'}
         onCancel={() => setStage('idle')}
         onSubmit={async (proof) => {
           setStage('idle')
@@ -286,6 +295,11 @@ function PasskeyCard({
   const [proofFor, setProofFor] = useState<'register' | number | null>(null)
   const [busy, setBusy] = useState(false)
   const supported = passkeySupported()
+
+  useEffect(() => {
+    if (takeStepUpResume() === 'passkey-register') void register('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const register = async (proof: string) => {
     setBusy(true)
@@ -378,6 +392,7 @@ function PasskeyCard({
       <ProofModal
         open={proofFor !== null}
         totpEnabled={totpEnabled}
+        resume={proofFor === 'register' ? 'passkey-register' : undefined}
         onCancel={() => setProofFor(null)}
         onSubmit={async (proof) => {
           const target = proofFor
@@ -392,27 +407,75 @@ function PasskeyCard({
 
 // ---------- step-up prompt ----------
 
-// ProofModal collects the re-proved factor for one action. The value lives in this component's state
-// and dies with it: nothing is cached for "next time", because a cached proof is exactly the stolen
-// session the step-up exists to stop.
+// resumeKey remembers which action was interrupted by a trip to the identity provider, so the page
+// can finish it on the way back instead of asking the user to find the button again. sessionStorage,
+// not a URL: it is scoped to this tab, dies with it, and the round-trip stays free of anything that
+// looks like a token to a proxy log.
+const resumeKey = 'rp_stepup_resume'
+
+/** Read and clear the pending action, if this load is the far side of a step-up round-trip. */
+export function takeStepUpResume(): string | null {
+  try {
+    const v = sessionStorage.getItem(resumeKey)
+    if (v) sessionStorage.removeItem(resumeKey)
+    return v
+  } catch {
+    return null // private mode / storage disabled: the action is simply not resumed
+  }
+}
+
+// ProofModal collects the re-proved factor for one action. A typed value lives in this component's
+// state and dies with it: nothing is cached for "next time", because a cached proof is exactly the
+// stolen session the step-up exists to stop.
+//
+// What it offers is decided by the SERVER (/api/account/stepup/policy), not by what the account
+// happens to have. Under force-SSO the portal has stopped accepting a password at the front door,
+// so the password box is not drawn here either — and the dialog says why rather than silently
+// bouncing the user to a provider they did not ask for.
 function ProofModal({
   open,
   totpEnabled,
+  resume,
   onCancel,
   onSubmit,
 }: {
   open: boolean
   totpEnabled: boolean
+  resume?: string
   onCancel: () => void
   onSubmit: (proof: string) => void | Promise<void>
 }) {
   const { t } = useTranslation()
   const [proof, setProof] = useState('')
+  const [policy, setPolicy] = useState<StepUpPolicy | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    api
+      .get<StepUpPolicy>('/api/account/stepup/policy')
+      // A policy we cannot read must not hide the password box: failing closed here would strand
+      // an account whose only way through is the one we just refused to draw.
+      .then(setPolicy)
+      .catch(() => setPolicy({ password: true, sso: false }))
+  }, [open])
 
   const close = () => {
     setProof('')
     onCancel()
   }
+
+  // A full page navigation, deliberately: the round-trip is the browser's, not fetch's.
+  const goToProvider = (kind: string, slug: string) => {
+    try {
+      if (resume) sessionStorage.setItem(resumeKey, resume)
+    } catch {
+      /* storage disabled — the trip still works, it just will not resume itself */
+    }
+    const next = encodeURIComponent(window.location.pathname)
+    window.location.href = `/api/auth/${kind}/${slug}/start?purpose=step_up&next=${next}`
+  }
+
+  const password = policy?.password ?? true
 
   return (
     <Modal
@@ -426,25 +489,49 @@ function ProofModal({
         setProof('')
         await onSubmit(v)
       }}
+      // With no password channel there is nothing for the OK button to submit: the only way on is
+      // the provider button below, and an enabled-looking confirm would be a dead end.
+      footer={password ? undefined : null}
       destroyOnHidden
     >
       <Typography.Paragraph type="secondary">
-        {totpEnabled ? t('account.confirmWithCode') : t('account.confirmWithPassword')}
+        {!password
+          ? t('account.confirmSSOOnly')
+          : totpEnabled
+            ? t('account.confirmWithCode')
+            : t('account.confirmWithPassword')}
       </Typography.Paragraph>
-      {totpEnabled ? (
-        <Input
-          value={proof}
-          onChange={(e) => setProof(e.target.value)}
-          placeholder={t('account.totpCodePlaceholder')}
-          autoComplete="one-time-code"
-          inputMode="numeric"
-        />
-      ) : (
-        <Input.Password
-          value={proof}
-          onChange={(e) => setProof(e.target.value)}
-          autoComplete="current-password"
-        />
+      {password &&
+        (totpEnabled ? (
+          <Input
+            value={proof}
+            onChange={(e) => setProof(e.target.value)}
+            placeholder={t('account.totpCodePlaceholder')}
+            autoComplete="one-time-code"
+            inputMode="numeric"
+          />
+        ) : (
+          <Input.Password
+            value={proof}
+            onChange={(e) => setProof(e.target.value)}
+            autoComplete="current-password"
+          />
+        ))}
+      {policy?.sso && (policy.providers ?? []).length > 0 && (
+        <div style={{ marginTop: password ? 14 : 0 }}>
+          {password && (
+            <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+              {t('account.confirmOrSSO')}
+            </Typography.Text>
+          )}
+          <Space wrap>
+            {(policy.providers ?? []).map((p) => (
+              <Button key={p.slug} icon={<SafetyCertificateOutlined />} onClick={() => goToProvider(p.kind, p.slug)}>
+                {t('account.confirmViaSSO', { name: p.name })}
+              </Button>
+            ))}
+          </Space>
+        </div>
       )}
     </Modal>
   )

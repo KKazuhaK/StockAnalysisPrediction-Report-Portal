@@ -1,8 +1,11 @@
 {
   "account.changePassword": "Change password",
   "account.confirmOk": "Confirm",
+  "account.confirmOrSSO": "Or:",
   "account.confirmPassword": "Confirm new password",
+  "account.confirmSSOOnly": "This action needs your identity re-confirmed. This portal is set to single sign-on only, so confirm with your identity provider.",
   "account.confirmTitle": "Confirm it is you",
+  "account.confirmViaSSO": "Confirm with {{name}}",
   "account.confirmWithCode": "Enter a code from your authenticator, or a recovery code, to continue.",
   "account.confirmWithPassword": "Enter your password to continue. We ask again because this changes how you sign in.",
   "account.currentPassword": "Current password",
