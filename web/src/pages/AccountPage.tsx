@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { formatReportDateTime } from '../lib/datetime'
+import SSOIcon from '../components/SSOIcon'
 import type { StepUpPolicy } from '../api/types'
 import { createCredential, passkeySupported } from '../lib/webauthn'
 
@@ -524,10 +525,15 @@ function ProofModal({
               {t('account.confirmOrSSO')}
             </Typography.Text>
           )}
+          {/* The admin-configured icon, the same one the login page draws. A hard-coded glyph here
+              would make one provider look like two different things depending on the screen. */}
           <Space wrap>
             {(policy.providers ?? []).map((p) => (
-              <Button key={p.slug} icon={<SafetyCertificateOutlined />} onClick={() => goToProvider(p.kind, p.slug)}>
-                {t('account.confirmViaSSO', { name: p.name })}
+              <Button key={p.slug} onClick={() => goToProvider(p.kind, p.slug)}>
+                <Space size={8}>
+                  <SSOIcon icon={p.icon} />
+                  {t('account.confirmViaSSO', { name: p.name })}
+                </Space>
               </Button>
             ))}
           </Space>

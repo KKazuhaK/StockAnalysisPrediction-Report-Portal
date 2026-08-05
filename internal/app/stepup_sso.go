@@ -47,6 +47,9 @@ type ssoChoice struct {
 	Slug string `json:"slug"`
 	Kind string `json:"kind"`
 	Name string `json:"name"`
+	// The admin-configured icon, so this button looks like the same provider the login page
+	// offers. A second, hard-coded glyph would read as a different thing entirely.
+	Icon string `json:"icon,omitempty"`
 }
 
 // stepUpPolicyFor decides the channels.
@@ -66,7 +69,7 @@ func (s *Server) stepUpPolicyFor(user string) stepUpPolicy {
 	pol := stepUpPolicy{Password: u.TOTPEnabled || (!u.IsFederated() && u.PasswordHash != "")}
 
 	for _, p := range s.st.EnabledSSOProviders() {
-		pol.Providers = append(pol.Providers, ssoChoice{Slug: p.Slug, Kind: p.Kind, Name: p.Name})
+		pol.Providers = append(pol.Providers, ssoChoice{Slug: p.Slug, Kind: p.Kind, Name: p.Name, Icon: p.Icon})
 	}
 	pol.SSO = len(pol.Providers) > 0
 

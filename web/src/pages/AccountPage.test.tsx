@@ -57,7 +57,7 @@ describe('AccountPage', () => {
   it('offers the provider instead of a password box when the login mode says so', async () => {
     apiMock.get.mockImplementation((url: string) =>
       url === '/api/account/stepup/policy'
-        ? Promise.resolve({ password: false, sso: true, reason: 'sso_required', providers: [{ slug: 'corp', kind: 'oidc', name: 'Corp SSO' }] })
+        ? Promise.resolve({ password: false, sso: true, reason: 'sso_required', providers: [{ slug: 'corp', kind: 'oidc', name: 'Corp SSO', icon: '/site-assets/corp.png' }] })
         : Promise.resolve({ passkeys: [] }),
     )
     renderPage()
@@ -65,6 +65,9 @@ describe('AccountPage', () => {
 
     await waitFor(() => expect(screen.getByText('account.confirmSSOOnly')).toBeTruthy())
     expect(screen.getByText('account.confirmViaSSO:{"name":"Corp SSO"}')).toBeTruthy()
+    // The provider's own configured icon, not a second hard-coded glyph: one provider must not
+    // look like two different things depending on which screen you meet it on.
+    expect(document.querySelector('.ant-modal img[src="/site-assets/corp.png"]')).toBeTruthy()
     expect(screen.queryByText('account.confirmWithPassword')).toBeNull()
     // Nothing to submit through, so the confirm button must not be sitting there looking usable.
     expect(modalInput('input[type=password]')).toBeNull()
