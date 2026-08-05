@@ -44,7 +44,7 @@ export interface BatchPlugin {
 export interface StepUpPolicy {
   password: boolean
   sso: boolean
-  providers?: { slug: string; kind: string; name: string }[]
+  providers?: { slug: string; kind: string; name: string; icon?: string }[]
   reason?: string // "sso_required" when the password channel is closed by the login mode
 }
 
