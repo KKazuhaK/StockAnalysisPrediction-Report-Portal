@@ -27,9 +27,20 @@ type AuthRequest struct {
 	ReqID      string // SAML AuthnRequest ID, echoed back as InResponseTo
 	Nonce      string // OIDC nonce
 	Verifier   string // PKCE code verifier
-	Username   string // 2FA / WebAuthn: who the pending step belongs to
+	Username   string // 2FA / WebAuthn / step-up: who the pending step belongs to
 	Target     string // where to land afterwards; a relative PATH, never a URL
+	// Purpose separates a sign-in round-trip from a re-prove-yourself one. Empty means sign-in, so
+	// every row written before this existed keeps its old meaning. It is NOT folded into Kind:
+	// both callbacks dispatch on Kind to know which protocol answered, and a step-up is the same
+	// protocol doing the same round-trip for a different reason.
+	Purpose string
 }
+
+// What a pending SSO round-trip is for.
+const (
+	authPurposeStepUp = "step_up"    // asking the IdP to re-authenticate someone already signed in
+	authPurposeProved = "step_up_ok" // it did, and this row is now the single-use proof
+)
 
 // newAuthToken mints the opaque token. 16 bytes base64url is 22 characters, which fits inside
 // SAML's 80-byte RelayState limit with room to spare.
@@ -43,9 +54,9 @@ func newAuthToken() (string, error) {
 
 // CreateAuthRequest stores a pending ceremony with an absolute expiry.
 func (s *Store) CreateAuthRequest(r AuthRequest, expires time.Time) error {
-	_, err := s.exec(`INSERT INTO auth_requests(token,provider_id,kind,req_id,nonce,verifier,username,target,created_at,expires_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		r.Token, r.ProviderID, r.Kind, r.ReqID, r.Nonce, r.Verifier, r.Username, r.Target,
+	_, err := s.exec(`INSERT INTO auth_requests(token,provider_id,kind,req_id,nonce,verifier,username,target,purpose,created_at,expires_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		r.Token, r.ProviderID, r.Kind, r.ReqID, r.Nonce, r.Verifier, r.Username, r.Target, r.Purpose,
 		time.Now().Unix(), expires.Unix())
 	return err
 }
@@ -62,10 +73,10 @@ func (s *Store) ConsumeAuthRequest(token string, now time.Time) (AuthRequest, bo
 	// this caller is in fact the winner. A read that loses the race is discarded.
 	var r AuthRequest
 	var provID sql.NullInt64
-	var kind, reqID, nonce, verifier, username, target sql.NullString
-	err := s.queryRow(`SELECT provider_id,kind,req_id,nonce,verifier,username,target
+	var kind, reqID, nonce, verifier, username, target, purpose sql.NullString
+	err := s.queryRow(`SELECT provider_id,kind,req_id,nonce,verifier,username,target,purpose
 		FROM auth_requests WHERE token=? AND expires_at>?`, token, now.Unix()).
-		Scan(&provID, &kind, &reqID, &nonce, &verifier, &username, &target)
+		Scan(&provID, &kind, &reqID, &nonce, &verifier, &username, &target, &purpose)
 	if err != nil {
 		return AuthRequest{}, false
 	}
@@ -78,7 +89,7 @@ func (s *Store) ConsumeAuthRequest(token string, now time.Time) (AuthRequest, bo
 	}
 	r.Token, r.ProviderID, r.Kind = token, provID.Int64, kind.String
 	r.ReqID, r.Nonce, r.Verifier = reqID.String, nonce.String, verifier.String
-	r.Username, r.Target = username.String, target.String
+	r.Username, r.Target, r.Purpose = username.String, target.String, purpose.String
 	return r, true
 }
 

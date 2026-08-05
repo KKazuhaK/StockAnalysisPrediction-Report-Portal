@@ -353,6 +353,12 @@ const stepUpHeader = "X-Step-Up-Proof"
 // a stolen cookie buys unlimited guesses at the password itself (reusable elsewhere) or at the
 // ~3-in-10^6 live TOTP codes, which is hours of work, not an infeasible attack.
 func (s *Server) stepUpOK(r *http.Request, user string) bool {
+	// A completed round-trip to the identity provider counts as the re-proved factor. Checked
+	// first and separately: it carries no guessable secret, so it is outside the lockout below —
+	// there is nothing here for an attacker to guess AT, only a cookie they either hold or do not.
+	if s.stepUpCookieProof(r, user) {
+		return true
+	}
 	proof := strings.TrimSpace(r.Header.Get(stepUpHeader))
 	if proof == "" {
 		return false
@@ -366,7 +372,7 @@ func (s *Server) stepUpOK(r *http.Request, user string) bool {
 	if s.loginThr != nil && s.loginThr.blocked(key, now) {
 		return false
 	}
-	ok := s.stepUpProofValid(u, proof)
+	ok := s.stepUpPolicyFor(user).Password && s.stepUpProofValid(u, proof)
 	if s.loginThr != nil {
 		if ok {
 			s.loginThr.reset(key)
@@ -389,6 +395,11 @@ func (s *Server) stepUpProofValid(u *User, proof string) bool {
 	}
 	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(proof)) == nil
 }
+
+// The password branch above is additionally gated by the login mode: under force-SSO a password is
+// not a valid way into this portal, so it must not be a valid way to re-prove identity inside it
+// either — that would make the step-up weaker than the front door it guards. The admin exemption
+// rides along from stepUpPolicyFor, matching the one sso_only already carries.
 
 // requireStepUp is the handler-side guard. Every credential change goes through it, so the list of
 // protected actions is visible in one place instead of being a property of whoever remembered.

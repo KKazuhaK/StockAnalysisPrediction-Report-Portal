@@ -354,7 +354,7 @@ func (s *Store) baseSchemaStmts() []string {
 		`CREATE TABLE IF NOT EXISTS auth_requests(
 			token TEXT PRIMARY KEY, provider_id BIGINT, kind TEXT,
 			req_id TEXT DEFAULT '', nonce TEXT DEFAULT '', verifier TEXT DEFAULT '',
-			username TEXT DEFAULT '', target TEXT DEFAULT '',
+			username TEXT DEFAULT '', target TEXT DEFAULT '', purpose TEXT DEFAULT '',
 			created_at BIGINT, expires_at BIGINT)`,
 		// SAML assertion replay cache (a Web SSO profile MUST). Keyed on the HASH of entity id +
 		// assertion id so one IdP cannot pre-poison another's ID space; a DB table rather than an

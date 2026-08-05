@@ -90,6 +90,10 @@ const (
 	AuditMFAChange      = "auth.mfa_change"
 	AuditIdentityLink   = "auth.identity_link"
 	AuditIdentityUnlink = "auth.identity_unlink"
+	// A completed re-authentication at the identity provider. Its own action rather than a
+	// second "auth.login": no session was issued, and reading it as a sign-in would put a login
+	// in the log for a browser that was already signed in.
+	AuditStepUp = "auth.step_up"
 
 	// Accounts and the OU tree, acted on by an administrator.
 	AuditUserCreate  = "user.create"
@@ -315,7 +319,7 @@ var auditVocabulary = []string{
 	AuditReportRead, AuditReportIngest, AuditReportDelete,
 	AuditLogin, AuditLoginFailed, AuditLockout, AuditLogout,
 	AuditPasswordChange, AuditPasswordReset, AuditMFAChange,
-	AuditIdentityLink, AuditIdentityUnlink,
+	AuditIdentityLink, AuditIdentityUnlink, AuditStepUp,
 	AuditUserCreate, AuditUserChange, AuditUserDelete,
 	AuditGroupCreate, AuditGroupChange, AuditGroupDelete,
 	AuditGrantChange, AuditPolicyChange,

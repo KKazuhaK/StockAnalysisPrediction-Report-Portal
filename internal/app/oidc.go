@@ -175,25 +175,35 @@ func (s *Server) oidcStart(w http.ResponseWriter, r *http.Request) {
 		s.ssoFail(w, r, "internal")
 		return
 	}
+	purpose, forUser, allowed := s.stepUpIntent(w, r)
+	if !allowed {
+		return
+	}
 	verifier := oauth2.GenerateVerifier()
 	// The pending row is the single-use record; the cookie below binds it to this browser. Both are
 	// required: the row proves the callback answers a request we issued, the cookie proves it came
 	// back to the browser that issued it (login CSRF).
 	if err := s.st.CreateAuthRequest(AuthRequest{
 		Token: token, ProviderID: p.ID, Kind: "oidc", Nonce: nonce, Verifier: verifier,
-		Target: safeReturnPath(r.URL.Query().Get("next")),
+		Target: safeReturnPath(r.URL.Query().Get("next")), Purpose: purpose, Username: forUser,
 	}, time.Now().Add(ssoFlowTTL)); err != nil {
 		s.ssoFail(w, r, "internal")
 		return
 	}
-	http.SetCookie(w, s.ssoFlowCookie(slug, token, int(ssoFlowTTL.Seconds())))
-	http.Redirect(w, r, rt.conf.AuthCodeURL(token,
+	opts := []oauth2.AuthCodeOption{
 		oidc.Nonce(nonce),
 		oauth2.S256ChallengeOption(verifier),
 		// Explicit: form_post would make the callback a cross-site POST, which a Lax cookie is
 		// not sent on.
 		oauth2.SetAuthURLParam("response_mode", "query"),
-	), http.StatusFound)
+	}
+	if purpose == authPurposeStepUp {
+		// The whole point of a step-up round-trip. Without it the OP answers from its own session
+		// and returns instantly, which re-proves nothing against an attacker holding this browser.
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"))
+	}
+	http.SetCookie(w, s.ssoFlowCookie(slug, token, int(ssoFlowTTL.Seconds())))
+	http.Redirect(w, r, rt.conf.AuthCodeURL(token, opts...), http.StatusFound)
 }
 
 // GET /api/auth/oidc/{slug}/callback — finish a login.
@@ -280,9 +290,12 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		s.ssoFail(w, r, "bad_token")
 		return
 	}
-	s.completeSSOLogin(w, r, p, ssoIdentity{
-		Provider: "oidc", Issuer: idt.Issuer, Subject: idt.Subject, Claims: claims,
-	}, req.Target)
+	id := ssoIdentity{Provider: "oidc", Issuer: idt.Issuer, Subject: idt.Subject, Claims: claims}
+	if req.Purpose == authPurposeStepUp {
+		s.completeSSOStepUp(w, r, p, id, req)
+		return
+	}
+	s.completeSSOLogin(w, r, p, id, req.Target)
 }
 
 // verifyOIDCExtras performs the validations go-oidc leaves to the caller.
