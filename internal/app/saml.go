@@ -221,6 +221,10 @@ func (s *Server) samlStart(w http.ResponseWriter, r *http.Request) {
 		s.ssoFail(w, r, "internal")
 		return
 	}
+	purpose, forUser, allowed := s.stepUpIntent(w, r)
+	if !allowed {
+		return
+	}
 	authReq, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(saml.HTTPRedirectBinding),
 		saml.HTTPRedirectBinding, saml.HTTPPostBinding)
 	if err != nil {
@@ -228,10 +232,18 @@ func (s *Server) samlStart(w http.ResponseWriter, r *http.Request) {
 		s.ssoFail(w, r, "provider_unavailable")
 		return
 	}
+	if purpose == authPurposeStepUp {
+		// The whole point of a step-up round-trip. Without ForceAuthn the IdP answers from its own
+		// session and returns instantly, which re-proves nothing against an attacker holding this
+		// browser. An IdP that refuses ForceAuthn fails the round-trip, which is the correct
+		// outcome: better a step-up that cannot complete than one that certifies nothing.
+		force := true
+		authReq.ForceAuthn = &force
+	}
 	// The request ID is stored so the ACS can require the response to answer THIS request.
 	if err := s.st.CreateAuthRequest(AuthRequest{
 		Token: token, ProviderID: p.ID, Kind: "saml", ReqID: authReq.ID,
-		Target: safeReturnPath(r.URL.Query().Get("next")),
+		Target: safeReturnPath(r.URL.Query().Get("next")), Purpose: purpose, Username: forUser,
 	}, time.Now().Add(ssoFlowTTL)); err != nil {
 		s.ssoFail(w, r, "internal")
 		return
@@ -330,9 +342,12 @@ func (s *Server) samlACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims["nameid"] = subject
-	s.completeSSOLogin(w, r, p, ssoIdentity{
-		Provider: "saml", Issuer: sp.IDPMetadata.EntityID, Subject: subject, Claims: claims,
-	}, req.Target)
+	id := ssoIdentity{Provider: "saml", Issuer: sp.IDPMetadata.EntityID, Subject: subject, Claims: claims}
+	if req.Purpose == authPurposeStepUp {
+		s.completeSSOStepUp(w, r, p, id, req)
+		return
+	}
+	s.completeSSOLogin(w, r, p, id, req.Target)
 	_ = format
 }
 

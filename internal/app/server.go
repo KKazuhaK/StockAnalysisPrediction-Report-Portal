@@ -206,6 +206,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/me/passkeys/register/begin", s.requireUserJSON(s.apiPasskeyRegisterBegin))
 	mux.HandleFunc("POST /api/me/passkeys/register/finish", s.requireUserJSON(s.apiPasskeyRegisterFinish))
 	mux.HandleFunc("DELETE /api/me/passkeys/{id}", s.requireUserJSON(s.apiPasskeyDelete))
+	mux.HandleFunc("GET /api/account/stepup/policy", s.requireUserJSON(s.apiStepUpPolicy))
 	mux.HandleFunc("GET /api/auth/oidc/{slug}/start", s.oidcStart)
 	mux.HandleFunc("GET /api/auth/oidc/{slug}/callback", s.oidcCallback)
 	mux.HandleFunc("GET /api/auth/saml/{slug}/start", s.samlStart)
