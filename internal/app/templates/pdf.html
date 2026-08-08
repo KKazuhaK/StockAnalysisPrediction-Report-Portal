@@ -1,7 +1,10 @@
 <!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <style>
-body { font-family: "Noto Sans CJK SC","WenQuanYi Zen Hei","Microsoft YaHei",sans-serif; font-size: 12px; line-height: 1.7; color:#1a1a1a; }
+/* Rendered by wkhtmltopdf inside the release container, so only fonts installed there resolve:
+   Noto Sans CJK SC is the one shipped (see Dockerfile.release). Keep in sync with pdfFontFamily
+   in mermaid_pdf.go, which normalizes chart text to the same face. */
+body { font-family: "Noto Sans CJK SC",sans-serif; font-size: 12px; line-height: 1.7; color:#1a1a1a; }
 h1 { font-size: 21px; color:#0c447c; border-bottom:2px solid #185fa5; padding-bottom:6px; }
 h2 { font-size: 16px; color:#185fa5; border-bottom:1px solid #d3d1c7; padding-bottom:4px; margin-top:18px; }
 h3 { font-size: 14px; }
