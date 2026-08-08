@@ -153,6 +153,10 @@ var allowedSVGElements = map[string]bool{
 	"polyline": true, "polygon": true, "text": true, "tspan": true, "title": true, "desc": true,
 }
 
+// pdfFontFamily is the CJK face actually installed in the render container (see Dockerfile.release).
+// Keep in sync with the body font stack in templates/pdf.html.
+const pdfFontFamily = "Noto Sans CJK SC, sans-serif"
+
 var allowedSVGAttrs = map[string]bool{
 	"id": true, "viewBox": true, "width": true, "height": true, "preserveAspectRatio": true,
 	"x": true, "y": true, "x1": true, "y1": true, "x2": true, "y2": true,
@@ -238,6 +242,13 @@ func sanitizeMermaidSVG(raw string) (string, error) {
 						return "", errors.New("duplicate SVG id")
 					}
 					ids[attr.Value] = true
+				}
+				if name == "font-family" {
+					// The browser inlines the font-family it computed locally (on Windows that is
+					// "Microsoft YaHei"), a name the render container cannot resolve — chart labels
+					// would then fall back to a different face than the surrounding report body.
+					// Pin every chart to the font the container actually has.
+					attr.Value = pdfFontFamily
 				}
 				clean.Attr = append(clean.Attr, xml.Attr{Name: xml.Name{Local: name}, Value: attr.Value})
 			}

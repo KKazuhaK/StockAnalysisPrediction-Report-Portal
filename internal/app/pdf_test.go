@@ -105,6 +105,26 @@ func TestSanitizeMermaidSVGRejectsFetchAndExecutableContent(t *testing.T) {
 	}
 }
 
+// The browser inlines its locally computed font-family into the chart SVG, so a Windows client
+// sends "Microsoft YaHei" — a font the render container does not have. Every chart must come out
+// pinned to the same face the report body uses, or chart labels render in a fallback font.
+func TestSanitizeMermaidSVGPinsChartFontToTheContainerFont(t *testing.T) {
+	in := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">` +
+		`<text font-family="Microsoft YaHei, sans-serif" font-size="12">图表</text>` +
+		`<text font-family="&#34;Helvetica Neue&#34;, Arial">label</text></svg>`
+
+	out, err := sanitizeMermaidSVG(in)
+	if err != nil {
+		t.Fatalf("sanitizeMermaidSVG: %v", err)
+	}
+	if strings.Contains(out, "Microsoft YaHei") || strings.Contains(out, "Helvetica Neue") {
+		t.Errorf("sanitized SVG kept a client-side font: %s", out)
+	}
+	if got := strings.Count(out, pdfFontFamily); got != 2 {
+		t.Errorf("sanitized SVG pinned %d of 2 font-family attributes to %q: %s", got, pdfFontFamily, out)
+	}
+}
+
 func TestMermaidCacheAPIRejectsTrailingJSON(t *testing.T) {
 	body := `{"source":"flowchart LR\\nA --> B","svg":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"><path d=\"M0 0L10 10\"/></svg>","theme":"light","version":"11.16.0"}{}`
 	req := httptest.NewRequest(http.MethodPost, "/api/mermaid-cache", strings.NewReader(body))
