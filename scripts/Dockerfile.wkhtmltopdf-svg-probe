@@ -1,7 +1,13 @@
 FROM debian:bookworm-slim
 
+# Mirrors the CJK font setup in Dockerfile.release so the probe exercises the font the
+# release image actually renders with.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates fonts-wqy-zenhei poppler-utils wget \
+      ca-certificates fontconfig poppler-utils wget \
+ && mkdir -p /usr/share/fonts/opentype/noto \
+ && wget -qO /usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf \
+      "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+ && fc-cache -f \
  && arch="$(dpkg --print-architecture)" \
  && wget -qO /tmp/wkhtmltox.deb \
       "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_${arch}.deb" \

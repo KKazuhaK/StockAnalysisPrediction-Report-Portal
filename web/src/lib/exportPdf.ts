@@ -28,7 +28,10 @@ export function buildPrintHtml({ title, date, source, html }: ReportForPrint): s
   const meta = [date, source].filter(Boolean).join(' · ')
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
-  body { font-family: "Noto Sans CJK SC","Microsoft YaHei",sans-serif; font-size: 13px; line-height: 1.75; color:#1a1a1a; max-width: 820px; margin: 24px auto; padding: 0 16px; }
+  /* This fallback prints on the user's own machine, so unlike the server template it may name
+     fonts the render container does not have: Noto first to match the server PDF where it is
+     installed, then the platform defaults. */
+  body { font-family: "Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei","PingFang SC",sans-serif; font-size: 13px; line-height: 1.75; color:#1a1a1a; max-width: 820px; margin: 24px auto; padding: 0 16px; }
   h1 { font-size: 22px; color:#0c447c; border-bottom:2px solid #185fa5; padding-bottom:6px; }
   h2 { font-size: 17px; color:#185fa5; border-bottom:1px solid #d3d1c7; padding-bottom:4px; margin-top:18px; }
   h3 { font-size: 15px; }

@@ -18,7 +18,7 @@ cat >"$probe_dir/svg.html" <<'EOF'
 <svg xmlns="http://www.w3.org/2000/svg" width="420" height="220" viewBox="0 0 420 220">
   <rect x="20" y="20" width="380" height="180" fill="#f5f7fa" stroke="#185fa5" stroke-width="4"/>
   <path d="M40 160 L120 115 L200 140 L280 65 L380 90" fill="none" stroke="#d4380d" stroke-width="6"/>
-  <text x="40" y="55" font-family="WenQuanYi Zen Hei" font-size="24" fill="#1a1a1a">SVG_PROBE 图表</text>
+  <text x="40" y="55" font-family="Noto Sans CJK SC" font-size="24" fill="#1a1a1a">SVG_PROBE 图表</text>
 </svg>
 EOF
 
