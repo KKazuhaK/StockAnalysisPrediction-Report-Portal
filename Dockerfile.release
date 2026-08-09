@@ -5,7 +5,7 @@
 #
 # FONTS. debian:bookworm-slim ships none, so every glyph an exported report can draw is one we put
 # here on purpose. An uncovered codepoint does not error — wkhtmltopdf silently draws nothing — so
-# the set is pinned deliberately and then verified by a gate at the bottom of this RUN.
+# the set is pinned deliberately and then verified by the coverage gate a few lines below.
 #   Noto Sans CJK SC   the body face: full CJK range, OFL, pinned upstream tag + sha256. A single
 #                      weight (~16 MB), not the fonts-noto-cjk package (~215 MB, every weight and
 #                      script — overkill here; ADR 0020 and 0021 both cite that call).
@@ -28,13 +28,13 @@ ARG NOTO_EMOJI_SHA256=de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates tzdata fontconfig fonts-dejavu-core gosu wget \
  && mkdir -p /usr/share/fonts/opentype/noto /usr/share/fonts/truetype/noto \
- && wget -nvO /usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf \
+ && wget -nv -O /usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf \
       "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
  && echo "${NOTO_CJK_SHA256}  /usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf" | sha256sum -c - \
- && wget -nvO /usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf \
+ && wget -nv -O /usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf \
       "https://raw.githubusercontent.com/google/fonts/2d85e20401920891efb7cd6272d6339685df2820/ofl/notoemoji/NotoEmoji%5Bwght%5D.ttf" \
  && echo "${NOTO_EMOJI_SHA256}  /usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf" | sha256sum -c - \
- && wget -nvO /tmp/wkhtmltox.deb \
+ && wget -nv -O /tmp/wkhtmltox.deb \
       "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_${TARGETARCH}.deb" \
  && apt-get install -y --no-install-recommends /tmp/wkhtmltox.deb \
  && fc-cache -f \
