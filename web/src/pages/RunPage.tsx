@@ -10,6 +10,7 @@ import ReaderControls from '../components/ReaderControls'
 import VersionSwitcher from '../components/VersionSwitcher'
 import { ExportPdfButton } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
+import { NO_ITEM_TOOLTIP } from '../lib/segmented'
 
 export default function RunPage() {
   const { t } = useTranslation()
@@ -123,7 +124,7 @@ export default function RunPage() {
             <Segmented
               value={data.selId}
               onChange={(v) => setSp({ r: String(v) })}
-              options={typeTabs.map((s) => ({ label: s.label, value: s.id }))}
+              options={typeTabs.map((s) => ({ label: s.label, value: s.id, title: NO_ITEM_TOOLTIP }))}
             />
           </div>
         )}
