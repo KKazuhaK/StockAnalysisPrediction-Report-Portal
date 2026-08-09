@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { App } from 'antd'
 import { MemoryRouter } from 'react-router'
 import QueueTable from './QueueTable'
+import { INPUT_VALUE_MAX } from '../lib/batchUi'
 import type { BatchJob } from '../api/types'
 
 // Mutable so a test can inject jobs into the mocked API. vi.hoisted keeps it reachable from
@@ -62,11 +63,12 @@ describe('QueueTable', () => {
   })
 
   // A chat/agent run carries a full `query=<prompt>` in its inputs; the workflow column must
-  // clamp it (multi-line ellipsis) so one long run can't stretch the row to an unbounded
-  // height. Regression guard for the "infinitely long queue row" bug.
+  // clamp it so one long run can't stretch the row to an unbounded height. The value is now
+  // cut in the markup itself, not only by CSS — that is also what keeps the hover tooltip
+  // from growing past the viewport. Regression guard for the "infinitely long queue row" bug.
   it('clamps a long chat query in the workflow column instead of rendering it full-height', async () => {
     const longQuery = 'Q'.repeat(1200)
-    store.jobs = [job({ inputs: JSON.stringify({ query: longQuery }) })]
+    store.jobs = [job({ inputs: JSON.stringify({ query: longQuery, symbol: '301539' }) })]
     render(
       <App>
         <MemoryRouter>
@@ -74,7 +76,9 @@ describe('QueueTable', () => {
         </MemoryRouter>
       </App>,
     )
-    const preview = await screen.findByText(`query=${longQuery}`)
+    // …and the clamp is per value, so the entry after the runaway prompt is still visible.
+    // (the query normalizes the entry separator's double space down to one)
+    const preview = await screen.findByText(`query=${'Q'.repeat(INPUT_VALUE_MAX)}… symbol=301539`)
     expect(preview.className).toMatch(/ant-typography-ellipsis/)
   })
 })

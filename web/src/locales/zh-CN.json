@@ -277,6 +277,7 @@
   "batch.dify.targetsHint": "还没有目标。填入 Dify 工作流的 API Key，其输入参数会自动探测。",
   "batch.dify.workflowTag": "工作流",
   "batch.downloadTemplate": "下载模板",
+  "batch.inputsMore": "…还有 {{n}} 项",
   "batch.jobDetail": "任务详情",
   "batch.jobTitle": "任务 #{{id}}",
   "batch.maxRetries": "失败重试",

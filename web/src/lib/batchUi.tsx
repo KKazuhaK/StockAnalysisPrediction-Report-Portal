@@ -1,6 +1,7 @@
 import { Tag, Tooltip, Typography } from 'antd'
 import type { CSSProperties } from 'react'
 import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 
 import { ALL_SURFACES } from '../api/types'
 import type { BatchTarget, Surface } from '../api/types'
@@ -59,25 +60,102 @@ export function priorityTag(t: TFunction, p?: string) {
   return <Tag color={baseTagColor(n)}>{n}</Tag>
 }
 
-// fmtInputs renders a run's first-row inputs JSON as "key=value  key=value",
-// dropping empty values (e.g. an unfilled optional field).
-export function fmtInputs(s?: string) {
-  if (!s) return ''
+// inputPairs reads a run's inputs JSON as [key, value] pairs, dropping empty values (e.g. an
+// unfilled optional field). A body that isn't a JSON object is kept as one unnamed value.
+function inputPairs(s?: string): Array<[string, string]> {
+  if (!s) return []
+  let parsed: unknown
   try {
-    const o = JSON.parse(s) as Record<string, string>
-    return Object.entries(o)
-      .filter(([, v]) => v !== '' && v != null)
-      .map(([k, v]) => `${k}=${v}`)
-      .join('  ')
+    parsed = JSON.parse(s)
   } catch {
-    return s
+    return [['', s]]
   }
+  if (parsed == null || typeof parsed !== 'object') return [['', s]]
+  return Object.entries(parsed as Record<string, unknown>)
+    .filter(([, v]) => v !== '' && v != null)
+    .map(([k, v]) => [k, String(v)] as [string, string])
 }
 
-// InputsPreview renders a run's inputs (see fmtInputs) as a compact, clamped label. A
-// chat/agent run carries a full `query=<prompt>` in its inputs, which — rendered verbatim —
-// would stretch a queue row to an unbounded height; clamp it to `rows` lines with the full
-// text on hover. Returns null when there are no inputs so callers can drop the line entirely.
+const joinPair = (k: string, v: string) => (k ? `${k}=${v}` : v)
+
+// fmtInputs renders a run's first-row inputs JSON as "key=value  key=value",
+// dropping empty values (e.g. an unfilled optional field). Lossless — it backs the queue
+// search and the run-detail modal, which must show exactly what was submitted.
+export function fmtInputs(s?: string) {
+  if (!s) return ''
+  return inputPairs(s)
+    .map(([k, v]) => joinPair(k, v))
+    .join('  ')
+}
+
+// ---------------------------------------------------------------------------
+// Inputs preview budget
+// ---------------------------------------------------------------------------
+// A run's inputs are arbitrary text: a chat/agent run carries its whole prompt in `query`,
+// routinely thousands of characters. Poured into a hover tooltip verbatim, the overlay grows
+// past the viewport — the tail is unreadable, and once the overlay reaches under the cursor
+// the hover toggles itself off and on (the tooltip flickers). So the preview is clamped on
+// two levels:
+//
+//   level 1 (per entry)  — every value is clamped on its own, so one runaway `query` cannot
+//                          push `symbol=301539` out of the preview;
+//   level 2 (whole list) — the kept entries are capped by count and by total length, with the
+//                          remainder reported as a trailing "+N".
+//
+// totalMax is a budget, not a hard limit: the entry that crosses it is kept whole (already
+// clamped by level 1) rather than cut a second time, and the first entry is always kept so a
+// preview is never empty. Worst case is therefore ~370 characters — about 15 tooltip lines,
+// which fits beside the cursor in any viewport. The untruncated inputs stay one click away in
+// the run's detail modal.
+export const INPUT_VALUE_MAX = 80
+export const INPUT_ENTRY_MAX = 8
+export const INPUT_TOTAL_MAX = 280
+
+const ELLIPSIS = '…'
+
+// Roomier than antd's 250px default so a clamped preview needs fewer lines, still narrow
+// enough that the overlay sits beside the cursor rather than under it. maxHeight is the
+// backstop the old preview lacked: whatever the content, the overlay can never grow taller
+// than the viewport (and start toggling its own hover) again.
+export const TOOLTIP_STYLES = {
+  root: { maxWidth: 360 },
+  container: { maxHeight: 320, overflowY: 'auto' as const },
+}
+
+// clampText collapses whitespace (a multi-line prompt must not stretch the preview vertically)
+// and cuts to `max` characters, marking the cut with an ellipsis.
+export function clampText(v: string, max: number): string {
+  const flat = v.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max)}${ELLIPSIS}` : flat
+}
+
+export type InputsSummary = {
+  entries: string[] // clamped "key=value" entries, in submission order
+  hidden: number // entries dropped by the whole-list cap
+}
+
+export function summarizeInputs(
+  inputs?: string,
+  opts: { valueMax?: number; entryMax?: number; totalMax?: number } = {},
+): InputsSummary {
+  const valueMax = opts.valueMax ?? INPUT_VALUE_MAX
+  const entryMax = opts.entryMax ?? INPUT_ENTRY_MAX
+  const totalMax = opts.totalMax ?? INPUT_TOTAL_MAX
+  const pairs = inputPairs(inputs)
+  const entries: string[] = []
+  let used = 0
+  for (const [k, v] of pairs) {
+    if (entries.length > 0 && (entries.length >= entryMax || used >= totalMax)) break
+    const entry = joinPair(k, clampText(v, valueMax))
+    entries.push(entry)
+    used += entry.length
+  }
+  return { entries, hidden: pairs.length - entries.length }
+}
+
+// InputsPreview renders a run's inputs as a compact, clamped label: the summary (see
+// summarizeInputs) on one line, and the same entries one-per-line in the hover tooltip.
+// Returns null when there are no inputs so callers can drop the line entirely.
 export function InputsPreview({
   inputs,
   rows = 2,
@@ -89,15 +167,22 @@ export function InputsPreview({
   secondary?: boolean
   style?: CSSProperties
 }) {
-  const text = fmtInputs(inputs)
-  if (!text) return null
+  const { t } = useTranslation()
+  const { entries, hidden } = summarizeInputs(inputs)
+  if (entries.length === 0) return null
+  const lines = hidden > 0 ? [...entries, t('batch.inputsMore', { n: hidden })] : entries
   return (
     <Typography.Paragraph
       type={secondary ? 'secondary' : undefined}
-      ellipsis={{ rows, tooltip: text }}
+      ellipsis={{
+        rows,
+        // One entry per line reads far better than a wrapped run-on, and the bounded content
+        // keeps the overlay small enough that it never lands under the cursor.
+        tooltip: { title: <div style={{ whiteSpace: 'pre-wrap' }}>{lines.join('\n')}</div>, styles: TOOLTIP_STYLES },
+      }}
       style={{ fontSize: 12, marginBottom: 0, ...style }}
     >
-      {text}
+      {lines.join('  ')}
     </Typography.Paragraph>
   )
 }

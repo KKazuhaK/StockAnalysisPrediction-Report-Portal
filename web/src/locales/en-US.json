@@ -277,6 +277,7 @@
   "batch.dify.targetsHint": "No targets yet. Add a Dify workflow with its API key and its inputs are discovered automatically.",
   "batch.dify.workflowTag": "Workflow",
   "batch.downloadTemplate": "Download template",
+  "batch.inputsMore": "…+{{n}} more",
   "batch.jobDetail": "Job detail",
   "batch.jobTitle": "Job #{{id}}",
   "batch.maxRetries": "Retries",
