@@ -99,4 +99,46 @@ awk -v corpus_name="$corpus" '
   }
 ' "$work/charsets" "$corpus"
 
+# Second invariant: nothing may claim the radical blocks.
+#
+# The Kangxi (U+2F00-2FD5) and CJK Radicals Supplement (U+2E80-2EF3) blocks address the same glyphs
+# as the unified ideographs. When one glyph has two codepoints, Qt writes the lower one into the
+# PDF's ToUnicode table, so every 月 in an export came out as ⽉ in the text layer — invisible on the
+# page, and wrong for anything that reads it. scripts/strip-radical-cmap.py removes those mappings
+# from the CJK font at build time; this asserts nobody has quietly put them back, by installing an
+# unpatched font or by adding one whose cmap carries the blocks.
+awk '
+  function hex(s,   i, c, v, d) {
+    v = 0; s = tolower(s)
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1); d = index("0123456789abcdef", c) - 1
+      if (d < 0) { printf "malformed hex: %s\n", s >"/dev/stderr"; exit 2 }
+      v = v * 16 + d
+    }
+    return v
+  }
+  # Bounds come through hex() rather than as 0x literals: mawk is the awk in this image and POSIX awk
+  # has no hex constants, so `0x2E80` reads as 0 and every comparison below silently passes. That is
+  # not hypothetical — it is how the first draft of this check reported "unclaimed" for a font whose
+  # cmap plainly carried the blocks.
+  BEGIN { r1lo = hex("2E80"); r1hi = hex("2EF3"); r2lo = hex("2F00"); r2hi = hex("2FD5") }
+  {
+    for (i = 1; i <= NF; i++) {
+      parts = split($i, p, "-")
+      lo = hex(p[1]); hi = hex(parts == 2 ? p[2] : p[1])
+      # Overlap against either radical block.
+      if (!(hi < r1lo || lo > r1hi) || !(hi < r2lo || lo > r2hi)) claimed++
+    }
+  }
+  END {
+    if (claimed) {
+      printf "An installed font claims %d range(s) inside the radical blocks (U+2E80-2EF3, U+2F00-2FD5).\n", claimed >"/dev/stderr"
+      print  "Exported PDFs will carry radical codepoints in their text layer instead of ideographs." >"/dev/stderr"
+      print  "Run scripts/strip-radical-cmap.py over the offending font, or stop installing it." >"/dev/stderr"
+      exit 1
+    }
+    print "radical blocks: unclaimed, so the PDF text layer keeps ideographs"
+  }
+' "$work/charsets"
+
 echo "Font coverage probe passed against the outline fonts installed in this image."
