@@ -3,6 +3,7 @@ package app
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -122,6 +123,62 @@ func TestSanitizeMermaidSVGPinsChartFontToTheContainerFont(t *testing.T) {
 	}
 	if got := strings.Count(out, pdfFontFamily); got != 2 {
 		t.Errorf("sanitized SVG pinned %d of 2 font-family attributes to %q: %s", got, pdfFontFamily, out)
+	}
+	// The attribute must come out byte-identical to the constant. It does not if a family name is
+	// quoted: encoding/xml escapes a double quote to &#34;, and the count above would then miss.
+	if strings.Contains(pdfFontFamily, `"`) {
+		t.Errorf("pdfFontFamily = %q; quoting a family name makes the emitted SVG attribute unreadable", pdfFontFamily)
+	}
+}
+
+// fontFamilies splits a CSS font-family list into normalized family names.
+func fontFamilies(list string) []string {
+	out := []string{}
+	for _, f := range strings.Split(list, ",") {
+		if f = strings.Trim(strings.TrimSpace(f), `"'`); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// The "keep in sync" comments on pdfFontFamily and on the body rule in templates/pdf.html were the
+// only thing holding the two stacks together, and a comment does not fail a build. A chart label and
+// the paragraph beside it resolving to different faces is exactly the bug this pins down.
+func TestPDFTemplateAndChartFontStacksAgree(t *testing.T) {
+	tpl, err := tplFS.ReadFile("templates/pdf.html")
+	if err != nil {
+		t.Fatalf("read pdf.html: %v", err)
+	}
+	_, rest, ok := strings.Cut(string(tpl), "body { font-family:")
+	if !ok {
+		t.Fatal("pdf.html has no body font-family rule; this test needs updating alongside it")
+	}
+	declared, _, ok := strings.Cut(rest, ";")
+	if !ok {
+		t.Fatal("body font-family declaration is not terminated")
+	}
+
+	body, chart := fontFamilies(declared), fontFamilies(pdfFontFamily)
+	if strings.Join(body, "|") != strings.Join(chart, "|") {
+		t.Errorf("font stacks drifted apart:\n  pdf.html:       %v\n  pdfFontFamily:  %v", body, chart)
+	}
+	// Naming the symbol faces is what makes precedence deterministic — fontconfig would otherwise
+	// pick among the installed fonts by its own sort, and a chart label could take a glyph from a
+	// different face than the paragraph beside it. Coverage itself comes from Dockerfile.release;
+	// scripts/probe-font-coverage.sh is what fails the build when that regresses.
+	//
+	// Named rather than counted: the agreement check above passes happily if a face is dropped from
+	// both sides at once, which is exactly how this would regress in one careless edit.
+	for _, want := range []string{"Noto Sans CJK SC", "Noto Emoji", "DejaVu Sans"} {
+		if !slices.Contains(body, want) {
+			t.Errorf("font stack %v no longer names %q; fallback precedence is unpinned for its glyphs", body, want)
+		}
+	}
+	// The CJK face has to lead, or DejaVu wins Latin and digits it also covers and the report is set
+	// in two faces.
+	if len(body) > 0 && body[0] != "Noto Sans CJK SC" {
+		t.Errorf("font stack %v does not lead with the body face", body)
 	}
 }
 

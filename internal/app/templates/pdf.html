@@ -1,10 +1,15 @@
 <!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <style>
-/* Rendered by wkhtmltopdf inside the release container, so only fonts installed there resolve:
-   Noto Sans CJK SC is the one shipped (see Dockerfile.release). Keep in sync with pdfFontFamily
-   in mermaid_pdf.go, which normalizes chart text to the same face. */
-body { font-family: "Noto Sans CJK SC",sans-serif; font-size: 12px; line-height: 1.7; color:#1a1a1a; }
+/* Rendered by wkhtmltopdf inside the release container, so only fonts installed there resolve —
+   see the font block in Dockerfile.release, which is what actually decides coverage: a codepoint no
+   installed font carries is drawn as nothing at all, and naming a family here cannot conjure it.
+   What this list decides is PRECEDENCE, not availability. fontconfig falls back to any installed
+   font for a glyph the named families lack, picking by its own sort; naming the fallbacks pins that
+   choice instead of inheriting it. Noto Sans CJK SC leads so it keeps every CJK, Latin and digit
+   glyph it has, and DejaVu never wins one back.
+   Keep in sync with pdfFontFamily in mermaid_pdf.go, which normalizes chart text to this stack. */
+body { font-family: "Noto Sans CJK SC","Noto Emoji","DejaVu Sans",sans-serif; font-size: 12px; line-height: 1.7; color:#1a1a1a; }
 h1 { font-size: 21px; color:#0c447c; border-bottom:2px solid #185fa5; padding-bottom:6px; }
 h2 { font-size: 16px; color:#185fa5; border-bottom:1px solid #d3d1c7; padding-bottom:4px; margin-top:18px; }
 h3 { font-size: 14px; }
