@@ -37,7 +37,19 @@ import type { Dayjs } from 'dayjs'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchQueueSummary, BatchTarget } from '../api/types'
-import { BASE_MAX, fmtInputs, InputsPreview, isTerminal, isUrgent, priorityNum, priorityTag, statusTag } from '../lib/batchUi'
+import {
+  BASE_MAX,
+  clampText,
+  fmtInputs,
+  INPUT_TOTAL_MAX,
+  InputsPreview,
+  isTerminal,
+  isUrgent,
+  priorityNum,
+  priorityTag,
+  statusTag,
+  TOOLTIP_STYLES,
+} from '../lib/batchUi'
 import { startVisiblePoll } from '../lib/visiblePoll'
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
@@ -117,7 +129,14 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
       title: t('batch.col.error'),
       render: (_: unknown, it) =>
         it.error ? (
-          <Typography.Paragraph type="danger" ellipsis={{ rows: 3, tooltip: it.error }} style={{ fontSize: 12, marginBottom: 0 }}>
+          // Same bound as the inputs preview: a raw provider error can run to thousands of
+          // characters, and an overlay that tall gets clipped by the viewport and flickers.
+          // The full text is in this row's detail modal.
+          <Typography.Paragraph
+            type="danger"
+            ellipsis={{ rows: 3, tooltip: { title: clampText(it.error, INPUT_TOTAL_MAX), styles: TOOLTIP_STYLES } }}
+            style={{ fontSize: 12, marginBottom: 0 }}
+          >
             {it.error}
           </Typography.Paragraph>
         ) : it.status === 'succeeded' && symbolOf(it) ? (
