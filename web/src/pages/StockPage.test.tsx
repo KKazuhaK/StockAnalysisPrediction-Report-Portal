@@ -14,10 +14,14 @@ vi.mock('../api/client', () => ({
         symbol: '001238',
         name: 'Test Co',
         selDate: '2026-07-07',
-        selKind: 'A',
+        selKind: 'Research',
         selId: 1,
-        kinds: ['A'],
-        subtabs: [{ label: 'Sub', id: 1 }],
+        // Two of each so both strips render: one option apiece and they are hidden.
+        kinds: ['Research', 'Trading'],
+        subtabs: [
+          { label: 'Sub', id: 1 },
+          { label: 'Sentiment', id: 2 },
+        ],
         timeline: [],
         rep: { id: 1, name: 'Test Co', title: 'Report Title', displayTitle: '001238 Test Co Report Title', date: '2026-07-07', source: 'x', html: '', md: '# hi', time: '' },
       }),
@@ -71,6 +75,18 @@ describe('StockPage', () => {
     expect(screen.queryByText(/compare-open/)).toBeNull()
     await userEvent.click(btn)
     expect(await screen.findByText(/compare-open:1/)).toBeTruthy()
+  })
+
+  // rc-segmented defaults each item's `title` to its own label text, so the browser drew a native
+  // tooltip repeating the button — flush under it, reading as though the two were one control stuck
+  // together. These strips scroll instead of truncating, so the label is always fully visible and
+  // the tooltip could only ever restate it.
+  it('does not repeat a category or report-type label as a native tooltip', async () => {
+    render(<StockPage />)
+    for (const label of ['Trading', 'Sentiment']) {
+      const el = await screen.findByText(label)
+      expect(el.getAttribute('title') ?? '', `${label} tooltip`).toBe('')
+    }
   })
 
   // Three labelled export buttons ate a row on desktop too. One menu everywhere — the same control

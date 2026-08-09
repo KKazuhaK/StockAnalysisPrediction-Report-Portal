@@ -12,6 +12,7 @@ import TimelinePanel from '../components/TimelinePanel'
 import { ExportMenu } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
+import { NO_ITEM_TOOLTIP } from '../lib/segmented'
 
 export default function StockPage() {
   const { t } = useTranslation()
@@ -142,7 +143,7 @@ export default function StockPage() {
                   <Segmented
                     value={data.selKind}
                     onChange={(v) => setKind(String(v))}
-                    options={data.kinds.map((k) => ({ label: k, value: k }))}
+                    options={data.kinds.map((k) => ({ label: k, value: k, title: NO_ITEM_TOOLTIP }))}
                   />
                 </div>
               )}
@@ -154,7 +155,7 @@ export default function StockPage() {
                   <Segmented
                     value={data.selId}
                     onChange={(v) => setId(Number(v))}
-                    options={data.subtabs.map((s) => ({ label: s.label, value: s.id }))}
+                    options={data.subtabs.map((s) => ({ label: s.label, value: s.id, title: NO_ITEM_TOOLTIP }))}
                   />
                 </div>
               )}
