@@ -65,3 +65,26 @@ jobs:
       - name: Build SPA # vite build → ../internal/web/dist; fails on any compile error
         working-directory: web
         run: npm run build
+
+  # The font chain used to be executed for the first time during a release: Dockerfile.release runs
+  # only on a tag, so a typo in it surfaced after the binaries were built and, before the release job
+  # learned to wait on this one, after the GitHub Release was already public. Two releases were lost
+  # that way. `--target runtime-base` stops before the stage that copies the Go binary, so this needs
+  # no build artifacts — it fetches the fonts, patches the CJK cmap and runs the coverage gate, which
+  # is the part that actually breaks.
+  font-image:
+    name: font chain + coverage gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the font stages and run the gate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.release
+          target: runtime-base
+          platforms: linux/amd64 # one arch is enough to catch a Dockerfile or gate error
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
