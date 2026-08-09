@@ -153,9 +153,18 @@ var allowedSVGElements = map[string]bool{
 	"polyline": true, "polygon": true, "text": true, "tspan": true, "title": true, "desc": true,
 }
 
-// pdfFontFamily is the CJK face actually installed in the render container (see Dockerfile.release).
-// Keep in sync with the body font stack in templates/pdf.html.
-const pdfFontFamily = "Noto Sans CJK SC, sans-serif"
+// pdfFontFamily is the font stack charts are pinned to. Like the body stack in templates/pdf.html it
+// decides precedence, not availability — fontconfig will fall back to any font installed in the
+// render container regardless of what this list ends with, so what naming the faces buys is that a
+// chart label and the paragraph beside it resolve the same way. Coverage is decided by the font
+// block in Dockerfile.release. Keep the two stacks in sync; TestPDFTemplateAndChartFontStacksAgree
+// fails if they drift.
+//
+// The names are deliberately unquoted. This value is written out as an SVG font-family attribute by
+// encoding/xml, which escapes a double quote to &#34; — legal, but it makes the emitted attribute
+// hard to reason about and to assert on. CSS only requires quoting for a family name that is not a
+// sequence of valid identifiers (a leading digit, say), and none of these are.
+const pdfFontFamily = "Noto Sans CJK SC, Noto Emoji, DejaVu Sans, sans-serif"
 
 var allowedSVGAttrs = map[string]bool{
 	"id": true, "viewBox": true, "width": true, "height": true, "preserveAspectRatio": true,

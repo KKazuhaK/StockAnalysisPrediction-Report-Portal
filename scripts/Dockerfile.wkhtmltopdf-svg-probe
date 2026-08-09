@@ -1,12 +1,18 @@
 FROM debian:bookworm-slim
 
-# Mirrors the CJK font setup in Dockerfile.release so the probe exercises the font the
-# release image actually renders with.
+# Mirrors the font setup in Dockerfile.release so the probe exercises the fonts the release image
+# actually renders with. poppler-utils is here and not in the release image because this probe
+# rasterises its output to compare against a blank control; that tooling has no business in the
+# shipped runtime. Note what this probe does NOT do: its assertion is only "the page differs from
+# blank", so it proves SVG survives the renderer, not that any particular glyph was drawn. Glyph
+# coverage is gated separately, by scripts/probe-font-coverage.sh inside Dockerfile.release.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates fontconfig poppler-utils wget \
- && mkdir -p /usr/share/fonts/opentype/noto \
+      ca-certificates fontconfig fonts-dejavu-core poppler-utils wget \
+ && mkdir -p /usr/share/fonts/opentype/noto /usr/share/fonts/truetype/noto \
  && wget -qO /usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf \
       "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+ && wget -qO /usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf \
+      "https://raw.githubusercontent.com/google/fonts/2d85e20401920891efb7cd6272d6339685df2820/ofl/notoemoji/NotoEmoji%5Bwght%5D.ttf" \
  && fc-cache -f \
  && arch="$(dpkg --print-architecture)" \
  && wget -qO /tmp/wkhtmltox.deb \
