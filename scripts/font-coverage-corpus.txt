@@ -1,0 +1,998 @@
+# =====================================================================
+# font-coverage-corpus.txt
+# =====================================================================
+#
+# WHAT THIS IS
+#   The single source of truth for which characters an exported PDF must be
+#   able to draw. Two consumers read this one file and nothing else:
+#
+#   Its one consumer is scripts/probe-font-coverage.sh, the build-time gate in
+#   Dockerfile.release. The gate asks fontconfig whether some installed font
+#   CLAIMS each codepoint, and fails the build when a `require` codepoint is
+#   claimed by none. Add a codepoint here and the gate picks it up; do not keep
+#   a second list anywhere else.
+#
+#   WHAT THIS FILE DOES NOT BUY YOU. Claiming a codepoint is not the same as
+#   painting one, and nothing in the repo checks the latter across this list.
+#   The gate narrows the gap by counting only fonts fontconfig reports as
+#   outline and non-colour, which is what excludes the emoji builds whose base
+#   glyphs are empty - but a font that claims a codepoint and draws a blank is
+#   still, in principle, invisible to it. Tiers were established by rendering
+#   every line once by hand (see HOW THE TIERS BELOW WERE ESTABLISHED); that
+#   was a one-off, not a standing check.
+#
+# WHY IT EXISTS
+#   Reports are written by an LLM, in Chinese, and rendered headlessly by
+#   wkhtmltopdf inside a debian:bookworm-slim image that has no fonts of its
+#   own. Every glyph the model reaches for has to be in a font we installed
+#   on purpose. A missing glyph does not error - wkhtmltopdf silently draws
+#   nothing - so the failure only ever surfaces as a hole in a customer PDF.
+#
+# FORMAT
+#   Three TAB-separated columns, one codepoint per line:
+#
+#     U+2705<TAB>ballot<TAB>require
+#     U+00A0<TAB>space<TAB>nonprinting
+#     U+20BF<TAB>currency<TAB>advisory
+#
+#   Column 1  codepoint, always written as U+XXXX text and never as a literal
+#             character, so this file is pure ASCII and survives any locale,
+#             editor or terminal it passes through.
+#   Column 2  group slug: lowercase, no spaces.
+#   Column 3  exactly one of require | advisory | nonprinting.
+#
+#   Blank lines are ignored. A line whose first non-blank character is '#' is
+#   a comment. Comments are whole-line only - never append one to a data
+#   line, because column 3 runs to end of line.
+#
+# TIERS
+#   require      No installed font covers it  ->  FAIL THE BUILD.
+#   advisory     Known to be uncovered and accepted. Warn, never fail. Every
+#                advisory line carries a comment above it saying why.
+#   nonprinting  Must be covered, but is expected to draw ZERO ink: spaces,
+#                zero-width controls, joiners, variation selectors. The probe
+#                asserts ink == 0 for these, which is how a space that has
+#                degraded into a tofu box gets caught.
+#
+#   The tier is a property of the codepoint, not of its group. U+3000
+#   IDEOGRAPHIC SPACE sits in `cjkpunct` and is nonprinting; U+200D and
+#   U+FE0F sit in `emoji` and are nonprinting.
+#
+# FONT SET THIS WAS VERIFIED AGAINST
+#   Noto Sans CJK SC  Regular  (OTF/CFF, upstream tag Sans2.004)
+#   Noto Emoji        MONOCHROME variable (outline). Noto COLOR Emoji is CBDT
+#                     raster and renders blank through wkhtmltopdf - rejected.
+#   DejaVu Sans / DejaVu Serif  (fonts-dejavu-core)
+#
+#   Noto Sans Symbols 2 was evaluated and is NOT required: with it removed,
+#   all 594 `require` codepoints below still render with ink. It contributes
+#   unique coverage only for U+1F5F4..U+1F5F9 (the astral BALLOT SCRIPT X /
+#   BOLD CHECK family), which are deliberately not in this corpus.
+#
+# HOW THE TIERS BELOW WERE ESTABLISHED
+#   Coverage was read from fc-query charsets for the four fonts above, then
+#   every line was rendered one-codepoint-per-page through wkhtmltopdf under
+#   a fontconfig that rejected every other font on the machine, rasterised at
+#   120 dpi with pdftoppm and counted for dark pixels. Result: 594/594
+#   `require` drew ink, 23/23 `nonprinting` drew zero ink, and all 6
+#   `advisory` drew zero ink (an uncovered codepoint renders blank, not tofu
+#   - which is exactly why the gate cannot be skipped).
+#
+# MAINTENANCE
+#   Adding a codepoint: put it in the group it belongs to, default it to
+#   `require`, and re-run the probe. If it fails, either install a font that
+#   covers it or demote it to `advisory` WITH a comment explaining why.
+#   Never demote silently.
+#
+# =====================================================================
+
+
+# ---------------------------------------------------------------------
+# ballot -- Ballot boxes and check / cross marks. LLM answers mark pass-fail
+#   rows with these constantly; U+2705 and U+274C come from Noto Emoji
+#   (monochrome), the rest from DejaVu Sans.
+# ---------------------------------------------------------------------
+# U+2610..U+2613  BALLOT BOX .. SALTIRE
+U+2610	ballot	require
+U+2611	ballot	require
+U+2612	ballot	require
+U+2613	ballot	require
+# U+2705 WHITE HEAVY CHECK MARK | U+274C CROSS MARK | U+274E NEGATIVE SQUARED CROSS MARK
+U+2705	ballot	require
+U+274C	ballot	require
+U+274E	ballot	require
+# U+2713..U+2718  CHECK MARK .. HEAVY BALLOT X
+U+2713	ballot	require
+U+2714	ballot	require
+U+2715	ballot	require
+U+2716	ballot	require
+U+2717	ballot	require
+U+2718	ballot	require
+
+# ---------------------------------------------------------------------
+# dingbats -- Dingbats block (U+2700..U+27BF). Ornamental marks that survive a
+#   copy-paste out of a chat window and into a report.
+# ---------------------------------------------------------------------
+# U+2702 BLACK SCISSORS | U+2708 AIRPLANE | U+2709 ENVELOPE
+U+2702	dingbats	require
+U+2708	dingbats	require
+U+2709	dingbats	require
+# U+270C VICTORY HAND | U+270D WRITING HAND | U+270F PENCIL
+U+270C	dingbats	require
+U+270D	dingbats	require
+U+270F	dingbats	require
+# U+2712 BLACK NIB | U+2728 SPARKLES | U+2733 EIGHT SPOKED ASTERISK
+U+2712	dingbats	require
+U+2728	dingbats	require
+U+2733	dingbats	require
+# U+2744 SNOWFLAKE | U+2747 SPARKLE
+U+2744	dingbats	require
+U+2747	dingbats	require
+# U+2753..U+2755  BLACK QUESTION MARK ORNAMENT .. WHITE EXCLAMATION MARK ORNAMENT
+U+2753	dingbats	require
+U+2754	dingbats	require
+U+2755	dingbats	require
+# U+2757 HEAVY EXCLAMATION MARK SYMBOL | U+2763 HEAVY HEART EXCLAMATION MARK ORNAMENT | U+2764 HEAVY BLACK HEART
+U+2757	dingbats	require
+U+2763	dingbats	require
+U+2764	dingbats	require
+# U+2795..U+2797  HEAVY PLUS SIGN .. HEAVY DIVISION SIGN
+U+2795	dingbats	require
+U+2796	dingbats	require
+U+2797	dingbats	require
+
+# ---------------------------------------------------------------------
+# geometric -- Geometric Shapes. Bullets, table markers and the up/down triangles
+#   used for gainers / losers.
+# ---------------------------------------------------------------------
+# U+25A0 BLACK SQUARE | U+25A1 WHITE SQUARE
+U+25A0	geometric	require
+U+25A1	geometric	require
+# U+25AA..U+25AC  BLACK SMALL SQUARE .. BLACK RECTANGLE
+U+25AA	geometric	require
+U+25AB	geometric	require
+U+25AC	geometric	require
+# U+25B2 BLACK UP-POINTING TRIANGLE | U+25B3 WHITE UP-POINTING TRIANGLE
+U+25B2	geometric	require
+U+25B3	geometric	require
+# U+25B6..U+25B8  BLACK RIGHT-POINTING TRIANGLE .. BLACK RIGHT-POINTING SMALL TRIANGLE
+U+25B6	geometric	require
+U+25B7	geometric	require
+U+25B8	geometric	require
+# U+25BA BLACK RIGHT-POINTING POINTER
+U+25BA	geometric	require
+# U+25BC..U+25BE  BLACK DOWN-POINTING TRIANGLE .. BLACK DOWN-POINTING SMALL TRIANGLE
+U+25BC	geometric	require
+U+25BD	geometric	require
+U+25BE	geometric	require
+# U+25C0 BLACK LEFT-POINTING TRIANGLE | U+25C4 BLACK LEFT-POINTING POINTER | U+25C6 BLACK DIAMOND
+U+25C0	geometric	require
+U+25C4	geometric	require
+U+25C6	geometric	require
+# U+25C7 WHITE DIAMOND | U+25CA LOZENGE | U+25CB WHITE CIRCLE
+U+25C7	geometric	require
+U+25CA	geometric	require
+U+25CB	geometric	require
+# U+25CE BULLSEYE | U+25CF BLACK CIRCLE | U+25E6 WHITE BULLET
+U+25CE	geometric	require
+U+25CF	geometric	require
+U+25E6	geometric	require
+# U+25EF LARGE CIRCLE | U+25FC BLACK MEDIUM SQUARE | U+2B1B BLACK LARGE SQUARE
+U+25EF	geometric	require
+U+25FC	geometric	require
+U+2B1B	geometric	require
+# U+2B1C WHITE LARGE SQUARE
+U+2B1C	geometric	require
+
+# ---------------------------------------------------------------------
+# stars -- Stars, used for ratings and conviction scores.
+# ---------------------------------------------------------------------
+# U+2605 BLACK STAR | U+2606 WHITE STAR | U+2726 BLACK FOUR POINTED STAR
+U+2605	stars	require
+U+2606	stars	require
+U+2726	stars	require
+# U+2727 WHITE FOUR POINTED STAR | U+272A CIRCLED WHITE STAR | U+272B OPEN CENTRE BLACK STAR
+U+2727	stars	require
+U+272A	stars	require
+U+272B	stars	require
+# U+272E HEAVY OUTLINED BLACK STAR | U+2734 EIGHT POINTED BLACK STAR | U+2736 SIX POINTED BLACK STAR
+U+272E	stars	require
+U+2734	stars	require
+U+2736	stars	require
+# U+2B50 WHITE MEDIUM STAR | U+22C6 STAR OPERATOR
+U+2B50	stars	require
+U+22C6	stars	require
+
+# ---------------------------------------------------------------------
+# arrows -- Arrows. U+2192 alone appears 740x in this repo; forecast tables use
+#   the whole up/down/left/right family plus the double-struck set.
+# ---------------------------------------------------------------------
+# U+2190..U+2199  LEFTWARDS ARROW .. SOUTH WEST ARROW
+U+2190	arrows	require
+U+2191	arrows	require
+U+2192	arrows	require
+U+2193	arrows	require
+U+2194	arrows	require
+U+2195	arrows	require
+U+2196	arrows	require
+U+2197	arrows	require
+U+2198	arrows	require
+U+2199	arrows	require
+# U+21A6 RIGHTWARDS ARROW FROM BAR | U+21A9 LEFTWARDS ARROW WITH HOOK | U+21AA RIGHTWARDS ARROW WITH HOOK
+U+21A6	arrows	require
+U+21A9	arrows	require
+U+21AA	arrows	require
+# U+21BA ANTICLOCKWISE OPEN CIRCLE ARROW | U+21BB CLOCKWISE OPEN CIRCLE ARROW | U+21C4 RIGHTWARDS ARROW OVER LEFTWARDS ARROW
+U+21BA	arrows	require
+U+21BB	arrows	require
+U+21C4	arrows	require
+# U+21C6 LEFTWARDS ARROW OVER RIGHTWARDS ARROW | U+21CB LEFTWARDS HARPOON OVER RIGHTWARDS HARPOON | U+21CC RIGHTWARDS HARPOON OVER LEFTWARDS HARPOON
+U+21C6	arrows	require
+U+21CB	arrows	require
+U+21CC	arrows	require
+# U+21D0..U+21D4  LEFTWARDS DOUBLE ARROW .. LEFT RIGHT DOUBLE ARROW
+U+21D0	arrows	require
+U+21D1	arrows	require
+U+21D2	arrows	require
+U+21D3	arrows	require
+U+21D4	arrows	require
+# U+21E6..U+21E9  LEFTWARDS WHITE ARROW .. DOWNWARDS WHITE ARROW
+U+21E6	arrows	require
+U+21E7	arrows	require
+U+21E8	arrows	require
+U+21E9	arrows	require
+# U+27A1 BLACK RIGHTWARDS ARROW | U+27F6 LONG RIGHTWARDS ARROW | U+2934 ARROW POINTING RIGHTWARDS THEN CURVING UPWARDS
+U+27A1	arrows	require
+U+27F6	arrows	require
+U+2934	arrows	require
+# U+2935 ARROW POINTING RIGHTWARDS THEN CURVING DOWNWARDS
+U+2935	arrows	require
+# U+2B05..U+2B07  LEFTWARDS BLACK ARROW .. DOWNWARDS BLACK ARROW
+U+2B05	arrows	require
+U+2B06	arrows	require
+U+2B07	arrows	require
+
+# ---------------------------------------------------------------------
+# boxdrawing -- Box Drawing. LLMs emit ASCII-art trees and framed tables; docs/
+#   recurring-tasks.md already ships U+2500/2502/250C/2510/2514/2518/253C.
+# ---------------------------------------------------------------------
+# U+2500 BOX DRAWINGS LIGHT HORIZONTAL | U+2502 BOX DRAWINGS LIGHT VERTICAL | U+250C BOX DRAWINGS LIGHT DOWN AND RIGHT
+U+2500	boxdrawing	require
+U+2502	boxdrawing	require
+U+250C	boxdrawing	require
+# U+2510 BOX DRAWINGS LIGHT DOWN AND LEFT | U+2514 BOX DRAWINGS LIGHT UP AND RIGHT | U+2518 BOX DRAWINGS LIGHT UP AND LEFT
+U+2510	boxdrawing	require
+U+2514	boxdrawing	require
+U+2518	boxdrawing	require
+# U+251C BOX DRAWINGS LIGHT VERTICAL AND RIGHT | U+2524 BOX DRAWINGS LIGHT VERTICAL AND LEFT | U+252C BOX DRAWINGS LIGHT DOWN AND HORIZONTAL
+U+251C	boxdrawing	require
+U+2524	boxdrawing	require
+U+252C	boxdrawing	require
+# U+2534 BOX DRAWINGS LIGHT UP AND HORIZONTAL | U+253C BOX DRAWINGS LIGHT VERTICAL AND HORIZONTAL | U+2501 BOX DRAWINGS HEAVY HORIZONTAL
+U+2534	boxdrawing	require
+U+253C	boxdrawing	require
+U+2501	boxdrawing	require
+# U+2503 BOX DRAWINGS HEAVY VERTICAL | U+250F BOX DRAWINGS HEAVY DOWN AND RIGHT | U+2513 BOX DRAWINGS HEAVY DOWN AND LEFT
+U+2503	boxdrawing	require
+U+250F	boxdrawing	require
+U+2513	boxdrawing	require
+# U+2517 BOX DRAWINGS HEAVY UP AND RIGHT | U+251B BOX DRAWINGS HEAVY UP AND LEFT | U+2523 BOX DRAWINGS HEAVY VERTICAL AND RIGHT
+U+2517	boxdrawing	require
+U+251B	boxdrawing	require
+U+2523	boxdrawing	require
+# U+252B BOX DRAWINGS HEAVY VERTICAL AND LEFT | U+2533 BOX DRAWINGS HEAVY DOWN AND HORIZONTAL | U+253B BOX DRAWINGS HEAVY UP AND HORIZONTAL
+U+252B	boxdrawing	require
+U+2533	boxdrawing	require
+U+253B	boxdrawing	require
+# U+254B BOX DRAWINGS HEAVY VERTICAL AND HORIZONTAL | U+2550 BOX DRAWINGS DOUBLE HORIZONTAL | U+2551 BOX DRAWINGS DOUBLE VERTICAL
+U+254B	boxdrawing	require
+U+2550	boxdrawing	require
+U+2551	boxdrawing	require
+# U+2554 BOX DRAWINGS DOUBLE DOWN AND RIGHT | U+2557 BOX DRAWINGS DOUBLE DOWN AND LEFT | U+255A BOX DRAWINGS DOUBLE UP AND RIGHT
+U+2554	boxdrawing	require
+U+2557	boxdrawing	require
+U+255A	boxdrawing	require
+# U+255D BOX DRAWINGS DOUBLE UP AND LEFT | U+2560 BOX DRAWINGS DOUBLE VERTICAL AND RIGHT | U+2563 BOX DRAWINGS DOUBLE VERTICAL AND LEFT
+U+255D	boxdrawing	require
+U+2560	boxdrawing	require
+U+2563	boxdrawing	require
+# U+2566 BOX DRAWINGS DOUBLE DOWN AND HORIZONTAL | U+2569 BOX DRAWINGS DOUBLE UP AND HORIZONTAL | U+256C BOX DRAWINGS DOUBLE VERTICAL AND HORIZONTAL
+U+2566	boxdrawing	require
+U+2569	boxdrawing	require
+U+256C	boxdrawing	require
+# U+256D BOX DRAWINGS LIGHT ARC DOWN AND RIGHT | U+256F BOX DRAWINGS LIGHT ARC UP AND LEFT
+U+256D	boxdrawing	require
+U+256F	boxdrawing	require
+
+# ---------------------------------------------------------------------
+# blocks -- Block Elements. In-text bar charts (U+2581..U+2588) and shading.
+# ---------------------------------------------------------------------
+# U+2580..U+2588  UPPER HALF BLOCK .. FULL BLOCK
+U+2580	blocks	require
+U+2581	blocks	require
+U+2582	blocks	require
+U+2583	blocks	require
+U+2584	blocks	require
+U+2585	blocks	require
+U+2586	blocks	require
+U+2587	blocks	require
+U+2588	blocks	require
+# U+258B..U+2593  LEFT FIVE EIGHTHS BLOCK .. DARK SHADE
+U+258B	blocks	require
+U+258C	blocks	require
+U+258D	blocks	require
+U+258E	blocks	require
+U+258F	blocks	require
+U+2590	blocks	require
+U+2591	blocks	require
+U+2592	blocks	require
+U+2593	blocks	require
+
+# ---------------------------------------------------------------------
+# math -- Math operators. Valuation formulas, growth rates and set notation.
+# ---------------------------------------------------------------------
+# U+00B1 PLUS-MINUS SIGN | U+00D7 MULTIPLICATION SIGN | U+00F7 DIVISION SIGN
+U+00B1	math	require
+U+00D7	math	require
+U+00F7	math	require
+# U+00AC NOT SIGN | U+00B0 DEGREE SIGN | U+2044 FRACTION SLASH
+U+00AC	math	require
+U+00B0	math	require
+U+2044	math	require
+# U+00BC..U+00BE  VULGAR FRACTION ONE QUARTER .. VULGAR FRACTION THREE QUARTERS
+U+00BC	math	require
+U+00BD	math	require
+U+00BE	math	require
+# U+2030 PER MILLE SIGN | U+2200 FOR ALL | U+2202 PARTIAL DIFFERENTIAL
+U+2030	math	require
+U+2200	math	require
+U+2202	math	require
+# U+2203 THERE EXISTS
+U+2203	math	require
+# U+2205..U+2209  EMPTY SET .. NOT AN ELEMENT OF
+U+2205	math	require
+U+2206	math	require
+U+2207	math	require
+U+2208	math	require
+U+2209	math	require
+# U+220B CONTAINS AS MEMBER | U+220F N-ARY PRODUCT
+U+220B	math	require
+U+220F	math	require
+# U+2211..U+2213  N-ARY SUMMATION .. MINUS-OR-PLUS SIGN
+U+2211	math	require
+U+2212	math	require
+U+2213	math	require
+# U+2215 DIVISION SLASH | U+221A SQUARE ROOT | U+221D PROPORTIONAL TO
+U+2215	math	require
+U+221A	math	require
+U+221D	math	require
+# U+221E INFINITY | U+2220 ANGLE | U+2225 PARALLEL TO
+U+221E	math	require
+U+2220	math	require
+U+2225	math	require
+# U+2227..U+222B  LOGICAL AND .. INTEGRAL
+U+2227	math	require
+U+2228	math	require
+U+2229	math	require
+U+222A	math	require
+U+222B	math	require
+# U+222E CONTOUR INTEGRAL | U+2234 THEREFORE | U+2235 BECAUSE
+U+222E	math	require
+U+2234	math	require
+U+2235	math	require
+# U+2295 CIRCLED PLUS
+U+2295	math	require
+# U+2297..U+2299  CIRCLED TIMES .. CIRCLED DOT OPERATOR
+U+2297	math	require
+U+2298	math	require
+U+2299	math	require
+# U+22C5 DOT OPERATOR | U+22EE VERTICAL ELLIPSIS | U+22EF MIDLINE HORIZONTAL ELLIPSIS
+U+22C5	math	require
+U+22EE	math	require
+U+22EF	math	require
+# U+2113 SCRIPT SMALL L
+U+2113	math	require
+
+# ---------------------------------------------------------------------
+# comparison -- Comparison / relation operators. Thresholds and ranking language.
+# ---------------------------------------------------------------------
+# U+2260..U+2262  NOT EQUAL TO .. NOT IDENTICAL TO
+U+2260	comparison	require
+U+2261	comparison	require
+U+2262	comparison	require
+# U+2264..U+2267  LESS-THAN OR EQUAL TO .. GREATER-THAN OVER EQUAL TO
+U+2264	comparison	require
+U+2265	comparison	require
+U+2266	comparison	require
+U+2267	comparison	require
+# U+226A MUCH LESS-THAN | U+226B MUCH GREATER-THAN
+U+226A	comparison	require
+U+226B	comparison	require
+# U+226E..U+2271  NOT LESS-THAN .. NEITHER GREATER-THAN NOR EQUAL TO
+U+226E	comparison	require
+U+226F	comparison	require
+U+2270	comparison	require
+U+2271	comparison	require
+# U+2276 LESS-THAN OR GREATER-THAN | U+2277 GREATER-THAN OR LESS-THAN | U+2243 ASYMPTOTICALLY EQUAL TO
+U+2276	comparison	require
+U+2277	comparison	require
+U+2243	comparison	require
+# U+2245 APPROXIMATELY EQUAL TO | U+2248 ALMOST EQUAL TO | U+2252 APPROXIMATELY EQUAL TO OR THE IMAGE OF
+U+2245	comparison	require
+U+2248	comparison	require
+U+2252	comparison	require
+# U+2282 SUBSET OF | U+2283 SUPERSET OF | U+2286 SUBSET OF OR EQUAL TO
+U+2282	comparison	require
+U+2283	comparison	require
+U+2286	comparison	require
+# U+2287 SUPERSET OF OR EQUAL TO
+U+2287	comparison	require
+
+# ---------------------------------------------------------------------
+# greek -- Greek, upper and lower case. Finance variables: alpha, beta, gamma,
+#   delta, theta, sigma, mu, rho, lambda. Kept whole - an LLM that
+#   reaches for one letter will reach for the others.
+# ---------------------------------------------------------------------
+# U+0391..U+03A1  GREEK CAPITAL LETTER ALPHA .. GREEK CAPITAL LETTER RHO
+U+0391	greek	require
+U+0392	greek	require
+U+0393	greek	require
+U+0394	greek	require
+U+0395	greek	require
+U+0396	greek	require
+U+0397	greek	require
+U+0398	greek	require
+U+0399	greek	require
+U+039A	greek	require
+U+039B	greek	require
+U+039C	greek	require
+U+039D	greek	require
+U+039E	greek	require
+U+039F	greek	require
+U+03A0	greek	require
+U+03A1	greek	require
+# U+03A3..U+03A9  GREEK CAPITAL LETTER SIGMA .. GREEK CAPITAL LETTER OMEGA
+U+03A3	greek	require
+U+03A4	greek	require
+U+03A5	greek	require
+U+03A6	greek	require
+U+03A7	greek	require
+U+03A8	greek	require
+U+03A9	greek	require
+# U+03B1..U+03C9  GREEK SMALL LETTER ALPHA .. GREEK SMALL LETTER OMEGA
+U+03B1	greek	require
+U+03B2	greek	require
+U+03B3	greek	require
+U+03B4	greek	require
+U+03B5	greek	require
+U+03B6	greek	require
+U+03B7	greek	require
+U+03B8	greek	require
+U+03B9	greek	require
+U+03BA	greek	require
+U+03BB	greek	require
+U+03BC	greek	require
+U+03BD	greek	require
+U+03BE	greek	require
+U+03BF	greek	require
+U+03C0	greek	require
+U+03C1	greek	require
+U+03C2	greek	require
+U+03C3	greek	require
+U+03C4	greek	require
+U+03C5	greek	require
+U+03C6	greek	require
+U+03C7	greek	require
+U+03C8	greek	require
+U+03C9	greek	require
+
+# ---------------------------------------------------------------------
+# currency -- Currency signs, including the whole Currency Symbols block.
+# ---------------------------------------------------------------------
+# U+00A2..U+00A5  CENT SIGN .. YEN SIGN
+U+00A2	currency	require
+U+00A3	currency	require
+U+00A4	currency	require
+U+00A5	currency	require
+# U+0E3F THAI CURRENCY SYMBOL BAHT
+U+0E3F	currency	require
+# U+20A0..U+20B5  EURO-CURRENCY SIGN .. CEDI SIGN
+U+20A0	currency	require
+U+20A1	currency	require
+U+20A2	currency	require
+U+20A3	currency	require
+U+20A4	currency	require
+U+20A5	currency	require
+U+20A6	currency	require
+U+20A7	currency	require
+U+20A8	currency	require
+U+20A9	currency	require
+U+20AA	currency	require
+U+20AB	currency	require
+U+20AC	currency	require
+U+20AD	currency	require
+U+20AE	currency	require
+U+20AF	currency	require
+U+20B0	currency	require
+U+20B1	currency	require
+U+20B2	currency	require
+U+20B3	currency	require
+U+20B4	currency	require
+U+20B5	currency	require
+# ADVISORY: U+20B6 LIVRE TOURNOIS SIGN - no shipped font covers it (measured: renders blank, ink=0).
+U+20B6	currency	advisory
+# ADVISORY: U+20B7 SPESMILO SIGN - no shipped font covers it (measured: renders blank, ink=0).
+U+20B7	currency	advisory
+# U+20B8..U+20BA  TENGE SIGN .. TURKISH LIRA SIGN
+U+20B8	currency	require
+U+20B9	currency	require
+U+20BA	currency	require
+# ADVISORY: U+20BB NORDIC MARK SIGN - no shipped font covers it (measured: renders blank, ink=0).
+U+20BB	currency	advisory
+# ADVISORY: U+20BC MANAT SIGN - no shipped font covers it (measured: renders blank, ink=0).
+U+20BC	currency	advisory
+# U+20BD RUBLE SIGN
+U+20BD	currency	require
+# ADVISORY: U+20BE LARI SIGN - no shipped font covers it (measured: renders blank, ink=0).
+U+20BE	currency	advisory
+# ADVISORY: U+20BF BITCOIN SIGN - no shipped font covers it (measured: renders blank, ink=0).
+U+20BF	currency	advisory
+# U+FF04 FULLWIDTH DOLLAR SIGN | U+FFE0 FULLWIDTH CENT SIGN | U+FFE1 FULLWIDTH POUND SIGN
+U+FF04	currency	require
+U+FFE0	currency	require
+U+FFE1	currency	require
+# U+FFE5 FULLWIDTH YEN SIGN | U+FFE6 FULLWIDTH WON SIGN
+U+FFE5	currency	require
+U+FFE6	currency	require
+
+# ---------------------------------------------------------------------
+# cjkpunct -- CJK punctuation, dashes, quotes and the fullwidth ASCII forms. This
+#   is the highest-traffic group for Chinese-language reports.
+# ---------------------------------------------------------------------
+# U+3000 IDEOGRAPHIC SPACE - sits in the CJK punctuation group but is a space
+U+3000	cjkpunct	nonprinting
+# U+3001 IDEOGRAPHIC COMMA | U+3002 IDEOGRAPHIC FULL STOP
+U+3001	cjkpunct	require
+U+3002	cjkpunct	require
+# U+3008..U+3011  LEFT ANGLE BRACKET .. RIGHT BLACK LENTICULAR BRACKET
+U+3008	cjkpunct	require
+U+3009	cjkpunct	require
+U+300A	cjkpunct	require
+U+300B	cjkpunct	require
+U+300C	cjkpunct	require
+U+300D	cjkpunct	require
+U+300E	cjkpunct	require
+U+300F	cjkpunct	require
+U+3010	cjkpunct	require
+U+3011	cjkpunct	require
+# U+3014 LEFT TORTOISE SHELL BRACKET | U+3015 RIGHT TORTOISE SHELL BRACKET | U+301C WAVE DASH
+U+3014	cjkpunct	require
+U+3015	cjkpunct	require
+U+301C	cjkpunct	require
+# U+30FB KATAKANA MIDDLE DOT | U+30FC KATAKANA-HIRAGANA PROLONGED SOUND MARK | U+FF01 FULLWIDTH EXCLAMATION MARK
+U+30FB	cjkpunct	require
+U+30FC	cjkpunct	require
+U+FF01	cjkpunct	require
+# U+FF02 FULLWIDTH QUOTATION MARK
+U+FF02	cjkpunct	require
+# U+FF05..U+FF0F  FULLWIDTH PERCENT SIGN .. FULLWIDTH SOLIDUS
+U+FF05	cjkpunct	require
+U+FF06	cjkpunct	require
+U+FF07	cjkpunct	require
+U+FF08	cjkpunct	require
+U+FF09	cjkpunct	require
+U+FF0A	cjkpunct	require
+U+FF0B	cjkpunct	require
+U+FF0C	cjkpunct	require
+U+FF0D	cjkpunct	require
+U+FF0E	cjkpunct	require
+U+FF0F	cjkpunct	require
+# U+FF1A..U+FF20  FULLWIDTH COLON .. FULLWIDTH COMMERCIAL AT
+U+FF1A	cjkpunct	require
+U+FF1B	cjkpunct	require
+U+FF1C	cjkpunct	require
+U+FF1D	cjkpunct	require
+U+FF1E	cjkpunct	require
+U+FF1F	cjkpunct	require
+U+FF20	cjkpunct	require
+# U+FF3B FULLWIDTH LEFT SQUARE BRACKET | U+FF3D FULLWIDTH RIGHT SQUARE BRACKET | U+FF5B FULLWIDTH LEFT CURLY BRACKET
+U+FF3B	cjkpunct	require
+U+FF3D	cjkpunct	require
+U+FF5B	cjkpunct	require
+# U+FF5D FULLWIDTH RIGHT CURLY BRACKET | U+FF5E FULLWIDTH TILDE | U+FF62 HALFWIDTH LEFT CORNER BRACKET
+U+FF5D	cjkpunct	require
+U+FF5E	cjkpunct	require
+U+FF62	cjkpunct	require
+# U+FF63 HALFWIDTH RIGHT CORNER BRACKET
+U+FF63	cjkpunct	require
+
+# ---------------------------------------------------------------------
+# whitespace -- Whitespace and zero-width controls. Every member here is expected to
+#   draw nothing - they are in the corpus so the render probe proves
+#   they stay invisible instead of turning into boxes.
+# ---------------------------------------------------------------------
+# U+00A0 NO-BREAK SPACE - a space; zero ink by definition
+U+00A0	whitespace	nonprinting
+# U+00AD SOFT HYPHEN - invisible unless the renderer breaks the line here
+U+00AD	whitespace	nonprinting
+# U+2000 EN QUAD - fixed-width space
+U+2000	whitespace	nonprinting
+# U+2001 EM QUAD - fixed-width space
+U+2001	whitespace	nonprinting
+# U+2002 EN SPACE - fixed-width space
+U+2002	whitespace	nonprinting
+# U+2003 EM SPACE - fixed-width space
+U+2003	whitespace	nonprinting
+# U+2007 FIGURE SPACE - digit-width space
+U+2007	whitespace	nonprinting
+# U+2009 THIN SPACE - fixed-width space
+U+2009	whitespace	nonprinting
+# U+200A HAIR SPACE - fixed-width space
+U+200A	whitespace	nonprinting
+# U+200B ZERO WIDTH SPACE
+U+200B	whitespace	nonprinting
+# U+200C ZERO WIDTH NON-JOINER
+U+200C	whitespace	nonprinting
+# U+200E LEFT-TO-RIGHT MARK - bidi control, zero ink
+U+200E	whitespace	nonprinting
+# U+200F RIGHT-TO-LEFT MARK - bidi control, zero ink
+U+200F	whitespace	nonprinting
+# U+2011 NON-BREAKING HYPHEN
+U+2011	whitespace	require
+# U+2028 LINE SEPARATOR - breaks the line, draws no glyph
+U+2028	whitespace	nonprinting
+# U+2029 PARAGRAPH SEPARATOR - breaks the paragraph, draws no glyph
+U+2029	whitespace	nonprinting
+# U+202F NARROW NO-BREAK SPACE
+U+202F	whitespace	nonprinting
+# U+205F MEDIUM MATHEMATICAL SPACE
+U+205F	whitespace	nonprinting
+# U+2060 WORD JOINER - zero-width
+U+2060	whitespace	nonprinting
+# U+FEFF ZERO WIDTH NO-BREAK SPACE / BOM
+U+FEFF	whitespace	nonprinting
+
+# ---------------------------------------------------------------------
+# enclosed -- Enclosed Alphanumerics. Circled and parenthesised numbering, the
+#   standard list markers in Chinese prose.
+# ---------------------------------------------------------------------
+# U+2460..U+2473  CIRCLED DIGIT ONE .. CIRCLED NUMBER TWENTY
+U+2460	enclosed	require
+U+2461	enclosed	require
+U+2462	enclosed	require
+U+2463	enclosed	require
+U+2464	enclosed	require
+U+2465	enclosed	require
+U+2466	enclosed	require
+U+2467	enclosed	require
+U+2468	enclosed	require
+U+2469	enclosed	require
+U+246A	enclosed	require
+U+246B	enclosed	require
+U+246C	enclosed	require
+U+246D	enclosed	require
+U+246E	enclosed	require
+U+246F	enclosed	require
+U+2470	enclosed	require
+U+2471	enclosed	require
+U+2472	enclosed	require
+U+2473	enclosed	require
+# U+24EA CIRCLED DIGIT ZERO
+U+24EA	enclosed	require
+# U+2474..U+2487  PARENTHESIZED DIGIT ONE .. PARENTHESIZED NUMBER TWENTY
+U+2474	enclosed	require
+U+2475	enclosed	require
+U+2476	enclosed	require
+U+2477	enclosed	require
+U+2478	enclosed	require
+U+2479	enclosed	require
+U+247A	enclosed	require
+U+247B	enclosed	require
+U+247C	enclosed	require
+U+247D	enclosed	require
+U+247E	enclosed	require
+U+247F	enclosed	require
+U+2480	enclosed	require
+U+2481	enclosed	require
+U+2482	enclosed	require
+U+2483	enclosed	require
+U+2484	enclosed	require
+U+2485	enclosed	require
+U+2486	enclosed	require
+U+2487	enclosed	require
+# U+2776..U+277A  DINGBAT NEGATIVE CIRCLED DIGIT ONE .. DINGBAT NEGATIVE CIRCLED DIGIT FIVE
+U+2776	enclosed	require
+U+2777	enclosed	require
+U+2778	enclosed	require
+U+2779	enclosed	require
+U+277A	enclosed	require
+
+# ---------------------------------------------------------------------
+# units -- Units and squared-CJK forms, including the parenthesised /circled
+#   ideographs an equity report actually uses (U+3231 STOCK,
+#   U+3236 FINANCIAL, U+3296 CIRCLED IDEOGRAPH FINANCE).
+# ---------------------------------------------------------------------
+# U+2103 DEGREE CELSIUS | U+2109 DEGREE FAHRENHEIT | U+2116 NUMERO SIGN
+U+2103	units	require
+U+2109	units	require
+U+2116	units	require
+# U+212B ANGSTROM SIGN | U+2126 OHM SIGN | U+3231 PARENTHESIZED IDEOGRAPH STOCK
+U+212B	units	require
+U+2126	units	require
+U+3231	units	require
+# U+3232 PARENTHESIZED IDEOGRAPH HAVE | U+3236 PARENTHESIZED IDEOGRAPH FINANCIAL | U+3239 PARENTHESIZED IDEOGRAPH REPRESENT
+U+3232	units	require
+U+3236	units	require
+U+3239	units	require
+# U+3296 CIRCLED IDEOGRAPH FINANCIAL | U+3297 CIRCLED IDEOGRAPH CONGRATULATION | U+3299 CIRCLED IDEOGRAPH SECRET
+U+3296	units	require
+U+3297	units	require
+U+3299	units	require
+# U+32A4..U+32A6  CIRCLED IDEOGRAPH HIGH .. CIRCLED IDEOGRAPH LOW
+U+32A4	units	require
+U+32A5	units	require
+U+32A6	units	require
+# U+337F SQUARE CORPORATION
+U+337F	units	require
+# U+338E..U+3390  SQUARE MG .. SQUARE HZ
+U+338E	units	require
+U+338F	units	require
+U+3390	units	require
+# U+3392 SQUARE MHZ | U+3396 SQUARE ML | U+3398 SQUARE KL
+U+3392	units	require
+U+3396	units	require
+U+3398	units	require
+# U+339C..U+339E  SQUARE MM .. SQUARE KM
+U+339C	units	require
+U+339D	units	require
+U+339E	units	require
+# U+33A1 SQUARE M SQUARED | U+33A5 SQUARE M CUBED | U+33BE SQUARE KW
+U+33A1	units	require
+U+33A5	units	require
+U+33BE	units	require
+# U+33D2 SQUARE LOG | U+33D9 SQUARE PPM
+U+33D2	units	require
+U+33D9	units	require
+
+# ---------------------------------------------------------------------
+# supersub -- Superscripts and subscripts. Footnote markers and formula indices.
+# ---------------------------------------------------------------------
+# U+00B2 SUPERSCRIPT TWO | U+00B3 SUPERSCRIPT THREE | U+00B9 SUPERSCRIPT ONE
+U+00B2	supersub	require
+U+00B3	supersub	require
+U+00B9	supersub	require
+# U+2070 SUPERSCRIPT ZERO
+U+2070	supersub	require
+# U+2074..U+208E  SUPERSCRIPT FOUR .. SUBSCRIPT RIGHT PARENTHESIS
+U+2074	supersub	require
+U+2075	supersub	require
+U+2076	supersub	require
+U+2077	supersub	require
+U+2078	supersub	require
+U+2079	supersub	require
+U+207A	supersub	require
+U+207B	supersub	require
+U+207C	supersub	require
+U+207D	supersub	require
+U+207E	supersub	require
+U+207F	supersub	require
+U+2080	supersub	require
+U+2081	supersub	require
+U+2082	supersub	require
+U+2083	supersub	require
+U+2084	supersub	require
+U+2085	supersub	require
+U+2086	supersub	require
+U+2087	supersub	require
+U+2088	supersub	require
+U+2089	supersub	require
+U+208A	supersub	require
+U+208B	supersub	require
+U+208C	supersub	require
+U+208D	supersub	require
+U+208E	supersub	require
+
+# ---------------------------------------------------------------------
+# punctuation -- General Punctuation: dashes, quotes, bullets, ellipsis, primes,
+#   daggers and the reference mark U+203B.
+# ---------------------------------------------------------------------
+# U+00A7 SECTION SIGN | U+00AB LEFT-POINTING DOUBLE ANGLE QUOTATION MARK | U+00B6 PILCROW SIGN
+U+00A7	punctuation	require
+U+00AB	punctuation	require
+U+00B6	punctuation	require
+# U+00BB RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK | U+2010 HYPHEN
+U+00BB	punctuation	require
+U+2010	punctuation	require
+# U+2012..U+2016  FIGURE DASH .. DOUBLE VERTICAL LINE
+U+2012	punctuation	require
+U+2013	punctuation	require
+U+2014	punctuation	require
+U+2015	punctuation	require
+U+2016	punctuation	require
+# U+2018..U+201A  LEFT SINGLE QUOTATION MARK .. SINGLE LOW-9 QUOTATION MARK
+U+2018	punctuation	require
+U+2019	punctuation	require
+U+201A	punctuation	require
+# U+201C..U+201E  LEFT DOUBLE QUOTATION MARK .. DOUBLE LOW-9 QUOTATION MARK
+U+201C	punctuation	require
+U+201D	punctuation	require
+U+201E	punctuation	require
+# U+2020..U+2022  DAGGER .. BULLET
+U+2020	punctuation	require
+U+2021	punctuation	require
+U+2022	punctuation	require
+# U+2025..U+2027  TWO DOT LEADER .. HYPHENATION POINT
+U+2025	punctuation	require
+U+2026	punctuation	require
+U+2027	punctuation	require
+# U+2032..U+2034  PRIME .. TRIPLE PRIME
+U+2032	punctuation	require
+U+2033	punctuation	require
+U+2034	punctuation	require
+# U+2039..U+203C  SINGLE LEFT-POINTING ANGLE QUOTATION MARK .. DOUBLE EXCLAMATION MARK
+U+2039	punctuation	require
+U+203A	punctuation	require
+U+203B	punctuation	require
+U+203C	punctuation	require
+# U+2047 DOUBLE QUESTION MARK | U+2049 EXCLAMATION QUESTION MARK
+U+2047	punctuation	require
+U+2049	punctuation	require
+
+# ---------------------------------------------------------------------
+# latin1 -- Latin-1 letters and marks that reach reports through company names,
+#   analyst names and legal boilerplate.
+# ---------------------------------------------------------------------
+# U+00A6 BROKEN BAR | U+00A9 COPYRIGHT SIGN | U+00AE REGISTERED SIGN
+U+00A6	latin1	require
+U+00A9	latin1	require
+U+00AE	latin1	require
+# U+00B4 ACUTE ACCENT | U+00B5 MICRO SIGN | U+00B7 MIDDLE DOT
+U+00B4	latin1	require
+U+00B5	latin1	require
+U+00B7	latin1	require
+# U+00B8 CEDILLA | U+00C9 LATIN CAPITAL LETTER E WITH ACUTE | U+00DF LATIN SMALL LETTER SHARP S
+U+00B8	latin1	require
+U+00C9	latin1	require
+U+00DF	latin1	require
+# U+00E9 LATIN SMALL LETTER E WITH ACUTE | U+00EA LATIN SMALL LETTER E WITH CIRCUMFLEX | U+00F1 LATIN SMALL LETTER N WITH TILDE
+U+00E9	latin1	require
+U+00EA	latin1	require
+U+00F1	latin1	require
+# U+00FC LATIN SMALL LETTER U WITH DIAERESIS | U+0153 LATIN SMALL LIGATURE OE | U+2122 TRADE MARK SIGN
+U+00FC	latin1	require
+U+0153	latin1	require
+U+2122	latin1	require
+
+# ---------------------------------------------------------------------
+# miscsym -- Miscellaneous Symbols. Weather, warning, recycling and the card /
+#   music glyphs that leak in from model training data.
+# ---------------------------------------------------------------------
+# U+2120 SERVICE MARK | U+2139 INFORMATION SOURCE
+U+2120	miscsym	require
+U+2139	miscsym	require
+# U+2600..U+2603  BLACK SUN WITH RAYS .. SNOWMAN
+U+2600	miscsym	require
+U+2601	miscsym	require
+U+2602	miscsym	require
+U+2603	miscsym	require
+# U+260E BLACK TELEPHONE | U+261D WHITE UP POINTING INDEX | U+2620 SKULL AND CROSSBONES
+U+260E	miscsym	require
+U+261D	miscsym	require
+U+2620	miscsym	require
+# U+262F YIN YANG | U+263A WHITE SMILING FACE | U+2640 FEMALE SIGN
+U+262F	miscsym	require
+U+263A	miscsym	require
+U+2640	miscsym	require
+# U+2642 MALE SIGN | U+2660 BLACK SPADE SUIT | U+2663 BLACK CLUB SUIT
+U+2642	miscsym	require
+U+2660	miscsym	require
+U+2663	miscsym	require
+# U+2665 BLACK HEART SUIT | U+2666 BLACK DIAMOND SUIT | U+266A EIGHTH NOTE
+U+2665	miscsym	require
+U+2666	miscsym	require
+U+266A	miscsym	require
+# U+266B BEAMED EIGHTH NOTES | U+267B BLACK UNIVERSAL RECYCLING SYMBOL | U+2699 GEAR
+U+266B	miscsym	require
+U+267B	miscsym	require
+U+2699	miscsym	require
+# U+269B ATOM SYMBOL | U+26A0 WARNING SIGN | U+26A1 HIGH VOLTAGE SIGN
+U+269B	miscsym	require
+U+26A0	miscsym	require
+U+26A1	miscsym	require
+# U+3030 WAVY DASH
+U+3030	miscsym	require
+
+# ---------------------------------------------------------------------
+# emoji -- Emoji: BMP, astral plane, and the sequence mechanics (ZWJ, variation
+#   selectors, keycap, regional indicators). Noto Emoji MONOCHROME is
+#   the only provider here - Noto COLOR Emoji is a CBDT raster font and
+#   renders BLANK through wkhtmltopdf (measured, ink=0).
+# ---------------------------------------------------------------------
+# U+200D ZERO WIDTH JOINER - glues emoji sequences; in the emoji group, zero ink
+U+200D	emoji	nonprinting
+# U+FE0E VARIATION SELECTOR-15 - text presentation request, zero ink
+U+FE0E	emoji	nonprinting
+# U+FE0F VARIATION SELECTOR-16 - emoji presentation request, zero ink
+U+FE0F	emoji	nonprinting
+# U+20E3 COMBINING ENCLOSING KEYCAP | U+231A WATCH | U+231B HOURGLASS
+U+20E3	emoji	require
+U+231A	emoji	require
+U+231B	emoji	require
+# U+23E9 BLACK RIGHT-POINTING DOUBLE TRIANGLE | U+23F0 ALARM CLOCK | U+23F3 HOURGLASS WITH FLOWING SAND
+U+23E9	emoji	require
+U+23F0	emoji	require
+U+23F3	emoji	require
+# U+26AA MEDIUM WHITE CIRCLE | U+26AB MEDIUM BLACK CIRCLE | U+2B55 HEAVY LARGE CIRCLE
+U+26AA	emoji	require
+U+26AB	emoji	require
+U+2B55	emoji	require
+# U+1F1E8..U+1F1EA  REGIONAL INDICATOR SYMBOL LETTER C .. REGIONAL INDICATOR SYMBOL LETTER E
+U+1F1E8	emoji	require
+U+1F1E9	emoji	require
+U+1F1EA	emoji	require
+# U+1F1ED REGIONAL INDICATOR SYMBOL LETTER H | U+1F1EF REGIONAL INDICATOR SYMBOL LETTER J | U+1F1F0 REGIONAL INDICATOR SYMBOL LETTER K
+U+1F1ED	emoji	require
+U+1F1EF	emoji	require
+U+1F1F0	emoji	require
+# U+1F1F3 REGIONAL INDICATOR SYMBOL LETTER N | U+1F1F5 REGIONAL INDICATOR SYMBOL LETTER P
+U+1F1F3	emoji	require
+U+1F1F5	emoji	require
+# U+1F1F8..U+1F1FA  REGIONAL INDICATOR SYMBOL LETTER S .. REGIONAL INDICATOR SYMBOL LETTER U
+U+1F1F8	emoji	require
+U+1F1F9	emoji	require
+U+1F1FA	emoji	require
+# U+1F3E2 OFFICE BUILDING | U+1F3E6 BANK | U+1F44D THUMBS UP SIGN
+U+1F3E2	emoji	require
+U+1F3E6	emoji	require
+U+1F44D	emoji	require
+# U+1F44E THUMBS DOWN SIGN | U+1F4A1 ELECTRIC LIGHT BULB | U+1F4B0 MONEY BAG
+U+1F44E	emoji	require
+U+1F4A1	emoji	require
+U+1F4B0	emoji	require
+# U+1F4B3..U+1F4B9  CREDIT CARD .. CHART WITH UPWARDS TREND AND YEN SIGN
+U+1F4B3	emoji	require
+U+1F4B4	emoji	require
+U+1F4B5	emoji	require
+U+1F4B6	emoji	require
+U+1F4B7	emoji	require
+U+1F4B8	emoji	require
+U+1F4B9	emoji	require
+# U+1F4C4 PAGE FACING UP
+U+1F4C4	emoji	require
+# U+1F4C8..U+1F4CC  CHART WITH UPWARDS TREND .. PUSHPIN
+U+1F4C8	emoji	require
+U+1F4C9	emoji	require
+U+1F4CA	emoji	require
+U+1F4CB	emoji	require
+U+1F4CC	emoji	require
+# U+1F4DD MEMO | U+1F50D LEFT-POINTING MAGNIFYING GLASS | U+1F50E RIGHT-POINTING MAGNIFYING GLASS
+U+1F4DD	emoji	require
+U+1F50D	emoji	require
+U+1F50E	emoji	require
+# U+1F512 LOCK | U+1F514 BELL | U+1F525 FIRE
+U+1F512	emoji	require
+U+1F514	emoji	require
+U+1F525	emoji	require
+# U+1F534 LARGE RED CIRCLE | U+1F535 LARGE BLUE CIRCLE | U+1F53A UP-POINTING RED TRIANGLE
+U+1F534	emoji	require
+U+1F535	emoji	require
+U+1F53A	emoji	require
+# U+1F53B DOWN-POINTING RED TRIANGLE | U+1F600 GRINNING FACE | U+1F642 SLIGHTLY SMILING FACE
+U+1F53B	emoji	require
+U+1F600	emoji	require
+U+1F642	emoji	require
+# U+1F680 ROCKET | U+1F6A8 POLICE CARS REVOLVING LIGHT | U+1F9E0 BRAIN
+U+1F680	emoji	require
+U+1F6A8	emoji	require
+U+1F9E0	emoji	require
+# U+1F9EA TEST TUBE | U+1F7E1 LARGE YELLOW CIRCLE | U+1F7E2 LARGE GREEN CIRCLE
+U+1F9EA	emoji	require
+U+1F7E1	emoji	require
+U+1F7E2	emoji	require
+# U+1F7E4 LARGE BROWN CIRCLE | U+1FA99 COIN
+U+1F7E4	emoji	require
+U+1FA99	emoji	require
+
+# ---------------------------------------------------------------------
+# END - 623 codepoints: 594 require, 6 advisory, 23 nonprinting.
+# ---------------------------------------------------------------------

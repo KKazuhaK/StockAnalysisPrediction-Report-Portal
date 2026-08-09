@@ -1,0 +1,8 @@
+# The coverage corpus and the shell probes are parsed inside a Linux container. A CRLF checkout
+# would give awk a trailing \r on every field — turning tier "require\r" into an unknown tier and
+# the gate's report into fiction — and would put \r on the probes' shebang line. Pin them to LF
+# regardless of the checking-out platform's core.autocrlf.
+scripts/font-coverage-corpus.txt text eol=lf
+scripts/*.sh                     text eol=lf
+Dockerfile*                      text eol=lf
+docker-entrypoint.sh             text eol=lf
