@@ -16,6 +16,32 @@ vi.mock('react-i18next', () => ({
 }))
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }))
 
+// The shell warms the two gating GETs while it is idle; this is the payoff.
+vi.mock('../lib/prefetch', () => ({
+  readPrefetched: (url: string) =>
+    warm.on
+      ? url.endsWith('/targets')
+        ? { targets: [{ id: 1, name: 'Daily', plugin_slug: 'dify', created_at: '', mode: 'workflow', inputs: [] }] }
+        : { presets: [], default_mode: 'now' }
+      : undefined,
+  prefetch: () => Promise.resolve(),
+}))
+const warm = vi.hoisted(() => ({ on: false }))
+
+describe('RunAnalysisModal with the shell-warmed answers already in hand', () => {
+  it('opens on the form, with no spinner at all', async () => {
+    warm.on = true
+    render(
+      <App>
+        <RunAnalysisModal open onClose={() => {}} />
+      </App>,
+    )
+    expect(await screen.findByText('run.workflow')).toBeTruthy()
+    expect(screen.queryByText('run.loading')).toBeNull()
+    warm.on = false
+  })
+})
+
 describe('RunAnalysisModal while its data is still loading', () => {
   it('says it is loading instead of showing an empty form', async () => {
     const { container } = render(
