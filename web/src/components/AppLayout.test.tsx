@@ -5,13 +5,16 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import AppLayout from './AppLayout'
 
 const updateState = vi.hoisted(() => ({ available: false }))
+const siteState = vi.hoisted(() => ({
+  settings: { footerText: '', footerShowInfo: false, footerShowVersion: false },
+}))
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('../site', () => ({
   SiteLogo: () => <span data-testid="site-logo" />,
   useSite: () => ({
     title: 'Report Portal',
-    settings: { footerText: '', footerShowInfo: false, footerShowVersion: false },
+    settings: siteState.settings,
   }),
 }))
 vi.mock('../prefs', () => ({
@@ -21,7 +24,9 @@ vi.mock('../reader', () => ({ useReaderPrefs: () => ({ wide: false }) }))
 vi.mock('../auth', () => ({
   useAuth: () => ({ user: 'alice', name: 'Alice', admin: true, can: () => true, logout: vi.fn() }),
 }))
-vi.mock('../api/client', () => ({ api: { get: () => Promise.resolve({}) } }))
+vi.mock('../api/client', () => ({
+  api: { get: () => Promise.resolve({ version: 'v9.9.9', commit: 'abc1234', buildDate: '2026-08-10' }) },
+}))
 vi.mock('../lib/useVersionCheck', () => ({ useVersionCheck: () => updateState.available }))
 vi.mock('./Omnibox', () => ({ default: () => <input aria-label="global-search" /> }))
 vi.mock('./RunAnalysisModal', () => ({ default: () => null }))
@@ -44,6 +49,7 @@ function renderAt(path: string) {
 describe('AppLayout mobile chat focus mode', () => {
   beforeEach(() => {
     updateState.available = false
+    siteState.settings = { footerText: '', footerShowInfo: false, footerShowVersion: false }
   })
 
   it('removes global search, actions, breadcrumbs, and content gutters on mobile chat', async () => {
@@ -69,6 +75,25 @@ describe('AppLayout mobile chat focus mode', () => {
     expect(screen.getByLabelText('global-search')).toBeTruthy()
     expect(screen.getByTitle('nav.runAnalysis')).toBeTruthy()
     expect(screen.getByText('nav.home')).toBeTruthy()
+  })
+
+  // The footer's name and version sat at different heights: the name and logo were grouped in an
+  // inline-flex box inside a flex row, an inline-flex box takes its baseline from its first flex
+  // item (here a replaced <img>), and centring that taller box left its text 1.25px above the
+  // version's. jsdom has no layout, so what is asserted here is the arrangement that caused it —
+  // one inline flow, no part boxed off in its own flex container. The 1.25px → 0 measurement
+  // itself was made in a browser.
+  it('lays the whole footer out in one inline flow so its parts share a baseline', async () => {
+    siteState.settings = { footerText: '', footerShowInfo: true, footerShowVersion: true }
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: true } as ReturnType<typeof Grid.useBreakpoint>)
+    const { container } = renderAt('/queue')
+
+    const footer = await screen.findByText('v9.9.9').then((el) => el.closest('.ant-layout-footer'))
+    expect(footer).not.toBeNull()
+    expect(footer!.querySelector('.ant-space'), 'a flex row re-splits the baselines').toBeNull()
+    const flexed = [...footer!.querySelectorAll<HTMLElement>('*')].filter((el) => el.style.display.includes('flex'))
+    expect(flexed.map((el) => el.textContent)).toEqual([])
+    expect(container.querySelector('[data-testid="site-logo"]')).not.toBeNull()
   })
 
   it('uses the info background without a dark separator under the update banner', async () => {
