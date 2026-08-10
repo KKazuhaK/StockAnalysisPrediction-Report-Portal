@@ -448,6 +448,15 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		// Everything under /api/ and /report/ is answered against a session cookie and is
+		// specific to that user. A response carrying no Cache-Control leaves the decision to
+		// whatever cache is in the path — a browser's heuristics, or the reverse proxy an
+		// operator has put in front of this binary — so say it outright rather than rely on
+		// nobody having enabled one. Set before the handler runs, so a handler with its own
+		// considered answer (the SSE stream, a token response) still overrides it.
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/report/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
