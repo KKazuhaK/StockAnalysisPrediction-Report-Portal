@@ -99,12 +99,19 @@ export default function AuditPage() {
     if (since) qs.set('since', since)
     api
       .get<AuditResp>(`/api/admin/audit?${qs}`)
+      // Data and the loading flag land in ONE state transition. Splitting them across .then and
+      // .finally puts a render between them where the rows exist but the table is still blurred
+      // and inert (antd's Spin sets pointer-events: none), which is a frame nobody sees in a
+      // browser and a real race for anything that clicks a row as soon as it appears.
       .then((r) => {
         setData(r)
         setErr('')
+        setLoading(false)
       })
-      .catch((e) => setErr(errText(e, t)))
-      .finally(() => setLoading(false))
+      .catch((e) => {
+        setErr(errText(e, t))
+        setLoading(false)
+      })
   }, [action, actor, ip, q, since, page, t])
   useEffect(load, [load])
 

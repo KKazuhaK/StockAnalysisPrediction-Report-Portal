@@ -31,6 +31,15 @@ const RESP = {
   ],
 }
 
+// Mirrors user-event's own precondition: an element is reachable only if neither it nor any
+// ancestor switches pointer events off.
+const reachable = (el: Element | null): boolean => {
+  for (let n: Element | null = el; n; n = n.parentElement) {
+    if (getComputedStyle(n).pointerEvents === 'none') return false
+  }
+  return true
+}
+
 const mount = () =>
   render(
     <App>
@@ -70,6 +79,11 @@ describe('AuditPage', () => {
   it('opens a row in full, with the stored payload verbatim', async () => {
     mount()
     const openers = await screen.findAllByTitle('audit.details')
+    // A row appearing is not the same as a row being clickable: while the table is loading antd
+    // blurs it with pointer-events: none, and user-event refuses to click through that. Waiting
+    // for the button to be genuinely reachable is what a person does, and it is what this test
+    // failed to do on a loaded CI runner while passing on an idle laptop.
+    await waitFor(() => expect(reachable(openers[1])).toBe(true))
     await userEvent.click(openers[1]) // the grant change: the row with a payload worth reading
 
     const dialog = await screen.findByRole('dialog')
