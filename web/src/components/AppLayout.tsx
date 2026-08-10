@@ -99,7 +99,13 @@ export default function AppLayout() {
   // the heavy Markdown chunk, so pre-loading them makes clicking a report navigate near-instantly
   // instead of waiting on a chunk download (paired with the keyed Suspense below, which shows a
   // spinner if a click still races the download).
+  //
+  // It is a bet that the visit will open a report, and it costs a few hundred KB. Where the browser
+  // says that bet is a bad one — the user asked for reduced data, or the connection is 2G — the
+  // chunks stay lazy and load on the click that actually needs them.
   useEffect(() => {
+    const conn = (navigator as { connection?: { saveData?: boolean; effectiveType?: string } }).connection
+    if (conn?.saveData || (conn?.effectiveType ?? '').includes('2g')) return
     const timer = window.setTimeout(() => {
       void import('../pages/StockPage')
       void import('../pages/RunPage')
