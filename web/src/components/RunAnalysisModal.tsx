@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Typography } from 'antd'
+import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Spin, Typography } from 'antd'
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
@@ -44,25 +44,40 @@ export default function RunAnalysisModal({
   const [notify, setNotify] = useState(false)
   const [retries, setRetries] = useState(0) // failure retries; 0 = never auto-retry (a single run maps 1:1 to the click)
   const [submitting, setSubmitting] = useState(false)
+  const [loading, setLoading] = useState(true) // until the workflow list is in, this modal knows nothing
 
   useEffect(() => {
     if (!open) return
-    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
+    // The form is meaningless until the workflow list and the run defaults are in: an empty
+    // Select reads as "nothing to run" and the no-targets notice states it outright, which on a
+    // slow link is a claim about the server that has not answered yet. Both of those wait behind
+    // `loading`. The three secondary calls (tickets, quota, queue depth) only add detail to
+    // controls that render sensibly without them, so they are not part of the gate.
+    setLoading(true)
     api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
     api.get<RunQuota>('/api/admin/batch/run-quota').then(setQuota).catch(() => {})
     api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
-    // Presets + the admin-set run-form defaults (default mode button + idle pre-check).
-    api
-      .get<RunPresetsResp>('/api/admin/batch/presets')
-      .then((r) => {
+    let live = true
+    const gated = [
+      api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])),
+      // Presets + the admin-set run-form defaults (default mode button + idle pre-check).
+      api.get<RunPresetsResp>('/api/admin/batch/presets').then((r) => {
         setPresets(r.presets || [])
         // Fall back to immediate if the admin default is "preset" but no preset windows are enabled
         // (the preset mode button is hidden then, so it couldn't be selected anyway).
         const hasPresets = (r.presets || []).some((p) => p.enabled)
         const mode = r.default_mode === 'preset' && !hasPresets ? 'now' : r.default_mode || 'now'
         setSchedule((s) => ({ ...s, mode, idle: !!r.default_idle }))
-      })
-      .catch(() => {})
+      }),
+    ]
+    // allSettled, not all: a failed presets call must still open the form (with no preset
+    // windows), rather than leave the modal spinning for ever on a detail.
+    Promise.allSettled(gated).then(() => {
+      if (live) setLoading(false)
+    })
+    return () => {
+      live = false
+    }
   }, [open])
 
   // 运行分析 generates a report (Dify ingests it). visibleOn applies both rules: agent apps
@@ -192,11 +207,20 @@ export default function RunAnalysisModal({
       open={open}
       onOk={submit}
       okText={schedule.mode === 'now' ? t('run.run') : t('run.schedule')}
-      okButtonProps={{ loading: submitting, disabled: !targetId }}
+      okButtonProps={{ loading: submitting, disabled: loading || !targetId }}
       cancelText={t('common.cancel')}
       onCancel={onClose}
       destroyOnHidden
     >
+      {loading ? (
+        // A spinner is the honest answer while the workflow list is on the wire. What used to be
+        // here — an empty Select under "no workflows are configured" — described a server that
+        // had not spoken yet.
+        <div style={{ display: 'grid', alignContent: 'center', justifyItems: 'center', minHeight: 180, gap: 12 }}>
+          <Spin size="large" />
+          <Typography.Text type="secondary">{t('run.loading')}</Typography.Text>
+        </div>
+      ) : (
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
         {runnable.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}
 
@@ -256,6 +280,7 @@ export default function RunAnalysisModal({
 
         <Alert type={busy ? 'warning' : 'success'} showIcon message={queueMsg} />
       </Space>
+      )}
     </Modal>
   )
 }
