@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { auditTime } from '../../lib/auditTime'
 import { formatRegion } from '../../lib/geo'
-import { Alert, Card, DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import { Alert, Button, Card, DatePicker, Descriptions, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { SearchOutlined } from '@ant-design/icons'
+import { InfoCircleOutlined, SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
@@ -80,6 +80,7 @@ export default function AuditPage() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [action, setAction] = useState<string>()
+  const [row, setRow] = useState<AuditEntry | null>(null) // the row opened in full
   const [actor, setActor] = useState('')
   const [ip, setIP] = useState('')
   const [q, setQ] = useState('')
@@ -201,6 +202,16 @@ export default function AuditPage() {
         </Typography.Text>
       ),
     },
+    {
+      // Scanning and investigating want opposite things from this table. The column above serves
+      // the scan; this serves the investigation — every field as stored, including the ones the
+      // sentence drops for being uninformative, and the payload verbatim for pasting elsewhere.
+      title: '',
+      width: 48,
+      render: (_, r) => (
+        <Button size="small" type="text" icon={<InfoCircleOutlined />} title={t('audit.details')} onClick={() => setRow(r)} />
+      ),
+    },
   ]
 
   return (
@@ -314,6 +325,50 @@ export default function AuditPage() {
               : t('audit.geoMissingShort')}
         </Typography.Text>
       )}
+
+      {/* Everything the row carries, in the order an investigation reads it, and the payload
+          exactly as stored — the sentence in the table is a rendering, and somebody chasing an
+          incident needs the thing itself to paste into a ticket. */}
+      <Modal open={row != null} title={t('audit.details')} footer={null} width={640} onCancel={() => setRow(null)}>
+        {row && (
+          <Descriptions bordered size="small" column={1}>
+            <Descriptions.Item label={t('audit.at')}>{auditTime(row.at, data?.timezone ?? '').text}</Descriptions.Item>
+            <Descriptions.Item label={t('audit.actor')}>
+              {row.actor || t('audit.machine')}
+              {row.actor_ou > 0 ? ` · ${ouNames[String(row.actor_ou)] ?? `OU ${row.actor_ou}`}` : ''}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('audit.ipFilter')}>
+              {row.ip ? `${row.ip}${formatRegion(row.geo) ? ` · ${formatRegion(row.geo)}` : ''}` : '—'}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('audit.action')}>
+              <Tag color={ACTION_COLOR[row.action]}>{t(`audit.a.${row.action}`, row.action)}</Tag>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {row.action}
+              </Typography.Text>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('audit.target')}>
+              {row.target_type} {row.target_id}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('audit.detail')}>{auditDetail(row.action, row.detail, t) || '—'}</Descriptions.Item>
+            <Descriptions.Item
+              // Copy sits on the label rather than on the payload: antd puts the icon after its
+              // child, and after a block of JSON that is a stray glyph on a line of its own.
+              label={
+                <Space size={4}>
+                  {t('audit.raw')}
+                  {row.detail ? <Typography.Text copyable={{ text: row.detail }} /> : null}
+                </Space>
+              }
+            >
+              {/* Bounded and scrollable: a grant change over a large OU can carry a long list, and
+                  a dialog that grows past the window is one nobody can close. */}
+              <pre style={{ margin: 0, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 12 }}>
+                {row.detail || '—'}
+              </pre>
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+      </Modal>
     </Card>
   )
 }
