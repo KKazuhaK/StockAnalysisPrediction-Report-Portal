@@ -492,7 +492,8 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 	}
 	// total = all jobs in the DB; len(out) = what this bounded page returned, so the UI can show
 	// "recent N of M" and point at storage cleanup when older jobs are hidden.
-	writeJSON(w, map[string]any{"jobs": out, "total": total, "budget": s.batchBudget()})
+	// Polled every few seconds per open tab; a queue in which nothing happened answers 304.
+	writeJSONIfChanged(w, r, map[string]any{"jobs": out, "total": total, "budget": s.batchBudget()})
 }
 
 // apiBatchJobCreate validates the target's plugin compiles, clamps concurrency to
@@ -914,7 +915,8 @@ func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user stri
 			scheduled++
 		}
 	}
-	writeJSON(w, map[string]any{
+	// Polled by the header badge and by every open queue view; unchanged is the normal answer.
+	writeJSONIfChanged(w, r, map[string]any{
 		"waiting":      len(s.queuedItems()), // due, awaiting admission (excludes not-yet-due)
 		"running":      s.st.RunningJobCount(),
 		"running_rows": s.st.RunningItemCount(), // concurrent runs (rows) — what the run cap governs

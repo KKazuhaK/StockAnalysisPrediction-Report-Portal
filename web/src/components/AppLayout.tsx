@@ -11,7 +11,9 @@ import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
 import { QUEUE_EVENT, RUN_ANALYSIS_EVENT } from '../lib/shortcuts'
 import { useVersionCheck } from '../lib/useVersionCheck'
+import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
 import { prefetch } from '../lib/prefetch'
+import { queueOnScreen } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
 import Omnibox from './Omnibox'
 import RunAnalysisModal from './RunAnalysisModal'
@@ -141,7 +143,16 @@ export default function AppLayout() {
   // Light poll for the header queue badge (the drawer refreshes faster when open).
   useEffect(() => {
     if (!canRun || queueOpen) return
-    const load = () => api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
+    const load = () => {
+      // Nothing to add while a queue view is open: it polls the same endpoint four times as often
+      // and shows the queue itself, so this would be a slower, staler copy of what is on screen.
+      if (queueOnScreen()) return Promise.resolve()
+      return getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
+        .then((r) => {
+          if (r !== UNCHANGED) setQueue(r)
+        })
+        .catch(() => {})
+    }
     return startVisiblePoll(load, 12000)
   }, [canRun, queueOpen])
 

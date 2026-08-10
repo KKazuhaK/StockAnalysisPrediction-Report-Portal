@@ -50,6 +50,8 @@ import {
   statusTag,
   TOOLTIP_STYLES,
 } from '../lib/batchUi'
+import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
+import { watchQueue } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
@@ -262,18 +264,29 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
     // The search goes with it: since the list carries only a PREVIEW of each job's inputs, filtering
     // here would stop matching anything past the first line of a prompt. The server still sees them
     // whole.
-    const jobsRequest = api
-      .get<{ jobs: BatchJob[]; total?: number }>(`/api/admin/batch/jobs?limit=300${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`)
+    // Conditional: a queue in which nothing happened answers 304, and keeping the objects we
+    // already have is what stops a 3-second poll from re-rendering the table for no reason.
+    const jobsRequest = getIfChanged<{ jobs: BatchJob[]; total?: number }>(
+      `/api/admin/batch/jobs?limit=300${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`,
+    )
       .then((r) => {
+        if (r === UNCHANGED) return
         setJobs(r.jobs || [])
         setTotal(r.total ?? (r.jobs || []).length)
       })
       .catch(() => {})
-    const summaryRequest = api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setSummary).catch(() => {})
+    const summaryRequest = getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
+      .then((r) => {
+        if (r !== UNCHANGED) setSummary(r)
+      })
+      .catch(() => {})
     await Promise.all([jobsRequest, summaryRequest])
   }
   useEffect(() => {
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
+    // While this view is mounted the header badge stands down: it would be asking, four times
+    // slower, for what is on screen in full.
+    return watchQueue()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
