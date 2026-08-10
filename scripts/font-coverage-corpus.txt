@@ -4,13 +4,15 @@
 #
 # WHAT THIS IS
 #   The single source of truth for which characters an exported PDF must be
-#   able to draw. Two consumers read this one file and nothing else:
+#   able to draw.
 #
 #   Its one consumer is scripts/probe-font-coverage.sh, the build-time gate in
-#   Dockerfile.release. The gate asks fontconfig whether some installed font
-#   CLAIMS each codepoint, and fails the build when a `require` codepoint is
-#   claimed by none. Add a codepoint here and the gate picks it up; do not keep
-#   a second list anywhere else.
+#   the runtime-base stage of Dockerfile.release — built on every push and pull
+#   request by the font-image job in .github/workflows/test.yml (amd64), and
+#   again by the release image build (both arches). The gate asks fontconfig
+#   whether some installed font CLAIMS each codepoint, and fails the build when
+#   a `require` codepoint is claimed by none. Add a codepoint here and the gate
+#   picks it up; do not keep a second list anywhere else.
 #
 #   WHAT THIS FILE DOES NOT BUY YOU. Claiming a codepoint is not the same as
 #   painting one, and nothing in the repo checks the latter across this list.

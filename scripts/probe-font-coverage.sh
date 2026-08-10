@@ -2,9 +2,11 @@
 # Build-time glyph-coverage gate. Runs inside the release image, against the fonts that image
 # actually installs, and fails the build when a codepoint in the corpus has no covering font.
 #
-# It has to run here rather than in CI: a GitHub runner has DejaVu, Liberation and Noto Color Emoji
-# installed, so the same check passes there while the image ships broken — the exact false negative
-# that makes a gate worse than none.
+# It has to run inside the image, never on a runner directly: a GitHub runner has DejaVu, Liberation
+# and Noto Color Emoji installed, so the same check passes there while the image ships broken — the
+# exact false negative that makes a gate worse than none. CI does run it, but the way that keeps it
+# honest: the font-image job in .github/workflows/test.yml builds `--target runtime-base` on every
+# push and pull request, and this script failing is that build failing.
 #
 # A missing glyph is not loud. wkhtmltopdf draws nothing at all for an uncovered codepoint, so the
 # only symptom is a hole in a customer's PDF. That is what this gate exists to make impossible.

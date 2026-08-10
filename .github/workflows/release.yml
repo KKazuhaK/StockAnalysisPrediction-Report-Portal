@@ -125,11 +125,17 @@ jobs:
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    # Waits on docker, not just build. The image build is where the font-coverage gate runs
-    # (scripts/probe-font-coverage.sh, in Dockerfile.release), and it can only gate a release it
-    # precedes: run the two in parallel and a coverage failure arrives after the Release is already
-    # published and the archives are downloadable. Costs the release job the image build's wall
-    # clock, buys that a tag never ships binaries whose PDF export would drop glyphs.
+    # Waits on docker, not just build, for two reasons. A gate can only gate what it precedes: run
+    # the two in parallel and either failure below lands after the Release is already public and its
+    # archives are downloadable.
+    #   1. The image build runs the glyph gate (scripts/probe-font-coverage.sh, in the runtime-base
+    #      stage of Dockerfile.release) on both arches. test.yml's font-image job gates amd64
+    #      pre-merge, so by tag time this is re-verification — except on arm64, first checked here.
+    #   2. The release body advertises `docker pull ghcr.io/…:${VERSION}` (generated below).
+    #      Publishing ahead of the push means a Release page pointing at a tag ghcr.io lacks.
+    # Costs the release job the image build's wall clock. Note the scope: an archive ships neither
+    # fonts nor wkhtmltopdf, so a tarball's glyph coverage is whatever its host provides
+    # (internal/app/pdf.go resolves the binary from PATH). The gate is a property of the image.
     needs: [setup, build, docker]
     steps:
       - uses: actions/checkout@v6
