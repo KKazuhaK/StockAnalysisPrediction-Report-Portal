@@ -586,9 +586,15 @@ func (s *Server) apiBatchJobCreate(w http.ResponseWriter, r *http.Request, user 
 	s.scheduleTick() // admit now if due + budget allows, else it waits (or waits for its schedule)
 	// The human decision, not the machine outcome: batch_items already records every row's fate and
 	// the console serves it, so a row per item would double the table to duplicate an existing one.
-	s.recordChange(r, user, AuditRunSubmit, "batch_job", itoa64(jobID), map[string]any{
-		"target_id": in.TargetID, "rows": len(in.Rows), "priority": priority,
-		"downgraded": downgraded, "run_at": runAt})
+	s.st.WriteAudit(AuditEntry{
+		Actor: user, ActorOU: s.st.PrimaryGroupOf(user), Action: AuditRunSubmit,
+		TargetType: "batch_job", TargetID: itoa64(jobID), IP: s.auditIP(r),
+		Detail: runSubmitDetail(runSubmitAudit{
+			TargetID: in.TargetID, TargetName: tgt.Name, Surface: in.Surface, Rows: in.Rows,
+			Priority: priority, Downgraded: downgraded, Retries: maxRetries, Notify: in.Notify,
+			RunAt: runAt, Preset: runPreset,
+		}),
+	})
 	writeJSON(w, map[string]any{"ok": true, "job_id": jobID, "concurrency": conc, "priority": priority, "downgraded": downgraded, "run_at": runAt})
 }
 

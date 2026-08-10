@@ -106,7 +106,7 @@ func (s *Server) apiAdminVersionDelete(w http.ResponseWriter, r *http.Request, u
 // registered-but-never-run version is absent rather than an empty tab — "this report has no external
 // edition yet" is a normal state, not an error.
 func (s *Server) apiReportVersions(w http.ResponseWriter, r *http.Request, user string) {
-	rep := s.loadRep(user, pathID(r, "id"))
+	rep := s.loadRep(r, user, pathID(r, "id"))
 	if rep == nil {
 		jsonError(w, http.StatusNotFound, "report not found")
 		return

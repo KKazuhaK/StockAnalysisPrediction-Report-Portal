@@ -377,6 +377,99 @@ func (s *Store) auditActionsPresent() []string {
 
 // auditJSON renders a detail payload, returning "" rather than failing: a detail that cannot be
 // encoded must not cost the audit line itself.
+// runSubmitAudit is what a run submission records about itself. Named rather than assembled inline
+// because the same shape has to come out of the single-run dialog, the CSV batch console and a
+// scheduled run, and a field that only some of them fill is a field an operator cannot rely on.
+type runSubmitAudit struct {
+	TargetID   int64
+	TargetName string              // what was run, in the words the console shows
+	Surface    string              // where it was submitted from: run / batch / recurring
+	Rows       []map[string]string // as submitted; only the first is recorded, bounded
+	Priority   string
+	Downgraded bool
+	Retries    int
+	Notify     bool
+	RunAt      string
+	Preset     string
+}
+
+// Bounds for the inputs recorded with a run. An agent run carries its whole prompt, so an
+// unbounded copy would let one submission outweigh a month of ordinary lines — and the audit log
+// is a record of the decision, not a transcript of it. The queue console shows the full inputs,
+// and the run itself keeps them.
+const (
+	auditInputValueMax = 120
+	auditInputTotalMax = 600
+)
+
+// auditInputs renders a submitted row as "key=value" pairs, each value clamped on its own so one
+// long field cannot push the others out, and the whole list clamped again.
+func auditInputs(row map[string]string) string {
+	keys := make([]string, 0, len(row))
+	for k, v := range row {
+		if strings.TrimSpace(v) != "" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys) // a map ranges in random order; the log must not differ run to run
+	var b strings.Builder
+	for _, k := range keys {
+		if b.Len() >= auditInputTotalMax {
+			b.WriteString("  …")
+			break
+		}
+		if b.Len() > 0 {
+			b.WriteString("  ")
+		}
+		b.WriteString(k)
+		b.WriteString("=")
+		b.WriteString(clampAuditText(row[k], auditInputValueMax))
+	}
+	return b.String()
+}
+
+// clampAuditText collapses whitespace (a multi-line prompt is one value, not a shape) and cuts to
+// max RUNES — cutting bytes would split a multi-byte character and leave invalid UTF-8 in the log.
+func clampAuditText(v string, max int) string {
+	flat := strings.Join(strings.Fields(v), " ")
+	r := []rune(flat)
+	if len(r) <= max {
+		return flat
+	}
+	return string(r[:max]) + "…"
+}
+
+// runSubmitDetail is the JSON stored on a run.submit line: which workflow, with what, and under
+// which options.
+func runSubmitDetail(a runSubmitAudit) string {
+	d := map[string]any{
+		"target_id":  a.TargetID,
+		"rows":       len(a.Rows),
+		"priority":   a.Priority,
+		"downgraded": a.Downgraded,
+		"run_at":     a.RunAt,
+		"retries":    a.Retries,
+		"notify":     a.Notify,
+	}
+	if a.TargetName != "" {
+		d["target"] = a.TargetName
+	}
+	if a.Surface != "" {
+		d["surface"] = a.Surface
+	}
+	if a.Preset != "" {
+		d["preset"] = a.Preset
+	}
+	// The first row stands for the submission: a single run has exactly one, and for a CSV batch
+	// it says what kind of thing was sent alongside the count that says how much of it.
+	if len(a.Rows) > 0 {
+		if in := auditInputs(a.Rows[0]); in != "" {
+			d["inputs"] = in
+		}
+	}
+	return auditJSON(d)
+}
+
 func auditJSON(v map[string]any) string {
 	b, err := json.Marshal(v)
 	if err != nil {

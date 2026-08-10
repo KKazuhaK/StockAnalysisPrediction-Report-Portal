@@ -113,8 +113,8 @@ func (s *Server) apiReportDiff(w http.ResponseWriter, r *http.Request, user stri
 	// Both bodies are about to be served: diffLines keeps unchanged lines as context and a wholly
 	// added section comes back with its text, so this is a read of each document, not of a delta.
 	// Side B is usually one the reader never opened, which is exactly the read a client asks about.
-	s.recordReportRead(user, a)
-	s.recordReportRead(user, b)
+	s.recordReportRead(r, user, a)
+	s.recordReportRead(r, user, b)
 
 	sections := diffMarkdown(a.MD, b.MD)
 	changed := 0
