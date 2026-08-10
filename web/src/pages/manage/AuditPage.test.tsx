@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { App } from 'antd'
 import AuditPage from './AuditPage'
 
@@ -61,6 +62,24 @@ describe('AuditPage', () => {
     // A grant change carries both sides — the current state cannot answer "when did they gain it".
     // Rendered rather than dumped as JSON, but with the empty side still saying it was empty.
     expect(screen.getByText(/before=— · after=u:client@corp\.example/)).toBeTruthy()
+  })
+
+  // The detail column is a sentence now, which is what somebody scanning the log wants. Somebody
+  // investigating wants the opposite: every field exactly as stored, including the ones the
+  // sentence leaves out for being uninformative. One click, not a second page.
+  it('opens a row in full, with the stored payload verbatim', async () => {
+    mount()
+    const openers = await screen.findAllByTitle('audit.details')
+    await userEvent.click(openers[1]) // the grant change: the row with a payload worth reading
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('{"before":[],"after":["u:client@corp.example"]}')).toBeTruthy()
+    // Everything the row carries, not just its detail — an investigation needs the actor, the
+    // address and the object together, in one place.
+    // Exact, because the payload below also mentions the account: this asserts the actor FIELD,
+    // resolved OU and all, not merely that the name appears somewhere in the dialog.
+    expect(within(dialog).getByText('client@corp.example · 客户A')).toBeTruthy()
+    expect(within(dialog).getByText('version 对外版')).toBeTruthy()
   })
 
   it('asks the server for a page, not the whole table', async () => {
