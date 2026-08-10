@@ -3,8 +3,9 @@ import { Alert, App, Button, Card, Divider, InputNumber, Select, Space, Switch, 
 import { AuditOutlined, DatabaseOutlined, FileTextOutlined, KeyOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import type { CleanupConfig, CleanupResult, CleanupRun, CleanupUsage, CleanupUsageCategory } from '../../api/types'
+import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
 
 // Storage management console (docs/adr/0017-storage-cleanup.md): a per-category usage dashboard (icon
@@ -65,6 +66,8 @@ export default function StoragePage() {
   const [time, setTime] = useState('03:00')
   const [weekday, setWeekday] = useState(1)
   const [monthday, setMonthday] = useState(1)
+  const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
   const [auditEnabled, setAuditEnabled] = useState(false)
   const [auditDays, setAuditDays] = useState(365)
   const [batchEnabled, setBatchEnabled] = useState(false)
@@ -80,25 +83,35 @@ export default function StoragePage() {
   const [usage, setUsage] = useState<CleanupUsage | null>(null)
   const [history, setHistory] = useState<CleanupRun[]>([])
 
-  const loadConfig = () =>
-    api.get<CleanupConfig>('/api/admin/cleanup/config').then((r) => {
-      setCfg(r)
-      setFreq(r.freq)
-      setTime(r.time)
-      setWeekday(r.weekday)
-      setMonthday(r.monthday)
-      setBatchEnabled(r.batch_enabled)
-      setBatchDays(r.batch_days)
-      setTokensEnabled(r.tokens_enabled)
-      setTokensGraceDays(r.tokens_grace_days)
-      setReportsEnabled(r.reports_enabled)
-      setReportsDays(r.reports_days)
-      setAuditEnabled(r.audit_enabled)
-      setAuditDays(r.audit_days)
-      setBatchFloor(r.batch_floor)
-      setReportsFloor(r.reports_floor)
-      setAuditFloor(r.audit_floor)
-    })
+  // The schedule fields start at this file's defaults — cleanup off, 365-day audit retention —
+  // and the form is live, so until the server has answered nothing here may be shown as if it
+  // were the configured policy.
+  const loadConfig = () => {
+    setLoading(true)
+    setLoadErr('')
+    return api
+      .get<CleanupConfig>('/api/admin/cleanup/config')
+      .then((r) => {
+        setCfg(r)
+        setFreq(r.freq)
+        setTime(r.time)
+        setWeekday(r.weekday)
+        setMonthday(r.monthday)
+        setBatchEnabled(r.batch_enabled)
+        setBatchDays(r.batch_days)
+        setTokensEnabled(r.tokens_enabled)
+        setTokensGraceDays(r.tokens_grace_days)
+        setReportsEnabled(r.reports_enabled)
+        setReportsDays(r.reports_days)
+        setAuditEnabled(r.audit_enabled)
+        setAuditDays(r.audit_days)
+        setBatchFloor(r.batch_floor)
+        setReportsFloor(r.reports_floor)
+        setAuditFloor(r.audit_floor)
+      })
+      .catch((e) => setLoadErr(errText(e, t)))
+      .finally(() => setLoading(false))
+  }
   const loadUsage = () => api.get<CleanupUsage>('/api/admin/cleanup/usage').then(setUsage)
   const loadHistory = () => api.get<{ runs: CleanupRun[] }>('/api/admin/cleanup/history').then((r) => setHistory(r.runs ?? []))
 
@@ -272,6 +285,7 @@ export default function StoragePage() {
   ]
 
   return (
+    <LoadGate loading={loading} error={loadErr} onRetry={loadConfig}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card title={t('storage.usageTitle')}>
         <Space direction="vertical" size={14} style={{ width: '100%' }}>
@@ -406,5 +420,6 @@ export default function StoragePage() {
         </Card>
       )}
     </div>
+    </LoadGate>
   )
 }

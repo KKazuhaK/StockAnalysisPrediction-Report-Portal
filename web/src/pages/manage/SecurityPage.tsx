@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
+import LoadGate from '../../components/LoadGate'
 
 // Login protection and self-service registration.
 //
@@ -51,8 +52,10 @@ export default function SecurityPage() {
   const [emailOK, setEmailOK] = useState(true)
   const [secret, setSecret] = useState<string | null>(null) // null = leave the stored one alone
   const [busy, setBusy] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
 
   const load = useCallback(() => {
+    setLoadErr('')
     api
       .get<{
         captcha: CaptchaCfg
@@ -69,7 +72,11 @@ export default function SecurityPage() {
         setEmailOK(r.email_configured)
         setSecret(null)
       })
-      .catch((e) => message.error(errText(e, t)))
+      .catch((e) => {
+        setLoadErr(errText(e, t))
+        message.error(errText(e, t))
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(load, [load])
 
@@ -102,7 +109,15 @@ export default function SecurityPage() {
     }
   }
 
-  if (!captcha || !reg || !login) return null
+  // Loading, not "nothing here": this used to render null, so a slow link showed a blank panel
+  // with no explanation and a failed load looked identical to a page with no settings on it.
+  if (!captcha || !reg || !login) {
+    return (
+      <LoadGate loading={!loadErr} error={loadErr} onRetry={load}>
+        {null}
+      </LoadGate>
+    )
+  }
   const tokenProvider = captcha.provider !== 'image'
 
   return (

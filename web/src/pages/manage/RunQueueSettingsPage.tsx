@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { App, Button, Card, Collapse, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import type { BatchConfig, RunMode } from '../../api/types'
 import RunPresetsEditor from './RunPresetsEditor'
+import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
 import { GAP_FIELD } from './tokens'
 
@@ -27,9 +28,17 @@ export default function RunQueueSettingsPage() {
   const [fairHalflife, setFairHalflife] = useState(168)
   const [runDefaultMode, setRunDefaultMode] = useState<RunMode>('now')
   const [runDefaultIdle, setRunDefaultIdle] = useState(false)
+  // Every field above starts at a plausible-looking number, and this form is live. Until the
+  // server has answered, those numbers are this file's opinion, not the queue's configuration —
+  // so nothing renders behind the gate, and a failed load says so instead of quietly offering
+  // an admin the chance to save 1-job-at-a-time over whatever is really set.
+  const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
 
-  const load = () =>
-    api
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    return api
       .get<BatchConfig>('/api/admin/batch/config')
       .then((r) => {
         setMaxJobs(r.max_jobs)
@@ -45,8 +54,12 @@ export default function RunQueueSettingsPage() {
         setRunDefaultMode(r.run_default_mode ?? 'now')
         setRunDefaultIdle(!!r.run_default_idle)
       })
+      .catch((e) => setLoadErr(errText(e, t)))
+      .finally(() => setLoading(false))
+  }
   useEffect(() => {
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const save = async () => {
@@ -78,6 +91,7 @@ export default function RunQueueSettingsPage() {
 
   return (
     <Card title={t('batch.admin.settings')}>
+      <LoadGate loading={loading} error={loadErr} onRetry={load}>
       {/* Config in its own flex block (not antd Space, whose per-item wrapper is too short) so the
           sticky Save pins against the settings above and comes to rest before the preset editor,
           which manages its own per-window saves. */}
@@ -193,6 +207,7 @@ export default function RunQueueSettingsPage() {
         <Typography.Text type="secondary">{t('batch.admin.presetsHint')}</Typography.Text>
         <RunPresetsEditor />
       </div>
+      </LoadGate>
     </Card>
   )
 }
