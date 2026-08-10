@@ -259,8 +259,11 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const load = async () => {
     // Bounded poll: the server returns every active job + the most recent terminal jobs (not the whole
     // history) plus the true total, so the 3s poll stays cheap on a large finished-job backlog.
+    // The search goes with it: since the list carries only a PREVIEW of each job's inputs, filtering
+    // here would stop matching anything past the first line of a prompt. The server still sees them
+    // whole.
     const jobsRequest = api
-      .get<{ jobs: BatchJob[]; total?: number }>('/api/admin/batch/jobs?limit=300')
+      .get<{ jobs: BatchJob[]; total?: number }>(`/api/admin/batch/jobs?limit=300${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`)
       .then((r) => {
         setJobs(r.jobs || [])
         setTotal(r.total ?? (r.jobs || []).length)
@@ -277,7 +280,15 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
     if (!auto) return
     return startVisiblePoll(load, 3000)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auto])
+  }, [auto, search])
+
+  // Typing must not fire a request per keystroke, and with auto-refresh off nothing else would
+  // refetch at all, so a paused queue still answers the search box.
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 300)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
 
   const targetName = (id: number) => targets.find((tg) => tg.id === id)?.name || `#${id}`
   const submitters = useMemo(() => [...new Set(jobs.map((j) => j.created_by).filter(Boolean))], [jobs])
@@ -289,13 +300,13 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   )
   const canCancel = (j: BatchJob) => admin || j.created_by === user // matches the server ownership check
 
+  // Status / submitter / workflow filter the fetched set — they read fields the list still carries
+  // in full. The free-text search does not appear here: it is applied by the server (see load).
   const rows = useMemo(() => {
-    const q = search.trim().toLowerCase()
     return jobs.filter((j) => {
       if (fStatus === 'scheduled' ? !j.scheduled : fStatus && j.status !== fStatus) return false
       if (fUser && j.created_by !== fUser) return false
       if (fTarget && j.target_id !== fTarget) return false
-      if (q && !`${targetName(j.target_id)} ${fmtInputs(j.inputs)} ${j.created_by}`.toLowerCase().includes(q)) return false
       return true
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
