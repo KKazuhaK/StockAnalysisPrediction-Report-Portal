@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { App, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
+import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
 
 interface EmailConfig {
@@ -31,18 +32,29 @@ export default function EmailPage() {
   const [testTo, setTestTo] = useState('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
 
-  const load = () =>
-    api.get<EmailConfig>('/api/admin/email').then((r) => {
-      setEnabled(r.enabled)
-      setHost(r.host)
-      setPort(r.port || 587)
-      setUser(r.user)
-      setFrom(r.from)
-      setSecurity(r.security || 'starttls')
-      setHasPass(r.has_pass)
-      setPass('')
-    })
+  // The fields start at this file's own defaults (SMTP off, port 587). Until the server has
+  // answered they are not the mail configuration, and this form can save them back.
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    return api
+      .get<EmailConfig>('/api/admin/email')
+      .then((r) => {
+        setEnabled(r.enabled)
+        setHost(r.host)
+        setPort(r.port || 587)
+        setUser(r.user)
+        setFrom(r.from)
+        setSecurity(r.security || 'starttls')
+        setHasPass(r.has_pass)
+        setPass('')
+      })
+      .catch((e) => setLoadErr(errText(e, t)))
+      .finally(() => setLoading(false))
+  }
   useEffect(() => {
     load()
   }, [])
@@ -80,6 +92,7 @@ export default function EmailPage() {
 
   return (
     <Card title={t('nav.email')}>
+      <LoadGate loading={loading} error={loadErr} onRetry={load}>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text type="secondary">{t('email.hint')}</Typography.Text>
         {row(t('email.enabled'), <Switch checked={enabled} onChange={setEnabled} />)}
@@ -125,6 +138,7 @@ export default function EmailPage() {
           {t('common.save')}
         </Button>
       </StickyActionBar>
+      </LoadGate>
     </Card>
   )
 }
