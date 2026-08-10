@@ -6,6 +6,8 @@ import { useNavigate } from 'react-router'
 import { api } from '../api/client'
 import type { BatchJob, BatchQueueSummary, BatchTarget } from '../api/types'
 import { InputsPreview, isTerminal, statusTag } from '../lib/batchUi'
+import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
+import { watchQueue } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
 
 // The header 队列 drawer (docs/adr/0007): a live glance at running / waiting /
@@ -20,15 +22,28 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
 
   const load = async () => {
     await Promise.all([
-      api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setSummary).catch(() => {}),
-      api.get<{ jobs: BatchJob[] }>('/api/admin/batch/jobs').then((r) => setJobs(r.jobs || [])).catch(() => {}),
+      getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
+        .then((r) => {
+          if (r !== UNCHANGED) setSummary(r)
+        })
+        .catch(() => {}),
+      getIfChanged<{ jobs: BatchJob[] }>('/api/admin/batch/jobs')
+        .then((r) => {
+          if (r !== UNCHANGED) setJobs(r.jobs || [])
+        })
+        .catch(() => {}),
     ])
   }
 
   useEffect(() => {
     if (!open) return
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
-    return startVisiblePoll(load, 3000)
+    const unwatch = watchQueue() // the badge stands down while the drawer shows the same thing
+    const stop = startVisiblePoll(load, 3000)
+    return () => {
+      stop()
+      unwatch()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 

@@ -136,3 +136,41 @@ func TestQueueSearchReachesWhatThePreviewNoLongerCarries(t *testing.T) {
 		}
 	}
 }
+
+// The console asks every three seconds; the queue answers far less often than that. An unchanged
+// queue must cost an empty 304 — no body on the wire, and no parse, setState or re-render at the
+// other end.
+func TestAnUnchangedQueueAnswersNotModified(t *testing.T) {
+	s := tenancyServer(t)
+	seedQueueForPayload(t, s)
+
+	first := httptest.NewRecorder()
+	s.apiBatchJobs(first, httptest.NewRequest("GET", "/api/admin/batch/jobs?limit=300", nil), "op")
+	tag := first.Header().Get("ETag")
+	if tag == "" {
+		t.Fatal("no ETag: a poller has nothing to revalidate against")
+	}
+
+	again := httptest.NewRequest("GET", "/api/admin/batch/jobs?limit=300", nil)
+	again.Header.Set("If-None-Match", tag)
+	second := httptest.NewRecorder()
+	s.apiBatchJobs(second, again, "op")
+	if second.Code != 304 {
+		t.Fatalf("status %d, want 304", second.Code)
+	}
+	if second.Body.Len() != 0 {
+		t.Errorf("304 carried %d bytes of body", second.Body.Len())
+	}
+
+	// And a queue that DID change must not be answered from the tag.
+	if _, err := s.st.CreateBatchJob(seedTarget(t, s.st), 1, 0, "op", []map[string]string{{"symbol": "1"}}, "50"); err != nil {
+		t.Fatal(err)
+	}
+	third := httptest.NewRequest("GET", "/api/admin/batch/jobs?limit=300", nil)
+	third.Header.Set("If-None-Match", tag)
+	rec := httptest.NewRecorder()
+	s.apiBatchJobs(rec, third, "op")
+	if rec.Code != 200 || rec.Body.Len() == 0 {
+		t.Errorf("a changed queue answered %d with %d bytes", rec.Code, rec.Body.Len())
+	}
+}

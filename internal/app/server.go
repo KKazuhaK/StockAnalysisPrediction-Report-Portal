@@ -1047,6 +1047,39 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// writeJSONIfChanged answers a polled endpoint with 304 when the body is byte-identical to what
+// this caller already has.
+//
+// It is for the console's pollers, which ask every few seconds for something that changes far less
+// often than they ask. A queue with nothing happening in it is the normal case, and answering that
+// case with an empty 304 costs the network nothing and — because the client keeps the object it
+// already had — costs React nothing either: no parse, no setState, no re-render.
+//
+// The tag is a hash of the body we were going to send. That does not save the server the work of
+// producing it, which would need a cheap version stamp the queue does not have; what it saves is
+// everything after that, which is where the cost was. Correct by construction: if the bytes are the
+// same the answer is the same.
+//
+// Note that /api/ is Cache-Control: no-store, so no cache along the way keeps this — the CLIENT
+// holds the tag and sends it back deliberately (see lib/conditionalGet.ts). That is the point: the
+// revalidation is between this handler and that poller, not something a proxy may join in on.
+func writeJSONIfChanged(w http.ResponseWriter, r *http.Request, v any) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		writeJSON(w, v)
+		return
+	}
+	sum := sha256.Sum256(body)
+	tag := `W/"` + hex.EncodeToString(sum[:16]) + `"`
+	w.Header().Set("ETag", tag)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if match := r.Header.Get("If-None-Match"); match != "" && match == tag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Write(body)
+}
+
 // apiSymbols lists stocks that have reports / autocomplete. GET /api/symbols?q=300&limit=50
 func (s *Server) apiSymbols(w http.ResponseWriter, r *http.Request) {
 	if !s.canQuery(r) { // Bearer(query) or a logged-in browser session

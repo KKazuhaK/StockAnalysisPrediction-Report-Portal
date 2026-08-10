@@ -24,6 +24,16 @@ vi.mock('../api/client', () => ({
     del: () => Promise.resolve({}),
   },
 }))
+// The two polled endpoints go through the conditional-GET helper now (304 on an unchanged queue),
+// so that is what a test has to answer. It never returns UNCHANGED: this suite is about what the
+// table renders, not about revalidation, which conditionalGet.test.ts covers.
+vi.mock('../lib/conditionalGet', () => ({
+  UNCHANGED: Symbol('unchanged'),
+  getIfChanged: (url: string) =>
+    String(url).includes('/queue')
+      ? Promise.resolve({ running: 0, waiting: 0, scheduled: 0, budget: 0 })
+      : Promise.resolve({ jobs: store.jobs }),
+}))
 vi.mock('../auth', () => ({ useAuth: () => ({ admin: true, user: 'alice' }) }))
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (k: string, o?: Record<string, unknown>) => (o ? `${k}:${JSON.stringify(o)}` : k) }),
