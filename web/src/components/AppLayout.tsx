@@ -483,28 +483,32 @@ export default function AppLayout() {
 
       {showFooter && !onManage && !onChat && (
         <Footer style={{ textAlign: 'center', background: 'transparent', color: token.colorTextTertiary, fontSize: 12 }}>
-          <Space size={6} wrap align="center" style={{ justifyContent: 'center' }}>
-            {showFooterInfo && (
-              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                <SiteLogo size={14} style={{ marginInlineEnd: 6 }} />
-                {settings.footerText ? <span dangerouslySetInnerHTML={{ __html: footerHtml }} /> : footerText}
-              </span>
-            )}
-            {showFooterInfo && showFooterVersion && <span>·</span>}
-            {showFooterVersion && (
-              <Tooltip
-                title={
-                  <div style={{ lineHeight: 1.6, fontWeight: 600 }}>
-                    <div>{ver.version}</div>
-                    <div>commit: {ver.commit}</div>
-                    <div>built: {ver.buildDate}</div>
-                  </div>
-                }
-              >
-                <span style={{ cursor: 'help', fontVariantNumeric: 'tabular-nums' }}>{ver.version}</span>
-              </Tooltip>
-            )}
-          </Space>
+          {/* One inline flow, deliberately not a flex row. Grouping the logo and the site name in
+              an inline-flex box put the two halves of this line at different heights: an inline-flex
+              box takes its baseline from its first flex item, which here is a replaced <img>, so
+              that box measured taller than the version beside it and centering it left the name
+              riding above the version. Inline text shares one baseline by construction, still wraps
+              on a narrow screen, and lets the logo keep its own optical nudge (vertical-align). */}
+          {showFooterInfo && (
+            <>
+              <SiteLogo size={14} style={{ marginInlineEnd: 6 }} />
+              {settings.footerText ? <span dangerouslySetInnerHTML={{ __html: footerHtml }} /> : footerText}
+            </>
+          )}
+          {showFooterInfo && showFooterVersion && <span style={{ margin: '0 6px' }}>·</span>}
+          {showFooterVersion && (
+            <Tooltip
+              title={
+                <div style={{ lineHeight: 1.6, fontWeight: 600 }}>
+                  <div>{ver.version}</div>
+                  <div>commit: {ver.commit}</div>
+                  <div>built: {ver.buildDate}</div>
+                </div>
+              }
+            >
+              <span style={{ cursor: 'help', fontVariantNumeric: 'tabular-nums' }}>{ver.version}</span>
+            </Tooltip>
+          )}
         </Footer>
       )}
     </Layout>
