@@ -138,7 +138,7 @@ func TestListQueueJobs(t *testing.T) {
 	active1 := seedJob(t, st, "queued", "")
 	active2 := seedJob(t, st, "running", "")
 
-	jobs, total := st.ListQueueJobs(2) // keep only 2 terminal
+	jobs, total := st.ListQueueJobs(2, "") // keep only 2 terminal
 	if total != 7 {
 		t.Errorf("total = %d; want 7", total)
 	}

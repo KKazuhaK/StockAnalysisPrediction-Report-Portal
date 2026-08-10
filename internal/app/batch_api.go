@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
 )
 
 // difyManualReconcileWait bounds a manual reconcile so the HTTP request stays responsive. A run
@@ -382,6 +382,72 @@ func normalizeRunAt(v string) (string, bool) {
 	return "", false
 }
 
+// The queue console polls this list every three seconds per open tab, and each job carries its
+// first row's inputs so the row can say what the run is about. For an agent run those inputs are
+// the entire prompt: measured on a 300-job queue of realistic shape, sending them whole made the
+// response 1.4 MB — about 470 KB/s per watcher — for two clamped lines of text.
+//
+// So the list sends a preview. The budgets are smaller than the console's own (batchUi.ts) because
+// this one only has to serve the two-line label in the row; the hover and the full inputs are read
+// from the run's detail drawer, which fetches a single job.
+//
+// The clamp is per VALUE first and then in total, for the same reason the console's is: a prefix
+// of the raw JSON is whatever the serialiser happened to put first, and measuring showed that to
+// be the prompt — the preview arrived without the symbol, which is the one field a person scans
+// for. Clamping each value keeps every key.
+const (
+	queueInputsValueMax = 60
+	queueInputsTotalMax = 120
+	// What the store is asked for. Big enough that the JSON still parses after the database has cut
+	// it (so the per-key clamp can work), small enough that a megabyte prompt is never carried.
+	queueInputsFetchMax = 4096
+)
+
+// queueInputsPreview bounds one job's inputs for the list. It works on what the store returned,
+// which may already have been cut mid-JSON — a body that no longer parses falls back to a plain
+// rune-bounded prefix rather than being dropped.
+func queueInputsPreview(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var in map[string]string
+	if err := json.Unmarshal([]byte(raw), &in); err != nil {
+		return clampRunes(strings.ToValidUTF8(raw, ""), queueInputsTotalMax)
+	}
+	keys := make([]string, 0, len(in))
+	for k, v := range in {
+		if strings.TrimSpace(v) != "" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys) // a map ranges in random order; a preview must not differ between polls
+	out := make(map[string]string, len(keys))
+	used := 0
+	for _, k := range keys {
+		if used >= queueInputsTotalMax {
+			break
+		}
+		v := clampRunes(in[k], queueInputsValueMax)
+		out[k] = v
+		used += len([]rune(k)) + len([]rune(v))
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// clampRunes cuts on a rune boundary — cutting bytes would split a multi-byte character — and
+// marks that it cut.
+func clampRunes(v string, max int) string {
+	r := []rune(v)
+	if len(r) <= max {
+		return v
+	}
+	return string(r[:max]) + "…"
+}
+
 func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user string) {
 	waiting := s.queuedItems() // for the live "N ahead" of each queued job
 	// Bound the poll: all active jobs + the most recent `limit` terminal jobs (default 300), so a
@@ -393,7 +459,10 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 		}
 		limit = n
 	}
-	jobs, total := s.st.ListQueueJobs(limit)
+	// The search box reaches the whole queue here rather than filtering the page it was sent —
+	// see queueSearchClause. `total` stays the size of the unfiltered queue, which is what the
+	// "showing the most recent N of M" line is about.
+	jobs, total := s.st.ListQueueJobs(limit, r.URL.Query().Get("q"))
 	ids := make([]int64, len(jobs))
 	for i, j := range jobs {
 		ids[i] = j.ID
@@ -403,7 +472,7 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 	out := make([]map[string]any, 0, len(jobs))
 	for _, j := range jobs {
 		m := jobJSON(j)
-		m["inputs"] = firstInputs[j.ID] // first row's inputs (JSON string) for a "标的" label
+		m["inputs"] = queueInputsPreview(firstInputs[j.ID]) // first row's inputs, bounded — see queueInputsPreviewMax
 		// A running job's stored counts are only written at finish; fill live counts
 		// so the console shows real-time progress.
 		if j.Status == "running" || j.Status == "cancelling" {

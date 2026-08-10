@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
@@ -700,12 +701,36 @@ func (s *Store) queryBatchJobs(tail string, args ...any) []BatchJob {
 // most recent termLimit terminal jobs (finished / cancelled / expired — the unbounded history),
 // newest-first, and the total job count. This bounds the 3s poll to O(active + termLimit) instead of
 // serializing the whole job history + every job's first-input blob on the single SQLite connection.
-func (s *Store) ListQueueJobs(termLimit int) ([]BatchJob, int) {
+// The console's search box reaches the whole queue through here rather than filtering what it was
+// sent. It has to: the list now carries a PREVIEW of each job's inputs, so a client-side filter
+// would quietly stop matching anything past the first line of a prompt — and it never covered more
+// than the fetched page anyway, which made "no results" ambiguous between "nothing matches" and
+// "nothing matches on this page".
+//
+// Matched against the workflow's name, the submitter, and the full inputs of the job's first row.
+func (s *Store) queueSearchClause(q string) (string, []any) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return "", nil
+	}
+	like := "%" + strings.ToLower(q) + "%"
+	// EXISTS rather than a join: one job has many rows, and a join would return the job once per
+	// matching row.
+	cond := ` AND (LOWER(COALESCE(b.created_by,'')) ` + s.likeOp() + ` ?` +
+		` OR EXISTS (SELECT 1 FROM batch_targets t WHERE t.id=b.target_id AND LOWER(t.name) ` + s.likeOp() + ` ?)` +
+		` OR EXISTS (SELECT 1 FROM batch_items i WHERE i.job_id=b.id AND i.row_index=0 AND LOWER(COALESCE(i.inputs,'')) ` + s.likeOp() + ` ?))`
+	return cond, []any{like, like, like}
+}
+
+func (s *Store) ListQueueJobs(termLimit int, q string) ([]BatchJob, int) {
 	if termLimit <= 0 {
 		termLimit = 300
 	}
-	jobs := s.queryBatchJobs(`WHERE b.status IN ('queued','running','cancelling') ORDER BY b.id DESC`)
-	jobs = append(jobs, s.queryBatchJobs(`WHERE b.status IN ('finished','cancelled','expired') ORDER BY b.id DESC LIMIT ?`, termLimit)...)
+	where, qArgs := s.queueSearchClause(q)
+	active := append([]any{}, qArgs...)
+	terminal := append(append([]any{}, qArgs...), termLimit)
+	jobs := s.queryBatchJobs(`WHERE b.status IN ('queued','running','cancelling')`+where+` ORDER BY b.id DESC`, active...)
+	jobs = append(jobs, s.queryBatchJobs(`WHERE b.status IN ('finished','cancelled','expired')`+where+` ORDER BY b.id DESC LIMIT ?`, terminal...)...)
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].ID > jobs[j].ID }) // active ids aren't always > terminal (a scheduled job)
 	var total int
 	s.queryRow("SELECT COUNT(*) FROM batch_jobs").Scan(&total)
@@ -724,7 +749,11 @@ func (s *Store) JobsFirstInputs(ids []int64) map[int64]string {
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := s.query("SELECT job_id, inputs FROM batch_items WHERE row_index=0 AND job_id IN ("+ph+")", args...)
+	// SUBSTR at the database, not after: the prompt is the whole reason this column is heavy, and a
+	// row never carried is cheaper than one carried and then trimmed. The cut is by BYTES and can
+	// land mid-JSON; queueInputsPreview finishes the job and copes with a body that no longer
+	// parses. The budget is generous enough that it almost always still does.
+	rows, err := s.query("SELECT job_id, SUBSTR(inputs,1,"+strconv.Itoa(queueInputsFetchMax)+") FROM batch_items WHERE row_index=0 AND job_id IN ("+ph+")", args...)
 	if err != nil {
 		return out
 	}
