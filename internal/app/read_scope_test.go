@@ -152,11 +152,11 @@ func TestGetNewScopedFailsClosed(t *testing.T) {
 	if r, _ := st.GetNew(ids.intToday, sc); r != nil {
 		t.Error("today's internal report must NOT be visible to a restricted viewer")
 	}
-	// The Server chokepoint loadRep(user,id) enforces the same for every by-id read path.
-	if s.loadRep("ext", ids.otherOU) != nil {
+	// The Server chokepoint loadRep(r,user,id) enforces the same for every by-id read path.
+	if s.loadRep(nil, "ext", ids.otherOU) != nil {
 		t.Error("loadRep must fail-closed for a restricted viewer on another OU's id")
 	}
-	if s.loadRep("staff", ids.otherOU) == nil {
+	if s.loadRep(nil, "staff", ids.otherOU) == nil {
 		t.Error("loadRep must return the report for an internal viewer")
 	}
 }

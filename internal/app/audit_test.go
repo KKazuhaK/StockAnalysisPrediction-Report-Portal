@@ -121,7 +121,7 @@ func TestReadingAReportIsRecorded(t *testing.T) {
 		Title: "内部", MD: "x"})
 	s.st.UpsertUser(User{Username: "alice", PasswordHash: "h", Role: "user"})
 
-	if rep := s.loadRep("alice", id); rep == nil {
+	if rep := s.loadRep(nil, "alice", id); rep == nil {
 		t.Fatal("the fixture report should be readable")
 	}
 	rows, total := s.st.ListAudit(AuditFilter{Action: AuditReportRead})
@@ -138,7 +138,7 @@ func TestReadingAReportIsRecorded(t *testing.T) {
 	// A refusal is not a read. Logging those here would fill the table from any stale link, and it
 	// is a different question from "who saw this".
 	s.st.SetUserRestricted("alice", true)
-	if rep := s.loadRep("alice", id); rep != nil {
+	if rep := s.loadRep(nil, "alice", id); rep != nil {
 		t.Fatal("a restricted account with no grant must not read it")
 	}
 	if _, n := s.st.ListAudit(AuditFilter{Action: AuditReportRead}); n != 1 {

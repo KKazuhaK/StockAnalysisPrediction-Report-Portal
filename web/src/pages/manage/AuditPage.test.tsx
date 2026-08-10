@@ -59,7 +59,8 @@ describe('AuditPage', () => {
     expect(await screen.findByText(/对外版/)).toBeTruthy()
     expect(screen.getByText(/600519/)).toBeTruthy()
     // A grant change carries both sides — the current state cannot answer "when did they gain it".
-    expect(screen.getByText(/"before":\[\]/)).toBeTruthy()
+    // Rendered rather than dumped as JSON, but with the empty side still saying it was empty.
+    expect(screen.getByText(/before=— · after=u:client@corp\.example/)).toBeTruthy()
   })
 
   it('asks the server for a page, not the whole table', async () => {

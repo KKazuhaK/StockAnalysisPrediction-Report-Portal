@@ -97,7 +97,7 @@ func (s *Server) reportDayZip(w http.ResponseWriter, r *http.Request, user strin
 		if m.Date != date {
 			continue
 		}
-		if full := s.loadRep(user, m.ID); full != nil {
+		if full := s.loadRep(r, user, m.ID); full != nil {
 			reps = append(reps, *full)
 		}
 	}

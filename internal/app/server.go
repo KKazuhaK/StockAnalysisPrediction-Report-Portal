@@ -818,7 +818,7 @@ func (s *Server) filtersFrom(r *http.Request) (Filters, string, int, int) {
 
 // ---------- run detail ----------
 
-func (s *Server) runMembers(user, key string) []Rep {
+func (s *Server) runMembers(r *http.Request, user, key string) []Rep {
 	var members []Rep
 	if !strings.Contains(key, "|") {
 		// A "|"-less key is a thematic report's group key, which gkey() renders as its bare id.
@@ -826,7 +826,7 @@ func (s *Server) runMembers(user, key string) []Rep {
 		if err != nil {
 			return nil
 		}
-		if rep := s.loadRep(user, id); rep != nil {
+		if rep := s.loadRep(r, user, id); rep != nil {
 			members = []Rep{*rep}
 		}
 	} else {
@@ -1089,13 +1089,13 @@ func repInList(reps []Rep, id int64) bool {
 // The comparison view is the one path that does not, because it reads a PAIR and needs both bodies
 // before it can answer at all; it scopes them itself and records through recordReportRead, which is
 // the same writer. Anything that serves a body must call one of the two.
-func (s *Server) loadRep(user string, id int64) *Rep {
+func (s *Server) loadRep(r *http.Request, user string, id int64) *Rep {
 	if id <= 0 {
 		return nil
 	}
 	rep, _ := s.st.GetNew(id, s.viewerScope(user))
 	if rep != nil {
-		s.recordReportRead(user, rep)
+		s.recordReportRead(r, user, rep)
 	}
 	return rep
 }
@@ -1104,7 +1104,9 @@ func (s *Server) loadRep(user string, id int64) *Rep {
 //
 // Only successful reads. A refusal is a different question — someone probing versus someone
 // following a stale link — and logging those would fill the table from any 404.
-func (s *Server) recordReportRead(user string, rep *Rep) {
+// The request is carried this far for one field: a read is the action most likely to be the
+// subject of "who saw this, and from where", and it was the only one recorded without an address.
+func (s *Server) recordReportRead(r *http.Request, user string, rep *Rep) {
 	if rep == nil {
 		return
 	}
@@ -1112,13 +1114,14 @@ func (s *Server) recordReportRead(user string, rep *Rep) {
 		Actor: user, ActorOU: s.st.PrimaryGroupOf(user), Action: AuditReportRead,
 		TargetType: "report", TargetID: strconv.FormatInt(rep.ID, 10),
 		Detail: auditJSON(map[string]any{"symbol": rep.Symbol, "date": rep.Date, "title": rep.Title}),
+		IP:     s.auditIP(r),
 	})
 }
 
 // ---------- Export ----------
 
 func (s *Server) reportMD(w http.ResponseWriter, r *http.Request, user string) {
-	rep := s.loadRep(user, pathID(r, "id"))
+	rep := s.loadRep(r, user, pathID(r, "id"))
 	if rep == nil {
 		http.Error(w, "报告不存在", 404)
 		return
@@ -1147,7 +1150,7 @@ func (s *Server) renderPDFHTML(rep *Rep, user string) (string, error) {
 }
 
 func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request, user string) {
-	rep := s.loadRep(user, pathID(r, "id"))
+	rep := s.loadRep(r, user, pathID(r, "id"))
 	if rep == nil {
 		http.Error(w, "报告不存在", 404)
 		return

@@ -7,6 +7,7 @@ import { SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
+import { auditDetail } from '../../lib/auditDetail'
 import type { AuditEntry, AuditResp } from '../../api/types'
 
 // The audit log: who read what, and who changed who can read it.
@@ -191,9 +192,12 @@ export default function AuditPage() {
     },
     {
       title: t('audit.detail'),
+      // Rendered, not dumped: somebody reading this column wants "who read what", not the field
+      // list a serialiser produced. auditDetail keeps every field that carries information — see
+      // lib/auditDetail.ts — so nothing is hidden by making it legible.
       render: (_, r) => (
-        <Typography.Text type="secondary" style={{ fontSize: 12, wordBreak: 'break-all' }}>
-          {r.detail}
+        <Typography.Text type="secondary" style={{ fontSize: 12, wordBreak: 'break-word' }}>
+          {auditDetail(r.action, r.detail, t)}
         </Typography.Text>
       ),
     },

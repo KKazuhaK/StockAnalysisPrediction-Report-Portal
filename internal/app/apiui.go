@@ -462,7 +462,7 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	if !repInList(kindReps, selID) {
 		selID = defID
 	}
-	rep := s.loadRep(user, selID)
+	rep := s.loadRep(r, user, selID)
 	timeline := make([]map[string]any, 0, len(order)) // newest to oldest
 	for _, d := range order {
 		timeline = append(timeline, map[string]any{"date": d, "n": len(byDate[d])})
@@ -482,7 +482,7 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 // apiRun reads a report group (legacy report card / single report): member tabs + selected body.
 func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 	key := r.PathValue("key")
-	members := s.runMembers(user, key)
+	members := s.runMembers(r, user, key)
 	if len(members) == 0 {
 		jsonErrorCode(w, http.StatusNotFound, "run_not_found", "未找到该 run")
 		return
@@ -492,7 +492,7 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 	if !repInList(members, selID) {
 		selID = defID
 	}
-	rep := s.loadRep(user, selID)
+	rep := s.loadRep(r, user, selID)
 	// Tabs carry their version (ADR 0024) so the reader can collapse the two axes properly: one tab
 	// per report type, with a version switcher inside it. Without it, two written forms of one
 	// analysis appear as two tabs with the same label, which reads as a duplicate rather than as a
