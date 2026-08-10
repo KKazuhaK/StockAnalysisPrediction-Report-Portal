@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
 import type { AnnouncementLevel, HomeMoreStyle, SiteSettings } from './api/types'
 import { BrandIcon } from './components/icons'
+import { startVisiblePoll } from './lib/visiblePoll'
 
 const DEFAULT_FAVICON = '/favicon.svg'
 const DEFAULT_SETTINGS: SiteSettings = {
@@ -71,19 +72,21 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    // Load once on mount whatever the tab's visibility — a link opened in a background tab
+    // still has to show this portal's title and favicon in the tab strip.
     refresh().catch(() => setSettings(DEFAULT_SETTINGS))
-    // Keep site chrome + the announcement live without a full reload: poll periodically and
-    // on tab refocus (same cadence as the home feed's auto-refresh), so an admin's edit
-    // reaches everyone shortly — and a changed announcement re-shows its popup.
-    const id = setInterval(() => refresh().catch(() => {}), 60000)
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') refresh().catch(() => {})
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      clearInterval(id)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
+    // Then keep the chrome + the announcement live without a full reload, but only while
+    // somebody is looking: the previous plain interval kept asking every minute in a tab left
+    // open behind others, for a page nobody could see. Becoming visible refreshes immediately,
+    // so an admin's edit still reaches a returning reader at once.
+    return startVisiblePoll(
+      () =>
+        refresh()
+          .then(() => {})
+          .catch(() => {}),
+      60000,
+      { skipLeading: true },
+    )
   }, [refresh])
 
   const title = settings.siteTitle || t('brand')

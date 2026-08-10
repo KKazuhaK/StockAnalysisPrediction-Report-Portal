@@ -29,6 +29,7 @@ import Omnibox from '../components/Omnibox'
 import ReportCard from '../components/ReportCard'
 import { linkIconComponent } from '../components/linkIcons'
 import { shortcutOfUrl, shortcutPerm, triggerShortcut } from '../lib/shortcuts'
+import { startVisiblePoll } from '../lib/visiblePoll'
 
 const { RangePicker } = DatePicker
 
@@ -66,22 +67,15 @@ export default function HomePage() {
       .finally(() => setLoading(false))
   }, [params])
 
-  // Auto-refresh: silently refetch the current view (no spinner) when the tab regains
-  // focus, and on a gentle interval while visible — new reports appear without a manual
-  // reload, and switching back to the tab shows fresh data.
+  // Auto-refresh: silently refetch the current view (no spinner) on a gentle interval while
+  // the tab is visible, and the moment it becomes visible again — new reports appear without a
+  // manual reload. skipLeading because the effect above already fetched this exact view on
+  // mount. The hand-rolled version this replaces listened for focus AND visibilitychange, which
+  // both fire on a tab switch, and had no in-flight guard: returning to the tab sent two
+  // identical /api/home requests, and a slow answer could be overtaken by the next tick.
   useEffect(() => {
-    const refetch = () => {
-      if (document.visibilityState !== 'visible') return
-      api.get<HomeResp>(`/api/home${qs(params)}`).then(setData).catch(() => {})
-    }
-    window.addEventListener('focus', refetch)
-    document.addEventListener('visibilitychange', refetch)
-    const id = setInterval(refetch, 60000)
-    return () => {
-      window.removeEventListener('focus', refetch)
-      document.removeEventListener('visibilitychange', refetch)
-      clearInterval(id)
-    }
+    const refetch = () => api.get<HomeResp>(`/api/home${qs(params)}`).then(setData).catch(() => {})
+    return startVisiblePoll(refetch, 60000, { skipLeading: true })
   }, [params])
 
   // Keep the form's initial values in sync with the URL
