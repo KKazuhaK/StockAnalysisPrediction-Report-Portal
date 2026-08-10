@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
 import type { AnnouncementLevel, HomeMoreStyle, SiteSettings } from './api/types'
 import { BrandIcon } from './components/icons'
+import { clearSWUpdate, trackSWUpdates } from './lib/swUpdate'
 import { startVisiblePoll } from './lib/visiblePoll'
 
 const DEFAULT_FAVICON = '/favicon.svg'
@@ -107,28 +108,19 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return
     if (settings.pwaEnabled) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {})
+      navigator.serviceWorker
+        .register('/sw.js')
+        .then(trackSWUpdates)
+        .catch(() => {})
     } else {
+      clearSWUpdate()
       navigator.serviceWorker.getRegistration('/sw.js').then((reg) => reg?.unregister()).catch(() => {})
     }
   }, [settings.pwaEnabled])
 
-  // Force-update on deploy: each build ships a service worker with a new versioned cache,
-  // and once it activates it claims the page — firing controllerchange. If the page was
-  // already controlled at load (i.e. this is an update, not the first install), reload once
-  // so it runs the fresh build instead of the assets it booted with.
-  useEffect(() => {
-    if (!('serviceWorker' in navigator)) return
-    const hadController = !!navigator.serviceWorker.controller
-    let reloaded = false
-    const onChange = () => {
-      if (!hadController || reloaded) return
-      reloaded = true
-      window.location.reload()
-    }
-    navigator.serviceWorker.addEventListener('controllerchange', onChange)
-    return () => navigator.serviceWorker.removeEventListener('controllerchange', onChange)
-  }, [])
+  // A new build no longer takes the page out from under the reader. The service worker installs
+  // and waits; the banner reports it beside the /api/version signal, and the user decides when.
+  // See lib/swUpdate.ts for why the two answers had to become one.
 
   const value = useMemo<SiteCtx>(() => ({ settings, title, logoUrl, refresh }), [settings, title, logoUrl, refresh])
 

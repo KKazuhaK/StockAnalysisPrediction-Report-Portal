@@ -62,6 +62,16 @@ export function prefetch(url: string): Promise<void> {
   return task
 }
 
+/**
+ * Store an answer that was fetched for real. A page that has just been read is the likeliest one
+ * to be read again — going back to it is the most predictable navigation there is — so what was
+ * loaded deliberately is worth keeping on the same terms as what was guessed.
+ */
+export function rememberPrefetched(url: string, data: unknown): void {
+  if (cache.size >= MAX_ENTRIES) cache.clear()
+  cache.set(url, { at: Date.now(), data })
+}
+
 /** The warm answer for `url` if one was stored within `maxAgeMs`, otherwise undefined. */
 export function readPrefetched<T>(url: string, maxAgeMs: number): T | undefined {
   const hit = cache.get(url)

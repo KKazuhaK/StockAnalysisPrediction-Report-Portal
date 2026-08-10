@@ -17,14 +17,21 @@
 const CACHE_NAME = 'rp-cache-__RP_SW_VERSION__'
 const SHELL = '/'
 
+// Install, then WAIT. Taking over immediately (skipWaiting) also purges the previous build's cache
+// on activate, which strands an open tab still running the old JS: it asks for chunks that no
+// longer exist. The page decides when to hand over — see lib/swUpdate.ts — and that decision is the
+// user's, made on the same banner that reports a new server build.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
       .then((cache) => cache.add(SHELL))
-      .catch(() => undefined)
-      .then(() => self.skipWaiting()),
+      .catch(() => undefined),
   )
+})
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting()
 })
 
 self.addEventListener('activate', (event) => {

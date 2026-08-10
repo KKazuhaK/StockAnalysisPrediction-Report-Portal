@@ -10,6 +10,7 @@ import { useAuth } from '../auth'
 import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
 import { QUEUE_EVENT, RUN_ANALYSIS_EVENT } from '../lib/shortcuts'
+import { applySWUpdate, useSWUpdateReady } from '../lib/swUpdate'
 import { useVersionCheck } from '../lib/useVersionCheck'
 import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
 import { prefetch } from '../lib/prefetch'
@@ -81,6 +82,7 @@ export default function AppLayout() {
   const [showTop, setShowTop] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const canRun = can('run_batch')
+  const swUpdateReady = useSWUpdateReady()
 
   // Show back-to-top once the window has scrolled past ~one screen. Self-controlled
   // (rather than antd's FloatButton.BackTop) so it's reliable across pages.
@@ -96,7 +98,10 @@ export default function AppLayout() {
   // "New version" prompt: once a deploy lands under this open tab, show a persistent inline banner
   // (not a floating notification that overlaps content) with a Refresh action. It stays until refresh
   // so a user cannot accidentally dismiss the only indication that the open client is stale.
-  const updateAvailable = useVersionCheck()
+  // Two ways to learn a new build exists — the server reports a different one, or a service worker
+  // has installed beside us — and ONE way to act on it, so the user is never told twice or, worse,
+  // reloaded without being asked.
+  const updateAvailable = useVersionCheck() || swUpdateReady
 
   // Warm the report-viewing chunks shortly after the shell mounts. StockPage/RunPage statically pull
   // the heavy Markdown chunk, so pre-loading them makes clicking a report navigate near-instantly
@@ -437,7 +442,15 @@ export default function AppLayout() {
               <InfoCircleFilled style={{ color: token.colorInfo, fontSize: 15, flexShrink: 0 }} />
               <span style={{ minWidth: 0, color: token.colorText, fontSize: 14 }}>{t('update.desc')}</span>
             </span>
-            <Button type="primary" size="small" onClick={() => window.location.reload()}>
+            <Button
+              type="primary"
+              size="small"
+              // Hand over to the waiting build first where there is one; reloading before it takes
+              // control would just re-run the build we are trying to leave.
+              onClick={() => {
+                if (!applySWUpdate()) window.location.reload()
+              }}
+            >
               {t('update.refresh')}
             </Button>
           </div>

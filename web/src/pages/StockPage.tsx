@@ -12,7 +12,12 @@ import TimelinePanel from '../components/TimelinePanel'
 import { ExportMenu } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
+import { prefetch, readPrefetched, rememberPrefetched } from '../lib/prefetch'
 import { NO_ITEM_TOOLTIP } from '../lib/segmented'
+
+// How stale a warmed report may be and still render without waiting. The live request goes out
+// regardless and corrects it, so this only bounds how long a re-ingested body can linger.
+const READ_WARM_MAX_AGE = 5 * 60_000
 
 export default function StockPage() {
   const { t } = useTranslation()
@@ -33,19 +38,52 @@ export default function StockPage() {
   const [notFound, setNotFound] = useState(false)
 
   const query = { date: sp.get('date') || '', kind: sp.get('kind') || '', r: sp.get('r') || '' }
+  // One place builds the URL, so what gets warmed and what gets loaded cannot drift apart — a
+  // prefetch under a slightly different query string is a request paid for and never used.
+  const stockUrl = (q: { date?: string; kind?: string; r?: string }) => `/api/stock/${encodeURIComponent(symbol)}${qs(q)}`
 
   useEffect(() => {
-    setLoading(true)
+    const url = stockUrl(query)
+    // A warm answer decides only whether this render waits. The request below goes out either way
+    // and replaces it, so a report re-ingested a minute ago still corrects itself on screen.
+    const warm = readPrefetched<StockResp>(url, READ_WARM_MAX_AGE)
+    if (warm) {
+      setData(warm)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     setNotFound(false)
     api
-      .get<StockResp>(`/api/stock/${encodeURIComponent(symbol)}${qs(query)}`)
-      .then(setData)
+      .get<StockResp>(url)
+      .then((d) => {
+        setData(d)
+        // Remember what was actually read, not only what was guessed: going back to the report you
+        // just left is the most predictable navigation there is.
+        rememberPrefetched(url, d)
+      })
       .catch((e) => {
         if (e instanceof ApiError && e.status === 404) setNotFound(true)
       })
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, sp])
+
+  // Warm the neighbours on the timeline. Stepping a day forward or back is the move a reader makes
+  // most, and it is the one that costs a whole report — measured at ~96% report, ~4% navigation
+  // (internal/app/stock_payload_test.go), which is why this can reuse the same endpoint rather than
+  // needing one that returns the body alone. Only the two adjacent days: warming the strip would
+  // download a month of reports nobody asked for.
+  useEffect(() => {
+    if (!data) return
+    const dates = data.timeline.map((n) => n.date)
+    const i = dates.indexOf(data.selDate)
+    if (i < 0) return
+    ;[dates[i - 1], dates[i + 1]].forEach((d) => {
+      if (d) void prefetch(stockUrl({ date: d }))
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, symbol])
 
   if (notFound) {
     return (
@@ -143,7 +181,12 @@ export default function StockPage() {
                   <Segmented
                     value={data.selKind}
                     onChange={(v) => setKind(String(v))}
-                    options={data.kinds.map((k) => ({ label: k, value: k, title: NO_ITEM_TOOLTIP }))}
+                    options={data.kinds.map((k) => ({
+                      // Pointing at a tab is the cheapest signal that it is about to be opened.
+                      label: <span onMouseEnter={() => void prefetch(stockUrl({ date: data.selDate, kind: k }))}>{k}</span>,
+                      value: k,
+                      title: NO_ITEM_TOOLTIP,
+                    }))}
                   />
                 </div>
               )}
@@ -155,7 +198,15 @@ export default function StockPage() {
                   <Segmented
                     value={data.selId}
                     onChange={(v) => setId(Number(v))}
-                    options={data.subtabs.map((s) => ({ label: s.label, value: s.id, title: NO_ITEM_TOOLTIP }))}
+                    options={data.subtabs.map((sub) => ({
+                      label: (
+                        <span onMouseEnter={() => void prefetch(stockUrl({ date: data.selDate, kind: data.selKind, r: String(sub.id) }))}>
+                          {sub.label}
+                        </span>
+                      ),
+                      value: sub.id,
+                      title: NO_ITEM_TOOLTIP,
+                    }))}
                   />
                 </div>
               )}
