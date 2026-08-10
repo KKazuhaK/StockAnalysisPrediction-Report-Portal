@@ -11,6 +11,7 @@ import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
 import { QUEUE_EVENT, RUN_ANALYSIS_EVENT } from '../lib/shortcuts'
 import { useVersionCheck } from '../lib/useVersionCheck'
+import { prefetch } from '../lib/prefetch'
 import { startVisiblePoll } from '../lib/visiblePoll'
 import Omnibox from './Omnibox'
 import RunAnalysisModal from './RunAnalysisModal'
@@ -109,9 +110,17 @@ export default function AppLayout() {
     const timer = window.setTimeout(() => {
       void import('../pages/StockPage')
       void import('../pages/RunPage')
+      // Same idea one level up: 运行分析 is a header button on every page, and the two answers
+      // its dialog cannot open without are small and rarely change. Fetching them while the
+      // shell sits idle is what turns that dialog's first second from a spinner into a form.
+      // Only for someone who can actually run — otherwise it is two 403s per page load.
+      if (canRun) {
+        void prefetch('/api/admin/batch/targets')
+        void prefetch('/api/admin/batch/presets')
+      }
     }, 1000)
     return () => window.clearTimeout(timer)
-  }, [])
+  }, [canRun])
   // Publish the real (wrap-aware) header height so the /manage sticky rail offsets by it
   // instead of assuming a fixed 64px. A ResizeObserver (not just a window-resize listener)
   // keeps it accurate whenever the header itself changes height — wrap/unwrap, font load,

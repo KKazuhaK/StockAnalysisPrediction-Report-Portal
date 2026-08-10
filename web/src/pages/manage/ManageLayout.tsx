@@ -26,9 +26,40 @@ import {
 import { Outlet, useLocation, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
+import { prefetch } from '../../lib/prefetch'
 
 const COLLAPSE_KEY = 'rp.manage.sider.collapsed'
 const NARROW_QUERY = '(max-width: 767px)'
+// What each settings page asks for the moment it mounts. Listed here so hovering its menu item
+// can start that request early; a page missing from the table simply gets no head start.
+//
+// Deliberately only the cheap, page-defining GET, and only where that is what it is. The storage
+// page warms its schedule and not /api/admin/cleanup/usage, which measures the database; the apps
+// page is absent entirely, because its list comes from a remote market with a 25-second timeout.
+// A hover must never be able to start work like that.
+const WARM_ON_HOVER: Record<string, string> = {
+  site: '/api/admin/settings',
+  announcement: '/api/admin/settings',
+  email: '/api/admin/email',
+  links: '/api/admin/links',
+  types: '/api/admin/types',
+  versions: '/api/admin/versions',
+  users: '/api/admin/users',
+  sso: '/api/admin/sso/providers',
+  security: '/api/admin/security',
+  tokens: '/api/admin/tokens',
+  batch: '/api/admin/batch/targets',
+  runqueue: '/api/admin/batch/config',
+  assistant: '/api/admin/chat/config',
+  webhooks: '/api/admin/webhooks',
+  storage: '/api/admin/cleanup/config',
+}
+
+const warmPage = (key: string) => {
+  const url = WARM_ON_HOVER[key]
+  if (url) void prefetch(url)
+}
+
 // The sticky rail offsets by the real header height, which AppLayout publishes as a
 // CSS var (the header wraps taller in compact mode); 64px is the single-row fallback.
 const HEADER_VAR = 'var(--rp-header-h, 64px)'
@@ -153,6 +184,11 @@ export default function ManageLayout() {
 
   // The nav menu, shared by the desktop rail and the mobile drawer. On mobile a click also
   // closes the drawer (so it behaves like a page switch, not a persistent sidebar).
+  //
+  // Pointing at an item starts loading the page behind it, so by the time the click lands its
+  // configuration is usually already answered and it renders filled instead of spinning. Hover
+  // is the cheapest possible signal of intent — one request for the one page about to be opened,
+  // rather than warming an admin area most sessions never visit.
   const menu = (
     <Menu
       mode="inline"
@@ -162,7 +198,11 @@ export default function ManageLayout() {
         navigate(`/manage/${key}`)
         setDrawerOpen(false)
       }}
-      items={items}
+      items={items.map((g) =>
+        g && 'children' in g
+          ? { ...g, children: (g.children ?? []).map((c) => (c ? { ...c, onMouseEnter: () => warmPage(String(c.key)) } : c)) }
+          : g,
+      )}
       style={{ border: 'none', background: 'transparent' }}
     />
   )

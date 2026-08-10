@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Spin, Typography } from 'antd'
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
+import { readPrefetched } from '../lib/prefetch'
 import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
 import RunScheduleControls from './RunScheduleControls'
 import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPresetsResp, RunQuota } from '../api/types'
@@ -17,6 +18,11 @@ import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPreset
 // An unknown period reads as the daily one: that is what every pre-period deployment meant, and it
 // is the phrasing that overstates the allowance least.
 const quotaPeriod = (p?: string) => (p === 'week' || p === 'month' || p === 'total' ? p : 'day')
+
+// How stale a warmed answer may be and still open the dialog without waiting. The live request
+// goes out regardless and corrects whatever this showed, so the number only bounds how long a
+// deleted workflow can stay on screen before the answer lands.
+const WARM_MAX_AGE = 5 * 60_000
 
 export default function RunAnalysisModal({
   open,
@@ -46,6 +52,17 @@ export default function RunAnalysisModal({
   const [submitting, setSubmitting] = useState(false)
   const [loading, setLoading] = useState(true) // until the workflow list is in, this modal knows nothing
 
+  // Presets carry the admin's run-form defaults with them, so reading them warm and reading them
+  // live must apply the same rules — hence one function, used by both.
+  const applyPresets = useCallback((r: RunPresetsResp) => {
+    setPresets(r.presets || [])
+    // Fall back to immediate if the admin default is "preset" but no preset windows are enabled
+    // (the preset mode button is hidden then, so it couldn't be selected anyway).
+    const hasPresets = (r.presets || []).some((p) => p.enabled)
+    const mode = r.default_mode === 'preset' && !hasPresets ? 'now' : r.default_mode || 'now'
+    setSchedule((s) => ({ ...s, mode, idle: !!r.default_idle }))
+  }, [])
+
   useEffect(() => {
     if (!open) return
     // The form is meaningless until the workflow list and the run defaults are in: an empty
@@ -53,7 +70,18 @@ export default function RunAnalysisModal({
     // slow link is a claim about the server that has not answered yet. Both of those wait behind
     // `loading`. The three secondary calls (tickets, quota, queue depth) only add detail to
     // controls that render sensibly without them, so they are not part of the gate.
-    setLoading(true)
+    // The shell warms these two while it is idle (AppLayout), so most opens have them already.
+    // A warm answer decides only whether this dialog waits: the requests below go out either way
+    // and overwrite it, so a workflow added in another tab a minute ago still appears.
+    const warmTargets = readPrefetched<{ targets: BatchTarget[] }>('/api/admin/batch/targets', WARM_MAX_AGE)
+    const warmPresets = readPrefetched<RunPresetsResp>('/api/admin/batch/presets', WARM_MAX_AGE)
+    if (warmTargets && warmPresets) {
+      setTargets(warmTargets.targets || [])
+      applyPresets(warmPresets)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
     api.get<RunQuota>('/api/admin/batch/run-quota').then(setQuota).catch(() => {})
     api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
@@ -61,14 +89,7 @@ export default function RunAnalysisModal({
     const gated = [
       api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])),
       // Presets + the admin-set run-form defaults (default mode button + idle pre-check).
-      api.get<RunPresetsResp>('/api/admin/batch/presets').then((r) => {
-        setPresets(r.presets || [])
-        // Fall back to immediate if the admin default is "preset" but no preset windows are enabled
-        // (the preset mode button is hidden then, so it couldn't be selected anyway).
-        const hasPresets = (r.presets || []).some((p) => p.enabled)
-        const mode = r.default_mode === 'preset' && !hasPresets ? 'now' : r.default_mode || 'now'
-        setSchedule((s) => ({ ...s, mode, idle: !!r.default_idle }))
-      }),
+      api.get<RunPresetsResp>('/api/admin/batch/presets').then(applyPresets),
     ]
     // allSettled, not all: a failed presets call must still open the form (with no preset
     // windows), rather than leave the modal spinning for ever on a detail.
@@ -78,6 +99,7 @@ export default function RunAnalysisModal({
     return () => {
       live = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   // 运行分析 generates a report (Dify ingests it). visibleOn applies both rules: agent apps
