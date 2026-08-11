@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { App } from 'antd'
+import { App, Grid } from 'antd'
 import SSOPage from './SSOPage'
 
 // Setting up SSO is a long form filled in one sitting, and fetching the IdP metadata happens in the
@@ -39,8 +39,14 @@ const DRAFT_AFTER_FETCH = {
   idp_metadata_url: 'https://login.microsoftonline.com/x/federationmetadata.xml',
 }
 
+// jsdom's matchMedia never matches, so antd reports every breakpoint as absent and the page would
+// render its phone layout under test. Say which one is being tested rather than inheriting it.
+const screenWidth = (wide: boolean) =>
+  vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: wide, lg: wide } as ReturnType<typeof Grid.useBreakpoint>)
+
 describe('SSOPage', () => {
   beforeEach(() => {
+    screenWidth(true)
     apiMock.get.mockReset()
     apiMock.post.mockReset()
     apiMock.get.mockImplementation((url: string) => {
@@ -128,6 +134,37 @@ describe('SSOPage', () => {
     expect(
       await screen.findByText('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'),
     ).toBeTruthy()
+  })
+
+  // A claim name is a 70-character URN and its value is another one. Two columns of that on a
+  // phone left the name column about two characters wide and pushed the value off the card, so
+  // below md the pair stacks — same names, no table.
+  it('stacks the claims on a phone instead of tabling them', async () => {
+    screenWidth(false)
+    apiMock.get.mockImplementation((url: string) => {
+      if (url === '/api/admin/sso/providers') {
+        return Promise.resolve({ providers: [], public_url: 'https://p.example', sp_defaults: SP_DEFAULTS })
+      }
+      if (url.includes('/last-seen')) {
+        return Promise.resolve({
+          seen: true,
+          claims: [{ name: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress', preview: 'me@kazuha.org' }],
+        })
+      }
+      return Promise.resolve({ groups: [], roles: [] })
+    })
+    const { container } = render(
+      <App>
+        <SSOPage />
+      </App>,
+    )
+    expect(
+      await screen.findByText('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'),
+    ).toBeTruthy()
+    // The value travels with the name, which is the whole point of showing it.
+    expect(screen.getByText('me@kazuha.org')).toBeTruthy()
+    expect(container.querySelector('.rp-claims-item')).toBeTruthy()
+    expect(container.querySelector('.rp-claims-table')).toBeNull()
   })
 
   it('says how to make the claim names appear when nothing has signed in yet', async () => {

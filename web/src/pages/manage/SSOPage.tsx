@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, App, Button, Card, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd'
+import { Alert, App, Button, Card, Form, Grid, Input, InputNumber, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd'
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
@@ -123,6 +123,7 @@ function IconPicker({ kind, value, onChange }: { kind: 'oidc' | 'saml'; value?: 
  */
 function LastSeenClaims({ slug }: { slug: string }) {
   const { t } = useTranslation()
+  const mobile = !Grid.useBreakpoint().md
   const [claims, setClaims] = useState<{ name: string; preview: string }[] | null>(null)
   const [seen, setSeen] = useState<boolean | null>(null)
 
@@ -150,24 +151,54 @@ function LastSeenClaims({ slug }: { slug: string }) {
       <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
         {t('sso.claimsHint')}
       </Typography.Paragraph>
-      <Table
-        size="small"
-        pagination={false}
-        rowKey="name"
-        dataSource={claims}
-        columns={[
-          {
-            title: t('sso.claimsName'),
-            dataIndex: 'name',
-            render: (v: string) => (
-              <Typography.Text code copyable style={{ wordBreak: 'break-all' }}>
-                {v}
+      {/* A claim name is a 70-character URN and the value beside it is an address or a GUID. Two
+          columns of that do not fit a phone: the name column collapses to about two characters
+          wide and the value runs off the card. Below md the pair stacks instead — name, then its
+          value underneath, each with the full width of the card. */}
+      {mobile ? (
+        <div className="rp-claims-list">
+          {claims.map((c) => (
+            <div className="rp-claims-item" key={c.name}>
+              <Typography.Text code copyable style={{ wordBreak: 'break-all', fontSize: 12 }}>
+                {c.name}
               </Typography.Text>
-            ),
-          },
-          { title: t('sso.claimsValue'), dataIndex: 'preview', width: '38%' },
-        ]}
-      />
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('sso.claimsValue')}
+                </Typography.Text>{' '}
+                <Typography.Text style={{ fontSize: 12, wordBreak: 'break-all' }}>{c.preview}</Typography.Text>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Table
+          className="rp-claims-table"
+          size="small"
+          pagination={false}
+          rowKey="name"
+          dataSource={claims}
+          columns={[
+            {
+              title: t('sso.claimsName'),
+              dataIndex: 'name',
+              render: (v: string) => (
+                <Typography.Text code copyable style={{ wordBreak: 'break-all' }}>
+                  {v}
+                </Typography.Text>
+              ),
+            },
+            {
+              title: t('sso.claimsValue'),
+              dataIndex: 'preview',
+              width: '38%',
+              // A value with no spaces in it — a GUID, an address, a URN — is one unbreakable word,
+              // and one of those sets the column's minimum width and pushes the table past the card.
+              render: (v: string) => <span style={{ wordBreak: 'break-all' }}>{v}</span>,
+            },
+          ]}
+        />
+      )}
     </Card>
   )
 }
@@ -294,12 +325,18 @@ function ProviderForm({
           <Form.Item name="idp_metadata_url" label={t('sso.metadataUrl')} extra={t('sso.metadataUrlHint')}>
             <Input placeholder="https://login.microsoftonline.com/<tenant>/federationmetadata/..." />
           </Form.Item>
-          <Space style={{ marginBottom: 16 }}>
+          {/* The green tag holds what the fetch found: the IdP's entity ID, which is a URL. antd
+              keeps a tag on one line, so on a phone it ran straight off the right edge of the
+              screen. Wrap the row, and let the tag break the URL across lines when it is the thing
+              that does not fit. */}
+          <Space wrap style={{ marginBottom: 16, maxWidth: '100%' }}>
             <Button icon={<ReloadOutlined />} onClick={fetchMetadata}>
               {t('sso.fetchMetadata')}
             </Button>
             {hasMetadata ? (
-              <Tag color="green">{metadataEntityID || t('sso.metadataPresent')}</Tag>
+              <Tag color="green" style={{ whiteSpace: 'normal', wordBreak: 'break-all', maxWidth: '100%' }}>
+                {metadataEntityID || t('sso.metadataPresent')}
+              </Tag>
             ) : (
               <Tag>{t('sso.metadataMissing')}</Tag>
             )}

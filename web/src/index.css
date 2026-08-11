@@ -670,3 +670,28 @@ body {
   font-size: 11px;
   word-break: break-all; /* a target id can be one long unbroken token */
 }
+
+/* SSO: the claim names the IdP last sent, stacked for a phone (see pages/manage/SSOPage.tsx).
+   Name on one line, its value under it, both allowed to break mid-token — every one of these
+   strings is an unbreakable URN, GUID or address. */
+.rp-claims-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rp-claims-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--ant-color-border-secondary, rgba(128, 128, 128, 0.3));
+  border-radius: 8px;
+}
+/* A name this long always wraps, and an inline background splits across the break with the
+   padding and the rounded corners only on the outer ends — which reads as two ragged boxes.
+   Cloning the decoration gives every line its own complete box. */
+.rp-claims-item code,
+.rp-claims-table code {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
