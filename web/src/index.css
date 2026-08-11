@@ -440,6 +440,38 @@ body {
     padding-right: 14px;
   }
 }
+/* The report card's header is one flex row: the title on the left, the report actions
+   (compare / export / reading settings) on the right. Below roughly 700px of reading column
+   the buttons win that fight — antd shrinks the title until only a character or two of it is
+   left ("6" of "688565重组综合决策") and the row still runs off the edge. Wrap the header
+   instead: the title keeps its own line and the buttons take the one below it.
+
+   A container query rather than a viewport one: until the reader is wide enough to float the
+   timeline as a side rail, the reading column IS the width of .rp-reader, and .rp-reader is
+   whatever the app shell left over after its own chrome — which a viewport query cannot see. */
+@container (max-width: 700px) {
+  /* Vertical padding as well: antd gives the header none, relying on a 56px min-height to
+     centre a single row inside. Two rows are taller than that, so without this the buttons sit
+     flush against the divider. */
+  .rp-doc-card > .ant-card-head {
+    padding: 12px 14px;
+  }
+  .rp-doc-card > .ant-card-head .ant-card-head-wrapper {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  /* A report title is a sentence, and on its own line there is no reason to cut it short. */
+  .rp-doc-card > .ant-card-head .ant-card-head-title {
+    flex: 1 0 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+  .rp-doc-card > .ant-card-head .ant-card-extra {
+    flex: 1 0 100%;
+    margin-inline-start: 0;
+  }
+}
 
 /* Chat: assistant "typing" indicator — three dots that pulse in sequence while a turn is
    in flight. Colour is inherited (the row sets `color`), so it adapts to light/dark. */
