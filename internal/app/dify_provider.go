@@ -71,6 +71,11 @@ type difyProvider struct {
 	// persists "this run reached Dify" so a crash before the first id still marks it started
 	// (→ untracked, never re-run) rather than un-started (→ re-run). nil disables it.
 	onStarted func()
+	// fileInputs is the declared type (file / file-list) of the target's file-carrying inputs,
+	// keyed by variable. A row carries those as a JSON array of uploaded Dify file ids — a
+	// string, like every other cell — so Run needs the declaration to know which keys to turn
+	// into file objects and whether the variable takes one object or an array.
+	fileInputs map[string]string
 }
 
 // runStream dispatches to the chat or workflow stream by the target's mode. Both
@@ -86,6 +91,15 @@ func (p difyProvider) runStream(ctx context.Context, in map[string]any, onEvent 
 func (p difyProvider) Run(ctx context.Context, inputs map[string]string) (batch.RunResult, error) {
 	in := make(map[string]any, len(inputs))
 	for k, v := range inputs {
+		if declared, isFile := p.fileInputs[k]; isFile {
+			// Unparseable or empty is treated as "the operator left it blank" rather than an error:
+			// a required field is the workflow's own gate, and failing the whole run here would
+			// turn one bad cell into a failed row with a reason nobody can act on.
+			if fv, ok := difyFileValue(declared, v); ok {
+				in[k] = fv
+			}
+			continue
+		}
 		in[k] = v
 	}
 	// Capture the ids as they stream: the task id lets a cancel stop the run server-side, and
@@ -371,11 +385,61 @@ func buildDifyProvider(configJSON, user string, poll bool, pollInterval, runTime
 		reconcileTimeout: runTimeout, // the reconcile poll window matches the run cap
 		onRef:            onRef,
 		onStarted:        onStarted,
+		fileInputs:       difyFileInputs(cfg.Inputs),
 	}
 	if poll && pollInterval > 0 {
 		p.reconcilePoll = pollInterval
 	}
 	return p, nil
+}
+
+// difyFileInputs indexes a target's file-carrying inputs by variable name (value = the
+// declared type), or nil when the workflow declares none — which is every existing target,
+// so the conversion in Run costs nothing until a workflow actually takes a file.
+func difyFileInputs(ins []dify.Input) map[string]string {
+	var out map[string]string
+	for _, in := range ins {
+		if in.Variable == "" || (in.Type != dify.InputFile && in.Type != dify.InputFileList) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, 1)
+		}
+		out[in.Variable] = in.Type
+	}
+	return out
+}
+
+// difyFileValue turns a row's cell — a JSON array of file ids already uploaded to Dify — into
+// the run-input value the declared type expects: an array of file objects for file-list, the
+// first object alone for a single file. ok is false when the cell holds nothing usable, which
+// the caller treats as an unfilled input.
+func difyFileValue(declared, cell string) (any, bool) {
+	var ids []string
+	if json.Unmarshal([]byte(cell), &ids) != nil {
+		return nil, false
+	}
+	objs := make([]any, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		objs = append(objs, map[string]any{
+			"type": "document", "transfer_method": "local_file", "upload_file_id": id,
+		})
+	}
+	if len(objs) == 0 {
+		return nil, false
+	}
+	if len(objs) > dify.MaxRunFiles {
+		// Refuse rather than truncate: a silently dropped attachment would leave the operator
+		// reading a report that is missing evidence it looks like it had.
+		return nil, false
+	}
+	if declared == dify.InputFile {
+		return objs[0], true
+	}
+	return objs, true
 }
 
 // difyTargetInputs returns a Dify target's discovered inputs (for the run form), or

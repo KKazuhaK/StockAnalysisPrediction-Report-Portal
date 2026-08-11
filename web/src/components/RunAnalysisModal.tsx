@@ -6,10 +6,12 @@ import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
+import { buildRow, isFileInput } from '../lib/difyInputs'
 import { readPrefetched } from '../lib/prefetch'
 import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
+import DifyFileInput from './DifyFileInput'
 import RunScheduleControls from './RunScheduleControls'
-import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPresetsResp, RunQuota } from '../api/types'
+import type { BatchQueueSummary, BatchTarget, BatchTickets, PluginInput, RunPreset, RunPresetsResp, RunQuota } from '../api/types'
 
 // The home-page run-analysis modal (docs/adr/0007 + 0014): pick a Dify workflow, fill its
 // discovered inputs, choose when to run (now / a preset low-peak window / an explicit 定时 time)
@@ -18,6 +20,31 @@ import type { BatchQueueSummary, BatchTarget, BatchTickets, RunPreset, RunPreset
 // An unknown period reads as the daily one: that is what every pre-period deployment meant, and it
 // is the phrasing that overstates the allowance least.
 const quotaPeriod = (p?: string) => (p === 'week' || p === 'month' || p === 'total' ? p : 'day')
+
+// inputControl draws one declared input as the control its type calls for. Everything unrecognised
+// falls back to a text box — the one control that can carry any of these types as text, and what
+// the form drew for every input before the declaration carried a type at all. `select` needs its
+// allowed values to be a Select at all, so a select that arrives without options falls back too,
+// leaving the field fillable instead of offering an empty menu.
+function inputControl(i: PluginInput, targetId: number) {
+  const hint = i.label || i.key
+  switch (i.type) {
+    case 'paragraph':
+      return <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder={hint} />
+    case 'number':
+      return <InputNumber style={{ width: '100%' }} placeholder={hint} />
+    case 'select':
+      if (i.options?.length) {
+        return <Select placeholder={hint} options={i.options.map((o) => ({ value: o, label: o }))} />
+      }
+      return <Input placeholder={hint} />
+    case 'file':
+    case 'file-list':
+      return <DifyFileInput targetId={targetId} type={i.type} />
+    default:
+      return <Input placeholder={hint} />
+  }
+}
 
 // How stale a warmed answer may be and still open the dialog without waiting. The live request
 // goes out regardless and corrects whatever this showed, so the number only bounds how long a
@@ -157,10 +184,7 @@ export default function RunAnalysisModal({
     }
     setSubmitting(true)
     try {
-      const row: Record<string, string> = {}
-      inputs.forEach((i) => {
-        row[i.key] = String(vals[i.key] ?? '').trim()
-      })
+      const row = buildRow(inputs, vals)
       const sp = schedulePayload(schedule)
       const res = await api.post<{
         job_id: number
@@ -266,9 +290,22 @@ export default function RunAnalysisModal({
                 key={i.key}
                 name={i.key}
                 label={i.label || i.key}
-                rules={i.required ? [{ required: true, message: t('run.required', { field: i.label || i.key }) }] : []}
+                // A file field holds a list of uploaded files, and the rule has to say so: a rule
+                // with no type validates as a string, which rejects the list outright — a required
+                // file input would then refuse every value, uploaded file included.
+                rules={
+                  i.required
+                    ? [
+                        {
+                          required: true,
+                          type: isFileInput(i.type) ? 'array' : undefined,
+                          message: t('run.required', { field: i.label || i.key }),
+                        },
+                      ]
+                    : []
+                }
               >
-                <Input placeholder={i.label || i.key} />
+                {inputControl(i, target.id)}
               </Form.Item>
             ))}
             {inputs.length === 0 && <Typography.Text type="secondary">{t('run.noInputs')}</Typography.Text>}

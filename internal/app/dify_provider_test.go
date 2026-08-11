@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -426,5 +427,139 @@ func TestDifyChatProviderEnrichesFailFromMessage(t *testing.T) {
 	}
 	if res.Detail != "LLM call failed: quota exceeded" {
 		t.Fatalf("detail = %q, want the message-level error surfaced", res.Detail)
+	}
+}
+
+// A row carries uploaded files as a JSON array of Dify file ids (a string like every other
+// cell). The provider turns them into the file objects Dify expects — an array for a
+// file-list input, a single object for a file input — and leaves text inputs alone.
+func TestDifyProviderConvertsFileInputs(t *testing.T) {
+	gotInputs := make(chan map[string]any, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		in, _ := body["inputs"].(map[string]any)
+		gotInputs <- in
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"event":"workflow_finished","task_id":"t","workflow_run_id":"r","data":{"status":"succeeded"}}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: srv.URL, APIKey: "k", Inputs: []dify.Input{
+		{Variable: "symbol", Type: "text-input", Required: true},
+		{Variable: "docs", Type: dify.InputFileList},
+		{Variable: "cover", Type: dify.InputFile},
+	}})
+	prov, err := buildDifyProvider(string(cfg), "u", false, 0, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("buildDifyProvider: %v", err)
+	}
+	if _, err := prov.Run(context.Background(), map[string]string{
+		"symbol": "600160", "docs": `["f1","f2"]`, "cover": `["f3"]`,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	in := <-gotInputs
+	if in["symbol"] != "600160" {
+		t.Errorf("text input = %v, want the string untouched", in["symbol"])
+	}
+	docs, ok := in["docs"].([]any)
+	if !ok || len(docs) != 2 {
+		t.Fatalf("file-list input = %#v, want 2 file objects", in["docs"])
+	}
+	first, _ := docs[0].(map[string]any)
+	if first["upload_file_id"] != "f1" || first["transfer_method"] != "local_file" || first["type"] != "document" {
+		t.Errorf("file object = %v", first)
+	}
+	cover, ok := in["cover"].(map[string]any)
+	if !ok || cover["upload_file_id"] != "f3" {
+		t.Fatalf("file input = %#v, want a single object for f3", in["cover"])
+	}
+}
+
+// A file cell that holds nothing usable (blank, malformed, or an empty array) is dropped:
+// the input is simply absent, exactly as if the operator had not filled it in. A failed run
+// would be the wrong answer — the workflow's own required check is the gate.
+func TestDifyFileValueDropsUnusableCells(t *testing.T) {
+	for _, cell := range []string{"", "not json", "[]", `[""]`, `"f1"`} {
+		if v, ok := difyFileValue(dify.InputFileList, cell); ok {
+			t.Errorf("cell %q → %v, want dropped", cell, v)
+		}
+	}
+	if v, ok := difyFileValue(dify.InputFile, `["a","b"]`); !ok {
+		t.Error(`file input with 2 ids should keep the first`)
+	} else if m, _ := v.(map[string]any); m["upload_file_id"] != "a" {
+		t.Errorf("file input = %v, want the first id", v)
+	}
+}
+
+// A cell over Dify's per-run cap is refused outright. Truncating it would ship a report that
+// silently lacks evidence it appears to cite, which is worse than a run that fails with a reason.
+func TestDifyFileValueRefusesOverCap(t *testing.T) {
+	ids := make([]string, 0, dify.MaxRunFiles+1)
+	for i := 0; i <= dify.MaxRunFiles; i++ {
+		ids = append(ids, fmt.Sprintf("f%d", i))
+	}
+	over, _ := json.Marshal(ids)
+	if v, ok := difyFileValue(dify.InputFileList, string(over)); ok {
+		t.Errorf("%d ids → %v, want refused", len(ids), v)
+	}
+	at, _ := json.Marshal(ids[:dify.MaxRunFiles])
+	if _, ok := difyFileValue(dify.InputFileList, string(at)); !ok {
+		t.Errorf("%d ids should be accepted", dify.MaxRunFiles)
+	}
+}
+
+// A select whose choices never reach the form renders as a text box, which is not the field the
+// workflow declared — so the options travel with the type.
+func TestDifyInputsJSONCarriesOptions(t *testing.T) {
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: "https://dify.example/v1", APIKey: "k", Inputs: []dify.Input{
+		{Variable: "kind", Label: "类型", Type: "select", Options: []string{"a", "b"}},
+		{Variable: "symbol", Label: "代码", Type: "text-input"},
+	}})
+	got := difyInputsJSON(string(cfg))
+	opts, _ := got[0]["options"].([]string)
+	if len(opts) != 2 || opts[0] != "a" {
+		t.Fatalf("options = %v", got[0]["options"])
+	}
+	if _, ok := got[1]["options"]; ok {
+		t.Errorf("a non-select input should carry no options: %v", got[1])
+	}
+}
+
+// difyFileInputs indexes only the file-carrying declarations, and a workflow with none at all
+// gets no table — the existing text-only targets keep running byte-for-byte as before.
+func TestDifyFileInputsIndex(t *testing.T) {
+	got := difyFileInputs([]dify.Input{
+		{Variable: "symbol", Type: "text-input"},
+		{Variable: "docs", Type: dify.InputFileList},
+		{Variable: "cover", Type: dify.InputFile},
+		{Variable: "", Type: dify.InputFile},
+	})
+	if len(got) != 2 || got["docs"] != dify.InputFileList || got["cover"] != dify.InputFile {
+		t.Fatalf("index = %v", got)
+	}
+	if got := difyFileInputs([]dify.Input{{Variable: "symbol", Type: "text-input"}}); got != nil {
+		t.Errorf("text-only workflow → %v, want nil", got)
+	}
+}
+
+// The run form needs the declared type to know a file picker from a text box, so difyInputsJSON
+// carries it through verbatim.
+func TestDifyInputsJSONCarriesType(t *testing.T) {
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: "https://dify.example/v1", APIKey: "k", Inputs: []dify.Input{
+		{Variable: "symbol", Label: "代码", Type: "text-input", Required: true},
+		{Variable: "docs", Label: "附件", Type: dify.InputFileList},
+	}})
+	got := difyInputsJSON(string(cfg))
+	if len(got) != 2 {
+		t.Fatalf("inputs = %v", got)
+	}
+	if got[0]["type"] != "text-input" || got[1]["type"] != dify.InputFileList {
+		t.Fatalf("types = %v / %v", got[0]["type"], got[1]["type"])
+	}
+	if got[1]["key"] != "docs" || got[1]["label"] != "附件" {
+		t.Errorf("input = %v", got[1])
 	}
 }
