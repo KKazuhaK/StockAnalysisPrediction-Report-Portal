@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
@@ -47,10 +48,25 @@ type Info struct {
 type Input struct {
 	Variable string   `json:"variable"`
 	Label    string   `json:"label"`
-	Type     string   `json:"type"` // text-input | paragraph | number | select
+	Type     string   `json:"type"` // text-input | paragraph | number | select | file | file-list
 	Required bool     `json:"required"`
 	Options  []string `json:"options,omitempty"`
 }
+
+// The two Input types that carry files rather than a plain value: their run input is a
+// file object (or an array of them) referencing an id from UploadFile, not a string.
+const (
+	InputFile     = "file"
+	InputFileList = "file-list"
+)
+
+// MaxUploadBytes is Dify's own per-file limit. Callers reject a bigger file up front so the
+// operator gets a clear answer instead of Dify's error after a 15MB round trip.
+const MaxUploadBytes = 15 << 20
+
+// MaxRunFiles is Dify's own per-run file cap. The count is enforced server-side as well as in
+// the browser, so a run assembled outside the form (batch, API) cannot exceed it silently.
+const MaxRunFiles = 10
 
 // APIError is a non-2xx response from Dify (carries the status so callers can tell
 // a retryable 5xx/429 from a permanent 4xx). A transport failure (no response)
@@ -148,6 +164,70 @@ func (c *Client) Parameters(ctx context.Context) ([]Input, error) {
 			}
 			out = append(out, Input{Variable: f.Variable, Label: f.Label, Type: t, Required: f.Required, Options: f.Options})
 		}
+	}
+	return out, nil
+}
+
+// UploadedFile is a file Dify accepted. ID is the handle a run's file input carries as
+// upload_file_id; Name/Size are echoed back for the operator to confirm what was sent.
+type UploadedFile struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// UploadFile pushes one file to Dify (POST /files/upload) and returns its id, which a
+// file / file-list input references as upload_file_id. user must be the SAME identity the
+// run is recorded under: Dify scopes an uploaded file to its uploader, so a file uploaded
+// as somebody else is not resolvable when the workflow runs.
+//
+// The body is buffered whole because multipart needs a Content-Length and callers cap the
+// size at MaxUploadBytes anyway.
+func (c *Client) UploadFile(ctx context.Context, filename string, src io.Reader, user string) (UploadedFile, error) {
+	if user == "" {
+		user = "report-portal"
+	}
+	if filename == "" {
+		filename = "file"
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("user", user); err != nil {
+		return UploadedFile{}, err
+	}
+	part, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		return UploadedFile{}, err
+	}
+	if _, err := io.Copy(part, src); err != nil {
+		return UploadedFile{}, err
+	}
+	if err := mw.Close(); err != nil {
+		return UploadedFile{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/files/upload", &body)
+	if err != nil {
+		return UploadedFile{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return UploadedFile{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode/100 != 2 {
+		return UploadedFile{}, &APIError{Status: resp.StatusCode, Message: apiErrMsg(raw)}
+	}
+	var out UploadedFile
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return UploadedFile{}, fmt.Errorf("dify /files/upload: bad JSON: %w", err)
+	}
+	// No id means nothing to reference at run time — a 2xx with an unusable body is still a
+	// failed upload, and saying so here beats a workflow failing on a blank upload_file_id.
+	if out.ID == "" {
+		return UploadedFile{}, fmt.Errorf("dify /files/upload: response carried no file id")
 	}
 	return out, nil
 }

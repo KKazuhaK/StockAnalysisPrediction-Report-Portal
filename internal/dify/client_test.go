@@ -3,6 +3,8 @@ package dify
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,5 +92,71 @@ func TestAuthErrorIsReadable(t *testing.T) {
 	_, err := c.Info(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "Access token is invalid") {
 		t.Fatalf("expected a readable auth error, got %v", err)
+	}
+}
+
+// UploadFile posts the file as multipart field "file" alongside the end-user form field,
+// authorized by the app key, and returns the id a run's file input references.
+func TestUploadFile(t *testing.T) {
+	var gotAuth, gotUser, gotName string
+	var gotBody []byte
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/files/upload" {
+			t.Errorf("path = %q, want /files/upload", r.URL.Path)
+		}
+		gotAuth = r.Header.Get("Authorization")
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm: %v", err)
+		}
+		gotUser = r.FormValue("user")
+		f, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("FormFile: %v", err)
+		}
+		defer f.Close()
+		gotName = header.Filename
+		gotBody, _ = io.ReadAll(f)
+		w.Write([]byte(`{"id":"file-1","name":"研报.pdf","size":7}`))
+	}))
+	defer s.Close()
+
+	up, err := New(s.URL, "app-key", s.Client()).UploadFile(context.Background(), "研报.pdf", strings.NewReader("PDFDATA"), "kazuha@example.org")
+	if err != nil {
+		t.Fatalf("UploadFile: %v", err)
+	}
+	if up.ID != "file-1" || up.Name != "研报.pdf" || up.Size != 7 {
+		t.Fatalf("uploaded = %+v", up)
+	}
+	if gotAuth != "Bearer app-key" {
+		t.Errorf("auth = %q, want Bearer app-key", gotAuth)
+	}
+	if gotUser != "kazuha@example.org" {
+		t.Errorf("user = %q, want the run's end-user identity", gotUser)
+	}
+	if gotName != "研报.pdf" || string(gotBody) != "PDFDATA" {
+		t.Errorf("sent file %q = %q", gotName, gotBody)
+	}
+}
+
+// A rejected upload surfaces Dify's own message and status, and a 2xx with no id is an
+// error too — a blank upload_file_id would only fail later, inside the workflow.
+func TestUploadFileErrors(t *testing.T) {
+	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		w.Write([]byte(`{"code":"file_too_large","message":"File size exceeded"}`))
+	}))
+	defer rejecting.Close()
+	idless := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{}`))
+	}))
+	defer idless.Close()
+
+	_, err := New(rejecting.URL, "k", rejecting.Client()).UploadFile(context.Background(), "big.pdf", strings.NewReader("x"), "u")
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status != http.StatusRequestEntityTooLarge || !strings.Contains(ae.Message, "File size exceeded") {
+		t.Fatalf("err = %v, want a 413 APIError carrying Dify's message", err)
+	}
+	if _, err := New(idless.URL, "k", idless.Client()).UploadFile(context.Background(), "f.pdf", strings.NewReader("x"), "u"); err == nil {
+		t.Fatal("a 2xx response with no file id must be an error")
 	}
 }

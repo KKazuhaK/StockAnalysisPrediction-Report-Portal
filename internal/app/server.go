@@ -318,6 +318,10 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/batch/targets", s.requireAdminJSON(s.apiBatchTargetAdd))
 	mux.HandleFunc("POST /api/admin/batch/targets/reorder", s.requireAdminJSON(s.apiBatchTargetReorder))
 	mux.HandleFunc("PUT /api/admin/batch/targets/{id}/surfaces", s.requireAdminJSON(s.apiBatchTargetSurfaces))
+	// Uploading a file for a run is part of SUBMITTING one, not of configuring a target, so it
+	// carries PermRunBatch like POST .../jobs — admin-only here would leave operators unable to
+	// run any workflow that takes a file.
+	mux.HandleFunc("POST /api/admin/batch/targets/{id}/upload", s.requirePermJSON(PermRunBatch, s.apiBatchDifyFileUpload))
 	// Dify-native config (docs/adr/0006-dify-native.md): probe a workflow by key, then save it.
 	mux.HandleFunc("POST /api/admin/batch/dify/probe", s.requireAdminJSON(s.apiBatchDifyProbe))
 	mux.HandleFunc("POST /api/admin/batch/dify/refresh", s.requireAdminJSON(s.apiBatchDifyRefresh))

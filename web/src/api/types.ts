@@ -20,6 +20,12 @@ export interface PluginInput {
   key: string
   label?: string
   required?: boolean
+  // The declared control kind, straight from Dify's /parameters ("text-input" | "paragraph" |
+  // "number" | "select" | "file" | "file-list"). Absent on an older server, and on a manifest
+  // plugin that declares no kind — both read as a plain text box, which is what the run form
+  // drew for everything before this field existed.
+  type?: string
+  options?: string[] // the allowed values of a "select" input
 }
 
 export interface PluginConfigField {

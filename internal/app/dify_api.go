@@ -1,9 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -198,13 +201,91 @@ func ensureQueryInput(inputs []dify.Input) []dify.Input {
 	return append([]dify.Input{{Variable: "query", Label: "query", Type: "paragraph", Required: true}}, inputs...)
 }
 
-// difyInputsJSON maps a Dify target's stored inputs to the {key,label,required}
-// shape the run form expects (same as a manifest plugin's InputDecl).
+// difyInputsJSON maps a Dify target's stored inputs to the {key,label,type,required}
+// shape the run form expects (same as a manifest plugin's InputDecl). type is Dify's own
+// field type, which is what tells the form to render a file picker instead of a text box.
 func difyInputsJSON(configJSON string) []map[string]any {
 	ins := difyTargetInputs(configJSON)
 	out := make([]map[string]any, 0, len(ins))
 	for _, in := range ins {
-		out = append(out, map[string]any{"key": in.Variable, "label": in.Label, "required": in.Required})
+		row := map[string]any{"key": in.Variable, "label": in.Label, "type": in.Type, "required": in.Required}
+		if len(in.Options) > 0 {
+			row["options"] = in.Options // a select without its choices renders as a text box, which is not the field the workflow declared
+		}
+		out = append(out, row)
 	}
 	return out
+}
+
+// difyUploadTimeout bounds one file-upload proxy call. Generous next to a probe (a 15MB body
+// crosses the wire twice, browser → portal → Dify) but far below a run's budget.
+const difyUploadTimeout = 2 * time.Minute
+
+// apiBatchDifyFileUpload proxies one file from the run form to the target's own Dify instance
+// and hands back the file id the row carries. The browser cannot upload straight to Dify: that
+// would need the app's service key in the page, and the key is the one thing this feature keeps
+// server-side (same reason apiBatchDifyTargetGet never returns it).
+func (s *Server) apiBatchDifyFileUpload(w http.ResponseWriter, r *http.Request, user string) {
+	tgt, ok := s.st.GetTarget(pathID(r, "id"))
+	if !ok || tgt.PluginSlug != difyPluginSlug {
+		jsonError(w, http.StatusNotFound, "target not found")
+		return
+	}
+	// The file is pushed with the target's own key, so a restricted OU may only upload to a
+	// workflow its allow-list grants (ADR 0022 R3). The per-surface check stays on submit, where
+	// the surface is actually known — an upload is not yet a run.
+	if s.viewerScope(user) != nil && !s.targetGranted(user, tgt.ID) {
+		jsonError(w, http.StatusForbidden, "this workflow is not available to your group")
+		return
+	}
+	var cfg difyTargetConfig
+	json.Unmarshal([]byte(tgt.Config), &cfg)
+	if cfg.BaseURL == "" || cfg.APIKey == "" {
+		jsonError(w, http.StatusBadRequest, "target is missing base_url or api_key")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, dify.MaxUploadBytes+1<<20)
+	if err := r.ParseMultipartForm(dify.MaxUploadBytes + 1024); err != nil {
+		jsonErrorCode(w, http.StatusBadRequest, "upload_too_large", "上传文件过大")
+		return
+	}
+	f, header, err := r.FormFile("file")
+	if err != nil {
+		jsonErrorCode(w, http.StatusBadRequest, "upload_no_file", "请选择要上传的文件")
+		return
+	}
+	defer f.Close()
+	// Read one byte past the cap so a file that lies about its size in the multipart header is
+	// still caught by what actually arrived.
+	raw, err := io.ReadAll(io.LimitReader(f, dify.MaxUploadBytes+1))
+	if err != nil || len(raw) == 0 {
+		jsonErrorCode(w, http.StatusBadRequest, "upload_unreadable", "读取上传文件失败")
+		return
+	}
+	if len(raw) > dify.MaxUploadBytes {
+		jsonErrorCode(w, http.StatusBadRequest, "upload_too_large", "上传文件过大")
+		return
+	}
+	name := filepath.Base(header.Filename)
+	if name == "." || name == string(filepath.Separator) {
+		name = "file"
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), difyUploadTimeout)
+	defer cancel()
+	c := dify.New(cfg.BaseURL, cfg.APIKey, &http.Client{Timeout: difyUploadTimeout})
+	// The SAME end-user identity the run will be recorded under: Dify scopes an uploaded file to
+	// its uploader, so uploading as anyone else leaves the id unresolvable at run time.
+	up, err := c.UploadFile(ctx, name, bytes.NewReader(raw), s.difyEndUser(user))
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, "upload failed: "+err.Error())
+		return
+	}
+	size := up.Size
+	if size == 0 {
+		size = int64(len(raw)) // Dify omitted it; what we sent is the honest answer
+	}
+	if up.Name != "" {
+		name = up.Name
+	}
+	writeJSON(w, map[string]any{"ok": true, "file_id": up.ID, "name": name, "size": size})
 }

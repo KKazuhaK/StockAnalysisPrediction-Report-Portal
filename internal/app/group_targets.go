@@ -89,6 +89,22 @@ func (s *Server) runAllowed(user string, targetID int64, surface string) bool {
 	return false
 }
 
+// targetGranted reports whether a target appears in a user's resolved allow-list at all,
+// ignoring surfaces. It backs the actions that lead UP TO a run (uploading a file the run will
+// reference) and happen before a surface is known; the surface stays enforced by runAllowed on
+// submit, which is the authoritative gate.
+func (s *Server) targetGranted(user string, targetID int64) bool {
+	if s.viewerScope(user) == nil {
+		return true
+	}
+	for _, g := range s.st.resolveGroupTargets(user) {
+		if g.TargetID == targetID {
+			return true
+		}
+	}
+	return false
+}
+
 // targetOutputSubtype reads the report subtype a target produces. It lives in the target's existing
 // config JSON rather than a new column (ADR 0022 D6), and feeds both the same-day reuse key and the
 // restricted read filter, keeping "what you may run" and "what you may see today" consistent.
