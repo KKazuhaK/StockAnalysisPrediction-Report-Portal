@@ -233,6 +233,10 @@ export default function SSORulesEditor({
           pagination={false}
           components={sortableTableComponents}
           columns={columns}
+          // Eight columns of editable controls want ~1100px. A phone squeezes them to the width of
+          // their own borders rather than admitting it; scrolling sideways at least leaves each
+          // select and input usable.
+          scroll={{ x: 1100 }}
           locale={{ emptyText: t('sso.rules.empty') }}
         />
       </SortableWrapper>
