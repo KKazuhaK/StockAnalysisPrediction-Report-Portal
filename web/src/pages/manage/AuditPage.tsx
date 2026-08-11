@@ -1,9 +1,28 @@
 import { useCallback, useEffect, useState } from 'react'
 import { auditTime } from '../../lib/auditTime'
 import { formatRegion } from '../../lib/geo'
-import { Alert, Button, Card, DatePicker, Descriptions, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  DatePicker,
+  Descriptions,
+  Empty,
+  Grid,
+  Input,
+  Modal,
+  Pagination,
+  Select,
+  Space,
+  Spin,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { InfoCircleOutlined, SearchOutlined } from '@ant-design/icons'
+import { FilterOutlined, InfoCircleOutlined, SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
@@ -76,6 +95,16 @@ const ACTION_COLOR: Record<string, string> = {
  */
 export default function AuditPage() {
   const { t } = useTranslation()
+  // A phone cannot hold six columns. antd does not refuse — it squeezes them until CJK wraps one
+  // character per line and a row becomes a column of glyphs, which is worse than not showing the
+  // table at all. On a narrow screen the same rows are rendered as cards: one row per card, each
+  // field on its own line at full width, and the whole card opens the full record.
+  //
+  // lg rather than the md this codebase usually switches on, because this table is unusually wide
+  // AND this page sits inside the manage layout, which keeps its sidebar from md up: a portrait
+  // tablet has about 600px of content for a table that wants 1040, and cards read better there
+  // than a table scrolled sideways with the detail column off the edge.
+  const mobile = !Grid.useBreakpoint().lg
   const [data, setData] = useState<AuditResp | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -86,6 +115,10 @@ export default function AuditPage() {
   const [q, setQ] = useState('')
   const [since, setSince] = useState<string>()
   const [page, setPage] = useState(1)
+  // Five filter controls at full width would push the first row off a phone screen, so all but
+  // the search box fold away. The badge is what stops a folded-away filter from silently
+  // explaining an empty page.
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   const pageSize = 50
 
@@ -221,65 +254,179 @@ export default function AuditPage() {
     },
   ]
 
+  // On a phone every control takes the full width of its cell; on a desktop each keeps the width
+  // its content needs, so the header row stays one line.
+  const width = (w: number) => (mobile ? { width: '100%' } : { width: w })
+
+  // The narrowing filters, minus the free-text search — that one stays visible on a phone while
+  // these fold away, because it is the one people reach for first.
+  const narrowFilters = (
+    <>
+      <Select
+        allowClear
+        style={width(170)}
+        placeholder={t('audit.action')}
+        value={action}
+        onChange={(v) => {
+          setAction(v)
+          setPage(1)
+        }}
+        // The label is a sentence ("changed a grant"), so on a phone the popup is wider than the
+        // 50%-width control that opens it rather than truncating every option.
+        popupMatchSelectWidth={false}
+        // Built from the values present, so rows written by an older build still filter.
+        options={(data?.actions ?? []).map((a) => ({ value: a, label: t(`audit.a.${a}`, a) }))}
+      />
+      <Input
+        allowClear
+        style={width(170)}
+        placeholder={t('audit.actor')}
+        value={actor}
+        onChange={(e) => {
+          setActor(e.target.value)
+          setPage(1)
+        }}
+      />
+      {/* An equality filter, not the free-text one. "Which host tried nine accounts" is the
+          query that turns a pile of failed sign-ins into a single incident. */}
+      <Input
+        allowClear
+        style={width(150)}
+        placeholder={t('audit.ipFilter')}
+        value={ip}
+        onChange={(e) => {
+          setIP(e.target.value)
+          setPage(1)
+        }}
+      />
+      <DatePicker
+        style={mobile ? { width: '100%' } : undefined}
+        placeholder={t('audit.since')}
+        value={since ? dayjs(since) : null}
+        onChange={(d) => {
+          setSince(d ? d.format('YYYY-MM-DD') : undefined)
+          setPage(1)
+        }}
+      />
+    </>
+  )
+
+  const search = (
+    <Input
+      allowClear
+      prefix={<SearchOutlined />}
+      style={width(220)}
+      placeholder={t('audit.search')}
+      value={q}
+      onChange={(e) => {
+        setQ(e.target.value)
+        setPage(1)
+      }}
+    />
+  )
+
+  const items = data?.items ?? []
+  const pager = (
+    <Pagination
+      align="center"
+      // "1/14" rather than a row of page numbers: the numbered pager wraps to three lines on a
+      // phone, and there is nothing on a page of audit rows worth jumping to by number.
+      simple={mobile}
+      current={page}
+      pageSize={pageSize}
+      total={data?.total ?? 0}
+      showSizeChanger={false}
+      onChange={setPage}
+      style={{ marginTop: 16 }}
+    />
+  )
+
+  // One row, as a card. Same fields as the table and in the same order, but each on its own line
+  // at full width — the whole point is that nothing has to fit in a 40px column. The card itself
+  // is the control that opens the full record; there is no room for a 48px button column, and a
+  // tap target the size of the row is the one a thumb hits.
+  const rowCard = (r: AuditEntry) => {
+    const at = auditTime(r.at, data?.timezone ?? '')
+    const region = formatRegion(r.geo)
+    const detail = auditDetail(r.action, r.detail, t)
+    return (
+      <div
+        key={r.id}
+        className="rp-audit-row"
+        role="button"
+        tabIndex={0}
+        title={t('audit.details')}
+        onClick={() => setRow(r)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setRow(r)
+          }
+        }}
+      >
+        <div className="rp-audit-row__head">
+          <Tag color={ACTION_COLOR[r.action]} style={{ marginInlineEnd: 0 }}>
+            {t(`audit.a.${r.action}`, r.action)}
+          </Tag>
+          <Typography.Text type="secondary" className="rp-audit-row__when">
+            {at.text}
+          </Typography.Text>
+        </div>
+        <div className="rp-audit-row__meta">
+          <Typography.Text style={{ fontSize: 13 }}>{r.actor || t('audit.machine')}</Typography.Text>
+          {r.actor_ou > 0 && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {ouNames[String(r.actor_ou)] ?? `OU ${r.actor_ou}`}
+            </Typography.Text>
+          )}
+          {r.ip && (
+            <Typography.Link
+              style={{ fontSize: 12 }}
+              // The address filters the log; the card opens the record. Without this, tapping the
+              // address does both and the modal covers the result.
+              onClick={(e) => {
+                e.stopPropagation()
+                setIP(r.ip ?? '')
+                setPage(1)
+              }}
+            >
+              {r.ip}
+            </Typography.Link>
+          )}
+          {region && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {region}
+            </Typography.Text>
+          )}
+        </div>
+        {detail && <div className="rp-audit-row__detail">{detail}</div>}
+        <Typography.Text type="secondary" className="rp-audit-row__target">
+          {r.target_type} {r.target_id}
+        </Typography.Text>
+        {at.local && (
+          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+            {t('audit.yourTime', { at: at.local })}
+          </Typography.Text>
+        )}
+        {at.legacy && (
+          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+            {t('audit.legacyTime')}
+          </Typography.Text>
+        )}
+      </div>
+    )
+  }
+
   return (
     <Card
       title={t('audit.title')}
       extra={
-        <Space wrap>
-          <Select
-            allowClear
-            style={{ width: 170 }}
-            placeholder={t('audit.action')}
-            value={action}
-            onChange={(v) => {
-              setAction(v)
-              setPage(1)
-            }}
-            // Built from the values present, so rows written by an older build still filter.
-            options={(data?.actions ?? []).map((a) => ({ value: a, label: t(`audit.a.${a}`, a) }))}
-          />
-          <Input
-            allowClear
-            style={{ width: 170 }}
-            placeholder={t('audit.actor')}
-            value={actor}
-            onChange={(e) => {
-              setActor(e.target.value)
-              setPage(1)
-            }}
-          />
-          {/* An equality filter, not the free-text one. "Which host tried nine accounts" is the
-              query that turns a pile of failed sign-ins into a single incident. */}
-          <Input
-            allowClear
-            style={{ width: 150 }}
-            placeholder={t('audit.ipFilter')}
-            value={ip}
-            onChange={(e) => {
-              setIP(e.target.value)
-              setPage(1)
-            }}
-          />
-          <DatePicker
-            placeholder={t('audit.since')}
-            value={since ? dayjs(since) : null}
-            onChange={(d) => {
-              setSince(d ? d.format('YYYY-MM-DD') : undefined)
-              setPage(1)
-            }}
-          />
-          <Input
-            allowClear
-            prefix={<SearchOutlined />}
-            style={{ width: 220 }}
-            placeholder={t('audit.search')}
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value)
-              setPage(1)
-            }}
-          />
-        </Space>
+        mobile ? undefined : (
+          <Space wrap>
+            {narrowFilters}
+            {search}
+          </Space>
+        )
       }
       styles={{ body: { paddingTop: 12 } }}
     >
@@ -287,20 +434,50 @@ export default function AuditPage() {
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         {t('audit.intro')}
       </Typography.Paragraph>
-      <Table<AuditEntry>
-        rowKey="id"
-        size="small"
-        loading={loading}
-        dataSource={data?.items ?? []}
-        columns={columns}
-        pagination={{
-          current: page,
-          pageSize,
-          total: data?.total ?? 0,
-          showSizeChanger: false,
-          onChange: setPage,
-        }}
-      />
+      {/* A card header on a phone is barely wider than one of these controls, so they move into
+          the body where they get the full width. */}
+      {mobile && (
+        <div className="rp-audit-filters">
+          <div className="rp-audit-filters__top">
+            {search}
+            <Badge dot={Boolean(action || actor.trim() || ip.trim() || since)} offset={[-4, 4]}>
+              <Button icon={<FilterOutlined />} onClick={() => setFiltersOpen((o) => !o)}>
+                {t('audit.filters')}
+              </Button>
+            </Badge>
+          </div>
+          {filtersOpen && <div className="rp-audit-filters__grid">{narrowFilters}</div>}
+        </div>
+      )}
+      {mobile ? (
+        <Spin spinning={loading}>
+          {items.length === 0 && !loading ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          ) : (
+            <div className="rp-audit-list">{items.map(rowCard)}</div>
+          )}
+          {pager}
+        </Spin>
+      ) : (
+        <Table<AuditEntry>
+          rowKey="id"
+          size="small"
+          loading={loading}
+          dataSource={items}
+          columns={columns}
+          // The fixed column widths add up to more than a small laptop or a portrait tablet has.
+          // Scrolling the table is the honest answer; squeezing the columns is what produced the
+          // one-character-per-line wrap this page used to show.
+          scroll={{ x: 1040 }}
+          pagination={{
+            current: page,
+            pageSize,
+            total: data?.total ?? 0,
+            showSizeChanger: false,
+            onChange: setPage,
+          }}
+        />
+      )}
       {/* A footnote, not a banner: it is reference rather than a problem. Without it, "no IP
           database installed" and "installed, but nothing public has shown up yet" look identical,
           because both render as bare addresses. */}
@@ -336,9 +513,21 @@ export default function AuditPage() {
       {/* Everything the row carries, in the order an investigation reads it, and the payload
           exactly as stored — the sentence in the table is a rendering, and somebody chasing an
           incident needs the thing itself to paste into a ticket. */}
-      <Modal open={row != null} title={t('audit.details')} footer={null} width={640} onCancel={() => setRow(null)}>
+      <Modal
+        open={row != null}
+        title={t('audit.details')}
+        footer={null}
+        // A 640px dialog on a 390px phone is centred by antd and then clipped on both sides.
+        width={mobile ? 'calc(100vw - 24px)' : 640}
+        // `margin: 0 auto` because setting `top` replaces antd's own margin shorthand, and without
+        // the auto the dialog sits against the left edge instead of centred.
+        style={mobile ? { top: 16, maxWidth: 'calc(100vw - 24px)', margin: '0 auto' } : undefined}
+        onCancel={() => setRow(null)}
+      >
         {row && (
-          <Descriptions bordered size="small" column={1}>
+          // Labels above values on a phone: side by side, the label column eats a third of the
+          // width and the address, the object and the payload each wrap to four lines.
+          <Descriptions bordered size="small" column={1} layout={mobile ? 'vertical' : 'horizontal'}>
             <Descriptions.Item label={t('audit.at')}>{auditTime(row.at, data?.timezone ?? '').text}</Descriptions.Item>
             <Descriptions.Item label={t('audit.actor')}>
               {row.actor || t('audit.machine')}

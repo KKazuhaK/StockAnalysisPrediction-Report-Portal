@@ -141,6 +141,7 @@
   "audit.f.surface": "from",
   "audit.f.target": "workflow",
   "audit.f.via": "via",
+  "audit.filters": "Filters",
   "audit.geoActive": "Active database",
   "audit.geoActiveHint": "Leave on automatic to use whichever database was updated most recently.",
   "audit.geoAttribution": "Attribution is required wherever the data is shown: MaxMind (GeoLite2), DB-IP, or IPinfo, depending on which database you use.",
