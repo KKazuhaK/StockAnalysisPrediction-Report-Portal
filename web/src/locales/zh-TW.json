@@ -141,6 +141,7 @@
   "audit.f.surface": "來自",
   "audit.f.target": "工作流",
   "audit.f.via": "入口",
+  "audit.filters": "篩選",
   "audit.geoActive": "使用的資料庫",
   "audit.geoActiveHint": "留空即自動選用最近更新的那一個。",
   "audit.geoAttribution": "展示這些資料的地方需要署名：MaxMind（GeoLite2）、DB-IP 或 IPinfo，取決於你使用的庫。",

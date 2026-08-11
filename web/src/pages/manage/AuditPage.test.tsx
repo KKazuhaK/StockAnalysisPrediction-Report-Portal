@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { App } from 'antd'
+import { App, Grid } from 'antd'
 import AuditPage from './AuditPage'
 
 // The log is only useful if a row can be read without cross-referencing anything: who, what, which
@@ -47,10 +47,16 @@ const mount = () =>
     </App>,
   )
 
+// jsdom's matchMedia never matches, so antd would report every breakpoint as absent and the page
+// would render its phone layout under test. Say which one is being tested instead of inheriting it.
+const screenWidth = (wide: boolean) =>
+  vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: wide, lg: wide } as ReturnType<typeof Grid.useBreakpoint>)
+
 describe('AuditPage', () => {
   beforeEach(() => {
     apiMock.get.mockReset()
     apiMock.get.mockResolvedValue(RESP)
+    screenWidth(true)
   })
 
   it('names the OU the actor was in, rather than showing a bare id', async () => {
@@ -94,6 +100,42 @@ describe('AuditPage', () => {
     // resolved OU and all, not merely that the name appears somewhere in the dialog.
     expect(within(dialog).getByText('client@corp.example · 客户A')).toBeTruthy()
     expect(within(dialog).getByText('version 对外版')).toBeTruthy()
+  })
+
+  // A phone cannot hold the six columns, and antd's answer is to squeeze them until a Chinese
+  // sentence wraps one character per line. Below md the rows are cards instead: no table at all,
+  // and the card itself is what opens the full record — there is no room for a button column.
+  describe('on a phone', () => {
+    beforeEach(() => screenWidth(false))
+
+    it('renders rows as cards rather than as a squeezed table', async () => {
+      const { container } = mount()
+      await screen.findByText(/对外版/)
+      expect(container.querySelector('table')).toBeNull()
+      expect(container.querySelectorAll('.rp-audit-row').length).toBe(2)
+      // Same facts as the table row, so nothing is lost by dropping the columns.
+      expect(screen.getByText('客户A')).toBeTruthy()
+      expect(screen.getByText(/before=— · after=u:client@corp\.example/)).toBeTruthy()
+    })
+
+    it('opens the full record when a card is tapped', async () => {
+      const { container } = mount()
+      await screen.findByText(/对外版/)
+      const cards = container.querySelectorAll('.rp-audit-row')
+      await userEvent.click(cards[1] as Element)
+      const dialog = await screen.findByRole('dialog')
+      expect(within(dialog).getByText('{"before":[],"after":["u:client@corp.example"]}')).toBeTruthy()
+    })
+
+    // Folded away, the filters would silently explain an empty page, so the button carries a dot
+    // whenever one of them is set. Nothing is set on arrival.
+    it('keeps the filters folded but reachable', async () => {
+      mount()
+      await screen.findByText(/对外版/)
+      expect(screen.queryByPlaceholderText('audit.ipFilter')).toBeNull()
+      await userEvent.click(screen.getByRole('button', { name: /audit\.filters/ }))
+      expect(screen.getByPlaceholderText('audit.ipFilter')).toBeTruthy()
+    })
   })
 
   it('asks the server for a page, not the whole table', async () => {
