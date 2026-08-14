@@ -93,7 +93,7 @@ func (s *Server) apiBatchPluginDelete(w http.ResponseWriter, r *http.Request, us
 
 func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user string) {
 	pw := s.prioWeights()
-	writeJSON(w, map[string]any{
+	cfg := map[string]any{
 		"max_jobs":                 s.batchBudget(),                                   // queue budget: jobs running at once (ADR 0004)
 		"reserved_slots":           s.batchReserved(),                                 // slots held for 加急 (ADR 0004)
 		"ticket_period_days":       s.ticketPeriodDays(),                              // how often 加急 tickets refill (ADR 0005)
@@ -102,15 +102,20 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 		"dify_end_user":            s.st.GetSetting("dify_end_user", "report-portal"), // Dify end-user template ([username] var)
 		"dify_poll_seconds":        s.difyPollSeconds(),                               // 0 = streaming; >0 = poll the run status every N s (proxy-friendly)
 		"dify_run_timeout_minutes": int(s.difyRunTimeoutDur() / time.Minute),          // cap on one run: portal HTTP client + reconcile poll window
-		"run_default_mode":         s.st.GetSetting("run_default_mode", "now"),        // run form default: now|preset|scheduled (ADR 0014)
-		"run_default_idle":         s.st.GetSetting("run_default_idle", "0") == "1",   // pre-check "run when queue idle" (immediate mode only)
 		// Multifactor priority weights + factor tuning (ADR 0008).
 		"prio_w_base":              pw.Base,
 		"prio_w_age":               pw.Age,
 		"prio_w_fair":              pw.Fair,
 		"prio_age_hours":           s.prioAgeHours(),
 		"prio_fair_halflife_hours": s.prioFairHalflifeHours(),
-	})
+	}
+	// The run-form defaults (which workflow / mode / preset window / idle / retries / notify the
+	// run dialog opens on) are their own settings page; they live in run_defaults.go so this
+	// endpoint and the one the run forms read cannot drift apart.
+	for k, v := range s.runFormDefaultsJSON("run_default_") {
+		cfg[k] = v
+	}
+	writeJSON(w, cfg)
 }
 
 func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user string) {
@@ -123,8 +128,14 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		DifyEndUser           *string `json:"dify_end_user"`            // Dify end-user template ([username] var)
 		DifyPollSeconds       *int    `json:"dify_poll_seconds"`        // 0 = streaming; >0 = poll the run status every N s
 		DifyRunTimeoutMinutes *int    `json:"dify_run_timeout_minutes"` // cap on one run (HTTP client + reconcile window)
-		RunDefaultMode        *string `json:"run_default_mode"`         // run form default button: now|preset|scheduled
-		RunDefaultIdle        *bool   `json:"run_default_idle"`         // pre-check "run when queue idle" (immediate mode)
+		// Run-form defaults — what the run dialog opens on (run_defaults.go). 0 / off clears one;
+		// "no default" is a supported choice, not an unset field.
+		RunDefaultMode     *string `json:"run_default_mode"`      // default mode button: now|preset|scheduled
+		RunDefaultIdle     *bool   `json:"run_default_idle"`      // pre-check "run when queue idle" (immediate mode)
+		RunDefaultTargetID *int64  `json:"run_default_target_id"` // pre-selected workflow; 0 = none
+		RunDefaultPresetID *int64  `json:"run_default_preset_id"` // pre-picked preset window; 0 = none
+		RunDefaultRetries  *int    `json:"run_default_retries"`   // pre-filled failure retries (0..5)
+		RunDefaultNotify   *bool   `json:"run_default_notify"`    // pre-tick "email me when done"
 		// Multifactor priority tuning; pointers so an omitted field is left unchanged
 		// (a weight of 0 is meaningful — it disables that factor). See ADR 0008.
 		PrioWBase             *float64 `json:"prio_w_base"`
@@ -170,13 +181,22 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		s.st.SetSetting("dify_end_user", *in.DifyEndUser) // difyEndUser trims + defaults on read
 	}
 	if in.RunDefaultMode != nil {
-		switch *in.RunDefaultMode {
-		case "now", "preset", "scheduled":
-			s.st.SetSetting("run_default_mode", *in.RunDefaultMode)
-		}
+		s.setRunDefaultMode(*in.RunDefaultMode)
 	}
 	if in.RunDefaultIdle != nil {
-		s.st.SetSetting("run_default_idle", strconv.Itoa(boolInt(*in.RunDefaultIdle)))
+		s.setRunDefaultIdle(*in.RunDefaultIdle)
+	}
+	if in.RunDefaultTargetID != nil {
+		s.setRunDefaultTarget(*in.RunDefaultTargetID)
+	}
+	if in.RunDefaultPresetID != nil {
+		s.setRunDefaultPreset(*in.RunDefaultPresetID)
+	}
+	if in.RunDefaultRetries != nil {
+		s.setRunDefaultRetries(*in.RunDefaultRetries)
+	}
+	if in.RunDefaultNotify != nil {
+		s.setRunDefaultNotify(*in.RunDefaultNotify)
 	}
 	setFloat := func(key string, v *float64, min float64) {
 		if v != nil && *v >= min {

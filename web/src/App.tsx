@@ -35,6 +35,7 @@ const TokensPage = lazyRetry(() => import('./pages/manage/TokensPage'))
 const ApiDocPage = lazyRetry(() => import('./pages/manage/ApiDocPage'))
 const BatchAdminPage = lazyRetry(() => import('./pages/manage/BatchAdminPage'))
 const RunQueueSettingsPage = lazyRetry(() => import('./pages/manage/RunQueueSettingsPage'))
+const RunDefaultsPage = lazyRetry(() => import('./pages/manage/RunDefaultsPage'))
 const ChatAdminPage = lazyRetry(() => import('./pages/manage/ChatAdminPage'))
 const WebhooksPage = lazyRetry(() => import('./pages/manage/WebhooksPage'))
 const StoragePage = lazyRetry(() => import('./pages/manage/StoragePage'))
@@ -151,6 +152,7 @@ function AppRoutes() {
           <Route path="tokens" element={<TokensPage />} />
           <Route path="batch" element={<BatchAdminPage />} />
           <Route path="runqueue" element={<RunQueueSettingsPage />} />
+          <Route path="rundefaults" element={<RunDefaultsPage />} />
           <Route path="assistant" element={<ChatAdminPage />} />
           <Route path="apps" element={<AppsAdminPage />} />
           <Route path="webhooks" element={<WebhooksPage />} />

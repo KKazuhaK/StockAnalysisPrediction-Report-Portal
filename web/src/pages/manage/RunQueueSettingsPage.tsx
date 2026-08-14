@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Card, Collapse, Divider, Input, InputNumber, Select, Space, Switch, Typography } from 'antd'
+import { App, Button, Card, Collapse, Divider, Input, InputNumber, Space, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router'
 import { api, errText } from '../../api/client'
-import type { BatchConfig, RunMode } from '../../api/types'
+import type { BatchConfig } from '../../api/types'
 import RunPresetsEditor from './RunPresetsEditor'
 import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
@@ -12,7 +13,9 @@ import { GAP_FIELD } from './tokens'
 // the default base priority, the Dify end-user template, and the Slurm-style multifactor
 // priority weights. These govern the whole run system (single run + CSV batch). The
 // urgent lane / ticket settings live with the group config (Manage -> Users -> Groups),
-// not here — urgent is a group/ticket concern.
+// not here — urgent is a group/ticket concern. What the run *form* opens on (default workflow,
+// mode, window, idle, retries, notify) is not a queue setting either: it moved to its own page
+// (Manage -> 运行默认, RunDefaultsPage), leaving this one about the engine.
 export default function RunQueueSettingsPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -26,8 +29,6 @@ export default function RunQueueSettingsPage() {
   const [wFair, setWFair] = useState(1000)
   const [ageHours, setAgeHours] = useState(24)
   const [fairHalflife, setFairHalflife] = useState(168)
-  const [runDefaultMode, setRunDefaultMode] = useState<RunMode>('now')
-  const [runDefaultIdle, setRunDefaultIdle] = useState(false)
   // Every field above starts at a plausible-looking number, and this form is live. Until the
   // server has answered, those numbers are this file's opinion, not the queue's configuration —
   // so nothing renders behind the gate, and a failed load says so instead of quietly offering
@@ -51,8 +52,6 @@ export default function RunQueueSettingsPage() {
         setWFair(r.prio_w_fair)
         setAgeHours(r.prio_age_hours)
         setFairHalflife(r.prio_fair_halflife_hours)
-        setRunDefaultMode(r.run_default_mode ?? 'now')
-        setRunDefaultIdle(!!r.run_default_idle)
       })
       .catch((e) => setLoadErr(errText(e, t)))
       .finally(() => setLoading(false))
@@ -74,8 +73,6 @@ export default function RunQueueSettingsPage() {
       prio_w_fair: wFair,
       prio_age_hours: ageHours,
       prio_fair_halflife_hours: fairHalflife,
-      run_default_mode: runDefaultMode,
-      run_default_idle: runDefaultIdle,
     })
     message.success(t('common.saved'))
     load()
@@ -105,29 +102,6 @@ export default function RunQueueSettingsPage() {
           t('batch.admin.defaultPriority'),
           t('batch.admin.defaultPriorityHint'),
           <InputNumber min={0} max={100} value={defaultPriority} onChange={(v) => setDefaultPriority(v ?? 50)} />,
-        )}
-
-        <Divider style={{ margin: '4px 0' }} titlePlacement="left" plain>
-          {t('batch.admin.runDefaultsTitle')}
-        </Divider>
-        {row(
-          t('batch.admin.runDefaultMode'),
-          t('batch.admin.runDefaultModeHint'),
-          <Select
-            value={runDefaultMode}
-            onChange={(v) => setRunDefaultMode(v as RunMode)}
-            style={{ width: 140 }}
-            options={[
-              { value: 'now', label: t('run.now') },
-              { value: 'preset', label: t('run.preset') },
-              { value: 'scheduled', label: t('run.scheduled') },
-            ]}
-          />,
-        )}
-        {row(
-          t('batch.admin.runDefaultIdle'),
-          t('batch.admin.runDefaultIdleHint'),
-          <Switch checked={runDefaultIdle} onChange={setRunDefaultIdle} />,
         )}
 
         {/* Rarely-touched knobs (Dify tuning + Slurm priority weights) fold into a collapsed
@@ -206,6 +180,11 @@ export default function RunQueueSettingsPage() {
         </Divider>
         <Typography.Text type="secondary">{t('batch.admin.presetsHint')}</Typography.Text>
         <RunPresetsEditor />
+        {/* Which window (if any) the run form pre-picks is a run-form default, not a queue setting;
+            it lives with the rest of them one page over. */}
+        <Typography.Text type="secondary">
+          {t('batch.admin.runDefaultsMoved')} <Link to="/manage/rundefaults">{t('nav.runDefaults')}</Link>
+        </Typography.Text>
       </div>
       </LoadGate>
     </Card>
