@@ -134,6 +134,39 @@ counts, shown as a neutral tag ("已过期 / 未在时段内执行") so it never
 - The preset windows themselves live in the `run_presets` table (§2), edited as an add / remove /
   reorder list on the same tab.
 
+#### Amendment (2026-08-14) — the run-form defaults become their own page
+
+The two settings above were the whole of "what the run form opens on", and they sat between the
+queue's concurrency budget and its priority weights. They are a different kind of setting: nothing
+in them governs how the queue behaves, they only decide what the dialog is already holding when it
+opens, and each is a suggestion the user overrides in the form. They move to their own settings
+page (Manage → 运行默认, `/manage/rundefaults`), and the set grows to cover the rest of the dialog:
+
+- `run_default_target_id` — int, `0` = none (default): the workflow the 运行分析 picker opens on.
+- `run_default_preset_id` — int, `0` = none (default): the window pre-picked in 预设时间 mode.
+- `run_default_retries` — int `0..5` (default `0`): the pre-filled failure-retry count.
+- `run_default_notify` — bool (default off): whether "完成后邮件通知" starts ticked.
+
+All four are scalars, so they stay in `meta` — no schema change, nothing to migrate, and an
+unconfigured portal reads `0` / off throughout, which is the empty form the dialog has always
+opened with. **"No default" stays a first-class choice**, not an unset field: `0` on the wire
+*clears* a stored default, where an omitted field leaves it alone (the batch config save is
+partial). The two id settings are the only batch-config values that reference another row, so they
+are validated on both sides of the trip — a save naming a workflow or window that does not exist is
+dropped rather than stored, and a stored id whose row has since been deleted reads back as `0`
+instead of putting a bare number in the admin's own picker. A *disabled* window is deliberately not
+forgotten: the run form won't offer it, but the admin who switched it off should find their choice
+waiting rather than silently cleared.
+
+Both endpoints carry the block (`run_default_` on the admin config, `default_` on
+`/api/admin/batch/presets`, which is what the run forms already fetch), rendered from one place
+(`internal/app/run_defaults.go`) so the two spellings cannot drift. The workflow / retries / notify
+defaults apply to the single-run dialog only — a batch picks its target together with its CSV
+columns and carries its own retry count — while mode / window / idle apply to both forms, as before.
+A default that the form could not offer is dropped by the form, not by the server: `preset` mode
+with no enabled window falls back to immediate, a pinned entry button's own workflow outranks the
+default one, and a default the admin has hidden from 运行分析 simply does not apply.
+
 ### 5. Frontend
 
 - The mode toggle grows to **three** buttons — `立即运行 | 预设时间 | 定时运行` (preset in the

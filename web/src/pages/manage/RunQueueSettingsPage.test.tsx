@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { App } from 'antd'
+import { MemoryRouter } from 'react-router'
 import RunQueueSettingsPage from './RunQueueSettingsPage'
 
 const server = vi.hoisted(() => ({ resolve: null as null | ((v: unknown) => void), reject: null as null | ((e: unknown) => void) }))
@@ -20,11 +21,14 @@ vi.mock('react-i18next', () => ({
 }))
 vi.mock('./RunPresetsEditor', () => ({ default: () => <div>presets</div> }))
 
+// The page links across to the run-form defaults, so it needs a router around it.
 const renderPage = () =>
   render(
-    <App>
-      <RunQueueSettingsPage />
-    </App>,
+    <MemoryRouter>
+      <App>
+        <RunQueueSettingsPage />
+      </App>
+    </MemoryRouter>,
   )
 
 describe('RunQueueSettingsPage before its configuration arrives', () => {

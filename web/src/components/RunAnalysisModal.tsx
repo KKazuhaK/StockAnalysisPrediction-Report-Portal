@@ -8,7 +8,15 @@ import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
 import { buildRow, isFileInput } from '../lib/difyInputs'
 import { readPrefetched } from '../lib/prefetch'
-import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
+import {
+  noRunDefaults,
+  readRunDefaults,
+  scheduleFromDefaults,
+  schedulePayload,
+  scheduleError,
+  type RunFormDefaults,
+  type RunSchedule,
+} from '../lib/runSchedule'
 import DifyFileInput from './DifyFileInput'
 import RunScheduleControls from './RunScheduleControls'
 import type { BatchQueueSummary, BatchTarget, BatchTickets, PluginInput, RunPreset, RunPresetsResp, RunQuota } from '../api/types'
@@ -73,22 +81,26 @@ export default function RunAnalysisModal({
   const [quota, setQuota] = useState<RunQuota | null>(null)
   const [queue, setQueue] = useState<BatchQueueSummary | null>(null)
   const [presets, setPresets] = useState<RunPreset[]>([])
-  const [schedule, setSchedule] = useState<RunSchedule>(emptySchedule)
+  const [defaults, setDefaults] = useState<RunFormDefaults>(noRunDefaults)
+  const [schedule, setSchedule] = useState<RunSchedule>(scheduleFromDefaults(noRunDefaults))
   const [notify, setNotify] = useState(false)
   const [retries, setRetries] = useState(0) // failure retries; 0 = never auto-retry (a single run maps 1:1 to the click)
   const [submitting, setSubmitting] = useState(false)
   const [loading, setLoading] = useState(true) // until the workflow list is in, this modal knows nothing
 
   // Presets carry the admin's run-form defaults with them, so reading them warm and reading them
-  // live must apply the same rules — hence one function, used by both.
+  // live must apply the same rules — hence one function, used by both. The workflow default is
+  // applied separately (below), because it needs the target list this call doesn't carry.
   const applyPresets = useCallback((r: RunPresetsResp) => {
     setPresets(r.presets || [])
-    // Fall back to immediate if the admin default is "preset" but no preset windows are enabled
-    // (the preset mode button is hidden then, so it couldn't be selected anyway).
-    const hasPresets = (r.presets || []).some((p) => p.enabled)
-    const mode = r.default_mode === 'preset' && !hasPresets ? 'now' : r.default_mode || 'now'
-    setSchedule((s) => ({ ...s, mode, idle: !!r.default_idle }))
-  }, [])
+    const d = readRunDefaults(r)
+    setDefaults(d)
+    setSchedule((s) => ({ ...s, mode: d.mode, presetId: s.presetId ?? d.presetId, idle: d.idle }))
+    setRetries(d.retries)
+    // The done-email is only offered to a user who has one on a portal that can send it; a default
+    // of "on" must not post notify for everyone else, whose checkbox isn't even drawn.
+    setNotify(d.notify && mailEnabled && !!email)
+  }, [mailEnabled, email])
 
   useEffect(() => {
     if (!open) return
@@ -147,6 +159,18 @@ export default function RunAnalysisModal({
     }
   }, [open, initialTargetId, runnable])
 
+  // …and failing that, the admin's default workflow, once the list it must be in has arrived. A
+  // shortcut's own workflow wins (it is the whole point of the button), and so does a choice the
+  // user has already made — this only ever fills an empty picker. A default naming a workflow that
+  // is gone, or one an admin has hidden from 运行分析, simply doesn't apply.
+  useEffect(() => {
+    if (!open || initialTargetId != null || targetId != null || !defaults.targetId) return
+    if (runnable.some((tg) => tg.id === defaults.targetId)) {
+      setTargetId(defaults.targetId)
+      form.resetFields()
+    }
+  }, [open, initialTargetId, targetId, defaults.targetId, runnable])
+
   const urgentEnabled = tickets?.urgent_enabled !== false
   const urgentDisabled = urgentEnabled && tickets != null && !tickets.unlimited && (tickets.remaining ?? 0) <= 0
   useEffect(() => {
@@ -158,11 +182,13 @@ export default function RunAnalysisModal({
     form.resetFields()
   }
 
+  // After a submit the form returns to the state it opened in — the admin's defaults — not to
+  // blank. Clearing the workflow lets the default-workflow effect above re-fill it.
   const reset = () => {
     setTargetId(undefined)
-    setNotify(false)
-    setRetries(0)
-    setSchedule(emptySchedule)
+    setNotify(defaults.notify && mailEnabled && !!email)
+    setRetries(defaults.retries)
+    setSchedule(scheduleFromDefaults(defaults))
     form.resetFields()
   }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from 'antd'
@@ -27,17 +27,30 @@ vi.mock('react-i18next', () => ({
 }))
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }))
 
-// The shell warms the two gating GETs while it is idle; this is the payoff.
+// The shell warms the two gating GETs while it is idle; this is the payoff. The presets answer
+// carries the admin's run-form defaults with it, so `warm.defaults` is how a test says what the
+// dialog was configured to open on.
 vi.mock('../lib/prefetch', () => ({
   readPrefetched: (url: string) =>
     warm.on
       ? url.endsWith('/targets')
-        ? { targets: [{ id: 1, name: 'Daily', plugin_slug: 'dify', created_at: '', mode: 'workflow', inputs: warm.inputs }] }
-        : { presets: [], default_mode: 'now' }
+        ? {
+            targets: [
+              { id: 1, name: 'Daily', plugin_slug: 'dify', created_at: '', mode: 'workflow', inputs: warm.inputs },
+              ...warm.extraTargets,
+            ],
+          }
+        : { presets: warm.presets, default_mode: 'now', ...warm.defaults }
       : undefined,
   prefetch: () => Promise.resolve(),
 }))
-const warm = vi.hoisted(() => ({ on: false, inputs: [] as PluginInput[] }))
+const warm = vi.hoisted(() => ({
+  on: false,
+  inputs: [] as PluginInput[],
+  extraTargets: [] as Array<Record<string, unknown>>,
+  presets: [] as Array<Record<string, unknown>>,
+  defaults: {} as Record<string, unknown>,
+}))
 
 describe('RunAnalysisModal with the shell-warmed answers already in hand', () => {
   it('opens on the form, with no spinner at all', async () => {
@@ -50,6 +63,64 @@ describe('RunAnalysisModal with the shell-warmed answers already in hand', () =>
     expect(await screen.findByText('run.workflow')).toBeTruthy()
     expect(screen.queryByText('run.loading')).toBeNull()
     warm.on = false
+  })
+})
+
+// An admin can decide what the dialog is already holding when it opens (Manage → 运行默认): a
+// workflow, a mode button, a preset window, a retry count. Each of them is a suggestion — the user
+// can change any of it — but it has to actually be there on open, or it is not a default.
+describe('RunAnalysisModal opens on the admin-set defaults', () => {
+  const q = (sel: string) => document.body.querySelector(sel)
+
+  const open = async (props: { initialTargetId?: number } = {}) => {
+    warm.on = true
+    render(
+      <App>
+        <RunAnalysisModal open onClose={() => {}} {...props} />
+      </App>,
+    )
+    await screen.findByText('run.workflow')
+    warm.on = false
+  }
+
+  afterEach(() => {
+    warm.extraTargets = []
+    warm.presets = []
+    warm.defaults = {}
+  })
+
+  it('pre-selects the default workflow and pre-fills the retry count', async () => {
+    warm.extraTargets = [{ id: 2, name: 'Weekly', plugin_slug: 'dify', created_at: '', mode: 'workflow', inputs: [] }]
+    warm.defaults = { default_target_id: 2, default_retries: 3 }
+    await open()
+    await waitFor(() => expect(q('.ant-select-content-has-value')?.getAttribute('title')).toBe('Weekly'))
+    expect((q('.ant-input-number input') as HTMLInputElement).value).toBe('3')
+  })
+
+  it('pre-picks the default preset window in preset mode', async () => {
+    warm.presets = [{ id: 5, label: 'Off-peak', freq: 'daily', intervals: [], on_overrun: 'next', enabled: true, invert: false, ord: 0 }]
+    warm.defaults = { default_mode: 'preset', default_preset_id: 5 }
+    await open()
+    // The workflow picker is still empty, so the one picker holding a value is the window.
+    await waitFor(() => expect(document.body.querySelectorAll('.ant-select-content-has-value')).toHaveLength(1))
+    expect(q('.ant-select-content-has-value')?.getAttribute('title')).toContain('Off-peak')
+  })
+
+  it('ignores a default window that is switched off, rather than opening on a dead choice', async () => {
+    warm.presets = [{ id: 5, label: 'Off-peak', freq: 'daily', intervals: [], on_overrun: 'next', enabled: false, invert: false, ord: 0 }]
+    warm.defaults = { default_mode: 'preset', default_preset_id: 5 }
+    await open()
+    // No enabled window means no 预设时间 button at all, so the form falls back to immediate.
+    expect(screen.queryByText('run.preset')).toBeNull()
+    expect(q('.ant-select-content-has-value')).toBeNull()
+  })
+
+  it('lets a pinned entry button override the default workflow', async () => {
+    // The button names the workflow it runs — that is the whole point of pinning it.
+    warm.extraTargets = [{ id: 2, name: 'Weekly', plugin_slug: 'dify', created_at: '', mode: 'workflow', inputs: [] }]
+    warm.defaults = { default_target_id: 2 }
+    await open({ initialTargetId: 1 })
+    await waitFor(() => expect(q('.ant-select-content-has-value')?.getAttribute('title')).toBe('Daily'))
   })
 })
 

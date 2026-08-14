@@ -21,6 +21,7 @@ import {
   MenuUnfoldOutlined,
   NotificationOutlined,
   PlayCircleOutlined,
+  SlidersOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
 import { Outlet, useLocation, useNavigate } from 'react-router'
@@ -50,6 +51,7 @@ const WARM_ON_HOVER: Record<string, string> = {
   tokens: '/api/admin/tokens',
   batch: '/api/admin/batch/targets',
   runqueue: '/api/admin/batch/config',
+  rundefaults: '/api/admin/batch/config',
   assistant: '/api/admin/chat/config',
   webhooks: '/api/admin/webhooks',
   storage: '/api/admin/cleanup/config',
@@ -160,6 +162,7 @@ export default function ManageLayout() {
       children: [
         { key: 'batch', label: t('nav.batchAdmin'), icon: <PlayCircleOutlined /> },
         { key: 'runqueue', label: t('nav.runQueue'), icon: <ControlOutlined /> },
+        { key: 'rundefaults', label: t('nav.runDefaults'), icon: <SlidersOutlined /> },
         { key: 'assistant', label: t('nav.chat'), icon: <MessageOutlined /> },
       ],
     },

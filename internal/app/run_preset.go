@@ -391,11 +391,13 @@ func (s *Server) apiRunPresets(w http.ResponseWriter, r *http.Request, user stri
 	for _, p := range list {
 		out = append(out, runPresetJSON(p))
 	}
-	writeJSON(w, map[string]any{
-		"presets":      out,
-		"default_mode": s.st.GetSetting("run_default_mode", "now"),
-		"default_idle": s.st.GetSetting("run_default_idle", "0") == "1",
-	})
+	resp := map[string]any{"presets": out}
+	// The run-form defaults (run_defaults.go) ride along so the run dialog opens filled from one
+	// fetch: which workflow, which mode button, which window, idle, retries, notify.
+	for k, v := range s.runFormDefaultsJSON("default_") {
+		resp[k] = v
+	}
+	writeJSON(w, resp)
 }
 
 // presetInput is the create/update body; intervals is the union of sub-windows. invert flips the

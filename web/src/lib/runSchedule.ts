@@ -1,5 +1,5 @@
 import type { Dayjs } from 'dayjs'
-import type { RunFreq, RunMode, RunPreset, RunPresetAnchor } from '../api/types'
+import type { RunFreq, RunMode, RunPreset, RunPresetAnchor, RunPresetsResp } from '../api/types'
 
 // The run-time + priority choice shared by the single-run modal and the batch console
 // (docs/adr/0014-idle-lane-and-preset-windows.md). mode picks WHEN (now / a preset low-peak
@@ -26,6 +26,48 @@ export function schedulePayload(s: RunSchedule): { priority: string; run_at: str
   const run_at = s.mode === 'scheduled' && s.runAt ? s.runAt.format('YYYY-MM-DD HH:mm:ss') : ''
   const preset_id = s.mode === 'preset' ? s.presetId ?? 0 : 0
   return { priority, run_at, preset_id }
+}
+
+// ---------------------------------------------------------------------------
+// Admin-set run-form defaults
+// ---------------------------------------------------------------------------
+// What the run forms open on before the user touches anything (docs/adr/0014 §4, edited on
+// Manage → 运行默认). Every field is a suggestion the user can change, and every one of them may be
+// "none" — an unconfigured portal sends 0 / false throughout, which is exactly the empty form the
+// run dialog has always opened with.
+export interface RunFormDefaults {
+  targetId: number // pre-selected workflow; 0 = none
+  mode: RunMode
+  presetId?: number // pre-picked preset window; undefined = none
+  idle: boolean
+  retries: number
+  notify: boolean
+}
+
+export const noRunDefaults: RunFormDefaults = { targetId: 0, mode: 'now', idle: false, retries: 0, notify: false }
+
+// readRunDefaults resolves the wire response into what a form can actually open on, dropping a
+// default the form could not offer: "preset" mode with no enabled window (the preset button is
+// hidden then, so nothing could select it) falls back to immediate, and a default window that is
+// disabled or gone is no default at all. Shared so the single-run dialog and the batch console
+// cannot disagree about what the admin configured.
+export function readRunDefaults(r: RunPresetsResp): RunFormDefaults {
+  const enabled = (r.presets || []).filter((p) => p.enabled)
+  const mode = r.default_mode === 'preset' && enabled.length === 0 ? 'now' : r.default_mode || 'now'
+  return {
+    targetId: r.default_target_id || 0,
+    mode,
+    presetId: enabled.some((p) => p.id === r.default_preset_id) ? r.default_preset_id : undefined,
+    idle: !!r.default_idle,
+    retries: r.default_retries ?? 0,
+    notify: !!r.default_notify,
+  }
+}
+
+// scheduleFromDefaults seeds a fresh schedule from the defaults — used both on open and on the
+// reset after a submit, so a submitted form returns to the state it opened in rather than to blank.
+export function scheduleFromDefaults(d: RunFormDefaults): RunSchedule {
+  return { ...emptySchedule, mode: d.mode, presetId: d.presetId, idle: d.idle }
 }
 
 // scheduleError returns an i18n key when the schedule is incomplete (a mode that needs a value has

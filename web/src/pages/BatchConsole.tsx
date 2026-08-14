@@ -7,7 +7,15 @@ import { useAuth } from '../auth'
 import type { BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
 import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
 import { BASE_MAX, visibleOn } from '../lib/batchUi'
-import { emptySchedule, schedulePayload, scheduleError, type RunSchedule } from '../lib/runSchedule'
+import {
+  noRunDefaults,
+  readRunDefaults,
+  scheduleFromDefaults,
+  schedulePayload,
+  scheduleError,
+  type RunFormDefaults,
+  type RunSchedule,
+} from '../lib/runSchedule'
 import RunScheduleControls from '../components/RunScheduleControls'
 import QueueTable from '../components/QueueTable'
 
@@ -22,7 +30,8 @@ export default function BatchConsole() {
   const [basePriority, setBasePriority] = useState(50)
   const [tickets, setTickets] = useState<BatchTickets | null>(null)
   const [presets, setPresets] = useState<RunPreset[]>([])
-  const [schedule, setSchedule] = useState<RunSchedule>(emptySchedule)
+  const [defaults, setDefaults] = useState<RunFormDefaults>(noRunDefaults)
+  const [schedule, setSchedule] = useState<RunSchedule>(scheduleFromDefaults(noRunDefaults))
   const [notify, setNotify] = useState(false)
   const [csvText, setCsvText] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -38,11 +47,12 @@ export default function BatchConsole() {
       .get<RunPresetsResp>('/api/admin/batch/presets')
       .then((r) => {
         setPresets(r.presets || [])
-        // Fall back to immediate if the admin default is "preset" but no preset windows are enabled
-        // (the preset mode button is hidden then, so it couldn't be selected anyway).
-        const hasPresets = (r.presets || []).some((p) => p.enabled)
-        const mode = r.default_mode === 'preset' && !hasPresets ? 'now' : r.default_mode || 'now'
-        setSchedule((s) => ({ ...s, mode, idle: !!r.default_idle }))
+        // The admin's run-form defaults (mode / window / idle). The workflow, retry and notify
+        // defaults are the single-run dialog's — a batch picks its target with its CSV columns and
+        // carries its own retry count, so pre-filling those here would fight the operator.
+        const d = readRunDefaults(r)
+        setDefaults(d)
+        setSchedule((s) => ({ ...s, mode: d.mode, presetId: s.presetId ?? d.presetId, idle: d.idle }))
       })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,7 +116,7 @@ export default function BatchConsole() {
       else message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
       if (res.downgraded) message.warning(t('batch.ticketDowngraded'))
       setCsvText(toCSV(inputKeys, []))
-      setSchedule(emptySchedule)
+      setSchedule(scheduleFromDefaults(defaults))
       setNotify(false)
       loadTickets() // an urgent run may have spent a ticket; the embedded queue self-refreshes
     } catch (e) {

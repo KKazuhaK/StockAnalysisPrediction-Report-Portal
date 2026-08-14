@@ -504,8 +504,14 @@ export interface BatchConfig {
   prio_w_fair: number
   prio_age_hours: number
   prio_fair_halflife_hours: number
-  run_default_mode?: RunMode // run form default button: now|preset|scheduled (ADR 0014)
+  // Run-form defaults — what the run dialog opens on, edited on its own settings page
+  // (Manage → Run defaults). 0 / false means "no default", a supported choice.
+  run_default_mode?: RunMode // default mode button: now|preset|scheduled (ADR 0014)
   run_default_idle?: boolean // pre-check "run when queue idle" (immediate mode only)
+  run_default_target_id?: number // pre-selected workflow; 0 = none
+  run_default_preset_id?: number // pre-picked preset window; 0 = none
+  run_default_retries?: number // pre-filled failure retries (0..5)
+  run_default_notify?: boolean // pre-tick "email me when done"
 }
 
 // Preset low-peak scheduling window (docs/adr/0014-idle-lane-and-preset-windows.md). Which anchor
@@ -540,10 +546,16 @@ export interface RunPreset {
 }
 
 // GET /api/admin/batch/presets — the preset list plus the run-form defaults, in one fetch.
+// Every default is optional on the wire: an older server sends only the first two, and a portal
+// whose admin has set none of them sends 0 / false, which both read as "no default".
 export interface RunPresetsResp {
   presets: RunPreset[]
   default_mode: RunMode
   default_idle: boolean
+  default_target_id?: number // pre-selected workflow; 0 = none
+  default_preset_id?: number // pre-picked preset window; 0 = none
+  default_retries?: number // pre-filled failure retries
+  default_notify?: boolean // pre-tick "email me when done"
 }
 
 // Urgent ticket balance for the batch run form (ADR 0005).
