@@ -7,8 +7,9 @@ import { INPUT_VALUE_MAX } from '../lib/batchUi'
 import type { BatchJob } from '../api/types'
 
 // Mutable so a test can inject jobs into the mocked API. vi.hoisted keeps it reachable from
-// the hoisted vi.mock factory below.
-const store = vi.hoisted(() => ({ jobs: [] as BatchJob[] }))
+// the hoisted vi.mock factory below. `hold` makes every polled GET hang, which is what a slow
+// link looks like for the seconds that matter: the page is up and nothing has answered yet.
+const store = vi.hoisted(() => ({ jobs: [] as BatchJob[], hold: false, fail: '' }))
 
 // Smoke test: the queue page must mount without crashing (it renders on load, before any
 // interaction). Guards against a render-time bug being mistaken for a caching/blank-page
@@ -23,16 +24,20 @@ vi.mock('../api/client', () => ({
     post: () => Promise.resolve({}),
     del: () => Promise.resolve({}),
   },
+  errText: (e: unknown) => String((e as Error)?.message ?? e),
 }))
 // The two polled endpoints go through the conditional-GET helper now (304 on an unchanged queue),
 // so that is what a test has to answer. It never returns UNCHANGED: this suite is about what the
 // table renders, not about revalidation, which conditionalGet.test.ts covers.
 vi.mock('../lib/conditionalGet', () => ({
   UNCHANGED: Symbol('unchanged'),
-  getIfChanged: (url: string) =>
-    String(url).includes('/queue')
+  getIfChanged: (url: string) => {
+    if (store.hold) return new Promise(() => {})
+    if (store.fail) return Promise.reject(new Error(store.fail))
+    return String(url).includes('/queue')
       ? Promise.resolve({ running: 0, waiting: 0, scheduled: 0, budget: 0 })
-      : Promise.resolve({ jobs: store.jobs }),
+      : Promise.resolve({ jobs: store.jobs })
+  },
 }))
 vi.mock('../auth', () => ({ useAuth: () => ({ admin: true, user: 'alice' }) }))
 vi.mock('react-i18next', () => ({
@@ -56,9 +61,20 @@ const job = (over: Partial<BatchJob>): BatchJob => ({
   ...over,
 })
 
+const mount = () =>
+  render(
+    <App>
+      <MemoryRouter>
+        <QueueTable showStats />
+      </MemoryRouter>
+    </App>,
+  )
+
 describe('QueueTable', () => {
   beforeEach(() => {
     store.jobs = []
+    store.hold = false
+    store.fail = ''
   })
 
   it('mounts and renders the queue card without crashing', async () => {
@@ -90,5 +106,36 @@ describe('QueueTable', () => {
     // (the query normalizes the entry separator's double space down to one)
     const preview = await screen.findByText(`query=${'Q'.repeat(INPUT_VALUE_MAX)}… symbol=301539`)
     expect(preview.className).toMatch(/ant-typography-ellipsis/)
+  })
+
+  // The bug this guards: on a slow link the page arrived fully drawn and said "Queue is empty"
+  // over five tiles reading zero, seconds before anything had been asked of the server. Both
+  // halves are statements about the queue, and neither was one the server had made.
+  it('says it is loading instead of declaring the queue empty', async () => {
+    store.hold = true
+    const { container } = mount()
+    expect(await screen.findByText('common.loading')).toBeTruthy()
+    expect(screen.queryByText('queue.empty')).toBeNull()
+    expect(container.querySelector('.ant-table')).toBeNull()
+    // …and the stat tiles hold a dash rather than a zero they cannot vouch for.
+    expect(screen.queryAllByText('—').length).toBe(5)
+    expect(screen.queryByText('0')).toBeNull()
+  })
+
+  it('shows the empty state once the server has actually answered with no runs', async () => {
+    mount()
+    expect(await screen.findByText('queue.empty')).toBeTruthy()
+    expect(screen.queryByText('common.loading')).toBeNull()
+  })
+
+  // A first load that never lands must not fall through to the empty state either — with
+  // auto-refresh off nothing would ever correct it.
+  it('reports a failed first load, with a retry, rather than an empty queue', async () => {
+    store.fail = 'boom'
+    mount()
+    expect(await screen.findByText('common.loadFailedContent')).toBeTruthy()
+    expect(screen.getByText('boom')).toBeTruthy()
+    expect(screen.getByText('common.retry')).toBeTruthy()
+    expect(screen.queryByText('queue.empty')).toBeNull()
   })
 })

@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Alert, App, Button, Input, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import type { Role, SSOProviderAdmin, SSORuleRow, SSORulesResp, UserGroupRow } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
+import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
 
 // The group-rules editor.
@@ -45,20 +46,26 @@ export default function SSORulesEditor({
   const { message } = App.useApp()
   const [rules, setRules] = useState<SSORuleRow[]>([])
   const [shadowed, setShadowed] = useState<number[]>([])
-  const [loading, setLoading] = useState(false)
+  // true from the start: save() PUTs the whole rule list, so a Save reached before the GET landed
+  // — or after it silently failed — would write "no rules" over every mapping this portal has.
+  const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
 
   const load = () => {
     setLoading(true)
+    setLoadErr('')
     api
       .get<SSORulesResp>('/api/admin/sso/rules')
       .then((r) => {
         setRules(r.rules || [])
         setShadowed(r.shadowed || [])
         setDirty(false)
+        setLoaded(true)
       })
-      .catch(() => {})
+      .catch((e) => setLoadErr(errText(e, t)))
       .finally(() => setLoading(false))
   }
   useEffect(load, [])
@@ -213,6 +220,7 @@ export default function SSORulesEditor({
 
   return (
     <div>
+      <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load} minHeight={220}>
       <Alert type="info" showIcon style={{ marginBottom: 12 }} message={t('sso.rules.intro')} />
       {providers.filter((p) => p.id > 0).length === 0 && (
         <Alert type="warning" showIcon style={{ marginBottom: 12 }} message={t('sso.rules.noProviders')} />
@@ -262,6 +270,7 @@ export default function SSORulesEditor({
           </Button>
         </StickyActionBar>
       )}
+      </LoadGate>
     </div>
   )
 }

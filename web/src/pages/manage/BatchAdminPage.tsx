@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -10,13 +10,17 @@ import type { Surface } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
 import type { BatchPlugin, BatchTarget, DifyInput, DifyRefreshResult, DifyTargetEdit } from '../../api/types'
 import DifyRefreshModal from './DifyRefreshModal'
+import LoadGate from '../../components/LoadGate'
 
 export default function BatchAdminPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
 
   const [plugins, setPlugins] = useState<BatchPlugin[]>([])
+  const [pluginsLoaded, setPluginsLoaded] = useState(false)
   const [targets, setTargets] = useState<BatchTarget[]>([])
+  const [targetsLoaded, setTargetsLoaded] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
 
   const [targetOpen, setTargetOpen] = useState(false)
   // null = creating a new target; a number = editing that target's id.
@@ -41,13 +45,27 @@ export default function BatchAdminPage() {
   const showDetails = editing || !!probed
 
   const loadPlugins = () =>
-    api.get<{ plugins: BatchPlugin[] }>('/api/admin/batch/plugins').then((r) => setPlugins(r.plugins || []))
+    api
+      .get<{ plugins: BatchPlugin[] }>('/api/admin/batch/plugins')
+      .then((r) => {
+        setPlugins(r.plugins || [])
+        setPluginsLoaded(true)
+      })
   const loadTargets = () =>
-    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || []))
+    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => {
+      setTargets(r.targets || [])
+      setTargetsLoaded(true)
+    })
 
+  // Both tabs read "nothing is configured here" off their initial [], which on this page is the
+  // sentence an admin came to check. Neither says it until its own list is in.
+  const load = () => {
+    setLoadErr('')
+    loadPlugins().catch(() => {})
+    return loadTargets().catch((e) => setLoadErr(errText(e, t)))
+  }
   useEffect(() => {
-    loadPlugins()
-    loadTargets()
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -404,6 +422,13 @@ export default function BatchAdminPage() {
                     {t('batch.dify.newTarget')}
                   </Button>
                 </div>
+                <LoadGate
+                  loading={!targetsLoaded && !loadErr}
+                  error={targetsLoaded ? undefined : loadErr}
+                  onRetry={load}
+                  minHeight={200}
+                  title={t('common.loadFailedContent')}
+                >
                 {targets.length === 0 && <Typography.Text type="secondary">{t('batch.dify.targetsHint')}</Typography.Text>}
                 <SortableWrapper ids={targets.map((tg) => String(tg.id))} onReorder={reorderTargets}>
                   <Table
@@ -416,6 +441,7 @@ export default function BatchAdminPage() {
                     scroll={{ x: 'max-content' }}
                   />
                 </SortableWrapper>
+                </LoadGate>
               </Space>
             ),
           },
@@ -429,7 +455,9 @@ export default function BatchAdminPage() {
                     <Button icon={<UploadOutlined />}>{t('batch.admin.importManifest')}</Button>
                   </Upload>
                 </div>
-                {customPlugins.length === 0 ? (
+                {!pluginsLoaded ? (
+                  <Spin />
+                ) : customPlugins.length === 0 ? (
                   <Typography.Text type="secondary">{t('batch.admin.advancedPluginsHint')}</Typography.Text>
                 ) : (
                   <Table rowKey="slug" size="small" dataSource={customPlugins} columns={pluginCols} pagination={false} scroll={{ x: 'max-content' }} />

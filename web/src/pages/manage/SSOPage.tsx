@@ -7,6 +7,7 @@ import type { Role, SSOProviderAdmin, SSOProvidersResp, UserGroupRow, UsersResp 
 import SSORulesEditor from './SSORulesEditor'
 import SSOSetupGuide from './SSOSetupGuide'
 import SSOIcon, { SSO_ICON_PRESETS } from '../../components/SSOIcon'
+import LoadGate from '../../components/LoadGate'
 
 // SSO administration (ADR 0023). One SAML tab and one OIDC tab; the API is row-shaped, so adding
 // more providers later is a change here and nowhere else.
@@ -137,7 +138,10 @@ function LastSeenClaims({ slug }: { slug: string }) {
         setSeen(r.seen)
         setClaims(r.claims ?? [])
       })
-      .catch(() => setSeen(false))
+      // Leave `seen` null on failure: the panel then renders nothing, where mapping the error
+      // onto false would report "no sign-in recorded for this provider" — an answer we do not
+      // have. `seen === null` is already the "say nothing" state below.
+      .catch(() => {})
   }, [slug])
 
   if (seen === null) return null
@@ -441,16 +445,12 @@ export default function SSOPage() {
   const [roles, setRoles] = useState<Role[]>([])
   const [publicUrl, setPublicUrl] = useState('')
   const [spDefaults, setSpDefaults] = useState<NonNullable<SSOProvidersResp['sp_defaults']>>({})
+  const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
 
   const load = () => {
-    api
-      .get<SSOProvidersResp>('/api/admin/sso/providers')
-      .then((r) => {
-        setProviders(r.providers || [])
-        setPublicUrl(r.public_url || '')
-        setSpDefaults(r.sp_defaults || {})
-      })
-      .catch(() => {})
+    setLoading(true)
+    setLoadErr('')
     api
       .get<{ groups: UserGroupRow[] }>('/api/admin/groups')
       .then((r) => setGroups(r.groups || []))
@@ -461,8 +461,24 @@ export default function SSOPage() {
       .get<UsersResp>('/api/admin/users')
       .then((r) => setRoles(r.roles || []))
       .catch(() => {})
+    // The providers call is the one the page cannot speak without: every tab below reads an
+    // unsaved-provider placeholder when the list is empty, so before it lands the forms would
+    // announce that no SSO is configured, that there is no public URL and that no metadata is
+    // stored — three claims about a server that has not answered — over a live Save button.
+    return api
+      .get<SSOProvidersResp>('/api/admin/sso/providers')
+      .then((r) => {
+        setProviders(r.providers || [])
+        setPublicUrl(r.public_url || '')
+        setSpDefaults(r.sp_defaults || {})
+      })
+      .catch((e) => setLoadErr(errText(e, t)))
+      .finally(() => setLoading(false))
   }
-  useEffect(load, [])
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // A provider that has not been saved has no row, so its SP addresses come from the server's
   // derived defaults instead. Without them the setup guide — the thing an admin reads BEFORE
@@ -472,6 +488,7 @@ export default function SSOPage() {
 
   return (
     <Card>
+      <LoadGate loading={loading} error={loadErr} onRetry={load}>
       <Tabs
         items={[
           ...(['saml', 'oidc'] as const).map((kind) => ({
@@ -494,6 +511,7 @@ export default function SSOPage() {
           },
         ]}
       />
+      </LoadGate>
     </Card>
   )
 }

@@ -3,12 +3,13 @@ import { App, Button, Drawer, Empty, Popconfirm, Progress, Space, Tag, Typograph
 import { ArrowRightOutlined, ClockCircleOutlined, StopOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
-import { api } from '../api/client'
+import { api, errText } from '../api/client'
 import type { BatchJob, BatchQueueSummary, BatchTarget } from '../api/types'
 import { InputsPreview, isTerminal, statusTag } from '../lib/batchUi'
 import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
 import { watchQueue } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
+import LoadGate from './LoadGate'
 
 // The header 队列 drawer (docs/adr/0007): a live glance at running / waiting /
 // scheduled runs. Polls while open; deeper management lives on the /queue page.
@@ -19,24 +20,37 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
   const [summary, setSummary] = useState<BatchQueueSummary | null>(null)
   const [jobs, setJobs] = useState<BatchJob[]>([])
   const [targets, setTargets] = useState<BatchTarget[]>([])
+  // Same rule as the full queue page: `[]` and a wall of zeros are where the state starts, not
+  // an answer. Nothing is said about the queue until the jobs call has landed at least once.
+  const [loaded, setLoaded] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
 
   const load = async () => {
-    await Promise.all([
-      getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
-        .then((r) => {
-          if (r !== UNCHANGED) setSummary(r)
-        })
-        .catch(() => {}),
-      getIfChanged<{ jobs: BatchJob[] }>('/api/admin/batch/jobs')
-        .then((r) => {
-          if (r !== UNCHANGED) setJobs(r.jobs || [])
-        })
-        .catch(() => {}),
-    ])
+    const summaryRequest = getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
+      .then((r) => {
+        if (r !== UNCHANGED) setSummary(r)
+      })
+      .catch(() => {})
+    const jobsRequest = getIfChanged<{ jobs: BatchJob[] }>('/api/admin/batch/jobs').then((r) => {
+      if (r !== UNCHANGED) setJobs(r.jobs || [])
+    })
+    try {
+      await jobsRequest
+      setLoaded(true)
+      setLoadErr('')
+    } catch (e) {
+      // Read only while !loaded: a poll that fails once the list is on screen changes nothing,
+      // since those runs are still the last thing the server said about the queue.
+      setLoadErr(errText(e, t))
+    }
+    await summaryRequest
   }
 
   useEffect(() => {
     if (!open) return
+    // Reopening asks again, so the drawer must not present the previous open's answer as this
+    // one's — but it keeps the rows it has so a reopen is not a flash of spinner.
+    setLoadErr('')
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
     const unwatch = watchQueue() // the badge stands down while the drawer shows the same thing
     const stop = startVisiblePoll(load, 3000)
@@ -57,9 +71,10 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
     load()
   }
 
-  const stat = (label: string, value: number) => (
+  // null = not answered yet; a dash rather than a 0, which would read as a settled idle queue.
+  const stat = (label: string, value: number | null) => (
     <div style={{ flex: 1, textAlign: 'center' }}>
-      <div style={{ fontSize: 22, fontWeight: 500 }}>{value}</div>
+      <div style={{ fontSize: 22, fontWeight: 500 }}>{value ?? <Typography.Text type="secondary">—</Typography.Text>}</div>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {label}
       </Typography.Text>
@@ -80,12 +95,19 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
     >
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Space style={{ width: '100%', justifyContent: 'space-around' }} split={<span style={{ color: 'var(--rp-border)' }}>|</span>}>
-          {stat(t('queue.running'), summary?.running ?? 0)}
-          {stat(t('queue.waiting'), summary?.waiting ?? 0)}
-          {stat(t('queue.scheduled'), summary?.scheduled ?? 0)}
-          {stat(t('queue.budget'), summary?.budget ?? 0)}
+          {stat(t('queue.running'), summary?.running ?? null)}
+          {stat(t('queue.waiting'), summary?.waiting ?? null)}
+          {stat(t('queue.scheduled'), summary?.scheduled ?? null)}
+          {stat(t('queue.budget'), summary?.budget ?? null)}
         </Space>
 
+        <LoadGate
+          loading={!loaded && !loadErr}
+          error={loaded ? undefined : loadErr}
+          onRetry={load}
+          minHeight={200}
+          title={t('common.loadFailedContent')}
+        >
         {active.length === 0 ? (
           <Empty description={t('queue.empty')} />
         ) : (
@@ -130,6 +152,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
             })}
           </Space>
         )}
+        </LoadGate>
       </Space>
     </Drawer>
   )

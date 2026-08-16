@@ -3,7 +3,8 @@ import { App, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Table
 import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, DeleteOutlined, PlusOutlined, SendOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
+import LoadGate from '../../components/LoadGate'
 import type { Webhook, WebhooksResp } from '../../api/types'
 
 export default function WebhooksPage() {
@@ -13,14 +14,27 @@ export default function WebhooksPage() {
   const [events, setEvents] = useState<string[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
+  // One GET carries both halves of this page: the receivers and the event vocabulary the Add
+  // form offers. Until it lands an empty table says this deployment notifies nobody, and the
+  // Add form would offer no events to subscribe to — neither being anything the server said.
+  const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
 
-  const load = () =>
-    api.get<WebhooksResp>('/api/admin/webhooks').then((r) => {
-      setHooks(r.webhooks || [])
-      setEvents(r.events || [])
-    })
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    return api
+      .get<WebhooksResp>('/api/admin/webhooks')
+      .then((r) => {
+        setHooks(r.webhooks || [])
+        setEvents(r.events || [])
+      })
+      .catch((e) => setLoadErr(errText(e, t)))
+      .finally(() => setLoading(false))
+  }
   useEffect(() => {
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const eventLabel = (code: string) => t(`webhook.event.${code}`, code)
@@ -93,6 +107,9 @@ export default function WebhooksPage() {
         <Button
           type="primary"
           icon={<PlusOutlined />}
+          // The Events field is required and its options come from this page's GET, so opening
+          // the form early would ask for a choice out of an empty list.
+          disabled={loading || !!loadErr}
           onClick={() => {
             form.resetFields()
             setOpen(true)
@@ -104,7 +121,9 @@ export default function WebhooksPage() {
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text type="secondary">{t('webhook.hint')}</Typography.Text>
-        <Table rowKey="id" size="small" dataSource={hooks} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
+        <LoadGate loading={loading} error={loadErr} onRetry={load} minHeight={180} title={t('common.loadFailedContent')}>
+          <Table rowKey="id" size="small" dataSource={hooks} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
+        </LoadGate>
       </Space>
 
       <Modal title={t('webhook.add')} open={open} onOk={submit} onCancel={() => setOpen(false)} destroyOnHidden>

@@ -68,7 +68,10 @@ export default function CompareModal({
   onClose: () => void
 }) {
   const { t } = useTranslation()
-  const [candidates, setCandidates] = useState<ComparableReport[]>([])
+  // null until the comparable-editions list has actually come back: "there is no earlier edition
+  // to compare with" is the reason this dialog would have nothing to do, and it must be the
+  // server's answer rather than the state's starting value.
+  const [candidates, setCandidates] = useState<ComparableReport[] | null>(null)
   const [against, setAgainst] = useState<number>()
   const [diff, setDiff] = useState<ReportDiff | null>(null)
   const [loading, setLoading] = useState(false)
@@ -89,7 +92,11 @@ export default function CompareModal({
         setAgainst(items[0]?.id)
       })
       .catch((e) => setErr(errText(e, t)))
-  }, [open, reportId, t])
+    // `t` is deliberately not a dependency: it is used only to word an error, and re-running this
+    // effect for a new `t` identity re-fetches the list — which, since the answer replaces state,
+    // re-renders and asks again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, reportId])
 
   const load = useCallback(() => {
     if (!against) return
@@ -100,7 +107,9 @@ export default function CompareModal({
       .then(setDiff)
       .catch((e) => setErr(errText(e, t)))
       .finally(() => setLoading(false))
-  }, [against, reportId, t])
+    // `t` omitted for the same reason as above — it only words the error.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [against, reportId])
   useEffect(load, [load])
 
   const shown = useMemo(
@@ -111,7 +120,12 @@ export default function CompareModal({
   return (
     <Modal open={open} onCancel={onClose} footer={null} width={860} title={t('compare.title')} destroyOnHidden>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        {candidates.length === 0 && !err ? (
+        {candidates == null && !err ? (
+          <div style={{ display: 'grid', justifyItems: 'center', gap: 12, padding: 24 }}>
+            <Spin />
+            <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+          </div>
+        ) : (candidates?.length ?? 0) === 0 && !err ? (
           <Empty description={t('compare.noneToCompare')} />
         ) : (
           <Space wrap>
@@ -120,7 +134,7 @@ export default function CompareModal({
               style={{ minWidth: 320 }}
               value={against}
               onChange={setAgainst}
-              options={candidates.map((c) => ({
+              options={(candidates ?? []).map((c) => ({
                 value: c.id,
                 label: `${c.date}${c.version ? ` · ${c.version}` : ''} · ${c.title}`,
               }))}

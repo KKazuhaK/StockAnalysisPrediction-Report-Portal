@@ -87,6 +87,8 @@ export default function RunAnalysisModal({
   const [retries, setRetries] = useState(0) // failure retries; 0 = never auto-retry (a single run maps 1:1 to the click)
   const [submitting, setSubmitting] = useState(false)
   const [loading, setLoading] = useState(true) // until the workflow list is in, this modal knows nothing
+  const [targetsOk, setTargetsOk] = useState(false) // …and a failed list is not an empty one
+  const [loadErr, setLoadErr] = useState('')
 
   // Presets carry the admin's run-form defaults with them, so reading them warm and reading them
   // live must apply the same rules — hence one function, used by both. The workflow default is
@@ -114,11 +116,14 @@ export default function RunAnalysisModal({
     // and overwrite it, so a workflow added in another tab a minute ago still appears.
     const warmTargets = readPrefetched<{ targets: BatchTarget[] }>('/api/admin/batch/targets', WARM_MAX_AGE)
     const warmPresets = readPrefetched<RunPresetsResp>('/api/admin/batch/presets', WARM_MAX_AGE)
+    setLoadErr('')
     if (warmTargets && warmPresets) {
       setTargets(warmTargets.targets || [])
       applyPresets(warmPresets)
+      setTargetsOk(true)
       setLoading(false)
     } else {
+      setTargetsOk(false)
       setLoading(true)
     }
     api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
@@ -126,7 +131,17 @@ export default function RunAnalysisModal({
     api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
     let live = true
     const gated = [
-      api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])),
+      api
+        .get<{ targets: BatchTarget[] }>('/api/admin/batch/targets')
+        .then((r) => {
+          setTargets(r.targets || [])
+          setTargetsOk(true)
+        })
+        // allSettled below swallows this, and the spinner would end on "No workflows configured
+        // yet. Add one under Manage → Batch." — advice for a server that never answered.
+        .catch((e) => {
+          if (live) setLoadErr(errText(e, t))
+        }),
       // Presets + the admin-set run-form defaults (default mode button + idle pre-check).
       api.get<RunPresetsResp>('/api/admin/batch/presets').then(applyPresets),
     ]
@@ -262,11 +277,16 @@ export default function RunAnalysisModal({
   const running = queue?.running_rows ?? queue?.running ?? 0
   const budget = queue?.budget ?? 1
   const busy = running >= budget
-  const queueMsg = busy
-    ? t('run.queueBusy', { n: running, ahead: waiting })
-    : running + waiting === 0
-      ? t('run.queueIdle')
-      : t('run.queueFree', { n: budget - running })
+  // The queue call stays outside the modal's gate (it only annotates controls that read fine
+  // without it), so this banner must be able to say nothing. Coercing a pending answer to zero
+  // put "Queue idle — runs immediately." in green on top of a queue nobody had asked about.
+  const queueMsg = !queue
+    ? t('common.loading')
+    : busy
+      ? t('run.queueBusy', { n: running, ahead: waiting })
+      : running + waiting === 0
+        ? t('run.queueIdle')
+        : t('run.queueFree', { n: budget - running })
 
   return (
     <Modal
@@ -292,6 +312,8 @@ export default function RunAnalysisModal({
           <Spin size="large" />
           <Typography.Text type="secondary">{t('run.loading')}</Typography.Text>
         </div>
+      ) : !targetsOk && loadErr ? (
+        <Alert type="error" showIcon message={t('common.loadFailedContent')} description={loadErr} />
       ) : (
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
         {runnable.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}
@@ -363,7 +385,7 @@ export default function RunAnalysisModal({
           </Checkbox>
         )}
 
-        <Alert type={busy ? 'warning' : 'success'} showIcon message={queueMsg} />
+        <Alert type={!queue ? 'info' : busy ? 'warning' : 'success'} showIcon message={queueMsg} />
       </Space>
       )}
     </Modal>

@@ -18,6 +18,7 @@ import {
 } from '../lib/runSchedule'
 import RunScheduleControls from '../components/RunScheduleControls'
 import QueueTable from '../components/QueueTable'
+import LoadGate from '../components/LoadGate'
 
 export default function BatchConsole() {
   const { t } = useTranslation()
@@ -35,26 +36,39 @@ export default function BatchConsole() {
   const [notify, setNotify] = useState(false)
   const [csvText, setCsvText] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // The form knows nothing until the workflow list and the run defaults are in — same gate the
+  // single-run dialog took in b32be03, for the same reason: "no runnable targets" is a statement
+  // about the server, and an empty picker under it says it again more quietly.
+  const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
 
   const loadTargets = () =>
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(visibleOn(r.targets || [], 'batch')))
   const loadTickets = () => api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
 
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    loadTickets() // ticket counts only add detail to controls that read correctly without them
+    const presetsRequest = api.get<RunPresetsResp>('/api/admin/batch/presets').then((r) => {
+      setPresets(r.presets || [])
+      // The admin's run-form defaults (mode / window / idle). The workflow, retry and notify
+      // defaults are the single-run dialog's — a batch picks its target with its CSV columns and
+      // carries its own retry count, so pre-filling those here would fight the operator.
+      const d = readRunDefaults(r)
+      setDefaults(d)
+      setSchedule((s) => ({ ...s, mode: d.mode, presetId: s.presetId ?? d.presetId, idle: d.idle }))
+    })
+    // The targets call decides whether this console has anything to say at all, so its failure is
+    // the one worth reporting; a failed presets call only costs the preset windows.
+    return loadTargets()
+      .then(() => presetsRequest.catch(() => {}))
+      .catch((e) => setLoadErr(errText(e, t)))
+      .finally(() => setLoading(false))
+  }
+
   useEffect(() => {
-    loadTargets()
-    loadTickets()
-    api
-      .get<RunPresetsResp>('/api/admin/batch/presets')
-      .then((r) => {
-        setPresets(r.presets || [])
-        // The admin's run-form defaults (mode / window / idle). The workflow, retry and notify
-        // defaults are the single-run dialog's — a batch picks its target with its CSV columns and
-        // carries its own retry count, so pre-filling those here would fight the operator.
-        const d = readRunDefaults(r)
-        setDefaults(d)
-        setSchedule((s) => ({ ...s, mode: d.mode, presetId: s.presetId ?? d.presetId, idle: d.idle }))
-      })
-      .catch(() => {})
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -136,6 +150,7 @@ export default function BatchConsole() {
           </Space>
         }
       >
+        <LoadGate loading={loading} error={loadErr} onRetry={load} minHeight={200} title={t('common.loadFailedContent')}>
         {targets.length === 0 ? (
           <Typography.Text type="secondary">{t('batch.noTargets')}</Typography.Text>
         ) : (
@@ -213,6 +228,7 @@ export default function BatchConsole() {
             </Space>
           </Space>
         )}
+        </LoadGate>
       </Card>
 
       {/* The full run queue (same table + actions as the Run/queue page). */}
