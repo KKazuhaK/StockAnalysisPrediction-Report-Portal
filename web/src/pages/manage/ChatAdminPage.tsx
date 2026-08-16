@@ -214,7 +214,11 @@ export default function ChatAdminPage() {
           dataSource={turns}
           pagination={false}
           loading={!liveLoaded && !cfgErr}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chatAdmin.none')} /> }}
+          locale={{
+            emptyText: (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={liveLoaded || !cfgErr ? t('chatAdmin.none') : t('common.loadFailedContent')} />
+            ),
+          }}
         />
       </Card>
 

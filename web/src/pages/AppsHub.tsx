@@ -1,11 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Card, Col, Empty, Row, Space, Tag, Typography, theme } from 'antd'
+import { Alert, Button, Card, Col, Empty, Row, Space, Spin, Tag, Typography, theme } from 'antd'
 import { AppstoreOutlined, ClockCircleOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
-import LoadGate from '../components/LoadGate'
 import { BUILTIN_APPS } from '../lib/builtinApps'
 import type { AppsResp, AppSummary } from '../api/types'
 
@@ -78,8 +77,24 @@ export default function AppsHub() {
       <Typography.Title level={4} style={{ margin: 0 }}>
         {t('nav.apps')}
       </Typography.Title>
-      <LoadGate loading={loading} error={loadErr} onRetry={load} minHeight={200} title={t('common.loadFailedContent')}>
-      {isEmpty ? (
+      {/* The built-in cards are compiled in and owe /api/apps nothing, so they are never hidden
+          behind its answer — a failed installed-apps call says so above them and leaves them
+          usable. Only the "no apps available" claim waits, since only the server can make it. */}
+      {loadErr && (
+        <Alert
+          type="warning"
+          showIcon
+          message={t('common.loadFailedContent')}
+          description={loadErr}
+          action={<Button size="small" onClick={load}>{t('common.retry')}</Button>}
+        />
+      )}
+      {loading && builtins.length === 0 ? (
+        <div style={{ display: 'grid', justifyItems: 'center', gap: 12, minHeight: 200, alignContent: 'center' }}>
+          <Spin size="large" />
+          <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+        </div>
+      ) : isEmpty && !loading && !loadErr ? (
         <Empty description={t('apps.empty')} />
       ) : (
         <Row gutter={[16, 16]}>
@@ -104,7 +119,6 @@ export default function AppsHub() {
           ))}
         </Row>
       )}
-      </LoadGate>
     </Space>
   )
 }

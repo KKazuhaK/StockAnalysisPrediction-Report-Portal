@@ -30,11 +30,11 @@ export default function AppsAdminPage() {
   const load = () =>
     api
       .get<AppsResp>('/api/apps')
-      .then((r) => {
-        setApps(r.apps || [])
-        setLoaded(true)
-      })
+      .then((r) => setApps(r.apps || []))
       .catch(() => {})
+      // In the finally, not the then: a swallowed rejection that never sets this leaves the table
+      // masked for ever, which is a worse answer than an empty one.
+      .finally(() => setLoaded(true))
   useEffect(() => {
     load()
   }, [])

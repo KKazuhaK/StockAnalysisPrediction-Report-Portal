@@ -325,10 +325,12 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
   const { message } = App.useApp()
   const [data, setData] = useState<GroupTargetsResp | null>(null)
   const [granted, setGranted] = useState<Record<number, string[]>>({})
+  const [loadFailed, setLoadFailed] = useState(false)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     setData(null)
+    setLoadFailed(false)
     api
       .get<GroupTargetsResp>(`/api/admin/groups/${group.id}/targets`)
       .then((r) => {
@@ -337,7 +339,13 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
         for (const g of r.granted || []) m[g.target_id] = g.surfaces
         setGranted(m)
       })
-      .catch((e) => message.error(errText(e, t)))
+      // The toast alone was enough while the table rendered an empty list underneath it; now that
+      // the table waits for `data`, a failure has to settle the wait too — otherwise the pane
+      // spins for ever after a message the admin has already scrolled past.
+      .catch((e) => {
+        message.error(errText(e, t))
+        setLoadFailed(true)
+      })
   }, [group.id])
 
   const save = async () => {
@@ -383,7 +391,7 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
           pagination={false}
           // Otherwise antd's own "No data" placeholder says the portal has no workflows to grant,
           // in the seconds before it has been asked.
-          loading={data == null}
+          loading={data == null && !loadFailed}
           dataSource={data?.targets ?? []}
           columns={[
             {

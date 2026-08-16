@@ -53,10 +53,12 @@ export default function RecurringConsole() {
   const [history, setHistory] = useState<{ task: RecurringTask; runs: RecurringRun[] } | null>(null)
 
   const loadTargets = () =>
-    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => {
-      setTargets(visibleOn(r.targets || [], 'recurring'))
-      setTargetsLoaded(true)
-    })
+    api
+      .get<{ targets: BatchTarget[] }>('/api/admin/batch/targets')
+      .then((r) => setTargets(visibleOn(r.targets || [], 'recurring')))
+      // Settled either way: load() swallows this rejection, and gating New on the flag alone
+      // would leave the button disabled for good on a server that failed to answer once.
+      .finally(() => setTargetsLoaded(true))
   const loadTasks = () => {
     setLoading(true)
     return api

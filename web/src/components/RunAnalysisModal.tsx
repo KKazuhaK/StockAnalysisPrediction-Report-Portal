@@ -88,6 +88,7 @@ export default function RunAnalysisModal({
   const [submitting, setSubmitting] = useState(false)
   const [loading, setLoading] = useState(true) // until the workflow list is in, this modal knows nothing
   const [targetsOk, setTargetsOk] = useState(false) // …and a failed list is not an empty one
+  const [queueSettled, setQueueSettled] = useState(false) // the ungated queue-depth call has come back
   const [loadErr, setLoadErr] = useState('')
 
   // Presets carry the admin's run-form defaults with them, so reading them warm and reading them
@@ -128,7 +129,14 @@ export default function RunAnalysisModal({
     }
     api.get<BatchTickets>('/api/admin/batch/tickets').then(setTickets).catch(() => {})
     api.get<RunQuota>('/api/admin/batch/run-quota').then(setQuota).catch(() => {})
-    api.get<BatchQueueSummary>('/api/admin/batch/queue').then(setQueue).catch(() => {})
+    setQueueSettled(false)
+    api
+      .get<BatchQueueSummary>('/api/admin/batch/queue')
+      .then(setQueue)
+      .catch(() => {})
+      // Settled either way: this call is outside the gate, so a failure has to be able to end the
+      // banner's "Loading…" — it just ends it by saying nothing rather than by guessing.
+      .finally(() => setQueueSettled(true))
     let live = true
     const gated = [
       api
@@ -385,7 +393,9 @@ export default function RunAnalysisModal({
           </Checkbox>
         )}
 
-        <Alert type={!queue ? 'info' : busy ? 'warning' : 'success'} showIcon message={queueMsg} />
+        {/* Nothing at all if the depth never arrived: the banner exists to describe the queue,
+            and with no answer it has nothing to describe. */}
+        {(queue || !queueSettled) && <Alert type={!queue ? 'info' : busy ? 'warning' : 'success'} showIcon message={queueMsg} />}
       </Space>
       )}
     </Modal>
