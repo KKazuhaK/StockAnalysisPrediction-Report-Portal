@@ -98,6 +98,46 @@ describe('LoginPage', () => {
     expect(await screen.findByText('login.ssoWith:{"name":"Corp"}')).toBeTruthy()
   })
 
+  // Clicking a provider hands the browser off with window.location, which changes nothing on this
+  // page until the browser decides to leave. On a slow link that reads as a button that did not
+  // work, and the natural response — pressing it again — starts a second handshake over the first.
+  it('says it is going somewhere when a provider is clicked', async () => {
+    navMock.hardNavigate.mockReset()
+    apiMock.get.mockResolvedValue({
+      providers: [
+        { slug: 'acme', kind: 'oidc', name: 'Acme' },
+        { slug: 'corp', kind: 'saml', name: 'Corp' },
+      ],
+    })
+    renderLogin()
+    const acme = await screen.findByText('login.ssoWith:{"name":"Acme"}')
+    fireEvent.click(acme)
+
+    expect(navMock.hardNavigate).toHaveBeenCalledWith('/api/auth/oidc/acme/start')
+    expect(await screen.findByText('login.ssoRedirecting:{"name":"Acme"}')).toBeTruthy()
+    // The pressed button is busy and the other provider is out of reach: two handshakes racing
+    // each other is exactly what a second press would start.
+    const button = acme.closest('button') as HTMLButtonElement
+    expect(button.className).toMatch(/ant-btn-loading/)
+    const corp = (screen.getByText('login.ssoWith:{"name":"Corp"}').closest('button') as HTMLButtonElement)
+    expect(corp.disabled).toBe(true)
+  })
+
+  // Back from the identity provider restores this page from the bfcache with its React state
+  // intact — including a spinner on a handshake that is over.
+  it('clears the redirect notice when the page is restored from the bfcache', async () => {
+    navMock.hardNavigate.mockReset()
+    apiMock.get.mockResolvedValue({ providers: [{ slug: 'acme', kind: 'oidc', name: 'Acme' }] })
+    renderLogin()
+    fireEvent.click(await screen.findByText('login.ssoWith:{"name":"Acme"}'))
+    expect(await screen.findByText('login.ssoRedirecting:{"name":"Acme"}')).toBeTruthy()
+
+    fireEvent(window, new Event('pageshow'))
+    await waitFor(() => expect(screen.queryByText('login.ssoRedirecting:{"name":"Acme"}')).toBeNull())
+    const button = screen.getByText('login.ssoWith:{"name":"Acme"}').closest('button') as HTMLButtonElement
+    expect(button.className).not.toMatch(/ant-btn-loading/)
+  })
+
   // The password leg must not be treated as a completed sign-in when 2FA is on.
   it('switches to the code step when the password leg reports 2FA', async () => {
     apiMock.get.mockResolvedValue({ providers: [] })

@@ -52,8 +52,14 @@ export default function LoginPage() {
   const [showLocal, setShowLocal] = useState(false)
   // Why the last handshake failed, so a loop that used to be silent now explains itself.
   const [ssoError, setSSOError] = useState('')
-  // Where force-SSO should send the browser, once we know nobody is already signed in.
-  const [redirectTo, setRedirectTo] = useState('')
+  // Where force-SSO should send the browser, once we know nobody is already signed in. The slug
+  // travels with the URL so the notice below can name the provider without re-deriving it.
+  const [redirectTo, setRedirectTo] = useState<{ url: string; slug: string }>({ url: '', slug: '' })
+  // The provider whose handshake we have just handed the browser off to. A full navigation gives
+  // no feedback of its own: the click sets window.location and then nothing on this page changes
+  // until the browser decides to leave, which on a slow link is long enough to read the button as
+  // broken and press it again. This is what says otherwise.
+  const [leavingTo, setLeavingTo] = useState('')
   const [captcha, setCaptcha] = useState<CaptchaValue>({})
   const [captchaRound, setCaptchaRound] = useState(0)
   const [account, setAccount] = useState('')
@@ -97,8 +103,8 @@ export default function LoginPage() {
         // below once both are known.
         setRedirectTo(
           r.login_mode === 'sso_redirect' && !bypass && list.length === 1
-            ? `/api/auth/${list[0].kind}/${encodeURIComponent(list[0].slug)}/start`
-            : '',
+            ? { url: `/api/auth/${list[0].kind}/${encodeURIComponent(list[0].slug)}/start`, slug: list[0].slug }
+            : { url: '', slug: '' },
         )
       })
       .catch(() => {})
@@ -112,9 +118,21 @@ export default function LoginPage() {
   // bookmark, a typed URL, Back after the SSO round-trip (a real history entry, because the
   // callback is a top-level redirect) — is sent to "/" by the check below instead.
   useEffect(() => {
-    if (loading || user || !redirectTo) return
-    hardNavigate(redirectTo)
+    if (loading || user || !redirectTo.url) return
+    // Force-SSO leaves on its own, so it gets the same notice — otherwise the page shows a login
+    // card for a beat and then vanishes, with nothing having said why.
+    setLeavingTo(redirectTo.slug)
+    hardNavigate(redirectTo.url)
   }, [loading, user, redirectTo])
+
+  // Coming Back from the identity provider restores this page from the bfcache with its React
+  // state intact — including a spinner on a handshake that is over. pageshow is the one event that
+  // fires for that restore (it also fires on a normal load, where clearing is a no-op).
+  useEffect(() => {
+    const onShow = () => setLeavingTo('')
+    window.addEventListener('pageshow', onShow)
+    return () => window.removeEventListener('pageshow', onShow)
+  }, [])
 
   if (!loading && user) return <Navigate to="/" replace />
 
@@ -268,7 +286,7 @@ export default function LoginPage() {
                   {err}
                 </Typography.Text>
               )}
-              <Button type="primary" size="large" htmlType="submit" block loading={busy}>
+              <Button type="primary" size="large" htmlType="submit" block loading={busy} disabled={!!leavingTo}>
                 {t('login.submit')}
               </Button>
               {canRegister && (
@@ -282,7 +300,7 @@ export default function LoginPage() {
               // either in flight or was declined via ?local=1).
               !totpToken &&
               offers.local && (
-                <Button type="link" size="small" block onClick={() => setShowLocal(true)}>
+                <Button type="link" size="small" block disabled={!!leavingTo} onClick={() => setShowLocal(true)}>
                   {t('login.usePassword')}
                 </Button>
               )
@@ -302,9 +320,14 @@ export default function LoginPage() {
                     key={p.slug}
                     size="large"
                     block
+                    // The spinner is on the button that was pressed; the others go quiet rather
+                    // than inviting a second handshake over the top of the first.
+                    loading={leavingTo === p.slug}
+                    disabled={!!leavingTo && leavingTo !== p.slug}
                     // A full navigation, not fetch: the IdP redirect chain has to happen in the
                     // browser's top-level context.
                     onClick={() => {
+                      setLeavingTo(p.slug)
                       hardNavigate(`/api/auth/${p.kind}/${encodeURIComponent(p.slug)}/start`)
                     }}
                   >
@@ -314,6 +337,11 @@ export default function LoginPage() {
                     </Space>
                   </Button>
                 ))}
+                {leavingTo && (
+                  <Typography.Text type="secondary" style={{ textAlign: 'center', display: 'block', fontSize: 12 }}>
+                    {t('login.ssoRedirecting', { name: providers.find((p) => p.slug === leavingTo)?.name || '' })}
+                  </Typography.Text>
+                )}
               </Space>
             )}
             {!totpToken && (

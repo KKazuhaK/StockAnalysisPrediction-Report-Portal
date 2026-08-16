@@ -450,6 +450,9 @@ function ProofModal({
   const { t } = useTranslation()
   const [proof, setProof] = useState('')
   const [policy, setPolicy] = useState<StepUpPolicy | null>(null)
+  // Same handoff as the login page's provider buttons: window.location changes nothing here until
+  // the browser leaves, so without this the button reads as dead for the whole wait.
+  const [leavingTo, setLeavingTo] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -461,13 +464,23 @@ function ProofModal({
       .catch(() => setPolicy({ password: true, sso: false }))
   }, [open])
 
+  // Back from the provider restores this page from the bfcache with its state intact, spinner and
+  // all. Same guard as the login page's.
+  useEffect(() => {
+    const onShow = () => setLeavingTo('')
+    window.addEventListener('pageshow', onShow)
+    return () => window.removeEventListener('pageshow', onShow)
+  }, [])
+
   const close = () => {
     setProof('')
+    setLeavingTo('')
     onCancel()
   }
 
   // A full page navigation, deliberately: the round-trip is the browser's, not fetch's.
   const goToProvider = (kind: string, slug: string) => {
+    setLeavingTo(slug)
     try {
       if (resume) sessionStorage.setItem(resumeKey, resume)
     } catch {
@@ -541,7 +554,12 @@ function ProofModal({
               would make one provider look like two different things depending on the screen. */}
           <Space wrap>
             {(policy.providers ?? []).map((p) => (
-              <Button key={p.slug} onClick={() => goToProvider(p.kind, p.slug)}>
+              <Button
+                key={p.slug}
+                loading={leavingTo === p.slug}
+                disabled={!!leavingTo && leavingTo !== p.slug}
+                onClick={() => goToProvider(p.kind, p.slug)}
+              >
                 <Space size={8}>
                   <SSOIcon icon={p.icon} />
                   {t('account.confirmViaSSO', { name: p.name })}

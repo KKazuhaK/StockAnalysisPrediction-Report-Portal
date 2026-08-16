@@ -583,6 +583,7 @@
   "login.ssoReason.saml_transient_nameid": "the identity provider sent a temporary user id that changes on every sign-in; its NameID format needs to be persistent, emailAddress or unspecified",
   "login.ssoReason.saml_weak_signature": "the assertion was signed with an algorithm this portal refuses",
   "login.ssoReason.sso_no_email_claim": "this provider is set to match accounts by email, but no email claim is mapped, so there is nothing to match on",
+  "login.ssoRedirecting": "Taking you to {{name}}…",
   "login.ssoWith": "Sign in with {{name}}",
   "login.submit": "Sign in",
   "login.title": "Sign in",
