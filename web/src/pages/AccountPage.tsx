@@ -10,6 +10,7 @@ import {
   Modal,
   Popconfirm,
   Space,
+  Spin,
   Tag,
   Typography,
 } from 'antd'
@@ -495,6 +496,17 @@ function ProofModal({
       footer={password ? undefined : null}
       destroyOnHidden
     >
+      {policy == null ? (
+        // The default `password: true` below is a sensible fallback for a policy we could not
+        // read, but drawn straight away it also hides the SSO buttons — so an account whose only
+        // way through is a provider is shown a password box and nothing else, until the answer
+        // lands. A moment's spinner says the same thing without deciding it.
+        <div style={{ display: 'grid', justifyItems: 'center', gap: 12, padding: 24 }}>
+          <Spin />
+          <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+        </div>
+      ) : (
+      <>
       <Typography.Paragraph type="secondary">
         {!password
           ? t('account.confirmSSOOnly')
@@ -538,6 +550,8 @@ function ProofModal({
             ))}
           </Space>
         </div>
+      )}
+      </>
       )}
     </Modal>
   )

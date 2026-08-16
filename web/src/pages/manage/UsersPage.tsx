@@ -34,6 +34,7 @@ import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
 import OrgUnitPicker, { subtreeOf } from './OrgUnitPicker'
 import OrgUnitDetail from './OrgUnitDetail'
+import LoadGate from '../../components/LoadGate'
 import type { BatchConfig, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
 
 // A deterministic avatar colour from a name, so each user reads distinctly.
@@ -469,6 +470,7 @@ export default function UsersPage() {
     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
       <OrgUnitPicker
         groups={groups}
+        loading={data == null}
         unassigned={(data?.users || []).filter((u) => !u.primary_group).length}
         scoped={ouScoped}
         onScopedChange={setOuScoped}
@@ -486,7 +488,7 @@ export default function UsersPage() {
       onChange={setTab}
       items={[
         { key: 'accounts', label: t('users.tabAccounts'), children: accounts },
-        { key: 'groups', label: t('users.tabGroups'), children: <GroupsPanel groups={groups} onChanged={load} /> },
+        { key: 'groups', label: t('users.tabGroups'), children: <GroupsPanel groups={groups} groupsLoading={data == null} onChanged={load} /> },
       ]}
     />
   )
@@ -496,7 +498,7 @@ export default function UsersPage() {
 // weight / urgent / priority drive the run queue for its members (group model B): a
 // non-default group either overrides a field or inherits it from the Default group,
 // which every unassigned user falls back to.
-function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged: () => void }) {
+function GroupsPanel({ groups, groupsLoading, onChanged }: { groups: UserGroupRow[]; groupsLoading: boolean; onChanged: () => void }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
   // Which OU the detail pane is showing. Held as an id, not the row: the list is refetched after
@@ -513,9 +515,11 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
   const [ticketPeriod, setTicketPeriod] = useState(7)
   const [maxJobs, setMaxJobs] = useState(1)
   const [cfgReady, setCfgReady] = useState(false)
+  const [cfgErr, setCfgErr] = useState('')
 
-  const loadCfg = () =>
-    api.get<BatchConfig>('/api/admin/batch/config').then(
+  const loadCfg = () => {
+    setCfgErr('')
+    return api.get<BatchConfig>('/api/admin/batch/config').then(
       (r) => {
         setUrgentEnabled(!!r.urgent_enabled)
         setReservedSlots(r.reserved_slots)
@@ -523,12 +527,15 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
         setMaxJobs(r.max_jobs)
         setCfgReady(true)
       },
-      () => {
-        /* keep group editing usable even if the global queue config is temporarily unreachable */
-      },
+      // The controls were already disabled until this landed, but a disabled switch still shows a
+      // position, and OFF here means "the urgent lane is hidden everywhere" — a description of the
+      // deployment written by this file's useState. Group editing below stays usable either way.
+      (e) => setCfgErr(errText(e, t)),
     )
+  }
   useEffect(() => {
     loadCfg()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const saveUrgent = async () => {
@@ -581,6 +588,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
     <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
       {/* Global urgent lane + ticket config (moved off the run-queue settings page). */}
       <Card size="small" title={t('users.urgentTitle')}>
+        <LoadGate loading={!cfgReady && !cfgErr} error={cfgReady ? undefined : cfgErr} onRetry={loadCfg} minHeight={140}>
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           {cfgRow(
             t('batch.admin.urgentEnabled'),
@@ -612,6 +620,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
             {t('common.save')}
           </Button>
         </Space>
+        </LoadGate>
       </Card>
 
       {/* Pick one on the left, see all of it on the right. A flat list of every OU plus a modal of
@@ -621,6 +630,7 @@ function GroupsPanel({ groups, onChanged }: { groups: UserGroupRow[]; onChanged:
         <OrgUnitPicker
           mode="manage"
           groups={groups}
+          loading={groupsLoading}
           unassigned={0}
           scoped
           onScopedChange={() => {}}

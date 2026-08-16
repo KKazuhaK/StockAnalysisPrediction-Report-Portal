@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  Alert,
   Button,
   Col,
   Collapse,
@@ -10,6 +11,7 @@ import {
   Modal,
   Pagination,
   Popover,
+  Result,
   Row,
   Select,
   Space,
@@ -21,7 +23,7 @@ import { DownOutlined, FolderOutlined } from '@ant-design/icons'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
-import { api, qs } from '../api/client'
+import { api, errText, qs } from '../api/client'
 import type { HomeResp, LinkItem } from '../api/types'
 import { SiteLogo, useSite } from '../site'
 import { useAuth } from '../auth'
@@ -42,6 +44,7 @@ export default function HomePage() {
   const [sp, setSp] = useSearchParams()
   const [data, setData] = useState<HomeResp | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
   const [openGroups, setOpenGroups] = useState<Record<number, boolean>>({}) // per-group reveal state (expand/modal/popover)
   const [form] = Form.useForm()
 
@@ -59,12 +62,24 @@ export default function HomePage() {
     [sp],
   )
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true)
-    api
+    setLoadErr('')
+    return api
       .get<HomeResp>(`/api/home${qs(params)}`)
-      .then(setData)
+      .then((r) => {
+        setData(r)
+        setLoadErr('')
+      })
+      // Without this the rejection was dropped and the page settled on a blank strip where the
+      // reports go — no cards, no message, nothing to retry. The `data &&` guard below meant it
+      // did not claim "no matching reports", but it did not say anything at all either.
+      .catch((e) => setLoadErr(errText(e, t)))
       .finally(() => setLoading(false))
+  }
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params])
 
   // Auto-refresh: silently refetch the current view (no spinner) on a gentle interval while
@@ -279,12 +294,14 @@ export default function HomePage() {
                   </Col>
                   <Col xs={24} md={8}>
                     <Form.Item name="kind" label={t('home.category')}>
-                      <Select allowClear showSearch options={kindOptions} placeholder={t('home.category')} />
+                      {/* loading, not an empty list: the categories come from the same answer as
+                          the cards, and an empty dropdown reads as "there are none". */}
+                      <Select allowClear showSearch loading={!data} options={kindOptions} placeholder={t('home.category')} />
                     </Form.Item>
                   </Col>
                   <Col xs={24} md={8}>
                     <Form.Item name="rtype" label={t('home.type')}>
-                      <Select allowClear showSearch options={typeOptions} placeholder={t('home.type')} />
+                      <Select allowClear showSearch loading={!data} options={typeOptions} placeholder={t('home.type')} />
                     </Form.Item>
                   </Col>
                   <Col xs={24} md={8}>
@@ -319,7 +336,26 @@ export default function HomePage() {
 
       {/* Card list */}
       <Spin spinning={loading}>
-        {data && data.groups.length === 0 ? (
+        {/* A filter change that fails leaves the PREVIOUS answer on screen, which under the new
+            filters is the wrong one. Say so above it rather than passing it off as the result. */}
+        {loadErr && data && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={t('common.loadFailedContent')}
+            description={loadErr}
+            action={<Button size="small" onClick={load}>{t('common.retry')}</Button>}
+          />
+        )}
+        {loadErr && !data ? (
+          <Result
+            status="warning"
+            title={t('common.loadFailedContent')}
+            subTitle={loadErr}
+            extra={<Button onClick={load}>{t('common.retry')}</Button>}
+          />
+        ) : data && data.groups.length === 0 ? (
           <Empty description={t('home.empty')} style={{ padding: '60px 0' }} />
         ) : (
           <Row gutter={[16, 16]}>

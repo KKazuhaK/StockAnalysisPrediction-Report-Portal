@@ -165,6 +165,9 @@ describe('AccountPage', () => {
     await waitFor(() => expect(screen.getByText('account.passkeyTitle')).toBeTruthy())
     fireEvent.click(screen.getByText('account.passkeyAdd'))
 
+    // The dialog spins until /api/account/stepup/policy answers, because which channels it may
+    // offer is the server's to say — so wait for the body the way the tests above it do.
+    await waitFor(() => expect(screen.getByText('account.confirmWithPassword')).toBeTruthy())
     const proof = modalInput('input[type="password"]')
     fireEvent.change(proof, { target: { value: 'correct-horse-battery' } })
     fireEvent.click(screen.getByText('account.confirmOk'))

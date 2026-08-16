@@ -19,13 +19,22 @@ export default function AppsAdminPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [apps, setApps] = useState<AppSummary[]>([])
+  const [loaded, setLoaded] = useState(false) // [] is the starting state, not "nothing is installed"
+
   const [uploading, setUploading] = useState(false)
   const [market, setMarket] = useState<AppMarketEntry[] | null>(null)
   const [marketLoading, setMarketLoading] = useState(false)
   const [pending, setPending] = useState<PendingInstall | null>(null)
   const [confirming, setConfirming] = useState(false)
 
-  const load = () => api.get<AppsResp>('/api/apps').then((r) => setApps(r.apps || []))
+  const load = () =>
+    api
+      .get<AppsResp>('/api/apps')
+      .then((r) => {
+        setApps(r.apps || [])
+        setLoaded(true)
+      })
+      .catch(() => {})
   useEffect(() => {
     load()
   }, [])
@@ -197,7 +206,7 @@ export default function AppsAdminPage() {
       >
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('apps.adminHint')}</Typography.Text>
-          <Table rowKey="id" size="small" dataSource={apps} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
+          <Table rowKey="id" size="small" loading={!loaded} dataSource={apps} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
         </Space>
       </Card>
 

@@ -446,8 +446,11 @@ export default function SSOPage() {
   const [publicUrl, setPublicUrl] = useState('')
   const [spDefaults, setSpDefaults] = useState<NonNullable<SSOProvidersResp['sp_defaults']>>({})
   const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
 
+  // `loaded` is checked separately from `loading` so that saving a provider — which calls load()
+  // again through onSaved — refreshes the tabs in place instead of replacing them with a spinner.
   const load = () => {
     setLoading(true)
     setLoadErr('')
@@ -471,6 +474,7 @@ export default function SSOPage() {
         setProviders(r.providers || [])
         setPublicUrl(r.public_url || '')
         setSpDefaults(r.sp_defaults || {})
+        setLoaded(true)
       })
       .catch((e) => setLoadErr(errText(e, t)))
       .finally(() => setLoading(false))
@@ -488,7 +492,7 @@ export default function SSOPage() {
 
   return (
     <Card>
-      <LoadGate loading={loading} error={loadErr} onRetry={load}>
+      <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load}>
       <Tabs
         items={[
           ...(['saml', 'oidc'] as const).map((kind) => ({
