@@ -3,8 +3,9 @@ import { Card, Col, Empty, Row, Space, Tag, Typography, theme } from 'antd'
 import { AppstoreOutlined, ClockCircleOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { api } from '../api/client'
+import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
+import LoadGate from '../components/LoadGate'
 import { BUILTIN_APPS } from '../lib/builtinApps'
 import type { AppsResp, AppSummary } from '../api/types'
 
@@ -48,12 +49,24 @@ export default function AppsHub() {
   const { can } = useAuth()
   const navigate = useNavigate()
   const [apps, setApps] = useState<AppSummary[]>([])
+  // An account without the built-in apps' permission sees nothing but the installed list, so
+  // "No apps available" before /api/apps answers is the whole page making a claim for the server
+  // — and the old `.catch(() => setApps([]))` made a failed request wear that same face for good.
+  const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
 
-  useEffect(() => {
-    api
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    return api
       .get<AppsResp>('/api/apps')
       .then((r) => setApps(r.apps || []))
-      .catch(() => setApps([]))
+      .catch((e) => setLoadErr(errText(e, t)))
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // '' perm = everyone (matches shortcutPerm's registry contract; can('') is false, so guard on it).
@@ -65,6 +78,7 @@ export default function AppsHub() {
       <Typography.Title level={4} style={{ margin: 0 }}>
         {t('nav.apps')}
       </Typography.Title>
+      <LoadGate loading={loading} error={loadErr} onRetry={load} minHeight={200} title={t('common.loadFailedContent')}>
       {isEmpty ? (
         <Empty description={t('apps.empty')} />
       ) : (
@@ -90,6 +104,7 @@ export default function AppsHub() {
           ))}
         </Row>
       )}
+      </LoadGate>
     </Space>
   )
 }

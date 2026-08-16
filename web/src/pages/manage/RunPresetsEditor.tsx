@@ -7,6 +7,7 @@ import { api, errText } from '../../api/client'
 import type { RunFreq, RunOverrun, RunPreset, RunPresetAnchor, RunPresetInterval, RunPresetsResp } from '../../api/types'
 import { presetSummary } from '../../lib/runSchedule'
 import { DragHandle, SortableItem, SortableWrapper } from './dnd'
+import LoadGate from '../../components/LoadGate'
 
 // Admin editor for preset low-peak scheduling windows (docs/adr/0014). An ordered, drag-sortable
 // list (like LinksPage / TypesPage); each preset is edited in a modal whose anchor fields adapt to
@@ -64,14 +65,24 @@ export default function RunPresetsEditor() {
   const [presets, setPresets] = useState<RunPreset[]>([])
   const [draft, setDraft] = useState<RunPreset | null>(null)
   const [saving, setSaving] = useState(false)
+  // "No preset windows" is what an admin comes here to check, so it waits for the answer: the
+  // page's own LoadGate covers /api/admin/batch/config only, not this section's list.
+  const [loaded, setLoaded] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
 
-  const load = () =>
-    api
+  const load = () => {
+    setLoadErr('')
+    return api
       .get<RunPresetsResp>('/api/admin/batch/presets')
-      .then((r) => setPresets(r.presets || []))
-      .catch(() => {})
+      .then((r) => {
+        setPresets(r.presets || [])
+        setLoaded(true)
+      })
+      .catch((e) => setLoadErr(errText(e, t)))
+  }
   useEffect(() => {
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const ids = useMemo(() => presets.map((p) => String(p.id)), [presets])
@@ -111,6 +122,7 @@ export default function RunPresetsEditor() {
 
   return (
     <Space direction="vertical" size={10} style={{ width: '100%' }}>
+      <LoadGate loading={!loaded && !loadErr} error={loaded ? undefined : loadErr} onRetry={load} minHeight={140} title={t('common.loadFailedContent')}>
       {presets.length === 0 ? (
         <Empty description={t('preset.none')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
@@ -148,6 +160,7 @@ export default function RunPresetsEditor() {
       <Button icon={<PlusOutlined />} onClick={() => setDraft(blankPreset())}>
         {t('preset.add')}
       </Button>
+      </LoadGate>
 
       <Modal
         open={!!draft}

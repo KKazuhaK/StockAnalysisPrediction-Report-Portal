@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Divider, Form, Input, Select, Space, Spin, Switch, Typography, Upload } from 'antd'
+import { App, Button, Divider, Form, Input, Select, Space, Switch, Typography, Upload } from 'antd'
 import { DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import type { SettingsResp } from '../../api/types'
 import { useSite } from '../../site'
 import { BrandIcon } from '../../components/icons'
+import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
 import GeoSection from './GeoSection'
 
@@ -30,10 +31,13 @@ export default function SiteSettingsPage() {
   const { refresh } = useSite()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(true)
+  const [loadErr, setLoadErr] = useState('')
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    api
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    return api
       .get<SettingsResp>('/api/admin/settings')
       .then((r) =>
         form.setFieldsValue({
@@ -48,7 +52,15 @@ export default function SiteSettingsPage() {
           publicUrl: r.publicUrl || '',
         }),
       )
+      // The spinner covered the wait but not the failure: `finally` alone dropped the rejection
+      // and left an empty form claiming this portal has no title, no logo and no public URL —
+      // in a form whose Save button would write exactly that.
+      .catch((e) => setLoadErr(errText(e, t)))
       .finally(() => setLoading(false))
+  }
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form])
 
   const save = async () => {
@@ -108,10 +120,9 @@ export default function SiteSettingsPage() {
     return false
   }
 
-  if (loading) return <Spin />
-
   return (
     <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 720 }}>
+      <LoadGate loading={loading} error={loadErr} onRetry={load}>
       <Form form={form} layout="vertical">
         <Form.Item
           name="siteTitle"
@@ -245,6 +256,7 @@ export default function SiteSettingsPage() {
           </Button>
         </StickyActionBar>
       </Form>
+      </LoadGate>
     </Space>
   )
 }

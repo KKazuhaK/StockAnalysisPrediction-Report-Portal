@@ -6,6 +6,7 @@ import { api, errText } from '../../api/client'
 import { formatReportTime } from '../../lib/datetime'
 import { startVisiblePoll } from '../../lib/visiblePoll'
 import Markdown from '../../components/Markdown'
+import LoadGate from '../../components/LoadGate'
 import type { ChatTurn } from '../../api/types'
 
 // Assistant admin (docs/adr/0012-interactive-chat.md). Two independent controls:
@@ -41,6 +42,13 @@ export default function ChatAdminPage() {
   const [stream, setStream] = useState(true)
   const [turnTimeout, setTurnTimeout] = useState(20)
   const [turns, setTurns] = useState<ChatLiveTurn[]>([])
+  // The three numbers above are useState defaults, and Save posts all three — so an admin who
+  // arrives on a slow link could write "0 concurrent, streaming on, 20 minutes" over the real
+  // configuration without ever having seen it. Nothing renders until the answer is in.
+  const [liveLoaded, setLiveLoaded] = useState(false)
+  const [cfgErr, setCfgErr] = useState('')
+  const [convsLoaded, setConvsLoaded] = useState(false)
+  const [convsErr, setConvsErr] = useState('')
   const [auto, setAuto] = useState(true)
   const seeded = useRef(false)
   const fullWidth = !Grid.useBreakpoint().md
@@ -55,6 +63,8 @@ export default function ChatAdminPage() {
       .get<ChatLive>('/api/admin/chat/live')
       .then((r) => {
         setTurns(r.turns || [])
+        setLiveLoaded(true)
+        setCfgErr('')
         // Seed the ceiling input once, so a running poll never clobbers an in-progress edit.
         if (!seeded.current) {
           setLimit(r.max_concurrent ?? 0)
@@ -63,11 +73,22 @@ export default function ChatAdminPage() {
           seeded.current = true
         }
       })
-      .catch(() => {})
-  const loadConvs = () =>
-    api.get<{ conversations: AdminConv[] }>('/api/admin/chat/conversations').then((r) => setConvs(r.conversations || [])).catch(() => {})
+      // Only the first poll has anything to report; after that the numbers on screen are the
+      // server's, and a dropped poll must not replace them.
+      .catch((e) => setCfgErr(errText(e, t)))
+  const loadConvs = () => {
+    setConvsErr('')
+    return api
+      .get<{ conversations: AdminConv[] }>('/api/admin/chat/conversations')
+      .then((r) => {
+        setConvs(r.conversations || [])
+        setConvsLoaded(true)
+      })
+      .catch((e) => setConvsErr(errText(e, t)))
+  }
   useEffect(() => {
     loadConvs()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
     if (!auto) return
@@ -143,6 +164,7 @@ export default function ChatAdminPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card title={t('chatAdmin.limitCard')}>
+        <LoadGate loading={!liveLoaded && !cfgErr} error={liveLoaded ? undefined : cfgErr} onRetry={load} minHeight={180}>
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Space wrap>
             <span style={{ display: 'inline-block', minWidth: 110 }}>{t('chatAdmin.limit')}</span>
@@ -163,13 +185,16 @@ export default function ChatAdminPage() {
             {t('common.save')}
           </Button>
         </Space>
+        </LoadGate>
       </Card>
 
       <Card
         title={
           <Space>
             {t('chatAdmin.liveCard')}
-            <Tag color={turns.length ? 'processing' : 'default'}>{t('chatAdmin.liveCount', { n: turns.length })}</Tag>
+            {/* No count until the first poll: "0 running" is a claim, and this tag is the only
+                place on the page that makes it in one glance. */}
+            {liveLoaded && <Tag color={turns.length ? 'processing' : 'default'}>{t('chatAdmin.liveCount', { n: turns.length })}</Tag>}
           </Space>
         }
         extra={
@@ -188,6 +213,7 @@ export default function ChatAdminPage() {
           columns={columns}
           dataSource={turns}
           pagination={false}
+          loading={!liveLoaded && !cfgErr}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chatAdmin.none')} /> }}
         />
       </Card>
@@ -212,7 +238,14 @@ export default function ChatAdminPage() {
           dataSource={filteredConvs}
           pagination={{ pageSize: 15, size: 'small' }}
           scroll={{ x: 560 }}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chatAdmin.convEmpty')} /> }}
+          loading={!convsLoaded && !convsErr}
+          locale={{
+            emptyText: convsErr ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('common.loadFailedContent')} />
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chatAdmin.convEmpty')} />
+            ),
+          }}
           columns={[
             { title: t('chatAdmin.colUser'), dataIndex: 'created_by', width: 140 },
             { title: t('chatAdmin.colTarget'), dataIndex: 'target', width: 150 },

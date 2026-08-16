@@ -87,7 +87,6 @@ export default function StoragePage() {
   // and the form is live, so until the server has answered nothing here may be shown as if it
   // were the configured policy.
   const loadConfig = () => {
-    setLoading(true)
     setLoadErr('')
     return api
       .get<CleanupConfig>('/api/admin/cleanup/config')
@@ -109,16 +108,22 @@ export default function StoragePage() {
         setReportsFloor(r.reports_floor)
         setAuditFloor(r.audit_floor)
       })
-      .catch((e) => setLoadErr(errText(e, t)))
-      .finally(() => setLoading(false))
   }
   const loadUsage = () => api.get<CleanupUsage>('/api/admin/cleanup/usage').then(setUsage)
   const loadHistory = () => api.get<{ runs: CleanupRun[] }>('/api/admin/cleanup/history').then((r) => setHistory(r.runs ?? []))
 
+  // Usage belongs inside the gate with the config: the card above reads `usage?.db_bytes ?? 0`,
+  // and "0 B" over an empty proportion bar is this page's headline number reporting a database
+  // it has not measured. History stays outside — its own table spins.
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    loadHistory().catch(() => {})
+    return Promise.all([loadConfig(), loadUsage().catch((e) => setLoadErr(errText(e, t)))]).finally(() => setLoading(false))
+  }
   useEffect(() => {
-    loadConfig()
-    loadUsage()
-    loadHistory()
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const save = async () => {
@@ -138,7 +143,7 @@ export default function StoragePage() {
     })
     message.success(t('common.saved'))
     loadConfig()
-    loadUsage()
+    loadUsage().catch(() => {})
   }
 
   const doRun = async (targets: string[]) => {
@@ -146,8 +151,8 @@ export default function StoragePage() {
     // Every target the run could have touched. Leaving audit out reported an audit purge as
     // "cleaned 0 of everything" — the one category whose rows cannot be regenerated.
     message.success(t('storage.cleaned', { batch: r.batch, reports: r.reports, tokens: r.tokens, audit: r.audit ?? 0 }))
-    loadUsage()
-    loadHistory()
+    loadUsage().catch(() => {})
+    loadHistory().catch(() => {})
     loadConfig()
   }
 
@@ -285,7 +290,7 @@ export default function StoragePage() {
   ]
 
   return (
-    <LoadGate loading={loading} error={loadErr} onRetry={loadConfig}>
+    <LoadGate loading={loading} error={loadErr} onRetry={load}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card title={t('storage.usageTitle')}>
         <Space direction="vertical" size={14} style={{ width: '100%' }}>

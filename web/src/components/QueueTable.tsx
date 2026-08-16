@@ -53,6 +53,7 @@ import {
 import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
 import { watchQueue } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
+import LoadGate from './LoadGate'
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
@@ -257,6 +258,10 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const [reschedId, setReschedId] = useState<number | null>(null)
   const [reschedAt, setReschedAt] = useState<Dayjs | null>(null)
   const [selectedJobs, setSelectedJobs] = useState<Key[]>([])
+  // Has the first jobs answer landed? `jobs` starts at [] because that is where a useState
+  // starts, not because the queue is empty — and "Queue is empty" is a claim about the server.
+  const [loaded, setLoaded] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
 
   const load = async () => {
     // Bounded poll: the server returns every active job + the most recent terminal jobs (not the whole
@@ -268,19 +273,27 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
     // already have is what stops a 3-second poll from re-rendering the table for no reason.
     const jobsRequest = getIfChanged<{ jobs: BatchJob[]; total?: number }>(
       `/api/admin/batch/jobs?limit=300${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`,
-    )
-      .then((r) => {
-        if (r === UNCHANGED) return
-        setJobs(r.jobs || [])
-        setTotal(r.total ?? (r.jobs || []).length)
-      })
-      .catch(() => {})
+    ).then((r) => {
+      if (r === UNCHANGED) return
+      setJobs(r.jobs || [])
+      setTotal(r.total ?? (r.jobs || []).length)
+    })
     const summaryRequest = getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
       .then((r) => {
         if (r !== UNCHANGED) setSummary(r)
       })
       .catch(() => {})
-    await Promise.all([jobsRequest, summaryRequest])
+    try {
+      await jobsRequest
+      setLoaded(true)
+      setLoadErr('')
+    } catch (e) {
+      // Only the first load has anything to report. Once rows are on screen a failed poll is
+      // not news — they are still the last thing the server said, and swapping them for an
+      // error page would be the worse answer. The render below reads this only while !loaded.
+      setLoadErr(errText(e, t))
+    }
+    await summaryRequest
   }
   useEffect(() => {
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
@@ -306,10 +319,11 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const targetName = (id: number) => targets.find((tg) => tg.id === id)?.name || `#${id}`
   const submitters = useMemo(() => [...new Set(jobs.map((j) => j.created_by).filter(Boolean))], [jobs])
   // Prefer the server-side count (exact even though the job list is paginated); fall back to counting
-  // the loaded page for an older server that doesn't send done_today.
+  // the loaded page for an older server that doesn't send done_today — and only once that page is
+  // actually loaded, since counting [] would answer "0 today" before anyone had asked the server.
   const doneToday = useMemo(
-    () => summary?.done_today ?? jobs.filter((j) => isTerminal(j.status) && (j.finished_at || '').startsWith(todayStr())).length,
-    [summary, jobs],
+    () => summary?.done_today ?? (loaded ? jobs.filter((j) => isTerminal(j.status) && (j.finished_at || '').startsWith(todayStr())).length : null),
+    [summary, jobs, loaded],
   )
   const canCancel = (j: BatchJob) => admin || j.created_by === user // matches the server ownership check
 
@@ -481,9 +495,12 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
     },
   ]
 
-  const stat = (label: string, value: number) => (
+  // null = the summary has not landed yet. A dash, not a 0: five tiles reading zero are a
+  // statement about the queue, and rendering it before the server has answered makes the page
+  // look like it has finished loading on an idle queue.
+  const stat = (label: string, value: number | null) => (
     <Card size="small" styles={{ body: { padding: mobile ? '8px 12px' : undefined } }}>
-      <div style={{ fontSize: mobile ? 20 : 24, fontWeight: 500, lineHeight: 1.2 }}>{value}</div>
+      <div style={{ fontSize: mobile ? 20 : 24, fontWeight: 500, lineHeight: 1.2 }}>{value ?? <Typography.Text type="secondary">—</Typography.Text>}</div>
       <Typography.Text type="secondary" style={{ fontSize: mobile ? 12 : 13 }}>
         {label}
       </Typography.Text>
@@ -534,11 +551,11 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         // A responsive grid (not Space wrap): auto-fit + 1fr keeps every tile the same size
         // and stretched to fill its row, so the stats never leave a lone half-empty card.
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 10, width: '100%' }}>
-          {stat(t('queue.running'), summary?.running ?? 0)}
-          {stat(t('queue.waiting'), summary?.waiting ?? 0)}
-          {stat(t('queue.scheduled'), summary?.scheduled ?? 0)}
+          {stat(t('queue.running'), summary?.running ?? null)}
+          {stat(t('queue.waiting'), summary?.waiting ?? null)}
+          {stat(t('queue.scheduled'), summary?.scheduled ?? null)}
           {stat(t('queue.doneToday'), doneToday)}
-          {stat(t('queue.budget'), summary?.budget ?? 0)}
+          {stat(t('queue.budget'), summary?.budget ?? null)}
         </div>
       )}
 
@@ -568,6 +585,15 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
             {t('queue.truncatedHint', { shown: jobs.length, total })}
           </Typography.Text>
         )}
+        {/* Until the first answer lands, "Queue is empty" is a claim about the server that the
+            server has not made — and with auto-refresh off nothing would ever correct it. */}
+        <LoadGate
+          loading={!loaded && !loadErr}
+          error={loaded ? undefined : loadErr}
+          onRetry={load}
+          minHeight={220}
+          title={t('common.loadFailedContent')}
+        >
         {rows.length === 0 ? (
           <Empty description={t('queue.empty')} />
         ) : (
@@ -590,6 +616,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
             scroll={{ x: mobile ? 640 : 1160 }}
           />
         )}
+        </LoadGate>
       </Card>
 
       <DetailDrawer jobId={detailId} admin={admin} user={user} onClose={() => setDetailId(null)} />

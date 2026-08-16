@@ -5,12 +5,13 @@ import { useTranslation } from 'react-i18next'
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import { useAuth } from '../../auth'
 import type { AppSummary, AppsResp, BatchTarget, ChatTarget, LinkGroup, LinkGroupMode, LinkItem } from '../../api/types'
 import { difyModeKind } from '../../lib/batchUi'
 import { DragHandle, SortableItem } from './dnd'
 import { LINK_ICON_OPTIONS, linkIconComponent } from '../../components/linkIcons'
+import LoadGate from '../../components/LoadGate'
 import { APP_SHORTCUTS, builtinAppOptions, shortcutOfUrl, shortcutUrl } from '../../lib/shortcuts'
 
 const iconSelectOptions = LINK_ICON_OPTIONS.map(({ value }) => {
@@ -30,6 +31,8 @@ export default function LinksPage() {
   const [links, setLinks] = useState<LinkItem[]>([])
   const [groups, setGroups] = useState<LinkGroup[]>([])
   const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
   const [editing, setEditing] = useState<LinkItem | null>(null)
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
@@ -41,17 +44,26 @@ export default function LinksPage() {
   const [appList, setAppList] = useState<AppSummary[]>([])
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
-  const load = () =>
-    api
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    return api
       .get<{ links: LinkItem[]; groups: LinkGroup[] }>('/api/admin/links')
       .then((r) => {
         setLinks(r.links || [])
         setGroups(r.groups || [])
+        setLoaded(true)
       })
+      // The `!loading` guard below covered the wait but not the failure: `finally` alone dropped
+      // the rejection and settled the page on "No entry buttons yet", which is what a genuinely
+      // empty home page looks like.
+      .catch((e) => setLoadErr(errText(e, t)))
       .finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -338,6 +350,7 @@ export default function LinksPage() {
         </Space>
       </Space>
 
+      <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load} minHeight={200} title={t('common.loadFailedContent')}>
       {!loading && rows.length === 0 ? (
         <Empty description={t('links.empty')} />
       ) : (
@@ -353,6 +366,7 @@ export default function LinksPage() {
           </SortableContext>
         </DndContext>
       )}
+      </LoadGate>
 
       <Modal
         open={groupOpen}

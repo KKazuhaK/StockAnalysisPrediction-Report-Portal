@@ -8,6 +8,7 @@ import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, RecurringDetail, RecurringRun, RecurringTask, RecurringTasksResp } from '../api/types'
 import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
+import LoadGate from '../components/LoadGate'
 
 // Recurring-tasks console (计划任务; docs/adr/0018-recurring-tasks.md). A first-party app card
 // (gated by run_batch) that manages saved job templates + a daily/weekly/monthly cadence the server
@@ -35,8 +36,11 @@ export default function RecurringConsole() {
   const { message, modal } = App.useApp()
   const { admin } = useAuth()
   const [targets, setTargets] = useState<BatchTarget[]>([])
+  const [targetsLoaded, setTargetsLoaded] = useState(false)
   const [tasks, setTasks] = useState<RecurringTask[]>([])
   const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null) // null = create
@@ -49,18 +53,30 @@ export default function RecurringConsole() {
   const [history, setHistory] = useState<{ task: RecurringTask; runs: RecurringRun[] } | null>(null)
 
   const loadTargets = () =>
-    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(visibleOn(r.targets || [], 'recurring')))
+    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => {
+      setTargets(visibleOn(r.targets || [], 'recurring'))
+      setTargetsLoaded(true)
+    })
   const loadTasks = () => {
     setLoading(true)
     return api
       .get<RecurringTasksResp>('/api/admin/batch/recurring')
-      .then((r) => setTasks(r.tasks || []))
+      .then((r) => {
+        setTasks(r.tasks || [])
+        setLoaded(true)
+      })
       .finally(() => setLoading(false))
   }
 
+  // Two claims this console must not make before its two GETs land: "no run targets yet" (with
+  // New greyed out beside it) and "no scheduled tasks yet". Both are about the server.
+  const load = () => {
+    setLoadErr('')
+    loadTargets().catch(() => {})
+    return loadTasks().catch((e) => setLoadErr(errText(e, t)))
+  }
   useEffect(() => {
-    loadTargets()
-    loadTasks()
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -288,14 +304,15 @@ export default function RecurringConsole() {
           </Space>
         }
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} disabled={targets.length === 0}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} disabled={!targetsLoaded || targets.length === 0}>
             {t('recurring.new')}
           </Button>
         }
       >
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('recurring.intro')}</Typography.Text>
-          {targets.length === 0 && <Typography.Text type="warning">{t('recurring.noTargets')}</Typography.Text>}
+          {targetsLoaded && targets.length === 0 && <Typography.Text type="warning">{t('recurring.noTargets')}</Typography.Text>}
+          <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load} minHeight={200} title={t('common.loadFailedContent')}>
           <div style={{ overflowX: 'auto' }}>
             <Table
               rowKey="id"
@@ -307,6 +324,7 @@ export default function RecurringConsole() {
               locale={{ emptyText: t('recurring.empty') }}
             />
           </div>
+          </LoadGate>
         </Space>
       </Card>
 

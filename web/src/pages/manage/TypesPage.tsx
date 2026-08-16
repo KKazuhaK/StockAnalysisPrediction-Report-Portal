@@ -17,9 +17,10 @@ import {
 } from 'antd'
 import { DeleteOutlined, DownOutlined, PlusOutlined, ReloadOutlined, RollbackOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import type { TypeGroup, TypeRow, TypesResp } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
+import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
 
 // antd's Tag preset colors (https://ant.design/components/tag) — "default" maps
@@ -134,7 +135,9 @@ export default function TypesPage() {
   const [groups, setGroups] = useState<TypeGroup[]>([])
   const [kinds, setKinds] = useState<string[]>([])
   const [colors, setColors] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(true) // a request is in flight
+  const [loaded, setLoaded] = useState(false) // …and at least one has landed, so the page has something to show
+  const [loadErr, setLoadErr] = useState('')
   const [saving, setSaving] = useState(false)
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
@@ -142,15 +145,23 @@ export default function TypesPage() {
   const [restoring, setRestoring] = useState(false)
   const [addForm] = Form.useForm()
 
-  const load = () =>
-    api
+  const load = () => {
+    setLoading(true)
+    setLoadErr('')
+    return api
       .get<TypesResp>('/api/admin/types')
       .then((r) => {
         setGroups(r.groups || [])
         setKinds(r.kinds || [])
         setColors(r.colors || {})
+        setLoaded(true)
       })
+      // Not optional here: save() posts every row this page holds, so a swallowed failure would
+      // leave an empty `groups` under a live Save button — one click from writing "no types at
+      // all" over the real configuration.
+      .catch((e) => setLoadErr(errText(e, t)))
       .finally(() => setLoading(false))
+  }
 
   const saveColor = async (kind: string, color: string) => {
     setColors((c) => ({ ...c, [kind]: color }))
@@ -298,6 +309,10 @@ export default function TypesPage() {
     // A plain flex column (not antd Space) so the sticky save bar's parent is a tall block it can
     // pin against — Space wraps each child in an item box only as tall as the bar itself.
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
+      {/* Everything below acts on the type configuration — including a Save that posts every row
+          the page holds. None of it may render off the initial empty state. Only the FIRST load
+          gates: a reload after saving keeps the page up and spins the tables instead. */}
+      <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load}>
       <Space wrap>
         <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
           {t('common.add')}
@@ -359,6 +374,7 @@ export default function TypesPage() {
           {t('types.save')}
         </Button>
       </StickyActionBar>
+      </LoadGate>
 
       <Modal
         open={open}

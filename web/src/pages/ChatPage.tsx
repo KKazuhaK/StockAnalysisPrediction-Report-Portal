@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { api, ApiError, errText } from '../api/client'
 import { useAuth } from '../auth'
 import Markdown from '../components/Markdown'
+import LoadGate from '../components/LoadGate'
 import { difyModeTag } from '../lib/batchUi'
 import type { ChatConversation, ChatTarget, ChatTurn } from '../api/types'
 
@@ -105,6 +106,11 @@ export default function ChatPage() {
   const padX = compact ? 12 : 32 // the thread/composer fill the panel width with this side gutter
   const [navOpen, setNavOpen] = useState(false)
   const [targets, setTargets] = useState<ChatTarget[]>([])
+  // Until this is true, `targets` is [] because that is where useState starts — not because the
+  // deployment has no assistants. The whole page is replaced by that claim below, so it has to
+  // wait for the answer.
+  const [targetsLoaded, setTargetsLoaded] = useState(false)
+  const [targetsErr, setTargetsErr] = useState('')
   const [targetId, setTargetId] = useState<number>()
   // Admin oversight from inside Chat: whose conversations to view ('' = your own). Viewing another
   // user's threads is read-only (you can't send as them) and reads via the admin endpoints.
@@ -112,6 +118,8 @@ export default function ChatPage() {
   const [chatUsers, setChatUsers] = useState<string[]>([])
   const viewingOther = !!viewUser && viewUser !== user
   const [convs, setConvs] = useState<ChatConversation[]>([])
+  const [convsLoaded, setConvsLoaded] = useState(false) // [] is the initial state, not an answer
+  const [convsErr, setConvsErr] = useState('')
   const [convId, setConvId] = useState<number>()
   const [hoverConv, setHoverConv] = useState<number | null>(null)
   const [menuConv, setMenuConv] = useState<number | null>(null) // which row's ⋮ menu is open
@@ -160,18 +168,25 @@ export default function ChatPage() {
     msgsLenRef.current = msgs.length
   }, [msgs])
 
-  useEffect(() => {
-    api
+  const loadTargets = () => {
+    setTargetsErr('')
+    return api
       .get<{ targets: ChatTarget[] }>('/api/chat/targets')
       .then((r) => {
         setTargets(r.targets || [])
+        setTargetsLoaded(true)
         // A pinned entry-button shortcut may deep-link to a specific assistant via ?target=<id>;
         // fall back to the first target if it's absent, unknown, or no longer accessible.
         const want = Number(sp.get('target'))
         const initial = r.targets?.find((tg) => tg.id === want) ?? r.targets?.[0]
         if (initial) setTargetId(initial.id)
       })
-      .catch(() => {})
+      // Swallowing this used to leave "no chat or agent apps yet" on screen for good — a failed
+      // request wearing the face of a configuration answer.
+      .catch((e) => setTargetsErr(errText(e, t)))
+  }
+  useEffect(() => {
+    loadTargets()
     // Read ?target once on mount (the intended "open pre-selected" UX); later manual switching wins.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -204,10 +219,17 @@ export default function ChatPage() {
     const url = viewingOther
       ? `/api/admin/chat/conversations?user=${encodeURIComponent(viewUser)}&target_id=${tid}`
       : `/api/chat/conversations?target_id=${tid}`
+    setConvsLoaded(false)
+    setConvsErr('')
     api
       .get<{ conversations: ChatConversation[] }>(url)
-      .then((r) => setConvs(r.conversations || []))
-      .catch(() => {})
+      .then((r) => {
+        setConvs(r.conversations || [])
+        setConvsLoaded(true)
+      })
+      // "No conversations yet" over a failed request tells someone their history is gone. Say
+      // what actually happened instead, with a way to ask again.
+      .catch((e) => setConvsErr(errText(e, t)))
   }
   useEffect(() => {
     setConvId(undefined)
@@ -544,10 +566,19 @@ export default function ChatPage() {
     return t(`chat.${key}`, { name: name || '' }).replace(/[，,、]\s*$/, '')
   }, [t, name])
 
-  if (targets.length === 0) {
+  // This branch swaps the entire page for one sentence, so it must be the server's sentence and
+  // not the initial state's: spinner until the list is in, and say so if it never comes.
+  if (!targetsLoaded || targets.length === 0) {
     return (
       <div style={{ padding: 48 }}>
-        <Empty description={t('chat.noTargets')} />
+        <LoadGate
+          loading={!targetsLoaded && !targetsErr}
+          error={targetsErr}
+          onRetry={loadTargets}
+          title={t('common.loadFailedContent')}
+        >
+          <Empty description={t('chat.noTargets')} />
+        </LoadGate>
       </div>
     )
   }
@@ -720,7 +751,16 @@ export default function ChatPage() {
         </Button>
       )}
       <div style={{ overflowY: 'auto', flex: 1, borderTop: `1px solid ${token.colorBorderSecondary}`, paddingTop: 8 }}>
-        {convs.length === 0 ? (
+        {convsErr ? (
+          <div style={{ fontSize: 12, padding: 8 }}>
+            <Typography.Text type="secondary">{t('common.loadFailedContent')}</Typography.Text>{' '}
+            <Typography.Link onClick={() => loadConvs(targetId)}>{t('common.retry')}</Typography.Link>
+          </div>
+        ) : !convsLoaded ? (
+          <div style={{ padding: 16, textAlign: 'center' }}>
+            <Spin size="small" />
+          </div>
+        ) : convs.length === 0 ? (
           <Typography.Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
             {t('chat.noConversations')}
           </Typography.Text>
