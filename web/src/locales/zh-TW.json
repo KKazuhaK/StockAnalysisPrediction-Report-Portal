@@ -583,6 +583,7 @@
   "login.ssoReason.saml_transient_nameid": "身份提供方發來的使用者標識每次登入都會變(transient),無法用於識別賬號;請把它的 NameID 格式改為 persistent、emailAddress 或 unspecified",
   "login.ssoReason.saml_weak_signature": "斷言使用了本門戶拒絕的簽名演算法",
   "login.ssoReason.sso_no_email_claim": "該提供商設定為按郵箱匹配賬號,但沒有對映郵箱宣告,因此無從匹配",
+  "login.ssoRedirecting": "正在前往 {{name}}…",
   "login.ssoWith": "使用 {{name}} 登入",
   "login.submit": "登入",
   "login.title": "登入研報門戶",
