@@ -18,6 +18,9 @@ export default function WebhooksPage() {
   // form offers. Until it lands an empty table says this deployment notifies nobody, and the
   // Add form would offer no events to subscribe to — neither being anything the server said.
   const [loading, setLoading] = useState(true)
+  // Separate from `loading` so the reload after adding, testing or deleting a hook refreshes the
+  // table in place rather than swapping it for a spinner.
+  const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
 
   const load = () => {
@@ -28,6 +31,7 @@ export default function WebhooksPage() {
       .then((r) => {
         setHooks(r.webhooks || [])
         setEvents(r.events || [])
+        setLoaded(true)
       })
       .catch((e) => setLoadErr(errText(e, t)))
       .finally(() => setLoading(false))
@@ -109,7 +113,7 @@ export default function WebhooksPage() {
           icon={<PlusOutlined />}
           // The Events field is required and its options come from this page's GET, so opening
           // the form early would ask for a choice out of an empty list.
-          disabled={loading || !!loadErr}
+          disabled={!loaded}
           onClick={() => {
             form.resetFields()
             setOpen(true)
@@ -121,7 +125,7 @@ export default function WebhooksPage() {
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text type="secondary">{t('webhook.hint')}</Typography.Text>
-        <LoadGate loading={loading} error={loadErr} onRetry={load} minHeight={180} title={t('common.loadFailedContent')}>
+        <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load} minHeight={180} title={t('common.loadFailedContent')}>
           <Table rowKey="id" size="small" dataSource={hooks} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
         </LoadGate>
       </Space>

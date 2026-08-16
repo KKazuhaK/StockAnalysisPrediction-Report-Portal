@@ -12,6 +12,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../api/client', () => ({
   api: apiMock,
+  errText: (e: unknown) => String((e as Error)?.message ?? e),
   ApiError: class ApiError extends Error {
     status: number
     constructor(status: number, message: string) {
@@ -65,6 +66,29 @@ describe('ChatPage responsive layout', () => {
     expect(conversations.textContent).toBe('')
     expect(screen.getByRole('button', { name: 'nav.home' })).toBeTruthy()
     expect(screen.queryByText('chat.enterHint')).toBeNull()
+  })
+
+  // The whole page used to be replaced by "no chat or agent apps yet" for the flight of the
+  // first GET — advice about Manage → Targets, given before the server had said anything.
+  it('says it is loading instead of declaring the deployment has no assistants', async () => {
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: true } as ReturnType<typeof Grid.useBreakpoint>)
+    apiMock.get.mockImplementation((url: string) =>
+      url === '/api/chat/targets' ? new Promise(() => {}) : Promise.resolve({}),
+    )
+    renderPage()
+    expect(await screen.findByText('common.loading')).toBeTruthy()
+    expect(screen.queryByText('chat.noTargets')).toBeNull()
+  })
+
+  it('reports a failed target list rather than an empty one', async () => {
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: true } as ReturnType<typeof Grid.useBreakpoint>)
+    apiMock.get.mockImplementation((url: string) =>
+      url === '/api/chat/targets' ? Promise.reject(new Error('boom')) : Promise.resolve({}),
+    )
+    renderPage()
+    expect(await screen.findByText('common.loadFailedContent')).toBeTruthy()
+    expect(screen.getByText('common.retry')).toBeTruthy()
+    expect(screen.queryByText('chat.noTargets')).toBeNull()
   })
 
   it('keeps the full desktop controls and composer hint', async () => {

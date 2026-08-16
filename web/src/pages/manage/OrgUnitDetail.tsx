@@ -359,7 +359,9 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
       size="small"
       title={t('ou.sectionTargets')}
       extra={
-        <Button size="small" loading={saving} onClick={save}>
+        // Save PUTs every grant this pane holds, and it holds {} until the GET lands — one click
+        // from revoking the OU's whole allow-list without having seen it.
+        <Button size="small" loading={saving} disabled={data == null} onClick={save}>
           {t('common.save')}
         </Button>
       }
@@ -379,6 +381,9 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
           size="small"
           rowKey="id"
           pagination={false}
+          // Otherwise antd's own "No data" placeholder says the portal has no workflows to grant,
+          // in the seconds before it has been asked.
+          loading={data == null}
           dataSource={data?.targets ?? []}
           columns={[
             {

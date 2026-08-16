@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Button, Input, Radio, Segmented, Space, Tag, Tooltip, Tree, Typography, theme } from 'antd'
+import { Button, Input, Radio, Segmented, Space, Spin, Tag, Tooltip, Tree, Typography, theme } from 'antd'
 import { LeftOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { UserGroupRow } from '../../api/types'
@@ -48,6 +48,7 @@ export default function OrgUnitPicker({
   onManage,
   mode = 'filter',
   onAdd,
+  loading = false,
 }: {
   groups: UserGroupRow[]
   /** Accounts with no primary group; they belong to the Default OU by inheritance. */
@@ -63,6 +64,9 @@ export default function OrgUnitPicker({
    */
   mode?: 'filter' | 'manage'
   onAdd?: () => void
+  /** The owner's groups request is still out. `groups` is [] because of that, not because this
+   *  portal has none — and "No groups yet" is a claim about the directory. */
+  loading?: boolean
 }) {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -224,7 +228,11 @@ export default function OrgUnitPicker({
       </Space>
 
       <div style={{ padding: '0 8px 8px', maxHeight: 420, overflow: 'auto' }}>
-        {nodes.length === 0 ? (
+        {loading && nodes.length === 0 ? (
+          <div style={{ padding: 16, textAlign: 'center' }}>
+            <Spin size="small" />
+          </div>
+        ) : nodes.length === 0 ? (
           <Typography.Text type="secondary" style={{ fontSize: 12, padding: 8, display: 'block' }}>
             {query ? t('ou.noMatch') : t('users.noGroups')}
           </Typography.Text>

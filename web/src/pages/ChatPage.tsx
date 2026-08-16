@@ -116,6 +116,7 @@ export default function ChatPage() {
   // user's threads is read-only (you can't send as them) and reads via the admin endpoints.
   const [viewUser, setViewUser] = useState('')
   const [chatUsers, setChatUsers] = useState<string[]>([])
+  const [chatUsersLoaded, setChatUsersLoaded] = useState(false)
   const viewingOther = !!viewUser && viewUser !== user
   const [convs, setConvs] = useState<ChatConversation[]>([])
   const [convsLoaded, setConvsLoaded] = useState(false) // [] is the initial state, not an answer
@@ -206,6 +207,7 @@ export default function ChatPage() {
       .get<{ conversations: { created_by: string }[] }>('/api/admin/chat/conversations')
       .then((r) => setChatUsers([...new Set((r.conversations || []).map((c) => c.created_by).filter(Boolean))]))
       .catch(() => {})
+      .finally(() => setChatUsersLoaded(true))
   }, [admin])
   useEffect(() => {
     setConvId(undefined)
@@ -732,6 +734,9 @@ export default function ChatPage() {
           showSearch
           optionFilterProp="label"
           style={{ width: '100%' }}
+          // Until the roster is in, "My chats" is the only entry — which reads as "nobody else
+          // has any", the opposite of why an admin opened this picker.
+          loading={!chatUsersLoaded}
           value={viewUser || user || ''}
           onChange={(v) => setViewUser(v === user ? '' : v)}
           options={[{ value: user || '', label: t('chat.myChats') }, ...chatUsers.filter((u) => u !== user).map((u) => ({ value: u, label: u }))]}

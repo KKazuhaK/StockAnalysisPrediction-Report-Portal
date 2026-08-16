@@ -262,6 +262,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   // starts, not because the queue is empty — and "Queue is empty" is a claim about the server.
   const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
+  const [targetsLoaded, setTargetsLoaded] = useState(false) // the workflow filter's option list
 
   const load = async () => {
     // Bounded poll: the server returns every active job + the most recent terminal jobs (not the whole
@@ -296,7 +297,11 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
     await summaryRequest
   }
   useEffect(() => {
-    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => setTargets(r.targets || [])).catch(() => {})
+    api
+      .get<{ targets: BatchTarget[] }>('/api/admin/batch/targets')
+      .then((r) => setTargets(r.targets || []))
+      .catch(() => {})
+      .finally(() => setTargetsLoaded(true))
     // While this view is mounted the header badge stands down: it would be asking, four times
     // slower, for what is on screen in full.
     return watchQueue()
@@ -578,7 +583,8 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
             ]}
           />
           <Select showSearch optionFilterProp="label" allowClear placeholder={t('batch.col.createdBy')} style={{ width: 140 }} value={fUser || undefined} onChange={(v) => setFUser(v || '')} options={submitters.map((u) => ({ value: u, label: u }))} />
-          <Select showSearch optionFilterProp="label" allowClear placeholder={t('run.workflow')} style={{ width: 200 }} value={fTarget} onChange={setFTarget} options={targets.map((tg) => ({ value: tg.id, label: tg.name }))} />
+          {/* loading, not an empty dropdown: "no workflows" is not something this filter knows. */}
+          <Select showSearch optionFilterProp="label" allowClear loading={!targetsLoaded} placeholder={t('run.workflow')} style={{ width: 200 }} value={fTarget} onChange={setFTarget} options={targets.map((tg) => ({ value: tg.id, label: tg.name }))} />
         </Space>
         {total > jobs.length && (
           <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>

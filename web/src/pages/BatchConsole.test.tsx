@@ -6,7 +6,7 @@ import BatchConsole from './BatchConsole'
 
 const apiMock = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 
-vi.mock('../api/client', () => ({ api: apiMock }))
+vi.mock('../api/client', () => ({ api: apiMock, errText: (e: unknown) => String((e as Error)?.message ?? e) }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
 vi.mock('../auth', () => ({ useAuth: () => ({ admin: true, email: '', mailEnabled: false }) }))
 vi.mock('../components/RunScheduleControls', () => ({ default: () => null }))
@@ -25,6 +25,22 @@ describe('BatchConsole', () => {
       if (url.includes('/batch/presets')) return Promise.resolve({ presets: [], default_mode: 'now', default_idle: false })
       return Promise.resolve({})
     })
+  })
+
+  // "No runnable targets yet. Ask an admin to configure a target" is advice about the server,
+  // and the console used to give it for the whole flight of the first request.
+  it('says it is loading instead of declaring there is nothing to run', async () => {
+    apiMock.get.mockImplementation((url: string) =>
+      url.includes('/batch/targets') ? new Promise(() => {}) : Promise.resolve({}),
+    )
+    render(
+      <App>
+        <BatchConsole />
+      </App>,
+    )
+    expect(await screen.findByText('common.loading')).toBeTruthy()
+    expect(screen.queryByText('batch.noTargets')).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
   })
 
   it('prefills the CSV header when a target is selected', async () => {

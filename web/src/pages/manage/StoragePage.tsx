@@ -108,6 +108,7 @@ export default function StoragePage() {
         setReportsFloor(r.reports_floor)
         setAuditFloor(r.audit_floor)
       })
+      .catch((e) => setLoadErr(errText(e, t)))
   }
   const loadUsage = () => api.get<CleanupUsage>('/api/admin/cleanup/usage').then(setUsage)
   const loadHistory = () => api.get<{ runs: CleanupRun[] }>('/api/admin/cleanup/history').then((r) => setHistory(r.runs ?? []))
