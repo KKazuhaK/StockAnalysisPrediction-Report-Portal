@@ -89,7 +89,16 @@ export default function HomePage() {
   // both fire on a tab switch, and had no in-flight guard: returning to the tab sent two
   // identical /api/home requests, and a slow answer could be overtaken by the next tick.
   useEffect(() => {
-    const refetch = () => api.get<HomeResp>(`/api/home${qs(params)}`).then(setData).catch(() => {})
+    // Clearing loadErr matters: the warning above the cards describes a request that has since
+    // been superseded, and left alone it would sit over a list that is once again current.
+    const refetch = () =>
+      api
+        .get<HomeResp>(`/api/home${qs(params)}`)
+        .then((r) => {
+          setData(r)
+          setLoadErr('')
+        })
+        .catch(() => {})
     return startVisiblePoll(refetch, 60000, { skipLeading: true })
   }, [params])
 

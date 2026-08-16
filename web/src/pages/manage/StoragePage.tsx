@@ -67,6 +67,10 @@ export default function StoragePage() {
   const [weekday, setWeekday] = useState(1)
   const [monthday, setMonthday] = useState(1)
   const [loading, setLoading] = useState(true)
+  // Separate from `loading`: the reloads that follow a save or a cleanup run must refresh the page
+  // in place. Replacing a page that has just saved successfully with a full-page load error —
+  // because the refresh behind it happened to fail — loses the form the admin is looking at.
+  const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
   const [auditEnabled, setAuditEnabled] = useState(false)
   const [auditDays, setAuditDays] = useState(365)
@@ -108,6 +112,7 @@ export default function StoragePage() {
         setReportsFloor(r.reports_floor)
         setAuditFloor(r.audit_floor)
       })
+      .then(() => setLoaded(true))
       .catch((e) => setLoadErr(errText(e, t)))
   }
   const loadUsage = () => api.get<CleanupUsage>('/api/admin/cleanup/usage').then(setUsage)
@@ -291,7 +296,7 @@ export default function StoragePage() {
   ]
 
   return (
-    <LoadGate loading={loading} error={loadErr} onRetry={load}>
+    <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card title={t('storage.usageTitle')}>
         <Space direction="vertical" size={14} style={{ width: '100%' }}>

@@ -9,7 +9,8 @@ import type { BatchJob } from '../api/types'
 // Mutable so a test can inject jobs into the mocked API. vi.hoisted keeps it reachable from
 // the hoisted vi.mock factory below. `hold` makes every polled GET hang, which is what a slow
 // link looks like for the seconds that matter: the page is up and nothing has answered yet.
-const store = vi.hoisted(() => ({ jobs: [] as BatchJob[], hold: false, fail: '' }))
+const store = vi.hoisted(() => ({ jobs: [] as BatchJob[], hold: false, fail: '', unchanged: false }))
+const forgetTags = vi.hoisted(() => vi.fn())
 
 // Smoke test: the queue page must mount without crashing (it renders on load, before any
 // interaction). Guards against a render-time bug being mistaken for a caching/blank-page
@@ -26,14 +27,18 @@ vi.mock('../api/client', () => ({
   },
   errText: (e: unknown) => String((e as Error)?.message ?? e),
 }))
-// The two polled endpoints go through the conditional-GET helper now (304 on an unchanged queue),
-// so that is what a test has to answer. It never returns UNCHANGED: this suite is about what the
-// table renders, not about revalidation, which conditionalGet.test.ts covers.
+// The two polled endpoints go through the conditional-GET helper (304 on an unchanged queue), so
+// that is what a test has to answer. `store.unchanged` turns every answer into UNCHANGED, because
+// what the table does with a 304 it has no data for is one of the things this suite pins; the
+// helper's own revalidation logic is conditionalGet.test.ts's.
+const UNCHANGED = vi.hoisted(() => Symbol('unchanged'))
 vi.mock('../lib/conditionalGet', () => ({
-  UNCHANGED: Symbol('unchanged'),
+  UNCHANGED,
+  forgetTags,
   getIfChanged: (url: string) => {
     if (store.hold) return new Promise(() => {})
     if (store.fail) return Promise.reject(new Error(store.fail))
+    if (store.unchanged) return Promise.resolve(UNCHANGED)
     return String(url).includes('/queue')
       ? Promise.resolve({ running: 0, waiting: 0, scheduled: 0, budget: 0 })
       : Promise.resolve({ jobs: store.jobs })
@@ -75,6 +80,8 @@ describe('QueueTable', () => {
     store.jobs = []
     store.hold = false
     store.fail = ''
+    store.unchanged = false
+    forgetTags.mockClear()
   })
 
   it('mounts and renders the queue card without crashing', async () => {
@@ -126,6 +133,26 @@ describe('QueueTable', () => {
     mount()
     expect(await screen.findByText('queue.empty')).toBeTruthy()
     expect(screen.queryByText('common.loading')).toBeNull()
+  })
+
+  // The ETag store is module-global and outlives any one mount, so a component that holds nothing
+  // can be told "nothing changed" — about data it has never had. Two guards, both pinned here.
+  it('asks unconditionally for what it is not holding', async () => {
+    mount()
+    await screen.findByText('queue.empty')
+    const asked = forgetTags.mock.calls.map((c) => String(c[0]))
+    expect(asked.some((u) => u.includes('/api/admin/batch/jobs'))).toBe(true)
+    expect(asked).toContain('/api/admin/batch/queue')
+  })
+
+  it('does not open the gate on a 304 for rows it never received', async () => {
+    store.unchanged = true
+    mount()
+    // The answer said "unchanged since the tag you sent" — and this mount sent nothing it holds.
+    // Declaring the queue empty off that is the original bug wearing a 304.
+    expect(await screen.findByText('common.loading')).toBeTruthy()
+    expect(screen.queryByText('queue.empty')).toBeNull()
+    expect(screen.queryAllByText('—').length).toBe(5)
   })
 
   // A first load that never lands must not fall through to the empty state either — with

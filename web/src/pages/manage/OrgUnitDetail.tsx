@@ -392,6 +392,9 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
           // Otherwise antd's own "No data" placeholder says the portal has no workflows to grant,
           // in the seconds before it has been asked.
           loading={data == null && !loadFailed}
+          // Otherwise the failure ends as antd's "No data" — the same false empty claim, just
+          // reached by a different route.
+          locale={loadFailed ? { emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('common.loadFailedContent')} /> } : undefined}
           dataSource={data?.targets ?? []}
           columns={[
             {

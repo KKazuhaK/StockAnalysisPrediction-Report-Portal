@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type Key } from 'react'
+import { useEffect, useMemo, useRef, useState, type Key } from 'react'
 import {
   App,
   Button,
@@ -50,7 +50,7 @@ import {
   statusTag,
   TOOLTIP_STYLES,
 } from '../lib/batchUi'
-import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
+import { UNCHANGED, forgetTags, getIfChanged } from '../lib/conditionalGet'
 import { watchQueue } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
 import LoadGate from './LoadGate'
@@ -263,6 +263,13 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
   const [targetsLoaded, setTargetsLoaded] = useState(false) // the workflow filter's option list
+  // Which answers this component is actually holding. A 304 means "unchanged since the tag YOU
+  // sent", and the tag store is module-global and outlives any one mount — so without these,
+  // arriving on /queue after the header badge has tagged the summary, or clearing the search box
+  // back to a URL tagged before the current rows, is answered "nothing changed" about data this
+  // component does not have. Refs, not state: `load` is captured by a poll started in an effect.
+  const heldJobsUrl = useRef('')
+  const heldSummary = useRef(false)
 
   const load = async () => {
     // Bounded poll: the server returns every active job + the most recent terminal jobs (not the whole
@@ -272,22 +279,32 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
     // whole.
     // Conditional: a queue in which nothing happened answers 304, and keeping the objects we
     // already have is what stops a 3-second poll from re-rendering the table for no reason.
-    const jobsRequest = getIfChanged<{ jobs: BatchJob[]; total?: number }>(
-      `/api/admin/batch/jobs?limit=300${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`,
-    ).then((r) => {
+    const jobsUrl = `/api/admin/batch/jobs?limit=300${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ''}`
+    // Drop the tag for anything we are not holding, so this request has to come back as an answer.
+    if (heldJobsUrl.current !== jobsUrl) forgetTags(jobsUrl)
+    if (!heldSummary.current) forgetTags('/api/admin/batch/queue')
+    const jobsRequest = getIfChanged<{ jobs: BatchJob[]; total?: number }>(jobsUrl).then((r) => {
       if (r === UNCHANGED) return
       setJobs(r.jobs || [])
       setTotal(r.total ?? (r.jobs || []).length)
+      heldJobsUrl.current = jobsUrl
     })
     const summaryRequest = getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
       .then((r) => {
-        if (r !== UNCHANGED) setSummary(r)
+        if (r === UNCHANGED) return
+        setSummary(r)
+        heldSummary.current = true
       })
       .catch(() => {})
     try {
       await jobsRequest
-      setLoaded(true)
-      setLoadErr('')
+      // Only once rows for THIS url have actually landed. The guard above means an UNCHANGED can
+      // no longer arrive for a url we are not holding, but the gate is what stands between the
+      // reader and "Queue is empty", so it does not take that on trust.
+      if (heldJobsUrl.current === jobsUrl) {
+        setLoaded(true)
+        setLoadErr('')
+      }
     } catch (e) {
       // Only the first load has anything to report. Once rows are on screen a failed poll is
       // not news — they are still the last thing the server said, and swapping them for an

@@ -238,8 +238,12 @@ export default function ChatPage() {
         setConvsLoaded(true)
       })
       // "No conversations yet" over a failed request tells someone their history is gone. Say
-      // what actually happened instead, with a way to ask again.
-      .catch((e) => setConvsErr(errText(e, t)))
+      // what actually happened instead, with a way to ask again — but only when there is nothing
+      // on screen to lose. A background refresh that fails after a sent message must leave the
+      // rail exactly as it is; the rows in it are still the last thing the server said.
+      .catch((e) => {
+        if (!quiet) setConvsErr(errText(e, t))
+      })
   }
   useEffect(() => {
     setConvId(undefined)

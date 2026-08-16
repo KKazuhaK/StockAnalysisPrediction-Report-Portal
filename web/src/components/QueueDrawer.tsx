@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { App, Button, Drawer, Empty, Popconfirm, Progress, Space, Tag, Typography } from 'antd'
 import { ArrowRightOutlined, ClockCircleOutlined, StopOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
 import type { BatchJob, BatchQueueSummary, BatchTarget } from '../api/types'
 import { InputsPreview, isTerminal, statusTag } from '../lib/batchUi'
-import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
+import { UNCHANGED, forgetTags, getIfChanged } from '../lib/conditionalGet'
 import { watchQueue } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
 import LoadGate from './LoadGate'
@@ -24,20 +24,33 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
   // an answer. Nothing is said about the queue until the jobs call has landed at least once.
   const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
+  // What this drawer is actually holding. The tag store is module-global, and the header badge
+  // polls the same summary URL — so on the first open a 304 would answer "unchanged" about a
+  // summary the drawer has never seen, leaving all four tiles on a dash for good.
+  const heldSummary = useRef(false)
+  const heldJobs = useRef(false)
 
   const load = async () => {
+    if (!heldSummary.current) forgetTags('/api/admin/batch/queue')
+    if (!heldJobs.current) forgetTags('/api/admin/batch/jobs')
     const summaryRequest = getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
       .then((r) => {
-        if (r !== UNCHANGED) setSummary(r)
+        if (r === UNCHANGED) return
+        setSummary(r)
+        heldSummary.current = true
       })
       .catch(() => {})
     const jobsRequest = getIfChanged<{ jobs: BatchJob[] }>('/api/admin/batch/jobs').then((r) => {
-      if (r !== UNCHANGED) setJobs(r.jobs || [])
+      if (r === UNCHANGED) return
+      setJobs(r.jobs || [])
+      heldJobs.current = true
     })
     try {
       await jobsRequest
-      setLoaded(true)
-      setLoadErr('')
+      if (heldJobs.current) {
+        setLoaded(true)
+        setLoadErr('')
+      }
     } catch (e) {
       // Read only while !loaded: a poll that fails once the list is on screen changes nothing,
       // since those runs are still the last thing the server said about the queue.

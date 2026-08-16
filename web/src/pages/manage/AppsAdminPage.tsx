@@ -3,7 +3,7 @@ import { App, Button, Card, Empty, Popconfirm, Space, Table, Tag, Typography, Up
 import type { ColumnsType } from 'antd/es/table'
 import { AppstoreOutlined, CloudDownloadOutlined, DeleteOutlined, ShopOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../api/client'
+import { api, errText } from '../../api/client'
 import type { AppMarketEntry, AppMarketResp, AppPreviewResp, AppsResp, AppSummary } from '../../api/types'
 import ScopePermissionModal from '../../components/ScopePermissionModal'
 
@@ -20,6 +20,7 @@ export default function AppsAdminPage() {
   const { message } = App.useApp()
   const [apps, setApps] = useState<AppSummary[]>([])
   const [loaded, setLoaded] = useState(false) // [] is the starting state, not "nothing is installed"
+  const [loadErr, setLoadErr] = useState('')
 
   const [uploading, setUploading] = useState(false)
   const [market, setMarket] = useState<AppMarketEntry[] | null>(null)
@@ -30,10 +31,14 @@ export default function AppsAdminPage() {
   const load = () =>
     api
       .get<AppsResp>('/api/apps')
-      .then((r) => setApps(r.apps || []))
-      .catch(() => {})
-      // In the finally, not the then: a swallowed rejection that never sets this leaves the table
-      // masked for ever, which is a worse answer than an empty one.
+      .then((r) => {
+        setApps(r.apps || [])
+        setLoadErr('')
+      })
+      .catch((e) => setLoadErr(errText(e, t)))
+      // In the finally, not the then: a flag that never settles leaves the table masked for ever,
+      // which is a worse answer than an empty one — but an empty one on its own would be a false
+      // claim, so the failure is named in the table's empty slot below.
       .finally(() => setLoaded(true))
   useEffect(() => {
     load()
@@ -206,7 +211,16 @@ export default function AppsAdminPage() {
       >
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('apps.adminHint')}</Typography.Text>
-          <Table rowKey="id" size="small" loading={!loaded} dataSource={apps} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />
+          <Table
+            rowKey="id"
+            size="small"
+            loading={!loaded}
+            locale={loadErr ? { emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={loadErr} /> } : undefined}
+            dataSource={apps}
+            columns={cols}
+            pagination={false}
+            scroll={{ x: 'max-content' }}
+          />
         </Space>
       </Card>
 
