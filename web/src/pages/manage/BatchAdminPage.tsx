@@ -18,6 +18,7 @@ export default function BatchAdminPage() {
 
   const [plugins, setPlugins] = useState<BatchPlugin[]>([])
   const [pluginsLoaded, setPluginsLoaded] = useState(false)
+  const [pluginsErr, setPluginsErr] = useState('')
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [targetsLoaded, setTargetsLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
@@ -47,9 +48,16 @@ export default function BatchAdminPage() {
   const loadPlugins = () =>
     api
       .get<{ plugins: BatchPlugin[] }>('/api/admin/batch/plugins')
-      .then((r) => setPlugins(r.plugins || []))
-      // Settled either way: load() swallows this rejection, so setting the flag only on success
-      // would pin the Advanced tab's spinner on any server whose plugins endpoint errors.
+      .then((r) => {
+        setPlugins(r.plugins || [])
+        setPluginsErr('')
+      })
+      .catch((e) => {
+        // Named, not swallowed: settling the flag alone would turn a failed request into
+        // "no custom plugins are installed", which is the claim this sweep exists to remove.
+        setPluginsErr(errText(e, t))
+        throw e
+      })
       .finally(() => setPluginsLoaded(true))
   const loadTargets = () =>
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => {
@@ -457,6 +465,8 @@ export default function BatchAdminPage() {
                 </div>
                 {!pluginsLoaded ? (
                   <Spin />
+                ) : pluginsErr ? (
+                  <Typography.Text type="danger">{pluginsErr}</Typography.Text>
                 ) : customPlugins.length === 0 ? (
                   <Typography.Text type="secondary">{t('batch.admin.advancedPluginsHint')}</Typography.Text>
                 ) : (
