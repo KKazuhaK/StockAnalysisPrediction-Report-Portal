@@ -59,6 +59,7 @@ export default function UsersPage() {
   const { message } = App.useApp()
   const [data, setData] = useState<UsersResp | null>(null)
   const [loading, setLoading] = useState(true)
+  const [settled, setSettled] = useState(false) // the first /api/admin/users call has come back, one way or another
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState<string>()
   // OU scoping (the tree picker). `ouScoped` is the all-vs-selected radio; `ouSelected` is what the
@@ -80,7 +81,15 @@ export default function UsersPage() {
         setData(d)
         setSelected((sel) => sel.filter((u) => d.users.some((x) => x.username === u)))
       })
-      .finally(() => setLoading(false))
+      // A failed load leaves `data` null for good, and the OU tree beside the table reads that as
+      // "still loading". Settling it here means the tree falls back to its empty text next to a
+      // table that is also visibly empty — one page in one state, rather than half of it spinning
+      // for ever on an answer that is not coming.
+      .catch(() => {})
+      .finally(() => {
+        setLoading(false)
+        setSettled(true)
+      })
   useEffect(() => {
     load()
   }, [])
@@ -470,7 +479,7 @@ export default function UsersPage() {
     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
       <OrgUnitPicker
         groups={groups}
-        loading={data == null}
+        loading={!settled}
         unassigned={(data?.users || []).filter((u) => !u.primary_group).length}
         scoped={ouScoped}
         onScopedChange={setOuScoped}
@@ -488,7 +497,7 @@ export default function UsersPage() {
       onChange={setTab}
       items={[
         { key: 'accounts', label: t('users.tabAccounts'), children: accounts },
-        { key: 'groups', label: t('users.tabGroups'), children: <GroupsPanel groups={groups} groupsLoading={data == null} onChanged={load} /> },
+        { key: 'groups', label: t('users.tabGroups'), children: <GroupsPanel groups={groups} groupsLoading={!settled} onChanged={load} /> },
       ]}
     />
   )

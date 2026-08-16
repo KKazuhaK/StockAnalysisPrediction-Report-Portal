@@ -47,10 +47,10 @@ export default function BatchAdminPage() {
   const loadPlugins = () =>
     api
       .get<{ plugins: BatchPlugin[] }>('/api/admin/batch/plugins')
-      .then((r) => {
-        setPlugins(r.plugins || [])
-        setPluginsLoaded(true)
-      })
+      .then((r) => setPlugins(r.plugins || []))
+      // Settled either way: load() swallows this rejection, so setting the flag only on success
+      // would pin the Advanced tab's spinner on any server whose plugins endpoint errors.
+      .finally(() => setPluginsLoaded(true))
   const loadTargets = () =>
     api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => {
       setTargets(r.targets || [])

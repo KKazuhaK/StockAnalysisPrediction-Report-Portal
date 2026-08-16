@@ -216,12 +216,20 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewUser])
 
-  const loadConvs = (tid?: number) => {
-    if (!tid) return
+  // `quiet` = a refresh of a list already on screen (after sending, renaming or deleting). Those
+  // must not blank the rail: the thread the user is reading is in it, and a spinner where their
+  // conversation was reads as if it had just been lost.
+  const loadConvs = (tid?: number, quiet = false) => {
+    if (!tid) {
+      // No assistant selected is an answer — an empty rail — not something to wait for.
+      setConvs([])
+      setConvsLoaded(true)
+      return
+    }
     const url = viewingOther
       ? `/api/admin/chat/conversations?user=${encodeURIComponent(viewUser)}&target_id=${tid}`
       : `/api/chat/conversations?target_id=${tid}`
-    setConvsLoaded(false)
+    if (!quiet) setConvsLoaded(false)
     setConvsErr('')
     api
       .get<{ conversations: ChatConversation[] }>(url)
@@ -473,7 +481,7 @@ export default function ChatPage() {
         // note if the turn was stopped before anything streamed.
         setMsgs((m) => [...m, { role: 'assistant', content: r.answer || (r.stopped ? '_' + t('chat.stopped') + '_' : '') }])
       }
-      loadConvs(targetId) // refresh titles + ordering
+      loadConvs(targetId, true) // refresh titles + ordering, without blanking the rail
     } catch (e) {
       // The assistant is at its concurrency ceiling — nothing was sent. Undo the optimistic
       // user bubble, restore what they typed, and ask them to retry (don't queue interactively).
