@@ -5,6 +5,11 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import AppLayout from './AppLayout'
 
 const updateState = vi.hoisted(() => ({ available: false }))
+// The header's queue badge polls through the conditional-GET helper; `queue` decides whether it has
+// a count yet. UNCHANGED is what a 304 looks like — an answer to a tag this mount never sent.
+const queueState = vi.hoisted(() => ({ answer: null as unknown }))
+const UNCHANGED = vi.hoisted(() => Symbol('unchanged'))
+const forgetTags = vi.hoisted(() => vi.fn())
 const siteState = vi.hoisted(() => ({
   settings: { footerText: '', footerShowInfo: false, footerShowVersion: false },
 }))
@@ -28,6 +33,11 @@ vi.mock('../api/client', () => ({
   api: { get: () => Promise.resolve({ version: 'v9.9.9', commit: 'abc1234', buildDate: '2026-08-10' }) },
 }))
 vi.mock('../lib/useVersionCheck', () => ({ useVersionCheck: () => updateState.available }))
+vi.mock('../lib/conditionalGet', () => ({
+  UNCHANGED,
+  forgetTags,
+  getIfChanged: () => (queueState.answer === null ? new Promise(() => {}) : Promise.resolve(queueState.answer)),
+}))
 vi.mock('./Omnibox', () => ({ default: () => <input aria-label="global-search" /> }))
 vi.mock('./RunAnalysisModal', () => ({ default: () => null }))
 vi.mock('./QueueDrawer', () => ({ default: () => null }))
@@ -45,6 +55,51 @@ function renderAt(path: string) {
     </MemoryRouter>,
   )
 }
+
+// An absent badge is how this header says "nothing is queued". It used to say that before anything
+// had been asked, and — on a summary request that keeps failing — for ever.
+describe('AppLayout queue badge', () => {
+  beforeEach(() => {
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: true } as ReturnType<typeof Grid.useBreakpoint>)
+    queueState.answer = null
+    forgetTags.mockClear()
+  })
+
+  // antd keeps a hidden badge in the DOM to animate it out, so "no badge" is data-show="false"
+  // rather than an absent node.
+  const shown = (c: HTMLElement, sel: string) => c.querySelector(`${sel}[data-show="true"]`)
+
+  it('shows a dot rather than no badge while the count is unknown', async () => {
+    const { container } = renderAt('/queue')
+    expect(await screen.findByText('queue-body')).toBeTruthy()
+    expect(shown(container, '.ant-badge-dot')).not.toBeNull()
+    expect(shown(container, '.ant-badge-count')).toBeNull()
+  })
+
+  it('drops the badge once the server has actually said the queue is empty', async () => {
+    queueState.answer = { running: 0, waiting: 0, scheduled: 0, budget: 3 }
+    const { container } = renderAt('/queue')
+    expect(await screen.findByText('queue-body')).toBeTruthy()
+    await vi.waitFor(() => expect(shown(container, '.ant-badge-dot')).toBeNull())
+    expect(shown(container, '.ant-badge-count')).toBeNull()
+  })
+
+  it('counts the runs once it has them', async () => {
+    queueState.answer = { running: 2, waiting: 1, scheduled: 0, budget: 3 }
+    const { container } = renderAt('/queue')
+    expect(await screen.findByText('queue-body')).toBeTruthy()
+    await vi.waitFor(() => expect(shown(container, '.ant-badge-count')?.textContent).toContain('3'))
+    expect(shown(container, '.ant-badge-dot')).toBeNull()
+  })
+
+  // Same module-global tag store as the queue table: the badge must not be told "unchanged" about
+  // a count it has never held.
+  it('drops the summary tag before its first ask', async () => {
+    queueState.answer = { running: 0, waiting: 0, scheduled: 0, budget: 3 }
+    renderAt('/queue')
+    await vi.waitFor(() => expect(forgetTags).toHaveBeenCalledWith('/api/admin/batch/queue'))
+  })
+})
 
 describe('AppLayout mobile chat focus mode', () => {
   beforeEach(() => {

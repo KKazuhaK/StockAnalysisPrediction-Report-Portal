@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
 import { AppstoreOutlined, AuditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
@@ -12,7 +12,7 @@ import { sanitizeFooterHtml } from '../lib/footerHtml'
 import { QUEUE_EVENT, RUN_ANALYSIS_EVENT } from '../lib/shortcuts'
 import { applySWUpdate, useSWUpdateReady } from '../lib/swUpdate'
 import { useVersionCheck } from '../lib/useVersionCheck'
-import { UNCHANGED, getIfChanged } from '../lib/conditionalGet'
+import { UNCHANGED, forgetTags, getIfChanged } from '../lib/conditionalGet'
 import { prefetch } from '../lib/prefetch'
 import { queueOnScreen } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
@@ -79,6 +79,10 @@ export default function AppLayout() {
   const [runTargetId, setRunTargetId] = useState<number | undefined>() // pinned workflow from an entry-button shortcut
   const [queueOpen, setQueueOpen] = useState(false)
   const [queue, setQueue] = useState<BatchQueueSummary | null>(null)
+  // Whether the badge is holding a summary at all. The ETag store is module-global, so if a queue
+  // view tagged this URL first, the badge's own first poll would be answered "nothing changed"
+  // about a count it has never had — and an absent badge is how this header says "nothing queued".
+  const heldQueue = useRef(false)
   const [showTop, setShowTop] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const canRun = can('run_batch')
@@ -152,9 +156,12 @@ export default function AppLayout() {
       // Nothing to add while a queue view is open: it polls the same endpoint four times as often
       // and shows the queue itself, so this would be a slower, staler copy of what is on screen.
       if (queueOnScreen()) return Promise.resolve()
+      if (!heldQueue.current) forgetTags('/api/admin/batch/queue')
       return getIfChanged<BatchQueueSummary>('/api/admin/batch/queue')
         .then((r) => {
-          if (r !== UNCHANGED) setQueue(r)
+          if (r === UNCHANGED) return
+          setQueue(r)
+          heldQueue.current = true
         })
         .catch(() => {})
     }
@@ -265,8 +272,25 @@ export default function AppLayout() {
           {canRun && !chatFocus && (
             // Queue glance with a live badge (everything not yet done: running + waiting
             // + scheduled). Icon-only on mobile.
-            <Badge count={(queue?.running ?? 0) + (queue?.waiting ?? 0) + (queue?.scheduled ?? 0)} size="small" overflowCount={99} offset={[-4, 3]}>
-              <Button icon={<UnorderedListOutlined />} onClick={() => setQueueOpen(true)} title={t('nav.queue')}>
+            //
+            // A count of 0 draws no badge, and so did a count nobody had asked for yet — which
+            // made "nothing is queued" and "the summary has not arrived" the same picture, and on
+            // a summary that never arrives it is the first of those, permanently. Until the count
+            // is real the badge is a muted dot: enough that the header is not claiming zero, quiet
+            // enough not to read as an alert.
+            <Badge
+              {...(queue
+                ? { count: queue.running + queue.waiting + queue.scheduled }
+                : { dot: true, color: token.colorTextQuaternary })}
+              size="small"
+              overflowCount={99}
+              offset={[-4, 3]}
+            >
+              <Button
+                icon={<UnorderedListOutlined />}
+                onClick={() => setQueueOpen(true)}
+                title={queue ? t('nav.queue') : `${t('nav.queue')} · ${t('common.loading')}`}
+              >
                 {!compact && t('nav.queue')}
               </Button>
             </Badge>
