@@ -10,6 +10,19 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.35](v0.4.35.md) | 2026-08-21 | A view waits before it tells you there is nothing |
+| [v0.4.34](v0.4.34.md) | 2026-08-14 | The run dialog opens on what you configured |
+| [v0.4.33](v0.4.33.md) | 2026-08-11 | A workflow that asks for a file can be given one |
+| [v0.4.32](v0.4.32.md) | 2026-08-11 | The panels stop pretending a phone is a desk |
+| [v0.4.31](v0.4.31.md) | 2026-08-10 | Measured, then changed |
+| [v0.4.30](v0.4.30.md) | 2026-08-10 | The audit log answers the questions it is asked |
+| [v0.4.29](v0.4.29.md) | 2026-08-10 | A slow link stops being told things that are not true |
+| [v0.4.28](v0.4.28.md) | 2026-08-10 | The footer sits on one line, not one and a bit |
+| [v0.4.27](v0.4.27.md) | 2026-08-10 | The text under an exported page is the text you typed |
+| [v0.4.26](v0.4.26.md) | 2026-08-10 | A button that stops repeating itself |
+| [v0.4.25](v0.4.25.md) | 2026-08-10 | Things that were painted on top of each other, or off the screen |
+| [v0.4.24](v0.4.24.md) | 2026-08-09 | A character that has no font stops the build, not the reader |
+| [v0.4.23](v0.4.23.md) | 2026-08-08 | Exported reports print in a font somebody chose |
 | [v0.4.22](v0.4.22.md) | 2026-08-05 | Confirm your identity the way you sign in |
 | [v0.4.21](v0.4.21.md) | 2026-08-04 | Pull a workflow's parameters back; the compare button works |
 | [v0.4.20](v0.4.20.md) | 2026-08-04 | The cleanup history records deletions, not days |
