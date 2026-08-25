@@ -397,6 +397,9 @@ func (s *Server) apiRunPresets(w http.ResponseWriter, r *http.Request, user stri
 	for k, v := range s.runFormDefaultsJSON("default_") {
 		resp[k] = v
 	}
+	// Not a default but a display choice: does the picker print a window's whole rule beside its
+	// name, or leave it to the info button (run_defaults.go).
+	resp["show_preset_rule"] = s.runShowPresetRule()
 	writeJSON(w, resp)
 }
 

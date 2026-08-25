@@ -183,6 +183,59 @@ default one, and a default the admin has hidden from 运行分析 simply does no
   定时 time. Preset resolution runs **before** the group-window governance gate so a preset that
   lands outside a group's allowed hours is rejected at submit, as today.
 
+#### Amendment (2026-08-24) — weekly windows are edited in rows, and the run form shows the name
+
+Three follow-ups on the same two surfaces, none of which touches the wire format, the
+`run_presets` table, or the resolver.
+
+**a. A weekly preset is edited as *rows*, not as one anchor pair per occurrence.** "Mon, Wed and
+Fri, 09:00–12:00" is one thing an admin configured, but it stores as three intervals, and the
+editor made them type all three: a start weekday, a start time, a stop weekday and a stop time,
+three times over. The form now works in rows — **a set of weekdays sharing one `HH:mm–HH:mm`
+range** — expanded to the stored one-interval-per-weekday form on save (`weeklyIntervals`) and
+grouped back on load (`parseWeeklyRows`, in `web/src/lib/runSchedule.ts`). Several rows still union,
+which is how a week with two different ranges is spelled.
+
+The expansion is **client-side on purpose**: giving the anchor a `weekdays[]` array instead would
+change the shape of every stored `intervals` blob and of every snapshot already riding on a job,
+and would need a matching branch in `nextInterval`. A row is *only* how the form spells a group of
+intervals that already resolve correctly, so the resolver, the overrun sweep, the snapshots and the
+Postgres/SQLite paths are all untouched.
+
+Two consequences worth naming:
+
+- **A row whose stop is at or before its start runs past midnight** and lands on the *following*
+  weekday (`Fri 22:00–02:00` → `{start: Fri 22:00, stop: Sat 02:00}`). Without that, a same-weekday
+  stop would resolve, per `nextInterval`'s wrap rule, to a **six-day** window — the one place the
+  weekly resolver's period wrap does not mean what a reader expects. Equal times are a full 24 hours.
+- **A window that spans whole days** (`Mon 09:00 → Wed 18:00`) has no row form. `parseWeeklyRows`
+  returns `null` for it and that preset keeps the per-edge anchor fields, rather than being silently
+  rewritten into something the rows can say. New presets only ever produce row-shaped windows.
+- Multi-day rows make the **ISO-week edge in `samePeriod`** (already noted at its definition) easier
+  to reach: any row set whose windows cross the Sunday/Monday line — a Sunday window, or a Saturday
+  row running past midnight — straddles the week boundary, so the overrun sweep sees two periods
+  rather than one. `on_overrun: next` behaves identically either way
+  — it rolls to the same next window — so only `cancel` differs, and only for that day pairing. Left
+  as-is; a period notion that follows the preset's own days rather than the ISO week is a bigger
+  change than the edge is worth.
+
+**b. The run form's picker shows the window's *name*.** A rule long enough to overrun the control
+("低峰价期间 · 每天 避开 09:00–12:00、14:00–18:00") does not belong in a control whose job is to say
+which window is chosen. The rule is still one glance away — under every option in the open
+drop-down, and in full (recurrence, every sub-window, the overrun policy) behind an info button
+beside the picker. New scalar setting **`run_show_preset_rule`** (bool, default **off**) puts the
+rule back inline for an admin who wants it; it lives with the run-form defaults
+(`internal/app/run_defaults.go`, Manage → 运行默认) but keeps its own key and its own wire name on
+each endpoint — `run_show_preset_rule` on `/api/admin/batch/config`, `show_preset_rule` on
+`/api/admin/batch/presets` — because it is not a default the user overrides in the form: it decides
+what the form *shows*.
+
+**c. Summaries read the way the windows were configured.** `presetSummary` names a weekly preset's
+days once per range ("周一/周三 09:00–12:00") instead of once per edge ("周一 09:00–周一 12:00"), and
+marks a window that runs past midnight ("22:00–次日 02:00") so it no longer reads as a window that
+ends before it starts. `presetWindows` exposes the same lines one-per-window for the rule popover.
+
+
 ## Alternatives rejected
 
 - **Base priority 0 for "idle"** — still ages/fair-shares up; not "only when idle" (ADR 0008).
@@ -195,6 +248,10 @@ default one, and a default the admin has hidden from 运行分析 simply does no
   correct and zero-blast-radius.
 - **Reusing/renaming the group `run_window` feature** — different role (mandatory group gate vs
   optional per-run target) and granularity (hours vs HH:mm × four freqs); kept separate.
+- **A `weekdays[]` array on the anchor** (2026-08-24) — the honest data model for "Mon, Wed and Fri
+  at the same hours", and rejected anyway: it rewrites every stored `intervals` blob and every
+  snapshot already on a job, and forks `nextInterval`, to buy nothing the client-side expansion
+  does not already give. The multi-day editor is a *spelling*, not a new rule.
 
 ## Consequences
 

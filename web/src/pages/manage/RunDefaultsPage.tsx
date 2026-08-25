@@ -29,6 +29,7 @@ export default function RunDefaultsPage() {
   const [idle, setIdle] = useState(false)
   const [retries, setRetries] = useState(0)
   const [notify, setNotify] = useState(false)
+  const [showRule, setShowRule] = useState(false) // print a window's whole rule in the run form
   const [targets, setTargets] = useState<BatchTarget[]>([])
   const [presets, setPresets] = useState<RunPreset[]>([])
   // Same rule as the other settings pages: until the server has answered, the numbers above are
@@ -53,6 +54,7 @@ export default function RunDefaultsPage() {
         setIdle(!!cfg.run_default_idle)
         setRetries(cfg.run_default_retries ?? 0)
         setNotify(!!cfg.run_default_notify)
+        setShowRule(!!cfg.run_show_preset_rule)
         setTargets(tg.targets || [])
         setPresets(ps.presets || [])
       })
@@ -72,6 +74,7 @@ export default function RunDefaultsPage() {
       run_default_idle: idle,
       run_default_retries: retries,
       run_default_notify: notify,
+      run_show_preset_rule: showRule,
     })
     message.success(t('common.saved'))
     load()
@@ -152,6 +155,11 @@ export default function RunDefaultsPage() {
               disabled={presets.length === 0}
               options={presetOptions}
             />,
+          )}
+          {row(
+            t('runDefaults.showRule'),
+            t('runDefaults.showRuleHint'),
+            <Switch checked={showRule} onChange={setShowRule} disabled={presets.length === 0} />,
           )}
           {row(t('runDefaults.idle'), t('runDefaults.idleHint'), <Switch checked={idle} onChange={setIdle} />)}
           {row(

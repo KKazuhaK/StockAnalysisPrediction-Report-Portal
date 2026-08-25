@@ -512,6 +512,9 @@ export interface BatchConfig {
   run_default_preset_id?: number // pre-picked preset window; 0 = none
   run_default_retries?: number // pre-filled failure retries (0..5)
   run_default_notify?: boolean // pre-tick "email me when done"
+  // Not a default but a display choice: does the run form print a preset window's whole rule next
+  // to its name, or leave it to the info button beside the picker. Off = just the name.
+  run_show_preset_rule?: boolean
 }
 
 // Preset low-peak scheduling window (docs/adr/0014-idle-lane-and-preset-windows.md). Which anchor
@@ -556,6 +559,7 @@ export interface RunPresetsResp {
   default_preset_id?: number // pre-picked preset window; 0 = none
   default_retries?: number // pre-filled failure retries
   default_notify?: boolean // pre-tick "email me when done"
+  show_preset_rule?: boolean // print a window's whole rule beside its name in the picker
 }
 
 // Urgent ticket balance for the batch run form (ADR 0005).
