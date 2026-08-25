@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.36](v0.4.36.md) | 2026-08-24 | A weekly window is a set of days, not one day at a time |
 | [v0.4.35](v0.4.35.md) | 2026-08-21 | A view waits before it tells you there is nothing |
 | [v0.4.34](v0.4.34.md) | 2026-08-14 | The run dialog opens on what you configured |
 | [v0.4.33](v0.4.33.md) | 2026-08-11 | A workflow that asks for a file can be given one |
