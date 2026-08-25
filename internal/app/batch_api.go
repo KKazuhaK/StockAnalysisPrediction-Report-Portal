@@ -108,6 +108,8 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 		"prio_w_fair":              pw.Fair,
 		"prio_age_hours":           s.prioAgeHours(),
 		"prio_fair_halflife_hours": s.prioFairHalflifeHours(),
+		// Whether the run form spells a preset window's rule out beside its name (run_defaults.go).
+		"run_show_preset_rule": s.runShowPresetRule(),
 	}
 	// The run-form defaults (which workflow / mode / preset window / idle / retries / notify the
 	// run dialog opens on) are their own settings page; they live in run_defaults.go so this
@@ -136,6 +138,8 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 		RunDefaultPresetID *int64  `json:"run_default_preset_id"` // pre-picked preset window; 0 = none
 		RunDefaultRetries  *int    `json:"run_default_retries"`   // pre-filled failure retries (0..5)
 		RunDefaultNotify   *bool   `json:"run_default_notify"`    // pre-tick "email me when done"
+		// Display, not a default: print a window's whole rule beside its name in the run form.
+		RunShowPresetRule *bool `json:"run_show_preset_rule"`
 		// Multifactor priority tuning; pointers so an omitted field is left unchanged
 		// (a weight of 0 is meaningful — it disables that factor). See ADR 0008.
 		PrioWBase             *float64 `json:"prio_w_base"`
@@ -194,6 +198,9 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	}
 	if in.RunDefaultRetries != nil {
 		s.setRunDefaultRetries(*in.RunDefaultRetries)
+	}
+	if in.RunShowPresetRule != nil {
+		s.setRunShowPresetRule(*in.RunShowPresetRule)
 	}
 	if in.RunDefaultNotify != nil {
 		s.setRunDefaultNotify(*in.RunDefaultNotify)

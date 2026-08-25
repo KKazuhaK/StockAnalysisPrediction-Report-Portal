@@ -1,9 +1,9 @@
 import { useEffect, type ReactNode } from 'react'
-import { Button, DatePicker, Grid, Radio, Select, Space, Tooltip } from 'antd'
-import { ThunderboltOutlined } from '@ant-design/icons'
+import { Button, DatePicker, Grid, Popover, Radio, Select, Space, Tooltip, Typography } from 'antd'
+import { InfoCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { BatchTickets, RunPreset } from '../api/types'
-import { presetSummary, type RunSchedule } from '../lib/runSchedule'
+import { presetSummary, presetWindows, type RunSchedule } from '../lib/runSchedule'
 
 // The shared run-time + priority control for both the single-run modal and the batch console
 // (docs/adr/0014-idle-lane-and-preset-windows.md): a mode toggle (立即 | 预设 | 定时), the matching
@@ -11,18 +11,25 @@ import { presetSummary, type RunSchedule } from '../lib/runSchedule'
 // preset mode button only appears when the admin has enabled at least one preset window, and the
 // two lanes are solid toggle buttons that match the mode toggle (idle only offered in immediate
 // mode). On a phone the picker drops to its own full-width row instead of crowding the buttons.
+//
+// The preset picker shows the window's *name*; a timetable long enough to overrun the control does
+// not belong in a control whose job is to say which window is chosen. The rule is still one glance
+// away — under every option in the open drop-down, and in full behind the info button beside it —
+// and an admin who wants it spelled out inline turns `showRule` on (Manage -> Run defaults).
 export default function RunScheduleControls({
   value,
   onChange,
   presets,
   tickets,
   disabled,
+  showRule,
 }: {
   value: RunSchedule
   onChange: (v: RunSchedule) => void
   presets: RunPreset[] // enabled presets for the dropdown
   tickets: BatchTickets | null
   disabled?: boolean
+  showRule?: boolean // admin setting: print the whole rule beside the window's name
 }) {
   const { t } = useTranslation()
   const mobile = !Grid.useBreakpoint().md
@@ -57,15 +64,44 @@ export default function RunScheduleControls({
       />
     )
   } else if (value.mode === 'preset' && hasPresets) {
+    const chosen = presets.find((p) => p.id === value.presetId)
     picker = (
-      <Select
-        style={{ minWidth: 240, width: mobile ? '100%' : undefined }}
-        placeholder={t('run.pickPreset')}
-        value={value.presetId}
-        disabled={disabled}
-        onChange={(id) => set({ presetId: id })}
-        options={presets.map((p) => ({ value: p.id, label: `${p.label} · ${presetSummary(p, t)}` }))}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, width: mobile ? '100%' : undefined }}>
+        <Select
+          style={{ minWidth: 240, flex: mobile ? 1 : undefined }}
+          placeholder={t('run.pickPreset')}
+          value={value.presetId}
+          disabled={disabled}
+          onChange={(id) => set({ presetId: id })}
+          // The name is what the closed control shows; the rule rides under it in the open list, so
+          // choosing a window never means choosing between names alone.
+          optionRender={(o) => (
+            <div>
+              <div>{(o.data as { preset: RunPreset }).preset.label || t('preset.untitled')}</div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {presetSummary((o.data as { preset: RunPreset }).preset, t)}
+              </Typography.Text>
+            </div>
+          )}
+          options={presets.map((p) => ({
+            value: p.id,
+            // The name now carries the option on its own, so an unnamed window has to fall back to
+            // the same placeholder the admin list uses rather than rendering as a blank row.
+            label: showRule ? `${p.label || t('preset.untitled')} · ${presetSummary(p, t)}` : p.label || t('preset.untitled'),
+            preset: p,
+          }))}
+        />
+        {chosen && (
+          <Popover
+            trigger="click"
+            title={chosen.label}
+            content={<PresetRule preset={chosen} />}
+            placement={mobile ? 'bottom' : 'bottomLeft'}
+          >
+            <Button type="text" icon={<InfoCircleOutlined />} aria-label={t('preset.viewRule')} />
+          </Popover>
+        )}
+      </div>
     )
   }
 
@@ -119,6 +155,35 @@ export default function RunScheduleControls({
             </Tooltip>
           )}
         </Space>
+      )}
+    </Space>
+  )
+}
+
+// PresetRule is the whole rule behind the picker's info button: the recurrence, every sub-window on
+// its own line, and the policy that decides what happens to a run the window closed on. An inverted
+// window lists the same times under "except", with the note that they are hours the run avoids.
+function PresetRule({ preset }: { preset: RunPreset }) {
+  const { t } = useTranslation()
+  return (
+    <Space direction="vertical" size={2} style={{ maxWidth: 300 }}>
+      <Typography.Text type="secondary">
+        {t('preset.freq')}: {t('run.freq.' + preset.freq)}
+      </Typography.Text>
+      <Typography.Text type="secondary">{preset.invert ? t('preset.summaryExcept') : t('preset.windows')}:</Typography.Text>
+      {presetWindows(preset, t).map((w, i) => (
+        <div key={i} style={{ paddingLeft: 8 }}>
+          {w}
+        </div>
+      ))}
+      {preset.invert ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {t('preset.invertHint')}
+        </Typography.Text>
+      ) : (
+        <Typography.Text type="secondary">
+          {t('preset.overrunLabel')}: {t('preset.overrun.' + preset.on_overrun)}
+        </Typography.Text>
       )}
     </Space>
   )

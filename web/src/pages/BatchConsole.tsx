@@ -214,7 +214,7 @@ export default function BatchConsole() {
               </Upload>
               <Typography.Text type="secondary">{t('batch.parsedRows', { n: rows.length })}</Typography.Text>
             </Space>
-            <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} />
+            <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} showRule={defaults.showPresetRule} />
             <Space wrap>
               {mailEnabled && email && (
                 <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>

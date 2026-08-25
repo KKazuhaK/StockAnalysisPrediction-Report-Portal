@@ -147,3 +147,23 @@ func (s *Server) setRunDefaultRetries(n int) {
 func (s *Server) setRunDefaultNotify(on bool) {
 	s.st.SetSetting("run_default_notify", strconv.Itoa(boolInt(on)))
 }
+
+// ---------- what the run form shows ----------
+
+// runShowPresetRule is whether the run forms print a preset window's whole rule next to its name
+// ("Off-peak - daily, except 09:00-12:00 and 14:00-18:00") or just the name, leaving the rule to
+// the info button beside the picker. Default off: the rule is long enough to overrun the control
+// it sits in, every option in the drop-down already carries it, and the closed picker only has to
+// say which window is chosen.
+//
+// This is not one of the defaults above — the user cannot override it in the form, it decides what
+// the form *shows* — so it keeps its own key and its own name on each endpoint
+// (`run_show_preset_rule` for the admin config, `show_preset_rule` for the run forms) rather than
+// joining the prefixed block. Both handlers read this one getter, so the two spellings agree.
+func (s *Server) runShowPresetRule() bool {
+	return s.st.GetSetting("run_show_preset_rule", "0") == "1"
+}
+
+func (s *Server) setRunShowPresetRule(on bool) {
+	s.st.SetSetting("run_show_preset_rule", strconv.Itoa(boolInt(on)))
+}

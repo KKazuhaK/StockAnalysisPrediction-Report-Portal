@@ -12,7 +12,7 @@ const preset: RunPreset = {
   id: 1,
   label: 'Off-peak',
   freq: 'daily',
-  intervals: [],
+  intervals: [{ start: { time: '09:00' }, stop: { time: '12:00' } }],
   on_overrun: 'next',
   enabled: true,
   invert: false,
@@ -20,7 +20,7 @@ const preset: RunPreset = {
 }
 
 function setup(
-  overrides: { value?: RunSchedule; presets?: RunPreset[]; tickets?: BatchTickets | null } = {},
+  overrides: { value?: RunSchedule; presets?: RunPreset[]; tickets?: BatchTickets | null; showRule?: boolean } = {},
 ) {
   const onChange = vi.fn()
   render(
@@ -29,10 +29,16 @@ function setup(
       onChange={onChange}
       presets={overrides.presets ?? []}
       tickets={overrides.tickets ?? { unlimited: true }}
+      showRule={overrides.showRule}
     />,
   )
   return { onChange }
 }
+
+// What the closed picker is showing — antd renders the chosen option there, and the whole point
+// of the compact label is that this is the window's name and not its timetable.
+const chosenLabel = () => document.querySelector('.ant-select-content')?.textContent ?? ''
+const presetMode: RunSchedule = { ...baseValue, mode: 'preset', presetId: 1 }
 
 describe('RunScheduleControls', () => {
   it('hides the preset mode button when no presets are configured', () => {
@@ -81,5 +87,30 @@ describe('RunScheduleControls', () => {
     setup({ tickets: { unlimited: false, remaining: 0, allocation: 5 } })
     const urgent = screen.getByRole('button', { name: /run\.urgent 0\/5/ }) as HTMLButtonElement
     expect(urgent.disabled).toBe(true)
+  })
+
+  it('names the chosen window in the picker without spelling out its rule', () => {
+    setup({ presets: [preset], value: presetMode })
+    expect(chosenLabel()).toBe('Off-peak')
+  })
+
+  it('spells the rule out beside the name when the admin asked it to', () => {
+    setup({ presets: [preset], value: presetMode, showRule: true })
+    expect(chosenLabel()).toContain('run.freq.daily')
+    expect(chosenLabel()).toContain('09:00–12:00')
+  })
+
+  it('puts the whole rule one click away', async () => {
+    const user = userEvent.setup()
+    setup({ presets: [preset], value: presetMode })
+    await user.click(screen.getByRole('button', { name: 'preset.viewRule' }))
+    const rule = await screen.findByText('09:00–12:00')
+    expect(rule).toBeTruthy()
+    expect(screen.getByText(/preset\.overrun\.next/)).toBeTruthy()
+  })
+
+  it('has nothing to explain until a window is chosen', () => {
+    setup({ presets: [preset], value: { ...baseValue, mode: 'preset' } })
+    expect(screen.queryByRole('button', { name: 'preset.viewRule' })).toBeNull()
   })
 })

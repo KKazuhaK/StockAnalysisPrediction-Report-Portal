@@ -138,3 +138,38 @@ func TestRunDefaultsKeepDisabledPreset(t *testing.T) {
 		t.Fatalf("disabled preset was dropped as the default: %d, want %d", got, presetID)
 	}
 }
+
+// Whether the run form prints a window's whole rule next to its name is an admin display choice,
+// not a default the user overrides — so it has its own key on both endpoints. Both spellings come
+// off the same getter, and an unconfigured portal reads "off": the picker says which window is
+// chosen and leaves the rule to the info button beside it.
+func TestRunShowPresetRuleRoundTrip(t *testing.T) {
+	srv := batchServer(t)
+
+	cfg := post(t, srv.apiBatchConfigGet, "{}")
+	if cfg["run_show_preset_rule"] != false {
+		t.Errorf("unconfigured show-rule = %v, want false", cfg["run_show_preset_rule"])
+	}
+	if ps := post(t, srv.apiRunPresets, "{}"); ps["show_preset_rule"] != false {
+		t.Errorf("unconfigured show-rule on the presets endpoint = %v, want false", ps["show_preset_rule"])
+	}
+
+	post(t, srv.apiBatchConfigSave, `{"run_show_preset_rule":true}`)
+	if cfg := post(t, srv.apiBatchConfigGet, "{}"); cfg["run_show_preset_rule"] != true {
+		t.Errorf("saved show-rule = %v, want true", cfg["run_show_preset_rule"])
+	}
+	if ps := post(t, srv.apiRunPresets, "{}"); ps["show_preset_rule"] != true {
+		t.Errorf("show-rule on the presets endpoint = %v, want true", ps["show_preset_rule"])
+	}
+
+	// An omitted field leaves the setting alone (the batch config save is partial); an explicit
+	// false clears it, the same shape as the rest of the block.
+	post(t, srv.apiBatchConfigSave, `{"max_jobs":4}`)
+	if cfg := post(t, srv.apiBatchConfigGet, "{}"); cfg["run_show_preset_rule"] != true {
+		t.Errorf("an unrelated save cleared show-rule: %v", cfg["run_show_preset_rule"])
+	}
+	post(t, srv.apiBatchConfigSave, `{"run_show_preset_rule":false}`)
+	if cfg := post(t, srv.apiBatchConfigGet, "{}"); cfg["run_show_preset_rule"] != false {
+		t.Errorf("show-rule did not turn back off: %v", cfg["run_show_preset_rule"])
+	}
+}

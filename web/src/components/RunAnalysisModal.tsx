@@ -380,7 +380,7 @@ export default function RunAnalysisModal({
           </Typography.Text>
         )}
 
-        <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} />
+        <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} showRule={defaults.showPresetRule} />
 
         <div>
           <span style={{ marginRight: 8 }}>{t('batch.maxRetries')}：</span>
