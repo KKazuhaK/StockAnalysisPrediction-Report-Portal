@@ -58,6 +58,7 @@ type Server struct {
 	chatSeq            int64                                                                      // monotonic in-flight chat-turn id
 	cleanupMu          sync.Mutex                                                                 // serializes a storage-cleanup pass so the scheduled ticker and a manual "clean now" never overlap (ADR 0017)
 	loginThr           *loginThrottle                                                             // per-IP + per-account failed-login rate limiter (brute-force + bcrypt DoS)
+	v1Rate             *rateLimiter                                                               // per-source request ceiling on the machine API (limits.go); off until configured
 	trustedNets        []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
 	mermaidCharts      mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
 	ssoInsecureForTest bool                                                                       // test-only: permit a plain-http loopback IdP (ADR 0023)
@@ -130,8 +131,12 @@ func RunServer(cfgPath string) {
 		bar := strings.Repeat("=", 52)
 		log.Printf("\n%s\n  first run: created admin account\n    username: admin\n    password: %s\n  log in and change the password in Users soon.\n%s", bar, pw, bar)
 	}
-	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute), loginThr: newLoginThrottle(),
+	s := &Server{cfg: cfg, st: st, appTok: newAppTokens(30 * time.Minute), loginThr: newLoginThrottle(), v1Rate: newRateLimiter(),
 		trustedNets: trustedNets, captchaSvc: captcha.New()}
+	// The failed-login ceiling and its window are settings (limits.go); handing the throttle the
+	// reader rather than the numbers is what makes a change on the settings page apply to the next
+	// attempt instead of at the next restart.
+	s.loginThr.limits = s.loginLimits
 	s.names = LoadNames(config.DirOf(cfg.DBPath), st)
 	s.geo = newGeoService(config.DirOf(cfg.DBPath))
 	s.geo.st = st
@@ -215,16 +220,20 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/symbols", s.apiSymbols) // stock list / autocomplete (omnibox)
 
 	// ---- Dify machine API v1: clean contract (JSON errors, portal-derived identity, envelopes) ----
-	mux.HandleFunc("POST /api/v1/reports", s.v1Ingest)
-	mux.HandleFunc("GET /api/v1/reports", s.v1QueryReports)
-	mux.HandleFunc("GET /api/v1/reports/manifest", s.v1Manifest) // more specific than {id}, matched first
-	mux.HandleFunc("GET /api/v1/reports/{id}", s.v1GetReport)
-	mux.HandleFunc("DELETE /api/v1/reports/{id}", s.v1DeleteReport)
-	mux.HandleFunc("GET /api/v1/runs", s.v1Runs)
-	mux.HandleFunc("GET /api/v1/symbols", s.v1Symbols)
-	mux.HandleFunc("GET /api/v1/tracking", s.v1Tracking)
-	mux.HandleFunc("PATCH /api/v1/tracking/{id}", s.v1TrackingUpdate)
-	mux.HandleFunc("GET /api/v1/now", s.v1Now) // authoritative clock: UTC instant + panel-tz civil date
+	// v1 registers a machine-API route behind the per-source request ceiling (limits.go). Every
+	// route goes through it, including the ones that are cheap to serve: a ceiling with a hole in
+	// it is a ceiling an abusive caller uses the hole in. It is off until an admin sets one.
+	v1 := func(pattern string, h http.HandlerFunc) { mux.HandleFunc(pattern, s.rateLimitV1(h)) }
+	v1("POST /api/v1/reports", s.v1Ingest)
+	v1("GET /api/v1/reports", s.v1QueryReports)
+	v1("GET /api/v1/reports/manifest", s.v1Manifest) // more specific than {id}, matched first
+	v1("GET /api/v1/reports/{id}", s.v1GetReport)
+	v1("DELETE /api/v1/reports/{id}", s.v1DeleteReport)
+	v1("GET /api/v1/runs", s.v1Runs)
+	v1("GET /api/v1/symbols", s.v1Symbols)
+	v1("GET /api/v1/tracking", s.v1Tracking)
+	v1("PATCH /api/v1/tracking/{id}", s.v1TrackingUpdate)
+	v1("GET /api/v1/now", s.v1Now) // authoritative clock: UTC instant + panel-tz civil date
 
 	// ---- Browser (React SPA) API: signed-cookie session auth ----
 	mux.HandleFunc("GET /api/me", s.apiMe)
@@ -603,20 +612,22 @@ func (s *Server) parseTemplates() {
 
 // ---------- Session / auth ----------
 
-// sessionTTL is how long a portal session lasts by default. An SSO provider may shorten it
-// (session_hours), which is why signing takes a duration at all.
-const sessionTTL = 7 * 24 * time.Hour
+// defaultSessionTTL is how long a portal session lasts on a portal that has not said otherwise.
+// The lifetime in force is s.sessionTTL() (limits.go), which reads the setting and falls back to
+// this; an SSO provider may shorten it further for its own users (session_hours), which is why
+// signing takes a duration at all.
+const defaultSessionTTL = 7 * 24 * time.Hour
 
 // setSessionCookie is the ONE place a portal session cookie is minted. Four call sites used to spell
 // the flags out by hand — password login, the 2FA second leg, the passkey second leg and SSO — and a
 // single one of them forgetting HttpOnly or Secure is a session-theft bug that no test would notice.
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, u User) {
-	s.setSessionCookieFor(w, r, u, sessionTTL)
+	s.setSessionCookieFor(w, r, u, s.sessionTTL())
 }
 
 func (s *Server) setSessionCookieFor(w http.ResponseWriter, r *http.Request, u User, ttl time.Duration) {
 	if ttl <= 0 {
-		ttl = sessionTTL
+		ttl = s.sessionTTL()
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: s.signUserFor(u, ttl), Path: "/",
@@ -631,7 +642,7 @@ func encodeSessionMessage(msg string) string {
 
 func (s *Server) signUserFor(u User, ttl time.Duration) string {
 	if ttl <= 0 {
-		ttl = sessionTTL
+		ttl = s.sessionTTL()
 	}
 	exp := time.Now().Add(ttl).Unix()
 	msg := fmt.Sprintf("v1|%s|%d|%d", u.Username, u.SessionRev, exp)

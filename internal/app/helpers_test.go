@@ -19,7 +19,7 @@ func (s *Server) sign(user string) string {
 
 // signUser mints a session cookie for a User value, including one no store holds — which is how the
 // owner-token tests forge a session that must be rejected.
-func (s *Server) signUser(u User) string { return s.signUserFor(u, sessionTTL) }
+func (s *Server) signUser(u User) string { return s.signUserFor(u, s.sessionTTL()) }
 
 // sessionValid reports whether a cookie would still be accepted. Production never asks this
 // directly; it resolves the user instead. The tests ask it to prove a cookie has been invalidated.

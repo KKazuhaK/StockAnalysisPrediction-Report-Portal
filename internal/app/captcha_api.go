@@ -201,6 +201,9 @@ func (s *Server) apiAdminSecurity(w http.ResponseWriter, r *http.Request, user s
 			"default_group":  s.st.GetSetting(setRegGroup, ""),
 			"expiry_days":    s.st.GetSetting(setRegExpiryDays, ""),
 		},
+		// Session lifetime and the two request ceilings (limits.go). Resolved rather than raw, so
+		// the form shows what the portal is doing even on one that has never saved them.
+		"limits": s.limitsJSON(),
 		// Registration with verification on cannot work without SMTP, and an admin who cannot see
 		// that will only learn it from a user who never got their email.
 		"email_configured": s.emailEnabled(),
@@ -233,9 +236,17 @@ func (s *Server) apiAdminSecuritySave(w http.ResponseWriter, r *http.Request, us
 			DefaultGroup  string `json:"default_group"`
 			ExpiryDays    string `json:"expiry_days"`
 		} `json:"registration"`
+		// A pointer for the same reason `login` is one: these are not toggles that mean "off" when
+		// absent. A session lifetime cleared by omission would sign the portal out.
+		Limits *limitsInput `json:"limits"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	// Validated and stored before anything else touches the store, and it answers 400 itself: a
+	// ceiling nobody meant must not land, and it must not land next to a captcha change that did.
+	if in.Limits != nil && !s.applyLimits(w, in.Limits) {
 		return
 	}
 	provider := strings.ToLower(strings.TrimSpace(in.Captcha.Provider))
