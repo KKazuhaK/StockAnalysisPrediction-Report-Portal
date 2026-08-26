@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Form, Input, Modal, Segmented, Select, Space, Typography, theme } from 'antd'
+import { Alert, Button, Card, Form, Input, Modal, Segmented, Select, Space, Typography, theme } from 'antd'
 import { LockOutlined, UserOutlined } from '@ant-design/icons'
 import { Navigate, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
@@ -31,7 +31,7 @@ function ssoReason(code: string, t: (k: string) => string): string {
 export default function LoginPage() {
   const { t } = useTranslation()
   const { title } = useSite()
-  const { user, loading, login, loginTOTP, loginPasskey } = useAuth()
+  const { user, loading, login, loginTOTP, loginPasskey, expired } = useAuth()
   const { mode, setMode, lang, setLang, langs } = usePrefs()
   const { token } = theme.useToken()
   const navigate = useNavigate()
@@ -239,6 +239,9 @@ export default function LoginPage() {
                   options={langs.map((l) => ({ value: l.code, label: l.label }))}
                 />
               </Space>
+              {/* Landing here because a session ran out is not the same as arriving at the login
+                  page, and being dropped without a word reads as the app losing its place. */}
+              {expired && <Alert type="info" showIcon message={t('login.expired')} />}
             </div>
 
             {totpToken ? (

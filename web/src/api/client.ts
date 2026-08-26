@@ -33,6 +33,27 @@ export function errText(e: unknown, t: (k: string, o?: Record<string, unknown>) 
   return t(fallbackKey)
 }
 
+// The session can end while the page is open — it simply runs out, an admin revokes it, or the
+// account is disabled — and every request after that is a 401. Left to each caller, that is a page
+// that renders nothing and says nothing: the app still believes somebody is signed in, so it stays
+// where it is with no data and no way back to the login form.
+//
+// So one place learns it instead. The gate every session-backed endpoint goes through answers with
+// the `session_expired` code (requireUserJSON), and only that code fires this — a wrong password at
+// the login form and a failed step-up are 401s too, and neither means the session is gone.
+let sessionLost: (() => void) | null = null
+
+export function onSessionLost(fn: (() => void) | null) {
+  sessionLost = fn
+}
+
+// SESSION_GONE is the server's word for it, not an inference from the status code.
+export const SESSION_GONE = 'session_expired'
+
+function noteSessionLost(status: number, code?: string) {
+  if (status === 401 && code === SESSION_GONE) sessionLost?.()
+}
+
 async function request<T>(method: string, url: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
   const headers: Record<string, string> = { ...(extraHeaders ?? {}) }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -54,6 +75,7 @@ async function request<T>(method: string, url: string, body?: unknown, extraHead
   if (!res.ok) {
     const msg = (data && typeof data === 'object' && data.error) || res.statusText || 'request failed'
     const code = data && typeof data === 'object' && typeof data.code === 'string' ? data.code : undefined
+    noteSessionLost(res.status, code)
     throw new ApiError(res.status, msg, code)
   }
   return data as T
@@ -73,6 +95,7 @@ async function requestForm<T>(method: string, url: string, body: FormData): Prom
   if (!res.ok) {
     const msg = (data && typeof data === 'object' && data.error) || res.statusText || 'request failed'
     const code = data && typeof data === 'object' && typeof data.code === 'string' ? data.code : undefined
+    noteSessionLost(res.status, code)
     throw new ApiError(res.status, msg, code)
   }
   return data as T
