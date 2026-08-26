@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, ApiError } from './api/client'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { api, ApiError, onSessionLost } from './api/client'
 import type { Me } from './api/types'
 import type { CaptchaValue } from './components/CaptchaField'
 import { getCredential } from './lib/webauthn'
@@ -14,6 +14,9 @@ interface AuthCtx {
   totpEnabled: boolean
   passkeyCount: number
   refresh: () => Promise<void> // re-read /api/me after a credential change
+  // The session ended while the page was open, rather than never having existed. The login form
+  // says so; without it, being thrown back to a blank login page reads as the app losing its place.
+  expired: boolean
   perms: Record<string, boolean>
   can: (perm: string) => boolean
   loading: boolean
@@ -33,6 +36,23 @@ const Ctx = createContext<AuthCtx | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [loading, setLoading] = useState(true)
+  const [expired, setExpired] = useState(false)
+  // Whether there was a session to lose, read inside a callback the client owns. "Expired" is a
+  // claim about the past: someone who never signed in gets the ordinary login form, not a notice
+  // about a session they never had.
+  const signedIn = useRef(false)
+  signedIn.current = me != null
+
+  // One subscriber for the whole app: any request that comes back "the session is gone" drops the
+  // user here, and the route gate takes it from there. Without this the app keeps its stale idea of
+  // who is signed in while every call underneath it fails — which is the blank page with no message.
+  useEffect(() => {
+    onSessionLost(() => {
+      if (signedIn.current) setExpired(true)
+      setMe(null)
+    })
+    return () => onSessionLost(null)
+  }, [])
 
   useEffect(() => {
     api
@@ -62,6 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!(e instanceof ApiError && e.status === 401)) console.error(e)
         }
       },
+      expired,
       perms: me?.perms ?? {},
       can: (perm: string) => (me?.admin ?? false) || !!me?.perms?.[perm],
       loading,
@@ -72,11 +93,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ...(captcha ?? {}),
         })
         if (res.totp_required && res.token) return { totpToken: res.token }
+        setExpired(false)
         setMe(res as Me)
         return {}
       },
       loginTOTP: async (token, code) => {
         const res = await api.post<Me>('/api/login/2fa', { token, code })
+        setExpired(false)
         setMe(res)
       },
       loginPasskey: async (token) => {
@@ -90,14 +113,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           `/api/login/passkey/finish?token=${encodeURIComponent(begin.token)}&pending=${encodeURIComponent(begin.pending)}`,
           assertion,
         )
+        setExpired(false)
         setMe(res)
       },
       logout: async () => {
         await api.post('/api/logout')
+        // Signing out is not expiring: the notice would be telling someone their session ended
+        // when what happened is that they ended it.
+        setExpired(false)
         setMe(null)
       },
     }),
-    [me, loading],
+    [me, loading, expired],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

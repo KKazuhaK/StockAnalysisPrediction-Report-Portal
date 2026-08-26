@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './auth'
 import { SiteProvider } from './site'
 import { lazyRetry } from './lib/lazyRetry'
 import AppLayout from './components/AppLayout'
+import ErrorBoundary from './components/ErrorBoundary'
 import LoginPage from './pages/LoginPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import RegisterPage from './pages/RegisterPage'
@@ -195,7 +196,12 @@ function Themed() {
     >
       <AntdApp style={{ height: '100%' }}>
         <AuthProvider>
-          <AppRoutes />
+          {/* Inside AntdApp so the fallback has the theme, and around the routes rather than around
+              one of them: a render error anywhere below used to unmount the app and leave a blank
+              page with nothing to act on. */}
+          <ErrorBoundary>
+            <AppRoutes />
+          </ErrorBoundary>
         </AuthProvider>
       </AntdApp>
     </ConfigProvider>

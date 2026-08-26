@@ -71,7 +71,11 @@ func (s *Server) requireUserJSON(h handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u := s.currentActiveUser(r)
 		if u == "" {
-			jsonError(w, http.StatusUnauthorized, "unauthorized")
+			// A CODE, not a bare 401. The SPA cannot tell "your session ran out" from "that
+			// password was wrong" by status alone, and it has to: one of them means abandon the
+			// page and go back to the login form, the other means stay put and say so. This is the
+			// gate every session-backed endpoint goes through, so it is the one that can say which.
+			jsonErrorCode(w, http.StatusUnauthorized, "session_expired", "登录已过期，请重新登录")
 			return
 		}
 		// Recorded HERE rather than in the handlers, so "last activity" means every authenticated
