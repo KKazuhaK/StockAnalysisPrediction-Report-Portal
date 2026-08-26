@@ -36,6 +36,16 @@ interface LoginCfg {
   sso_available: boolean
 }
 
+// The session lifetime and the two request ceilings (internal/app/limits.go). Every value the
+// server reports is the one in force, including on a portal that has never saved them, so the form
+// opens on what the portal is doing rather than on this file's idea of it.
+interface LimitsCfg {
+  session_ttl_hours: number
+  login_fail_max: number
+  login_fail_window_min: number
+  apiv1_rate_per_min: number
+}
+
 interface GroupRow {
   id: number
   name: string
@@ -48,6 +58,7 @@ export default function SecurityPage() {
   const [captcha, setCaptcha] = useState<CaptchaCfg | null>(null)
   const [reg, setReg] = useState<RegCfg | null>(null)
   const [login, setLogin] = useState<LoginCfg | null>(null)
+  const [limits, setLimits] = useState<LimitsCfg | null>(null)
   const [groups, setGroups] = useState<GroupRow[]>([])
   const [emailOK, setEmailOK] = useState(true)
   const [secret, setSecret] = useState<string | null>(null) // null = leave the stored one alone
@@ -61,6 +72,7 @@ export default function SecurityPage() {
         captcha: CaptchaCfg
         registration: RegCfg
         login: LoginCfg
+        limits: LimitsCfg
         groups: GroupRow[]
         email_configured: boolean
       }>('/api/admin/security')
@@ -68,6 +80,7 @@ export default function SecurityPage() {
         setCaptcha(r.captcha)
         setReg(r.registration)
         setLogin(r.login)
+        setLimits(r.limits)
         setGroups(r.groups ?? [])
         setEmailOK(r.email_configured)
         setSecret(null)
@@ -81,7 +94,7 @@ export default function SecurityPage() {
   useEffect(load, [load])
 
   const save = async () => {
-    if (!captcha || !reg || !login) return
+    if (!captcha || !reg || !login || !limits) return
     setBusy(true)
     try {
       await api.post('/api/admin/security', {
@@ -99,6 +112,7 @@ export default function SecurityPage() {
         },
         registration: reg,
         login: { mode: login.mode, sso_only: login.sso_only },
+        limits,
       })
       message.success(t('common.saved'))
       load()
@@ -111,7 +125,7 @@ export default function SecurityPage() {
 
   // Loading, not "nothing here": this used to render null, so a slow link showed a blank panel
   // with no explanation and a failed load looked identical to a page with no settings on it.
-  if (!captcha || !reg || !login) {
+  if (!captcha || !reg || !login || !limits) {
     return (
       <LoadGate loading={!loadErr} error={loadErr} onRetry={load}>
         {null}
@@ -252,6 +266,50 @@ export default function SecurityPage() {
               max={3650}
               value={Number(reg.expiry_days) || 0}
               onChange={(v) => setReg({ ...reg, expiry_days: v ? String(v) : '' })}
+            />
+          </Row>
+        </Space>
+      </Card>
+
+      {/* Three ceilings that were compiled in until now. They sit with the login policy because
+          that is what they are: how long being signed in lasts, and how hard someone may knock. */}
+      <Card title={t('security.limitsTitle')}>
+        <Typography.Paragraph type="secondary">{t('security.limitsDesc')}</Typography.Paragraph>
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Row label={t('security.sessionTTL')} hint={t('security.sessionTTLHint')}>
+            <InputNumber
+              min={1}
+              max={24 * 365}
+              value={limits.session_ttl_hours}
+              onChange={(v) => setLimits({ ...limits, session_ttl_hours: v || 1 })}
+              addonAfter={t('security.hours')}
+            />
+          </Row>
+          <Row label={t('security.loginFailMax')} hint={t('security.loginFailMaxHint')}>
+            <InputNumber
+              min={1}
+              max={1000}
+              value={limits.login_fail_max}
+              onChange={(v) => setLimits({ ...limits, login_fail_max: v || 1 })}
+              addonAfter={t('security.times')}
+            />
+          </Row>
+          <Row label={t('security.loginFailWindow')} hint={t('security.loginFailWindowHint')}>
+            <InputNumber
+              min={1}
+              max={24 * 60}
+              value={limits.login_fail_window_min}
+              onChange={(v) => setLimits({ ...limits, login_fail_window_min: v || 1 })}
+              addonAfter={t('security.minutes')}
+            />
+          </Row>
+          <Row label={t('security.apiRate')} hint={t('security.apiRateHint')}>
+            <InputNumber
+              min={0}
+              max={100000}
+              value={limits.apiv1_rate_per_min}
+              onChange={(v) => setLimits({ ...limits, apiv1_rate_per_min: v ?? 0 })}
+              addonAfter={t('security.perMin')}
             />
           </Row>
         </Space>

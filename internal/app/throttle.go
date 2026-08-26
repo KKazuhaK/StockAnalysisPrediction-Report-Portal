@@ -18,6 +18,19 @@ import (
 type loginThrottle struct {
 	mu   sync.Mutex
 	recs map[string]*failRec
+	// limits, when set, is where the ceiling and the window come from — the admin's setting rather
+	// than the constants below (limits.go). It is a function, not two numbers, so a change on the
+	// settings page applies to the next attempt instead of at the next restart. Left nil the
+	// constants stand, which is what the throttle did before it was configurable.
+	limits func() (int, time.Duration)
+}
+
+// ceiling resolves the failure ceiling and the window in force right now.
+func (l *loginThrottle) ceiling() (int, time.Duration) {
+	if l.limits != nil {
+		return l.limits()
+	}
+	return loginFailMax, loginFailWindow
 }
 
 type failRec struct {
@@ -25,9 +38,11 @@ type failRec struct {
 	resetAt time.Time
 }
 
+// The shipped ceiling, still the fallback whenever no setting is wired in (tests, and any
+// throttle constructed without a Server behind it).
 const (
-	loginFailWindow = 15 * time.Minute
-	loginFailMax    = 10
+	loginFailWindow = defLoginFailWindow
+	loginFailMax    = defLoginFailMax
 )
 
 func newLoginThrottle() *loginThrottle { return &loginThrottle{recs: map[string]*failRec{}} }
@@ -37,7 +52,8 @@ func (l *loginThrottle) blocked(key string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	r := l.recs[key]
-	return r != nil && now.Before(r.resetAt) && r.n >= loginFailMax
+	max, _ := l.ceiling()
+	return r != nil && now.Before(r.resetAt) && r.n >= max
 }
 
 // record counts one failed attempt against key, (re)starting the window if it had lapsed. It also
@@ -60,7 +76,8 @@ func (l *loginThrottle) record(key string, now time.Time) {
 	}
 	r := l.recs[key]
 	if r == nil || now.After(r.resetAt) {
-		l.recs[key] = &failRec{n: 1, resetAt: now.Add(loginFailWindow)}
+		_, window := l.ceiling()
+		l.recs[key] = &failRec{n: 1, resetAt: now.Add(window)}
 		return
 	}
 	r.n++

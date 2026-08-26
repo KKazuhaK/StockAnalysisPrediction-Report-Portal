@@ -202,7 +202,7 @@ func (s *Server) resolveSSOAccount(p SSOProvider, id ssoIdentity) (username stri
 // MaxAge is a browser-side hint that anyone actually holding the cookie value simply ignores, so a
 // limit expressed only there would be no limit at all against the threat it exists for.
 func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, u User, p SSOProvider) {
-	ttl := sessionTTL
+	ttl := s.sessionTTL()
 	if p.SessionHours > 0 {
 		ttl = time.Duration(p.SessionHours) * time.Hour
 	}
