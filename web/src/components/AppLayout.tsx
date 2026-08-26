@@ -10,7 +10,7 @@ import { useAuth } from '../auth'
 import { SiteLogo, useSite } from '../site'
 import { sanitizeFooterHtml } from '../lib/footerHtml'
 import { QUEUE_EVENT, RUN_ANALYSIS_EVENT } from '../lib/shortcuts'
-import { applySWUpdate, useSWUpdateReady } from '../lib/swUpdate'
+import { applyUpdate, useSWUpdateReady } from '../lib/swUpdate'
 import { useVersionCheck } from '../lib/useVersionCheck'
 import { UNCHANGED, forgetTags, getIfChanged } from '../lib/conditionalGet'
 import { prefetch } from '../lib/prefetch'
@@ -469,11 +469,11 @@ export default function AppLayout() {
             <Button
               type="primary"
               size="small"
-              // Hand over to the waiting build first where there is one; reloading before it takes
-              // control would just re-run the build we are trying to leave.
-              onClick={() => {
-                if (!applySWUpdate()) window.location.reload()
-              }}
+              // One click is the whole handover: find the build carrying the update — asking the
+              // registration if the browser has not looked yet — hand over to it, then reload. It
+              // used to reload with nothing waiting, which left the new HTML under the old worker
+              // and brought the banner straight back for a second round.
+              onClick={() => void applyUpdate()}
             >
               {t('update.refresh')}
             </Button>
