@@ -32,8 +32,13 @@ for (const [k, v] of Object.entries(cn)) {
   if (conv !== tw[k]) changed += 1
   out[k] = conv
 }
-// Never silently drop zh-TW-only keys (parity should prevent these, but be safe).
-for (const k of Object.keys(tw)) if (!(k in out)) out[k] = tw[k]
+// zh-CN is the source of truth in BOTH directions: a key deleted there is deleted here. This file
+// is generated in full and holds no hand-written Traditional text, so there is nothing to lose by
+// dropping a stale key — whereas keeping one leaves the locale-parity test failing with a message
+// that points at zh-TW instead of at the removal that caused it. Not silent, though: they are
+// listed, which is what the "never silently drop" rule was actually protecting.
+const dropped = Object.keys(tw).filter((k) => !(k in out))
 
 writeFileSync(twPath, JSON.stringify(out, null, 2) + '\n')
 console.log(`zh-TW: ${changed} key(s) ${all ? 'reconverted' : 'filled'} from zh-CN via OpenCC s2twp`)
+if (dropped.length) console.log(`zh-TW: dropped ${dropped.length} key(s) no longer in zh-CN: ${dropped.join(', ')}`)

@@ -188,15 +188,16 @@ func adminAnnouncementJSON(a Announcement) map[string]any {
 	}
 }
 
-// apiAdminAnnouncements lists every row for the management page, plus the panel timezone the
-// editor renders its time window in. One round trip: the page needs both to render at all.
+// apiAdminAnnouncements lists every row for the management page. Times go out as UTC instants and
+// the editor renders them in the operator's own clock, the way every other instant in this app is
+// shown (lib/datetime.ts) — the panel timezone governs scheduling, not display.
 func (s *Server) apiAdminAnnouncements(w http.ResponseWriter, r *http.Request, user string) {
 	list := s.st.AnnouncementsWithGrants()
 	items := make([]map[string]any, 0, len(list))
 	for _, a := range list {
 		items = append(items, adminAnnouncementJSON(a))
 	}
-	writeJSON(w, map[string]any{"items": items, "timezone": s.st.GetSetting("timezone", "")})
+	writeJSON(w, map[string]any{"items": items})
 }
 
 // announcementInput is the create/update body. Every optional field is a pointer for the usual

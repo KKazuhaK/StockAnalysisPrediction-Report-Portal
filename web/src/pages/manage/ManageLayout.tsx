@@ -40,7 +40,7 @@ const NARROW_QUERY = '(max-width: 767px)'
 // A hover must never be able to start work like that.
 const WARM_ON_HOVER: Record<string, string> = {
   site: '/api/admin/settings',
-  announcement: '/api/admin/settings',
+  announcement: '/api/admin/announcements',
   email: '/api/admin/email',
   links: '/api/admin/links',
   types: '/api/admin/types',

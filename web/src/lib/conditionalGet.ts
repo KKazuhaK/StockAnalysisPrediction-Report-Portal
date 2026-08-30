@@ -1,4 +1,4 @@
-import { ApiError } from '../api/client'
+import { ApiError, noteSessionLost } from '../api/client'
 
 // A GET that can come back "nothing changed".
 //
@@ -44,6 +44,12 @@ export async function getIfChanged<T>(url: string): Promise<T | typeof UNCHANGED
     // A failed response must not leave a tag behind: the next poll has to ask properly.
     tags.delete(url)
     const body = data as { error?: string; code?: string } | null
+    // Same reporting as api.get. This mattered little while the only thing polled through here was
+    // the admin queue, which a signed-out reader never reaches; the announcement feed runs on every
+    // page for everybody, so a session that ended has to be noticed here too — otherwise the caller
+    // swallows the 401 and the app keeps rendering a reader's announcements after their session
+    // is gone.
+    noteSessionLost(res.status, body?.code)
     throw new ApiError(res.status, body?.error || res.statusText || 'request failed', body?.code)
   }
   const tag = res.headers.get('ETag')
