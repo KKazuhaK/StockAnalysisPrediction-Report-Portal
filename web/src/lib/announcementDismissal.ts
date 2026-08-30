@@ -143,16 +143,26 @@ function saveMap(user: string, map: DismissMap, now: number) {
 }
 
 /**
- * migrateLegacy carries the single pre-upgrade dismissal over, once.
+ * migrateLegacyDismissal carries the single pre-upgrade dismissal over, once.
  *
  * The old key held a bare signature with no id beside it, so the only way to find out which
  * announcement it belonged to is to compare it against the ones on offer — which works, because
  * the imported row keeps the level, title and body the hash was taken over. Matched or not, the
- * old key is deleted: leaving it would make this run on every mount forever.
+ * old key is then deleted: leaving it would make this run on every mount forever.
+ *
+ * It MUST be called with the reader's whole feed, which is why it lives here and is driven from the
+ * provider rather than from loadDismissals. Three components read dismissals — the strip, the home
+ * band and the popup — and each sees only its own slice; whichever rendered first would consume the
+ * legacy key while comparing it against a handful of announcements it happens to draw, or against
+ * none at all, and every reader who had clicked "don't show again" would be interrupted on upgrade
+ * day. Exactly what this function exists to prevent.
+ *
+ * Callers pass a non-empty list: with nothing on offer there is nothing to match, and deleting the
+ * key then would throw the dismissal away before it could ever be claimed.
  */
-function migrateLegacy(user: string, items: Announcement[], now: number) {
+export function migrateLegacyDismissal(user: string, items: Announcement[], now = Date.now()) {
   const legacy = read(local(), LEGACY_KEY)
-  if (!legacy) return
+  if (!legacy || !items.length) return
   remove(local(), LEGACY_KEY)
   if (read(local(), mapKey(user))) return // already migrated, or the reader has newer dismissals
   const hit = items.find((a) => announcementSig(a) === legacy)
@@ -172,8 +182,7 @@ export interface DismissalState {
   seenThisSession: (a: Announcement) => boolean
 }
 
-export function loadDismissals(user: string, items: Announcement[], now = Date.now()): DismissalState {
-  migrateLegacy(user, items, now)
+export function loadDismissals(user: string, items: Announcement[]): DismissalState {
   const map = loadMap(user)
   const seen = new Set(readSeen(user))
   const matches = (key: string, a: Announcement) => map[key]?.sig === announcementSig(a)

@@ -1,16 +1,26 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { Alert, Button, Space, Modal, Typography } from 'antd'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Alert, Button, Space, Modal, Typography, theme } from 'antd'
 import type { AlertProps } from 'antd'
+import {
+  CheckCircleFilled,
+  CloseCircleFilled,
+  CloseOutlined,
+  DownOutlined,
+  ExclamationCircleFilled,
+  InfoCircleFilled,
+  UpOutlined,
+} from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useLocation } from 'react-router'
 import { useAuth } from '../auth'
-import { inScope, useAnnouncements } from '../announcements'
+import { bandItems, inScope, stripItems, useAnnouncements } from '../announcements'
 import {
   announcementSig,
   dismissBanner,
   dismissPopup,
   loadDismissals,
   markSeen,
+  type DismissalState,
 } from '../lib/announcementDismissal'
 import type { Announcement, AnnouncementLevel } from '../api/types'
 
@@ -25,21 +35,28 @@ export function announcementAlertType(level?: string): AlertProps['type'] {
   return ALERT_TYPES[level as AnnouncementLevel] || 'info'
 }
 
-// How many banners stack before the rest fold behind a counter. A phone has room for fewer, and
-// an unbounded stack is worse than a truncated one: five warnings above the fold teaches the
-// reader to scroll past the band entirely, which is the failure this whole feature exists to avoid.
+const LEVEL_ICON: Record<AnnouncementLevel, typeof InfoCircleFilled> = {
+  notice: InfoCircleFilled,
+  success: CheckCircleFilled,
+  warning: ExclamationCircleFilled,
+  error: CloseCircleFilled,
+}
+
+// antd token names per level, for the strip. The alert stack gets these from antd itself.
+const LEVEL_TOKENS: Record<AnnouncementLevel, { bg: string; fg: string }> = {
+  notice: { bg: 'colorInfoBg', fg: 'colorInfo' },
+  success: { bg: 'colorSuccessBg', fg: 'colorSuccess' },
+  warning: { bg: 'colorWarningBg', fg: 'colorWarning' },
+  error: { bg: 'colorErrorBg', fg: 'colorError' },
+}
+
+// How many banners stack before the rest fold behind a counter. A phone has room for fewer, and an
+// unbounded stack is worse than a truncated one: five warnings above the fold teaches the reader to
+// scroll past the band entirely, which is the failure this whole feature exists to avoid.
 const MAX_STACKED = 3
 const MAX_STACKED_COMPACT = 2
 
-export function AnnouncementBody({ content }: { content: string }) {
-  return (
-    <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line', lineHeight: 1.5 }}>
-      {content}
-    </Typography.Text>
-  )
-}
-
-/** One announcement rendered as the banner the reader sees. Shared with the admin preview. */
+/** One announcement rendered as the roomy banner. Shared with the admin preview. */
 export function AnnouncementAlert({
   announcement,
   onClose,
@@ -52,7 +69,11 @@ export function AnnouncementAlert({
   const title = announcement.title.trim()
   const content = announcement.content.trim()
   const message = title ? <Typography.Text style={{ fontWeight: 700 }}>{title}</Typography.Text> : undefined
-  const description = content ? <AnnouncementBody content={content} /> : undefined
+  const description = content ? (
+    <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line', lineHeight: 1.5 }}>
+      {content}
+    </Typography.Text>
+  ) : undefined
   return (
     <Alert
       className="rp-announcement"
@@ -67,43 +88,197 @@ export function AnnouncementAlert({
   )
 }
 
+// Shared plumbing: the reader's dismissal state for whatever set of announcements is on offer, and
+// the local record of what they have closed in this render. Both surfaces need exactly this, and
+// they render disjoint sets, so each gets its own instance rather than a shared one.
+function useReaderState(items: Announcement[]) {
+  const { user } = useAuth()
+  const [closed, setClosed] = useState<Record<number, boolean>>({})
+  // The payload's identity: what is on offer AND what each one says. It is what the memo below
+  // depends on, so a navigation alone never rebuilds this.
+  const identity = items.map((a) => `${a.id}:${announcementSig(a)}`).join(',')
+  const dismissals = useMemo<DismissalState>(
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- identity IS the dependency on `items`
+    () => loadDismissals(user || '', items),
+    [user, identity],
+  )
+  const open = items.filter((a) => !closed[a.id] && !dismissals.bannerDismissed(a))
+  const close = (a: Announcement) => {
+    dismissBanner(user || '', a)
+    setClosed((prev) => ({ ...prev, [a.id]: true }))
+  }
+  return { open, close, dismissals, identity, user: user || '' }
+}
+
 /**
- * The reader-facing announcement band: every announcement addressed to this reader that belongs on
- * this route, plus at most one popup.
- *
- * Popups: one per page load, the first eligible in the operator's order. Advancing to the next one
- * after it is closed would contradict the hint the admin page shows and would make the reader
- * dismiss two modals in one interaction, so the admin list labels the popup switches that will not
- * fire instead — an ignored toggle should be visible where it is set, not discovered later.
+ * The home page's announcement band: home-scoped announcements, stacked, in the operator's order.
  */
 export default function SiteAnnouncement({ style, compact = false }: { style?: CSSProperties; compact?: boolean }) {
   const { t } = useTranslation()
   const loc = useLocation()
-  const { user } = useAuth()
   const { items } = useAnnouncements()
   const [expanded, setExpanded] = useState(false)
-  const [closed, setClosed] = useState<Record<number, boolean>>({})
-  const [popup, setPopup] = useState<Announcement | null>(null)
-  // Keyed by id AND signature, not id alone: if the operator fixes a typo while a tab is open,
-  // the corrected announcement is a different thing to have offered, and this tab should offer it.
-  const fired = useRef(new Set<string>())
+  const mine = useMemo(() => bandItems(items, loc.pathname), [items, loc.pathname])
+  const { open, close } = useReaderState(mine)
 
-  const visible = useMemo(() => inScope(items, loc.pathname), [items, loc.pathname])
-  // The payload's identity, so the effects below re-run when what is on offer actually changes —
-  // and NOT on every navigation. The previous version depended on the router's location key, so a
-  // popup re-fired every time the reader came back to the page it was scoped to.
-  const identity = visible.map((a) => `${a.id}:${announcementSig(a)}`).join(',')
+  if (!open.length) return null
+  const limit = compact ? MAX_STACKED_COMPACT : MAX_STACKED
+  const shown = expanded ? open : open.slice(0, limit)
+  const hidden = open.length - shown.length
 
-  const dismissals = useMemo(
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- identity IS the dependency on `visible`
-    () => loadDismissals(user || '', visible),
-    [user, identity],
+  return (
+    <Space direction="vertical" size={8} style={{ width: '100%', ...style }}>
+      {shown.map((a) => (
+        <AnnouncementAlert key={a.id} announcement={a} onClose={() => close(a)} />
+      ))}
+      {hidden > 0 && (
+        <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setExpanded(true)}>
+          {t('announcement.showMore', { count: hidden })}
+        </Button>
+      )}
+    </Space>
   )
+}
+
+/**
+ * The site-wide announcement strip: app-scoped announcements, on every page.
+ *
+ * Collapsed to one line by design. This band follows the reader everywhere, so it is chrome and has
+ * to cost what chrome costs — three stacked alerts would be ~150px of every screen in the portal,
+ * against ~36px here. Clicking it expands the full list in place rather than opening a popover
+ * (360px of floating panel is unusable on a 375px phone) or a drawer (a scrim over the whole app to
+ * read two sentences).
+ */
+export function AnnouncementStrip({ compact = false, maxWidth }: { compact?: boolean; maxWidth?: number | string }) {
+  const { t } = useTranslation()
+  const { token } = theme.useToken()
+  const { items } = useAnnouncements()
+  const [expanded, setExpanded] = useState(false)
+  const mine = useMemo(() => stripItems(items), [items])
+  const { open, close } = useReaderState(mine)
+
+  if (!open.length) return null
+  const lead = open[0]
+  const rest = open.length - 1
+  const Icon = LEVEL_ICON[lead.level]
+  const tokens = LEVEL_TOKENS[lead.level]
+  const palette = token as unknown as Record<string, string>
+  const line = (a: Announcement): ReactNode => a.title || a.content.split('\n')[0]
+
+  return (
+    <div className="rp-announce-strip" style={{ background: palette[tokens.bg] }}>
+      <div
+        style={{
+          maxWidth,
+          margin: '0 auto',
+          padding: compact ? '8px 12px' : '8px 20px',
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 10,
+        }}
+      >
+        <Icon style={{ color: palette[tokens.fg], fontSize: 15, flexShrink: 0, marginTop: 4 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {open.length > 1 || lead.content ? (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((v) => !v)}
+              style={{
+                background: 'none',
+                border: 0,
+                padding: 0,
+                cursor: 'pointer',
+                color: token.colorText,
+                font: 'inherit',
+                fontSize: 14,
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                maxWidth: '100%',
+              }}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line(lead)}</span>
+              {rest > 0 && (
+                <span
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 12,
+                    padding: '0 6px',
+                    borderRadius: 10,
+                    background: token.colorFillSecondary,
+                    color: token.colorTextSecondary,
+                  }}
+                >
+                  +{rest}
+                </span>
+              )}
+              {expanded ? <UpOutlined style={{ fontSize: 10 }} /> : <DownOutlined style={{ fontSize: 10 }} />}
+            </button>
+          ) : (
+            <span style={{ color: token.colorText, fontSize: 14 }}>{line(lead)}</span>
+          )}
+
+          {expanded && (
+            <Space direction="vertical" size={6} style={{ width: '100%', marginTop: 8 }}>
+              {open.map((a) => (
+                <div key={a.id}>
+                  {a.title && (
+                    <Typography.Text style={{ fontWeight: 600, display: 'block' }}>{a.title}</Typography.Text>
+                  )}
+                  {a.content && (
+                    <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line', lineHeight: 1.5 }}>
+                      {a.content}
+                    </Typography.Text>
+                  )}
+                </div>
+              ))}
+            </Space>
+          )}
+        </div>
+        {lead.dismissible && (
+          <Button
+            type="text"
+            size="small"
+            aria-label={t('announcement.close')}
+            icon={<CloseOutlined />}
+            onClick={() => close(lead)}
+            style={{ flexShrink: 0 }}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The one announcement popup.
+ *
+ * At most one per page load, the first eligible in the operator's order, over every announcement in
+ * scope regardless of which surface draws its banner. Advancing to the next after it closes would
+ * make a reader dismiss two modals in one interaction and would contradict what the admin page
+ * says, so the admin list labels the popup switches that will not fire instead — an ignored setting
+ * should be visible where it is set, not discovered later.
+ */
+export function AnnouncementPopup() {
+  const { t } = useTranslation()
+  const loc = useLocation()
+  const { items } = useAnnouncements()
+  const [popup, setPopup] = useState<Announcement | null>(null)
+  const visible = useMemo(() => inScope(items, loc.pathname), [items, loc.pathname])
+  const { dismissals, identity, user } = useReaderState(visible)
+  // Keyed by id AND signature, not id alone: if the operator fixes a typo while a tab is open, the
+  // corrected announcement is a different thing to have offered, and this tab should offer it.
+  const fired = useRef(new Set<string>())
 
   useEffect(() => {
     const next = visible.find(
-      (a) => a.popup && !fired.current.has(`${a.id}:${announcementSig(a)}`) &&
-        !dismissals.popupDismissed(a) && !dismissals.seenThisSession(a),
+      (a) =>
+        a.popup &&
+        !fired.current.has(`${a.id}:${announcementSig(a)}`) &&
+        !dismissals.popupDismissed(a) &&
+        !dismissals.seenThisSession(a),
     )
     if (!next) return
     fired.current.add(`${next.id}:${announcementSig(next)}`)
@@ -111,68 +286,38 @@ export default function SiteAnnouncement({ style, compact = false }: { style?: C
     // eslint-disable-next-line react-hooks/exhaustive-deps -- identity IS the dependency on `visible`
   }, [identity, dismissals])
 
-  const banners = visible.filter((a) => !closed[a.id] && !dismissals.bannerDismissed(a))
-  const limit = compact ? MAX_STACKED_COMPACT : MAX_STACKED
-  const shown = expanded ? banners : banners.slice(0, limit)
-  const hidden = banners.length - shown.length
-
-  const closeBanner = (a: Announcement) => {
-    dismissBanner(user || '', a)
-    setClosed((prev) => ({ ...prev, [a.id]: true }))
-  }
-
-  // "Got it" stops the popup for this session; "don't show again" stops it for good. Both stop
-  // only the POPUP, and only this one: the banner stays, so the notice is still readable and only
-  // the interruption ends.
+  // "Got it" stops the popup for this session; "don't show again" stops it for good. Both stop only
+  // the POPUP, and only this one: the banner stays, so the notice is still readable and only the
+  // interruption ends.
   const closePopup = (forGood: boolean) => {
     if (popup) {
-      if (forGood) dismissPopup(user || '', popup)
-      else markSeen(user || '', popup)
+      if (forGood) dismissPopup(user, popup)
+      else markSeen(user, popup)
     }
     setPopup(null)
   }
 
-  if (!banners.length && !popup) return null
-
   return (
-    <>
-      {shown.length > 0 && (
-        <Space direction="vertical" size={8} style={{ width: '100%', ...style }}>
-          {shown.map((a) => (
-            <AnnouncementAlert key={a.id} announcement={a} onClose={() => closeBanner(a)} />
-          ))}
-          {hidden > 0 && (
-            <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setExpanded(true)}>
-              {t('announcement.showMore', { count: hidden })}
-            </Button>
-          )}
+    <Modal
+      rootClassName="rp-announce-popup"
+      open={!!popup}
+      title={
+        <Typography.Text style={{ fontWeight: 700 }}>{popup?.title || t('announcement.popupTitle')}</Typography.Text>
+      }
+      onCancel={() => closePopup(false)}
+      footer={
+        <Space style={{ width: '100%', justifyContent: 'flex-end' }} wrap>
+          <Button onClick={() => closePopup(true)}>{t('announcement.dontShowAgain')}</Button>
+          <Button type="primary" onClick={() => closePopup(false)}>
+            {t('announcement.gotIt')}
+          </Button>
         </Space>
+      }
+      destroyOnHidden
+    >
+      {popup?.content && (
+        <Typography.Paragraph style={{ whiteSpace: 'pre-line', marginBottom: 0 }}>{popup.content}</Typography.Paragraph>
       )}
-      <Modal
-        rootClassName="rp-announce-popup"
-        open={!!popup}
-        title={
-          <Typography.Text style={{ fontWeight: 700 }}>
-            {popup?.title || t('announcement.popupTitle')}
-          </Typography.Text>
-        }
-        onCancel={() => closePopup(false)}
-        footer={
-          <Space style={{ width: '100%', justifyContent: 'flex-end' }} wrap>
-            <Button onClick={() => closePopup(true)}>{t('announcement.dontShowAgain')}</Button>
-            <Button type="primary" onClick={() => closePopup(false)}>
-              {t('announcement.gotIt')}
-            </Button>
-          </Space>
-        }
-        destroyOnHidden
-      >
-        {popup?.content && (
-          <Typography.Paragraph style={{ whiteSpace: 'pre-line', marginBottom: 0 }}>
-            {popup.content}
-          </Typography.Paragraph>
-        )}
-      </Modal>
-    </>
+    </Modal>
   )
 }

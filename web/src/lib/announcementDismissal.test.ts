@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { announcementSig, dismissPopup, loadDismissals } from './announcementDismissal'
+import { announcementSig, dismissPopup, loadDismissals, migrateLegacyDismissal } from './announcementDismissal'
 import type { Announcement } from '../api/types'
 
 const MAP_KEY = 'report-portal.announce.dismissed.v1.alice'
+const LEGACY_KEY = 'report-portal.site-announcement.popup.dismissed'
 const DAY = 86400000
 
 function announcement(over: Partial<Announcement> = {}): Announcement {
@@ -78,6 +79,30 @@ describe('dismissal storage', () => {
     dismissPopup('alice', announcement({ id: 2 }))
     const stored = JSON.parse(window.localStorage.getItem(MAP_KEY) as string)
     expect(Object.keys(stored)).toEqual(['2'])
+  })
+
+  // The three reader surfaces each see only the announcements they draw, so a migration run from
+  // one of them could compare the legacy hash against a partial list — or, before the first fetch
+  // lands, against nothing — and delete it unmatched. Refusing an empty list is what makes the
+  // provider the only sensible caller.
+  it('refuses to consume the pre-upgrade key when there is nothing to match it against', () => {
+    const a = announcement()
+    window.localStorage.setItem(LEGACY_KEY, announcementSig(a))
+
+    migrateLegacyDismissal('alice', [])
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBe(announcementSig(a))
+
+    migrateLegacyDismissal('alice', [a])
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull()
+    expect(loadDismissals('alice', [a]).popupDismissed(a)).toBe(true)
+  })
+
+  it('drops the pre-upgrade key when it matches nothing, so it cannot run forever', () => {
+    window.localStorage.setItem(LEGACY_KEY, 'a-hash-of-something-since-deleted')
+    const a = announcement()
+    migrateLegacyDismissal('alice', [a])
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull()
+    expect(loadDismissals('alice', [a]).popupDismissed(a)).toBe(false)
   })
 
   it('survives a corrupt or hostile stored value instead of throwing in the app shell', () => {

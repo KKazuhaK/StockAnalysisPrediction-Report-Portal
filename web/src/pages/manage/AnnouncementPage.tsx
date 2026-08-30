@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   Popconfirm,
+  Segmented,
   Select,
   Space,
   Switch,
@@ -21,7 +22,7 @@ import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
 import { forgetTags } from '../../lib/conditionalGet'
-import type { AdminAnnouncement, AnnouncementLevel } from '../../api/types'
+import type { AdminAnnouncement, AnnouncementLevel, AnnouncementScope } from '../../api/types'
 import { AnnouncementAlert } from '../../components/SiteAnnouncement'
 import { DragHandle, SortableItem, SortableWrapper } from './dnd'
 import LoadGate from '../../components/LoadGate'
@@ -47,6 +48,7 @@ interface FormValues {
   popup: boolean
   dismissible: boolean
   level: AnnouncementLevel
+  scope: AnnouncementScope
   title: string
   content: string
   window?: [dayjs.Dayjs | null, dayjs.Dayjs | null] | null
@@ -120,6 +122,7 @@ export default function AnnouncementPage() {
       popup: a ? a.popup : false,
       dismissible: a ? a.dismissible : false,
       level: a?.level || 'notice',
+      scope: a?.scope || 'home',
       title: a?.title || '',
       content: a?.content || '',
       window: a && (a.startsAt || a.endsAt) ? [a.startsAt ? dayjs(a.startsAt) : null, a.endsAt ? dayjs(a.endsAt) : null] : null,
@@ -135,6 +138,7 @@ export default function AnnouncementPage() {
       popup: v.popup === true,
       dismissible: v.dismissible === true,
       level: v.level || 'notice',
+      scope: v.scope || 'home',
       title: v.title || '',
       content: v.content || '',
       startsAt: from ? from.toISOString() : '',
@@ -227,6 +231,7 @@ export default function AnnouncementPage() {
           {preview}
         </Typography.Text>
         <Tag color={status.color}>{t(`announcementAdmin.status.${status.key}`)}</Tag>
+        {a.scope === 'app' && <Tag color="geekblue">{t('announcementAdmin.scope.app')}</Tag>}
         {a.popup && a.enabled && a.id !== firstPopupId && (
           <Tooltip title={t('announcementAdmin.popupSkippedHint')}>
             <Tag>{t('announcementAdmin.popupSkipped')}</Tag>
@@ -351,6 +356,14 @@ export default function AnnouncementPage() {
                   </Space>
                 ),
               }))}
+            />
+          </Form.Item>
+          <Form.Item name="scope" label={t('announcementAdmin.scope')} extra={t('announcementAdmin.scopeHint')}>
+            <Segmented
+              options={[
+                { value: 'home', label: t('announcementAdmin.scope.home') },
+                { value: 'app', label: t('announcementAdmin.scope.app') },
+              ]}
             />
           </Form.Item>
           <Form.Item

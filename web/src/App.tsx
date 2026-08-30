@@ -66,7 +66,11 @@ function Protected({ children }: { children: React.ReactNode }) {
   // needs the session: SiteProvider is mounted above AuthProvider so /login can paint the brand.
   // key={user} so signing in as somebody else on a shared machine builds a fresh provider instead
   // of inheriting the previous account's items.
-  return <AnnouncementsProvider key={user}>{children}</AnnouncementsProvider>
+  return (
+    <AnnouncementsProvider key={user} user={user}>
+      {children}
+    </AnnouncementsProvider>
+  )
 }
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
