@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import SiteAnnouncement, { announcementAlertType } from './SiteAnnouncement'
-import { announcementSig } from '../lib/announcementDismissal'
+import SiteAnnouncement, { AnnouncementPopup, AnnouncementStrip, announcementAlertType } from './SiteAnnouncement'
+import { announcementSig, migrateLegacyDismissal } from '../lib/announcementDismissal'
 import type { Announcement } from '../api/types'
 
 const feed = vi.hoisted(() => ({ items: [] as Announcement[], user: 'alice' as string | null }))
@@ -38,10 +38,14 @@ function announcement(over: Partial<Announcement> = {}): Announcement {
   }
 }
 
+// The three surfaces AppLayout mounts together: the app-scoped strip on every page, the home-page
+// alert stack, and the single popup over both.
 function renderAt(path = '/') {
   return render(
     <MemoryRouter initialEntries={[path]}>
+      <AnnouncementStrip />
       <SiteAnnouncement />
+      <AnnouncementPopup />
     </MemoryRouter>,
   )
 }
@@ -95,14 +99,44 @@ describe('SiteAnnouncement', () => {
       announcement({ id: 1, title: '首页公告', scope: 'home' }),
       announcement({ id: 2, title: '全站公告', scope: 'app' }),
     ]
-    renderAt('/')
+    const { container } = renderAt('/')
     expect(await screen.findByText('首页公告')).toBeTruthy()
     expect(screen.getByText('全站公告')).toBeTruthy()
+    // Each is drawn once, by the surface that owns its scope — not twice on the home page.
+    expect(container.querySelectorAll('.rp-announcement')).toHaveLength(1)
+    expect(container.querySelector('.rp-announce-strip')).not.toBeNull()
 
     cleanup()
     renderAt('/queue')
     expect(await screen.findByText('全站公告')).toBeTruthy()
     expect(screen.queryByText('首页公告')).toBeNull()
+  })
+
+  // A band on every page is chrome, so it costs what chrome costs: one line, expanded on demand.
+  it('collapses the site-wide strip to one line and expands it in place', async () => {
+    feed.items = [
+      announcement({ id: 1, title: '第一条', content: '正文一', scope: 'app' }),
+      announcement({ id: 2, title: '第二条', content: '正文二', scope: 'app' }),
+    ]
+    const user = userEvent.setup()
+    renderAt('/queue')
+
+    expect(await screen.findByText('第一条')).toBeTruthy()
+    expect(screen.getByText('+1')).toBeTruthy()
+    expect(screen.queryByText('正文二')).toBeNull()
+
+    await user.click(screen.getByRole('button', { expanded: false }))
+    expect(await screen.findByText('正文二')).toBeTruthy()
+  })
+
+  it('closes a dismissible site-wide strip', async () => {
+    feed.items = [announcement({ id: 1, title: '可关闭', scope: 'app', dismissible: true })]
+    const user = userEvent.setup()
+    const { container } = renderAt('/queue')
+    await screen.findByText('可关闭')
+
+    await user.click(screen.getByRole('button', { name: 'announcement.close' }))
+    await waitFor(() => expect(container.querySelector('.rp-announce-strip')).toBeNull())
   })
 
   // One modal per page load. Advancing to the next would make the reader dismiss two in one
@@ -194,14 +228,17 @@ describe('SiteAnnouncement', () => {
 
   // The old key held a bare hash with no id beside it. The imported row keeps the level, title and
   // body it was taken over, so matching it back is exact — which is why the signature is computed
-  // in the browser rather than on the server.
+  // in the browser rather than on the server. It runs from the provider, over the WHOLE feed: the
+  // three surfaces below each see only their own slice, and one of them consuming the key against a
+  // partial list is how every reader gets re-interrupted on upgrade day.
   it('carries the pre-upgrade dismissal across, once', async () => {
     const a = announcement({ id: 7, popup: true })
     window.localStorage.setItem(LEGACY_KEY, announcementSig(a))
     feed.items = [a]
+    migrateLegacyDismissal('alice', feed.items)
 
     renderAt('/')
-    await screen.findByText('维护通知')
+    await screen.findAllByText('维护通知')
     await waitFor(() => expect(screen.queryByText('announcement.dontShowAgain')).toBeNull())
     expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull()
   })

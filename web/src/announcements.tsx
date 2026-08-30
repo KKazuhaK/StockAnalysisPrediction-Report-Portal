@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError } from './api/client'
 import { UNCHANGED, forgetTags, getIfChanged } from './lib/conditionalGet'
+import { migrateLegacyDismissal } from './lib/announcementDismissal'
 import { startVisiblePoll } from './lib/visiblePoll'
 import type { Announcement, AnnouncementLevel, AnnouncementScope } from './api/types'
 
@@ -64,7 +65,7 @@ function unexpired(items: Announcement[], now: number): Announcement[] {
   })
 }
 
-export function AnnouncementsProvider({ children }: { children: ReactNode }) {
+export function AnnouncementsProvider({ user = '', children }: { user?: string; children: ReactNode }) {
   const [items, setItems] = useState<Announcement[]>([])
   const [tick, setTick] = useState(0)
   const held = useRef(false)
@@ -97,6 +98,18 @@ export function AnnouncementsProvider({ children }: { children: ReactNode }) {
     return startVisiblePoll(() => load(), 60000, { skipLeading: true })
   }, [load])
 
+  // Carry the pre-upgrade "don't show again" across, once, as soon as there is a feed to match it
+  // against. It has to happen HERE, where the whole list is: the three components that read
+  // dismissals each see only the slice they draw, so doing it there would let whichever rendered
+  // first consume the legacy key against a partial list — or an empty one — and re-interrupt every
+  // reader who had already dismissed the announcement.
+  const migrated = useRef(false)
+  useEffect(() => {
+    if (migrated.current || !items.length) return
+    migrated.current = true
+    migrateLegacyDismissal(user, items)
+  }, [user, items])
+
   // Re-evaluate the display window on the same cadence as the poll, so a banner with an end time
   // retires itself even in a tab that has stopped asking the server anything. Only when something
   // actually has an end time: this provider wraps the whole signed-in app, so an unconditional
@@ -120,8 +133,25 @@ export function useAnnouncements(): AnnouncementsCtx {
   return useContext(Ctx)
 }
 
-/** Which announcements belong on the route currently rendered. */
+/**
+ * Every announcement that belongs on the route currently rendered, whatever its scope. This is the
+ * set the popup queue draws from; the two functions below split it by where it is DRAWN.
+ */
 export function inScope(items: Announcement[], pathname: string): Announcement[] {
   const onHome = pathname === '/'
   return items.filter((a) => (a.scope === 'app' ? true : onHome))
+}
+
+/** Home-scoped announcements, which get the roomy alert stack — on the home page and nowhere else. */
+export function bandItems(items: Announcement[], pathname: string): Announcement[] {
+  return pathname === '/' ? items.filter((a) => a.scope === 'home') : []
+}
+
+/**
+ * App-scoped announcements, which follow the reader onto every page and therefore get the compact
+ * strip instead. The two sets are disjoint by construction, so nothing renders twice on the home
+ * page.
+ */
+export function stripItems(items: Announcement[]): Announcement[] {
+  return items.filter((a) => a.scope === 'app')
 }

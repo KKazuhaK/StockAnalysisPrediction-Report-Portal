@@ -19,7 +19,7 @@ import { startVisiblePoll } from '../lib/visiblePoll'
 import Omnibox from './Omnibox'
 import RunAnalysisModal from './RunAnalysisModal'
 import QueueDrawer from './QueueDrawer'
-import SiteAnnouncement from './SiteAnnouncement'
+import SiteAnnouncement, { AnnouncementPopup, AnnouncementStrip } from './SiteAnnouncement'
 import type { BatchQueueSummary } from '../api/types'
 import { AutoIcon, MoonIcon, SunIcon } from './icons'
 
@@ -481,6 +481,14 @@ export default function AppLayout() {
         </div>
       )}
 
+      {/* Site-wide announcements: a full-width tinted strip under the header, collapsed to one line,
+          the way the update banner is. This one follows the reader onto every page, so it is chrome
+          and has to cost what chrome costs — the roomy alert stack below is for the home page.
+          Deliberately in normal flow rather than sticky: sticky at the header offset would collide
+          with the update banner and cover the console rail, and a normal-flow element is what the
+          chat page's 100dvh + overflow:hidden layout can absorb while keeping one scrollbar. */}
+      {!chatFocus && !onManage && <AnnouncementStrip compact={compact} maxWidth={onChat ? 'none' : contentMaxWidth} />}
+
       {/* Back-navigation breadcrumb band, aligned to the content column (full-bleed on chat). */}
       {showCrumbs && (
         <div style={{ maxWidth: onChat ? 'none' : contentMaxWidth, width: '100%', margin: '0 auto', padding: compact ? '10px 12px 0' : '14px 20px 0' }}>
@@ -488,19 +496,25 @@ export default function AppLayout() {
         </div>
       )}
 
-      {/* Announcements, in their own fixed-width band (not inside the Content, whose max-width
-          flexes with reader "wide" mode). WHICH announcements is the row's own business — a
-          home-scoped one appears on / and an app-scoped one on every page — but two surfaces
-          suppress the band whatever the row says, because both are deliberately stripped layouts:
-          mobile chat hides the header entirely to give the thread and composer the viewport, and
-          the admin console is full-bleed with a rail positioned off the header height, so a band
-          above it adds a scrollbar with nothing to scroll and pushes the rail's footer off-screen.
-          The console comment above has said it suppresses this banner since before anything
-          actually did; now it does. */}
+      {/* The home page's announcement band, in its own fixed-width column (not inside the Content,
+          whose max-width flexes with reader "wide" mode). It draws only home-scoped announcements;
+          the strip above draws the app-scoped ones, so the two sets are disjoint and nothing
+          appears twice here.
+
+          Both surfaces, and the popup, are suppressed on mobile chat and on the admin console
+          whatever an announcement says, because both are deliberately stripped layouts: chat hides
+          the header entirely to give the thread and composer the viewport, and the console is
+          full-bleed with a rail positioned off the header height, so a band above it adds a
+          scrollbar with nothing to scroll and pushes the rail's footer off-screen. The console
+          comment near the top of this file has claimed it suppresses this banner since before
+          anything actually did; now it does. */}
       {!chatFocus && !onManage && (
-        <div style={{ maxWidth: 1240, width: '100%', margin: '0 auto', padding: '0 20px' }}>
-          <SiteAnnouncement style={{ marginTop: 24, marginBottom: 0 }} compact={compact} />
-        </div>
+        <>
+          <div style={{ maxWidth: 1240, width: '100%', margin: '0 auto', padding: '0 20px' }}>
+            <SiteAnnouncement style={{ marginTop: 24, marginBottom: 0 }} compact={compact} />
+          </div>
+          <AnnouncementPopup />
+        </>
       )}
 
       <Content

@@ -171,18 +171,39 @@ switches below the first are decorative for that load, so the management list la
 an ignored setting should be visible where it is set, not discovered by an operator wondering why
 nothing appeared.
 
-### Scope is two values, with three exclusions
+### Scope is two values, drawn on two surfaces, with two exclusions
 
 `home` (the home page, today's behaviour, and the fallback for anything unrecognized) and `app`
 (every page behind the login). There is deliberately no path-prefix third value: it would bypass
 the exclusions below — a `/chat`-scoped row would render on the mobile chat page whose header is
 `display:none` precisely because that surface is stripped to the thread and composer.
 
-The band is suppressed on **mobile chat** (`chatFocus`) and on **the admin console**
-(`/manage/*`) whatever a row says. The console is full-bleed with a rail positioned off the header
-height, so a band above it adds a scrollbar with nothing to scroll and pushes the rail's footer
-off-screen. `AppLayout` has carried a comment saying the console suppresses this banner since
+**The two scopes are drawn differently, and that is the point of having two.** A home-scoped
+announcement gets the roomy alert stack it has always had, on the page a reader visits deliberately.
+An app-scoped one follows the reader everywhere, so it is *chrome* and has to cost what chrome
+costs: a one-line tinted strip under the header — level icon, the leading announcement's title, a
+`+N` chip, an optional close — that expands in place. Three stacked alerts would be ~150px of every
+screen in the portal against ~36px for the strip, and a band that expensive is one readers learn to
+scroll past. Expansion is in place rather than a popover (360px of floating panel is unusable on a
+375px phone) or a drawer (a scrim over the whole app to read two sentences).
+
+The two sets are disjoint by construction — the strip draws `scope='app'`, the band draws
+`scope='home'` and only on `/` — so nothing appears twice on the home page. The popup queue runs
+over the union of both, in one component mounted once, so only one modal can ever exist.
+
+Both surfaces and the popup are suppressed on **mobile chat** (`chatFocus`) and on **the admin
+console** (`/manage/*`) whatever a row says. The console is full-bleed with a rail positioned off
+the header height, so a band above it adds a scrollbar with nothing to scroll and pushes the rail's
+footer off-screen. `AppLayout` has carried a comment saying the console suppresses this banner since
 before anything actually did; now it does.
+
+Splitting the reader into three components made one thing load-bearing that was not before: the
+one-time migration of the pre-upgrade dismissal **must run over the whole feed**, from the provider,
+not from whichever surface happens to read dismissals first. Each surface sees only the slice it
+draws; the legacy key holds a bare hash with no id beside it and is deleted once read, so a surface
+consuming it against a partial list — or against nothing, before the first fetch lands — would
+throw the dismissal away unmatched and re-interrupt every reader on upgrade day. It refuses an empty
+list for the same reason.
 
 ## Consequences
 
@@ -210,12 +231,24 @@ before anything actually did; now it does.
   threw without calling `noteSessionLost`, so a dead session would leave a targeted announcement on
   screen indefinitely.
 
+### `audience='all'` includes external tenants, deliberately
+
+ADR 0022 tenants resolve through the Default OU, so "every signed-in account" reaches them. That is
+the intended reading, not an oversight: the announcements that most need to reach everybody —
+maintenance windows, a data source that is down, a scheduled outage — affect an external tenant
+exactly as much as an internal one, and an external tenant who is not told is the one who files a
+support ticket. `all` means all.
+
+"Internal staff only" is therefore not a third value in the enumeration; it is `audience='grant'` on
+the OU that internal accounts belong to, which covers its subtree. That works only where internal
+accounts sit in a **named** OU rather than the Default one, because the Default OU is on every
+account's chain and is refused as an audience for that reason. A portal that has never organized its
+internal accounts into an OU has no way to say "internal only" — that is a real limitation, and the
+answer is to create the OU, not to add an enumeration value that would mean something different on
+every deployment.
+
 ## Not decided here
 
-- **What `audience='all'` should mean in a portal with external tenants.** ADR 0022 tenants hang
-  off the Default OU, so "every signed-in account" includes them, and there is no third value
-  between that and hand-picked grants. This is a product call, and the phase that opens the
-  audience write path is where it has to be made.
 - **A publicly visible announcement layer** (a maintenance notice on the login page). The data is
   already public today, so making it an explicit switch sounds like a bargain — but it would make
   the widest audience value reach the whole internet, turning every audience bug into an internet
