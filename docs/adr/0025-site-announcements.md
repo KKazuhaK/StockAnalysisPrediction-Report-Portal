@@ -94,14 +94,41 @@ is the ADR 0024 lesson (read permission derived from run permission) in a new pl
 **Admins are not exempt from the audience filter**, which is the one deliberate departure from this
 codebase's usual "an admin is never narrowed". An announcement is a message, not a permission: an
 admin who is not in 华东 does not need 华东's outage popup on every page, and training them to
-ignore the band costs more than the diagnostic value. Diagnosis lives where it belongs — the
-management list shows every row with its audience unconditionally.
+ignore the band costs more than the diagnostic value.
+
+That exemption is what makes **`GET /api/admin/announcements/preview?principal=…` a requirement
+rather than a nicety**, and why it ships with the audience rather than after it. A targeted
+announcement fails *silently*: the admin who wrote it cannot see it, and the people who should have
+received it do not know to expect it, so "addressed correctly" and "addressed to nobody" look
+identical from the console and nobody files the bug. The preview calls `visibleFor` — the same
+function the reader's own request calls, over a synthetic principal set — so it cannot drift from
+the real answer. A preview that can disagree with what readers actually get is worse than none.
+Previewing an OU builds that OU's whole ancestry, because a notice sent to a parent reaches the
+subtree; `groupAncestry` is shared with `groupChain` rather than reimplemented beside it.
+
+The rest of the diagnosis lives where it belongs: the management list shows every row with its
+audience unconditionally, naming the groups and accounts rather than printing principal strings.
 
 **Audience is mutable from outside this subsystem.** Moving an account between OUs changes what it
-receives, and today the three paths that do it behave differently (the single-user path audits but
-does not bump `session_rev`; the bulk `set_group`/`clear_group` path audits nothing; the SSO path
-bumps `session_rev` and kills every session). No OU snapshot is stored on the announcement — the
-audience is evaluated at read time, every time.
+receives, and the three paths that do it behave differently: the single-user path audits but does
+not bump `session_rev`, the SSO path bumps `session_rev` and kills every session, and the bulk
+`set_group`/`clear_group` path audited *nothing at all* — the bulk form of a policy change leaving
+no trail, which is the shape of gap only noticed while investigating. That one is fixed here; the
+`session_rev` divergence is left alone, because the audience is evaluated at read time on every
+request and no OU snapshot is stored on the announcement, so a moved account's feed corrects itself
+within one poll either way.
+
+**Deleting the thing a principal names must take its grants with it.** Usernames are reusable and OU
+ids are reassigned by the database, so a left-behind row is inherited by whoever holds that name or
+id next — announcements addressed to somebody who left. `announcement_grants` is therefore swept in
+both `Store.DeleteUser` and `Store.DeleteUserGroup`, beside `report_viewers` and `version_grants`.
+
+The guard for this is structural rather than a third hand-written case:
+`TestEveryPrincipalTableIsSweptOnDelete` reads `baseSchemaStmts`, finds **every** table with a
+`principal` column, seeds a row in each, and deletes an account and an OU. A fourth principal table
+added later fails there on the day it is added rather than on the day somebody notices the wrong
+person is reading something. (The pre-existing `orphan_test.go` is a hand-written list of table
+names, which is exactly the shape that would have let this one through.)
 
 ### Time bounds are UTC instants
 

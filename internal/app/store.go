@@ -934,6 +934,11 @@ func (s *Store) DeleteUser(name string) error {
 		// hands the new holder of the name every report the old one could read.
 		{"DELETE FROM report_viewers WHERE principal=?", principal},
 		{"DELETE FROM version_grants WHERE principal=?", principal},
+		// Same reasoning for announcements (ADR 0025): a left-behind `u:<name>` grant would send
+		// the next holder of this username announcements addressed to the person who left.
+		// TestEveryPrincipalTableIsSweptOnDelete walks the schema for principal tables and fails if
+		// a future one is missing from here or from DeleteUserGroup.
+		{"DELETE FROM announcement_grants WHERE principal=?", principal},
 	}
 	for _, st := range steps {
 		if err := run(st.q, st.arg); err != nil {

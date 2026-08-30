@@ -646,6 +646,15 @@ export interface Announcement {
   endsAt: string
 }
 
+// Somebody an announcement (or a report version) can be addressed to: an OU or one account, in the
+// single-column `g:<id>` / `u:<name>` encoding the store uses.
+export interface Principal {
+  principal: string
+  name: string
+  restricted?: boolean
+  display?: string
+}
+
 // One announcement as the ADMIN sees it (GET /api/admin/announcements) — the whole row.
 export interface AdminAnnouncement extends Announcement {
   ord: number
