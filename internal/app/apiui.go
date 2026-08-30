@@ -26,11 +26,9 @@ import (
 var okJSON = map[string]any{"ok": true}
 
 const (
-	maxSiteTitleRunes           = 80
-	maxFooterTextRunes          = 1000
-	maxAnnouncementTitleRunes   = 160
-	maxAnnouncementContentRunes = 2000
-	maxSiteLogoBytes            = 1024 * 1024
+	maxSiteTitleRunes  = 80
+	maxFooterTextRunes = 1000
+	maxSiteLogoBytes   = 1024 * 1024
 )
 
 // jsonError writes a uniform JSON error response.
@@ -161,21 +159,23 @@ func normalizeHomeMoreStyle(v string) string {
 	}
 }
 
+// siteSettingsJSON is the PUBLIC brand payload: /api/site serves it with no auth so the login page
+// can paint the right title and logo, and apiAdminSettings merges it into the admin payload.
+//
+// This key set is frozen, and site_settings_test pins it. The site announcement used to live here
+// and no longer does (ADR 0025): anything in this map is readable by anyone who can reach the
+// portal's front door, so a per-audience message can never come back to it. Adding a key means
+// deciding, deliberately, that an anonymous visitor may have it.
 func (s *Server) siteSettingsJSON() map[string]any {
 	return map[string]any{
-		"siteTitle":           s.st.GetSetting("site_title", ""),
-		"siteLogoUrl":         s.st.GetSetting("site_logo_url", ""),
-		"homeMoreStyle":       normalizeHomeMoreStyle(s.st.GetSetting("home_more_style", "")),
-		"footerText":          s.st.GetSetting("footer_text", ""),
-		"footerShowInfo":      settingBool(s.st.GetSetting("footer_show_info", ""), true),
-		"footerShowVersion":   settingBool(s.st.GetSetting("footer_show_version", ""), true),
-		"pwaEnabled":          settingBool(s.st.GetSetting("pwa_enabled", ""), true),
-		"pwaIconUrl":          s.st.GetSetting("pwa_icon_url", ""),
-		"announcementEnabled": settingBool(s.st.GetSetting("announcement_enabled", ""), false),
-		"announcementPopup":   settingBool(s.st.GetSetting("announcement_popup", ""), false),
-		"announcementLevel":   normalizeAnnouncementLevel(s.st.GetSetting("announcement_level", "notice")),
-		"announcementTitle":   s.st.GetSetting("announcement_title", ""),
-		"announcementContent": s.st.GetSetting("announcement_content", ""),
+		"siteTitle":         s.st.GetSetting("site_title", ""),
+		"siteLogoUrl":       s.st.GetSetting("site_logo_url", ""),
+		"homeMoreStyle":     normalizeHomeMoreStyle(s.st.GetSetting("home_more_style", "")),
+		"footerText":        s.st.GetSetting("footer_text", ""),
+		"footerShowInfo":    settingBool(s.st.GetSetting("footer_show_info", ""), true),
+		"footerShowVersion": settingBool(s.st.GetSetting("footer_show_version", ""), true),
+		"pwaEnabled":        settingBool(s.st.GetSetting("pwa_enabled", ""), true),
+		"pwaIconUrl":        s.st.GetSetting("pwa_icon_url", ""),
 	}
 }
 
@@ -1098,6 +1098,11 @@ func (s *Server) apiTypesRecompute(w http.ResponseWriter, r *http.Request, user 
 func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user string) {
 	// All pointers: a nil field was omitted from the request → leave that setting
 	// untouched, so a timezone-only save can't wipe the legacy creds and vice-versa.
+	//
+	// The five Announcement* fields are retained for ONE release line and nothing sends them any
+	// more — announcements are rows now (ADR 0025), and upgrade_v04.go has already folded the keys
+	// they write into the table. They stay only so an operator who rolls back mid-upgrade still has
+	// a working settings save. Delete them, and their three error codes, at the next release line.
 	var in struct {
 		OldBase, OldUser, OldPass, Timezone, SiteTitle, SiteLogoUrl, FooterText, PwaIconUrl   *string
 		PublicUrl                                                                             *string
@@ -1210,23 +1215,6 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	// an admin touched is the useful half and carries none of the risk.
 	s.recordChange(r, user, AuditPolicyChange, "settings", "", map[string]any{"fields": changedSettingFields(in)})
 	writeJSON(w, okJSON)
-}
-
-func validAnnouncementLevel(raw string) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "notice", "success", "warning", "error":
-		return true
-	default:
-		return false
-	}
-}
-
-func normalizeAnnouncementLevel(raw string) string {
-	level := strings.ToLower(strings.TrimSpace(raw))
-	if validAnnouncementLevel(level) && level != "" {
-		return level
-	}
-	return "notice"
 }
 
 func settingBool(raw string, def bool) bool {

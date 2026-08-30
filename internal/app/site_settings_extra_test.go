@@ -150,7 +150,11 @@ func TestAnnouncementSettingsRejectLongFieldsAtomically(t *testing.T) {
 	}
 }
 
-func TestAnnouncementLevelNormalizationIsPublic(t *testing.T) {
+// The level is normalized on the way IN, which is what makes " Warning " and "warning" the same
+// stored row. This used to also assert the normalized value came back out of /api/site; it no
+// longer does, because the announcement left that payload (ADR 0025). The reader-side half of the
+// same rule — that an empty stored level reads as notice — is now TestAnnouncementLevelFallback.
+func TestAnnouncementLevelNormalizationIsStored(t *testing.T) {
 	s := newV1Server(t)
 
 	rec := postSettingsJSON(t, s, map[string]any{"announcementLevel": " Warning "})
@@ -160,15 +164,12 @@ func TestAnnouncementLevelNormalizationIsPublic(t *testing.T) {
 	if got := s.st.GetSetting("announcement_level", ""); got != "warning" {
 		t.Fatalf("stored level=%q, want warning", got)
 	}
-	if got := publicSiteSettings(t, s)["announcementLevel"]; got != "warning" {
-		t.Fatalf("public level=%v, want warning", got)
-	}
 
 	rec = postSettingsJSON(t, s, map[string]any{"announcementLevel": ""})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("clear level status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := publicSiteSettings(t, s)["announcementLevel"]; got != "notice" {
-		t.Fatalf("empty level should publish as notice, got %v", got)
+	if got := normalizeAnnouncementLevel(s.st.GetSetting("announcement_level", "")); got != "notice" {
+		t.Fatalf("empty level should read as notice, got %q", got)
 	}
 }

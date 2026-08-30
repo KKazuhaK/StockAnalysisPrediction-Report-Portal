@@ -183,7 +183,11 @@ func RunServer(cfgPath string) {
 	// Session-gated, not public: build identity (version/commit) is only shown in the signed-in
 	// app footer, so an anonymous scanner can't fingerprint the build against known CVEs.
 	mux.HandleFunc("GET /api/version", s.requireUserJSON(s.handleVersion))
-	mux.HandleFunc("GET /api/site", s.apiSite)            // public: brand title/logo for login + browser chrome
+	mux.HandleFunc("GET /api/site", s.apiSite) // public: brand title/logo for login + browser chrome
+	// The announcement feed is NOT on /api/site, and the wrapper is the reason (ADR 0025): a row can
+	// be addressed to one OU, and who is being told what is itself disclosure. Polled, so it answers
+	// with a 304 while nothing changes.
+	mux.HandleFunc("GET /api/announcements", s.requireUserJSON(s.apiAnnouncements))
 	mux.HandleFunc("GET /api/openapi.json", s.apiOpenAPI) // public: OpenAPI 3.1 spec for the v1 machine API
 	mux.HandleFunc("GET /manifest.webmanifest", s.pwaManifest)
 	mux.HandleFunc("GET /pwa-icon", s.pwaIcon)
@@ -260,6 +264,14 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("PUT /api/admin/links/{id}", s.requireAdminJSON(s.apiLinkEdit))
 	mux.HandleFunc("DELETE /api/admin/links/{id}", s.requireAdminJSON(s.apiLinkDelete))
 	mux.HandleFunc("POST /api/admin/links/layout", s.requireAdminJSON(s.apiLinkLayout))
+	// Site announcements (ADR 0025). PATCH is the list's two inline switches and only those: a
+	// whole-row PUT to flip one would also write back a stale audience.
+	mux.HandleFunc("GET /api/admin/announcements", s.requireAdminJSON(s.apiAdminAnnouncements))
+	mux.HandleFunc("POST /api/admin/announcements", s.requireAdminJSON(s.apiAnnouncementAdd))
+	mux.HandleFunc("POST /api/admin/announcements/reorder", s.requireAdminJSON(s.apiAnnouncementReorder))
+	mux.HandleFunc("PUT /api/admin/announcements/{id}", s.requireAdminJSON(s.apiAnnouncementSave))
+	mux.HandleFunc("PATCH /api/admin/announcements/{id}", s.requireAdminJSON(s.apiAnnouncementToggle))
+	mux.HandleFunc("DELETE /api/admin/announcements/{id}", s.requireAdminJSON(s.apiAnnouncementDelete))
 	mux.HandleFunc("POST /api/admin/link-groups", s.requireAdminJSON(s.apiLinkGroupAdd))
 	mux.HandleFunc("PUT /api/admin/link-groups/{id}", s.requireAdminJSON(s.apiLinkGroupEdit))
 	mux.HandleFunc("DELETE /api/admin/link-groups/{id}", s.requireAdminJSON(s.apiLinkGroupDelete))
