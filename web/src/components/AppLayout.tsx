@@ -488,11 +488,18 @@ export default function AppLayout() {
         </div>
       )}
 
-      {/* The announcement shows only on the home page, in its own fixed-width band (not
-          inside the Content whose max-width flexes with reader "wide" mode). */}
-      {onHome && (
+      {/* Announcements, in their own fixed-width band (not inside the Content, whose max-width
+          flexes with reader "wide" mode). WHICH announcements is the row's own business — a
+          home-scoped one appears on / and an app-scoped one on every page — but two surfaces
+          suppress the band whatever the row says, because both are deliberately stripped layouts:
+          mobile chat hides the header entirely to give the thread and composer the viewport, and
+          the admin console is full-bleed with a rail positioned off the header height, so a band
+          above it adds a scrollbar with nothing to scroll and pushes the rail's footer off-screen.
+          The console comment above has said it suppresses this banner since before anything
+          actually did; now it does. */}
+      {!chatFocus && !onManage && (
         <div style={{ maxWidth: 1240, width: '100%', margin: '0 auto', padding: '0 20px' }}>
-          <SiteAnnouncement style={{ marginTop: 24, marginBottom: 0 }} />
+          <SiteAnnouncement style={{ marginTop: 24, marginBottom: 0 }} compact={compact} />
         </div>
       )}
 

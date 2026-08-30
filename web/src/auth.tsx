@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError, onSessionLost } from './api/client'
+import { forgetTags } from './lib/conditionalGet'
 import type { Me } from './api/types'
 import type { CaptchaValue } from './components/CaptchaField'
 import { getCredential } from './lib/webauthn'
@@ -64,6 +65,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .finally(() => setLoading(false))
   }, [])
+
+  // Whenever the signed-in identity changes — a sign-in, a sign-out, an expiry — drop every stored
+  // conditional-GET tag. They are module-level and keyed by URL alone, so they outlive the session
+  // that earned them: on a shared machine (sign out, sign in as someone else, same tab, no reload)
+  // the next poll would send the previous reader's ETag, the server could legitimately answer 304,
+  // and 304 means "keep what you have" to a freshly-mounted component that has nothing. One effect
+  // here rather than a call in each of the four login/logout paths, so a fifth cannot forget.
+  const identity = me?.user ?? ''
+  useEffect(() => {
+    forgetTags()
+  }, [identity])
 
   const value = useMemo<AuthCtx>(
     () => ({

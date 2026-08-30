@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from './api/client'
-import type { AnnouncementLevel, HomeMoreStyle, SiteSettings } from './api/types'
+import type { HomeMoreStyle, SiteSettings } from './api/types'
 import { BrandIcon } from './components/icons'
 import { clearSWUpdate, trackSWUpdates } from './lib/swUpdate'
 import { startVisiblePoll } from './lib/visiblePoll'
@@ -16,11 +16,6 @@ const DEFAULT_SETTINGS: SiteSettings = {
   footerShowVersion: true,
   pwaEnabled: true,
   pwaIconUrl: '',
-  announcementEnabled: false,
-  announcementPopup: false,
-  announcementLevel: 'notice',
-  announcementTitle: '',
-  announcementContent: '',
 }
 
 interface SiteCtx {
@@ -33,7 +28,6 @@ interface SiteCtx {
 const Ctx = createContext<SiteCtx | null>(null)
 
 function normalizeSettings(s?: Partial<SiteSettings> | null): SiteSettings {
-  const level = String(s?.announcementLevel ?? '').trim().toLowerCase()
   const moreStyle = String(s?.homeMoreStyle ?? '').trim().toLowerCase()
   return {
     siteTitle: (s?.siteTitle ?? '').trim(),
@@ -44,11 +38,6 @@ function normalizeSettings(s?: Partial<SiteSettings> | null): SiteSettings {
     footerShowVersion: s?.footerShowVersion !== false,
     pwaEnabled: s?.pwaEnabled !== false,
     pwaIconUrl: (s?.pwaIconUrl ?? '').trim(),
-    announcementEnabled: s?.announcementEnabled === true,
-    announcementPopup: s?.announcementPopup === true,
-    announcementLevel: ['notice', 'success', 'warning', 'error'].includes(level) ? (level as AnnouncementLevel) : 'notice',
-    announcementTitle: (s?.announcementTitle ?? '').trim(),
-    announcementContent: (s?.announcementContent ?? '').trim(),
   }
 }
 
@@ -76,7 +65,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
     // Load once on mount whatever the tab's visibility — a link opened in a background tab
     // still has to show this portal's title and favicon in the tab strip.
     refresh().catch(() => setSettings(DEFAULT_SETTINGS))
-    // Then keep the chrome + the announcement live without a full reload, but only while
+    // Then keep the chrome live without a full reload, but only while
     // somebody is looking: the previous plain interval kept asking every minute in a tab left
     // open behind others, for a page nobody could see. Becoming visible refreshes immediately,
     // so an admin's edit still reaches a returning reader at once.

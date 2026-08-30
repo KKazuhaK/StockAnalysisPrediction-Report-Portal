@@ -594,6 +594,8 @@ export interface SettingsResp {
   footerShowVersion: boolean
   pwaEnabled: boolean
   pwaIconUrl: string
+  // Retained for one release line with the settings POST that still accepts them; announcements
+  // are rows now and nothing reads these. Delete them together (ADR 0025).
   announcementEnabled: boolean
   announcementPopup: boolean
   announcementLevel: AnnouncementLevel
@@ -607,6 +609,9 @@ export type AnnouncementLevel = 'notice' | 'success' | 'warning' | 'error'
 // How the home-page "More" button reveals folded quick links.
 export type HomeMoreStyle = 'expand' | 'modal' | 'popover'
 
+// The PUBLIC brand payload from GET /api/site — served with no auth, so the login page can paint
+// the right title and logo. Announcements deliberately left it (ADR 0025): a per-audience message
+// cannot live on an endpoint anonymous visitors can read and poll. See AnnouncementsProvider.
 export interface SiteSettings {
   siteTitle: string
   siteLogoUrl: string
@@ -616,11 +621,41 @@ export interface SiteSettings {
   footerShowVersion: boolean
   pwaEnabled: boolean
   pwaIconUrl: string
-  announcementEnabled: boolean
-  announcementPopup: boolean
-  announcementLevel: AnnouncementLevel
-  announcementTitle: string
-  announcementContent: string
+}
+
+// Where an announcement shows. 'home' = the home page only (what the single announcement always
+// did); 'app' = every page behind the login.
+export type AnnouncementScope = 'home' | 'app'
+
+// Who an announcement is for. 'all' = every signed-in account; 'grant' = only the principals in
+// announcement_grants. The reader payload never carries this — see Announcement.
+export type AnnouncementAudience = 'all' | 'grant'
+
+// One announcement as the READER sees it (GET /api/announcements). It carries no audience, no
+// grants and no ord on purpose: which OUs are being addressed is the shape of the org chart.
+// endsAt is included so a tab left open in the background — where polling stops — can retire an
+// expired banner on its own instead of painting it for hours.
+export interface Announcement {
+  id: number
+  level: AnnouncementLevel
+  title: string
+  content: string
+  popup: boolean
+  dismissible: boolean
+  scope: AnnouncementScope
+  endsAt: string
+}
+
+// One announcement as the ADMIN sees it (GET /api/admin/announcements) — the whole row.
+export interface AdminAnnouncement extends Announcement {
+  ord: number
+  enabled: boolean
+  audience: AnnouncementAudience
+  grants: string[]
+  startsAt: string
+  createdAt: string
+  createdBy: string
+  updatedAt: string
 }
 
 export interface TokenRow {

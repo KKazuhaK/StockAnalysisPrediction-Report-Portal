@@ -50,7 +50,7 @@ export function onSessionLost(fn: (() => void) | null) {
 // SESSION_GONE is the server's word for it, not an inference from the status code.
 export const SESSION_GONE = 'session_expired'
 
-function noteSessionLost(status: number, code?: string) {
+export function noteSessionLost(status: number, code?: string) {
   if (status === 401 && code === SESSION_GONE) sessionLost?.()
 }
 
