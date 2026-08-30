@@ -175,9 +175,7 @@ func TestSiteSettings(t *testing.T) {
 	pub := get(s.apiSite, "/api/site")
 	if pub["siteTitle"] != "" || pub["siteLogoUrl"] != "" || pub["footerText"] != "" ||
 		pub["footerShowInfo"] != true || pub["footerShowVersion"] != true ||
-		pub["pwaEnabled"] != true || pub["pwaIconUrl"] != "" ||
-		pub["announcementEnabled"] != false || pub["announcementPopup"] != false || pub["announcementLevel"] != "notice" ||
-		pub["announcementTitle"] != "" || pub["announcementContent"] != "" {
+		pub["pwaEnabled"] != true || pub["pwaIconUrl"] != "" {
 		t.Fatalf("default site settings = %v, want empty overrides", pub)
 	}
 
@@ -207,20 +205,20 @@ func TestSiteSettings(t *testing.T) {
 		t.Errorf("announcement settings not saved")
 	}
 
+	// The five announcement_* keys are still WRITTEN by this endpoint for one more release line
+	// (checked above), but they are no longer PUBLISHED by either payload: announcements are rows
+	// now and are served, per reader, from /api/announcements (ADR 0025). What that must never
+	// regress into is pinned by TestPublicSiteSettingsKeySetIsFrozen.
 	admin := get(func(w http.ResponseWriter, r *http.Request) { s.apiAdminSettings(w, r, "admin") }, "/api/admin/settings")
 	if admin["siteTitle"] != "智研平台" || admin["siteLogoUrl"] != "/brand/logo.png" ||
 		admin["footerText"] != "© 智研平台" || admin["footerShowInfo"] != false || admin["footerShowVersion"] != false ||
-		admin["pwaEnabled"] != true || admin["pwaIconUrl"] != "/brand/app.png" ||
-		admin["announcementEnabled"] != true || admin["announcementPopup"] != true || admin["announcementLevel"] != "warning" ||
-		admin["announcementTitle"] != "节点维护" || admin["announcementContent"] != "今晚 22:00 开始维护。" {
+		admin["pwaEnabled"] != true || admin["pwaIconUrl"] != "/brand/app.png" {
 		t.Errorf("admin settings missing site fields: %v", admin)
 	}
 	pub = get(s.apiSite, "/api/site")
 	if pub["siteTitle"] != "智研平台" || pub["siteLogoUrl"] != "/brand/logo.png" ||
 		pub["footerText"] != "© 智研平台" || pub["footerShowInfo"] != false || pub["footerShowVersion"] != false ||
-		pub["pwaEnabled"] != true || pub["pwaIconUrl"] != "/brand/app.png" ||
-		pub["announcementEnabled"] != true || pub["announcementPopup"] != true || pub["announcementLevel"] != "warning" ||
-		pub["announcementTitle"] != "节点维护" || pub["announcementContent"] != "今晚 22:00 开始维护。" {
+		pub["pwaEnabled"] != true || pub["pwaIconUrl"] != "/brand/app.png" {
 		t.Errorf("public site settings = %v", pub)
 	}
 

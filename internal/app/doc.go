@@ -29,6 +29,10 @@
 //
 // Store & schema (dual-driver SQLite/Postgres, no ORM)
 //   - store.go   the Store type, base schema (baseSchemaStmts), dialect helpers
+//   - upgrade_v04.go EVERY v0.4-line adoption step, in one file named for the release line it
+//     belongs to. Deleted whole at the v0.5 boundary, along with its single call in Store.init;
+//     requireSchemaBaseline then refuses databases that never ran a v0.4 release. Nothing else
+//     goes in it, and nothing in it is called from anywhere but init.
 //   - migrate.go schemaBaseline + requireSchemaBaseline (the major-boundary upgrade gate)
 //     and ensureColumns (additive-column reconcile). The v0.1→v0.2 fold step that used to
 //     sit beside it was folded into the base schema at the v0.3 boundary, per CLAUDE.md.
@@ -81,6 +85,11 @@
 //   - roles.go          Perm* constants + role→permission registry (RBAC-lite)
 //   - password_reset.go stateless HMAC email password reset
 //   - tickets.go        urgent-run priority tickets — per-user urgent-run quota (ADR 0005)
+//
+// Site announcements (ADR 0025)
+//   - announcement_api.go   the reader feed (GET /api/announcements, behind the session) and the
+//     admin CRUD + reorder surface; audience resolution (announcementPrincipals) lives here too
+//   - announcement_store.go announcements + announcement_grants persistence
 //
 // Notifications
 //   - email.go emails a submitter when their batch job finishes (opt-in)

@@ -213,6 +213,12 @@ func (s *Store) init() error {
 	if err := s.createBaseIndexes(); err != nil {
 		return err
 	}
+	// Release-line adoption steps, all of them, in one file that gets deleted at the next major
+	// boundary. Runs after the schema exists (a step reads and writes real tables) and before
+	// anything serves from it. See upgrade_v04.go.
+	if err := s.upgradeV04(); err != nil {
+		return err
+	}
 	if fresh {
 		if err := s.setSchemaVersion(schemaBaseline); err != nil {
 			return err
@@ -293,6 +299,38 @@ func (s *Store) baseSchemaStmts() []string {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS link_groups(
 			id %s, name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, icon TEXT DEFAULT '', ord INTEGER DEFAULT 0, visible INTEGER DEFAULT 1)`, pk),
 		`CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)`,
+		// Site announcements (ADR 0025). One row = one announcement; this table replaces the five
+		// announcement_* keys in meta, which upgrade_v04.go folds into the first row exactly once.
+		//
+		// level is notice|success|warning|error; '' is legal and reads as notice, because the meta key
+		// it descends from could be empty. ord is a sort key ONLY — identity is always id, which is why
+		// dragging a row can never re-fire a popup somebody already dismissed.
+		// scope: home = the home page alone (today's behaviour, and the fallback for any unrecognized
+		// value); app = every page behind the login. audience: all = every logged-in account; grant =
+		// only the principals listed in announcement_grants, and an empty grant list shows the
+		// announcement to NOBODY — default-deny is written out, never inferred from an absent filter.
+		// starts_at/ends_at are RFC3339 UTC instants ('' = unbounded on that side), compared in UTC and
+		// rendered in the panel timezone; a civil-time string here would shift meaning with the setting.
+		// scope/audience/starts_at/ends_at are declared from the first release that has this table even
+		// though the release line that ships it only writes the defaults: a column costs nothing here and
+		// arrives on existing databases through ensureColumns anyway.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS announcements(
+			id %s, level TEXT DEFAULT 'notice', title TEXT DEFAULT '', content TEXT DEFAULT '',
+			ord INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1, popup INTEGER DEFAULT 0,
+			dismissible INTEGER DEFAULT 0, scope TEXT DEFAULT 'home', audience TEXT DEFAULT 'all',
+			starts_at TEXT DEFAULT '', ends_at TEXT DEFAULT '',
+			created_at TEXT DEFAULT '', created_by TEXT DEFAULT '', updated_at TEXT DEFAULT '')`, pk),
+		// announcement_grants (ADR 0025): who an audience='grant' announcement goes to, in the principal
+		// encoding version_grants and report_viewers already use — an OU is "g:<id>", one account is
+		// "u:<name>". It resolves DIFFERENTLY from version_grants though, and the difference is the whole
+		// point: a grant is a right, so the nearest ancestor OU with rows wins and a child never inherits
+		// the root's; an announcement is a broadcast, so a reader matches the UNION of every OU on their
+		// chain and a notice sent to a parent OU reaches the whole subtree. See announcementPrincipals.
+		// Deliberately no index: the whole table is tens of rows and the read path loads it into a map.
+		// If it ever grows past that, the covering shape is (principal, announcement_id) — but reports
+		// has already lost two indexes to write amplification, so don't add one before a query needs it.
+		`CREATE TABLE IF NOT EXISTS announcement_grants(
+			announcement_id BIGINT, principal TEXT, PRIMARY KEY(announcement_id, principal))`,
 		// Report type registry: subtype (name, unique) → explicit category (kind) + display name/order/default page.
 		// Auto-registered on ingest, editable in the admin backend; replaces runKind guessing (runKind only serves as the fallback default for new types).
 		`CREATE TABLE IF NOT EXISTS type_config(
