@@ -502,6 +502,120 @@ func TestOmittedGrantsLeaveTheAudienceAlone(t *testing.T) {
 	}
 }
 
+// ---------- "preview as" ----------
+
+func announcementPreview(t *testing.T, s *Server, principal string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/admin/announcements/preview?principal="+principal, nil)
+	s.apiAnnouncementPreview(rec, req, "admin")
+	return rec
+}
+
+// Admins are not exempt from the audience filter, so a targeted announcement fails SILENTLY: the
+// admin who wrote it cannot see it, and the people who should get it do not know to expect it.
+// This endpoint is the only cheap way to tell "addressed correctly" from "addressed to nobody".
+func TestPreviewAnswersWhatAPrincipalWouldSee(t *testing.T) {
+	s := newV1Server(t)
+	mustAddUser(t, s, "shanghai", false)
+	parent, err := s.st.CreateUserGroup("华东", "", 0)
+	if err != nil {
+		t.Fatalf("create parent OU: %v", err)
+	}
+	child, err := s.st.CreateUserGroup("华东-上海", "", 0)
+	if err != nil {
+		t.Fatalf("create child OU: %v", err)
+	}
+	other, err := s.st.CreateUserGroup("华西", "", 0)
+	if err != nil {
+		t.Fatalf("create other OU: %v", err)
+	}
+	if err := s.st.SetGroupParent(child, parent); err != nil {
+		t.Fatalf("nest OU: %v", err)
+	}
+	s.st.SetPrimaryGroup("shanghai", child)
+
+	mustAddAnnouncement(t, s, `{"title":"全体通告"}`)
+	mustAddAnnouncement(t, s, fmt.Sprintf(`{"title":"华东停电","audience":"grant","grants":["g:%d"]}`, parent))
+	mustAddAnnouncement(t, s, fmt.Sprintf(`{"title":"华西停电","audience":"grant","grants":["g:%d"]}`, other))
+
+	read := func(principal string) []string {
+		t.Helper()
+		rec := announcementPreview(t, s, principal)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("preview %s: status=%d body=%s", principal, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode preview: %v", err)
+		}
+		return feedTitles(out.Items)
+	}
+
+	// Previewing an OU means "a member of this OU", ancestry included — so the child OU sees the
+	// notice sent to its parent, exactly as the real read path would deliver it.
+	if got := strings.Join(read(fmt.Sprintf("g:%d", child)), ","); got != "全体通告,华东停电" {
+		t.Errorf("preview of the child OU = %s", got)
+	}
+	if got := strings.Join(read(fmt.Sprintf("g:%d", other)), ","); got != "全体通告,华西停电" {
+		t.Errorf("preview of the unrelated OU = %s", got)
+	}
+	// An account preview must agree with what that account's own feed returns. A preview that can
+	// disagree with the real answer is worse than no preview.
+	if got, want := strings.Join(read("u:shanghai"), ","), strings.Join(feedTitles(readerFeed(t, s, "shanghai")), ","); got != want {
+		t.Errorf("preview of u:shanghai = %s, but their feed = %s", got, want)
+	}
+}
+
+func TestPreviewRefusesAPrincipalThatDoesNotResolve(t *testing.T) {
+	s := newV1Server(t)
+	for _, p := range []string{"g:9999", "u:ghost", "alice", ""} {
+		if rec := announcementPreview(t, s, p); rec.Code != http.StatusBadRequest {
+			t.Errorf("preview %q: status=%d, want 400", p, rec.Code)
+		}
+	}
+}
+
+// ---------- the audience picker ----------
+
+func TestAdminListOffersAddressablePrincipalsButNotTheDefaultOU(t *testing.T) {
+	s := newV1Server(t)
+	mustAddUser(t, s, "alice", false)
+	named, err := s.st.CreateUserGroup("华东", "", 0)
+	if err != nil {
+		t.Fatalf("create OU: %v", err)
+	}
+
+	rec := announcementReq(t, s, http.MethodGet, "/api/admin/announcements", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin list status=%d", rec.Code)
+	}
+	var out struct {
+		Groups []struct{ Principal string } `json:"groups"`
+		Users  []struct{ Principal string } `json:"users"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode admin list: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, g := range out.Groups {
+		seen[g.Principal] = true
+	}
+	if !seen[groupPrincipal(named)] {
+		t.Errorf("the named OU is missing from the picker: %v", out.Groups)
+	}
+	// The Default OU is on every account's chain, so offering it would be offering "everyone"
+	// under a name that reads like a subset. The save path refuses it; the picker must not tempt.
+	if seen[groupPrincipal(s.st.DefaultGroupID())] {
+		t.Errorf("the Default OU was offered as an audience")
+	}
+	if len(out.Users) == 0 {
+		t.Errorf("no accounts offered")
+	}
+}
+
 // ---------- validation, deletion ----------
 
 func TestAnnouncementValidationRejectsBeforeWriting(t *testing.T) {

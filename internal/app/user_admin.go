@@ -168,6 +168,7 @@ func (s *Store) DeleteUserGroup(id int64) error {
 	// whichever OU is created next (ADR 0022 / 0024).
 	s.exec("DELETE FROM report_viewers WHERE principal=?", groupPrincipal(id))
 	s.exec("DELETE FROM version_grants WHERE principal=?", groupPrincipal(id))
+	s.exec("DELETE FROM announcement_grants WHERE principal=?", groupPrincipal(id))
 	s.exec("DELETE FROM group_targets WHERE group_id=?", id)
 	s.exec("UPDATE user_groups SET parent_id=NULL WHERE parent_id=?", id)
 	_, err := s.exec("DELETE FROM user_groups WHERE id=?", id)
@@ -423,6 +424,14 @@ func (s *Store) groupChain(username string) []int64 {
 	if leaf == 0 {
 		leaf = def
 	}
+	return s.groupAncestry(leaf, def)
+}
+
+// groupAncestry walks leaf up to the root and returns the chain root→leaf, with the Default group
+// guaranteed to be on it. Split out of groupChain so it can also be reached from a GROUP id rather
+// than a username: announcement preview asks "what would a member of this OU see", and the answer
+// has to be built the same way the real read path builds it, not approximated beside it.
+func (s *Store) groupAncestry(leaf, def int64) []int64 {
 	var up []int64
 	seen := map[int64]bool{}
 	for gid := leaf; gid != 0 && !seen[gid] && len(up) < 64; gid = s.groupParent(gid) {

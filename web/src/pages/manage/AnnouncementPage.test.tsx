@@ -52,6 +52,23 @@ function announcement(over: Partial<AdminAnnouncement> = {}): AdminAnnouncement 
   }
 }
 
+// The picker payload. The Default OU is absent because the server leaves it out: it is on every
+// account's chain, so offering it would be offering "everyone" under a name that reads like a
+// subset — and the save path refuses it anyway.
+const GROUPS = [
+  { principal: 'g:7', name: '华东' },
+  { principal: 'g:8', name: '外部客户 A', restricted: true },
+]
+const USERS = [{ principal: 'u:alice', name: 'alice', display: '张三' }]
+
+// antd puts pointer-events:none on a Select's placeholder, so clicking the visible text does
+// nothing; in antd 6 the thing that opens the dropdown is .ant-select-input (there is no longer a
+// .ant-select-selector). Find the Select by the placeholder it renders, then click its input.
+async function openSelect(user: ReturnType<typeof userEvent.setup>, placeholder: string) {
+  const box = screen.getByText(placeholder).closest('.ant-select') as HTMLElement
+  await user.click(box.querySelector('.ant-select-input') as HTMLElement)
+}
+
 function renderPage() {
   return render(
     <App>
@@ -64,7 +81,7 @@ describe('AnnouncementPage', () => {
   beforeEach(() => {
     for (const fn of Object.values(apiMock)) fn.mockReset()
     forgetTagsMock.mockReset()
-    apiMock.get.mockResolvedValue({ items: [announcement()] })
+    apiMock.get.mockResolvedValue({ items: [announcement()], groups: GROUPS, users: USERS })
     apiMock.post.mockResolvedValue({ ok: true, id: 9 })
     apiMock.put.mockResolvedValue({ ok: true })
     apiMock.patch.mockResolvedValue({ ok: true })
@@ -165,6 +182,83 @@ describe('AnnouncementPage', () => {
     renderPage()
     await user.click(await screen.findByRole('switch'))
     await waitFor(() => expect(forgetTagsMock).toHaveBeenCalledWith('/api/announcements'))
+  })
+
+  it('names the audience on a targeted row', async () => {
+    apiMock.get.mockResolvedValue({
+      items: [announcement({ audience: 'grant', grants: ['g:7'] })],
+      groups: GROUPS,
+      users: USERS,
+    })
+    renderPage()
+    // The group's NAME, not the principal string an operator has never seen.
+    expect(await screen.findByText('华东')).toBeTruthy()
+  })
+
+  it('reveals the recipient picker only for a targeted announcement, and sends what was picked', async () => {
+    apiMock.get.mockResolvedValue({ items: [], groups: GROUPS, users: USERS })
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: /announcementAdmin\.add/ }))
+    await screen.findByPlaceholderText('settings.announcementTitlePlaceholder')
+    expect(screen.queryByText('announcementAdmin.grants')).toBeNull()
+
+    await user.click(screen.getByText('announcementAdmin.audience.grant'))
+    await openSelect(user, 'announcementAdmin.grantsPlaceholder')
+    await user.click(await screen.findByTitle('华东'))
+    await user.click(screen.getByRole('button', { name: /common\.save/ }))
+
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(1))
+    expect(apiMock.post.mock.calls[0][1]).toMatchObject({ audience: 'grant', grants: ['g:7'] })
+  })
+
+  it('clears the recipients when an announcement goes back to everyone', async () => {
+    apiMock.get.mockResolvedValue({
+      items: [announcement({ audience: 'grant', grants: ['g:7'] })],
+      groups: GROUPS,
+      users: USERS,
+    })
+    const user = userEvent.setup()
+    const { container } = renderPage()
+    await screen.findByText('维护窗口')
+
+    await user.click(container.querySelector('.anticon-edit')!.closest('button')!)
+    await screen.findByPlaceholderText('settings.announcementTitlePlaceholder')
+    await user.click(screen.getByText('announcementAdmin.audience.all'))
+    await user.click(screen.getByRole('button', { name: /common\.save/ }))
+
+    await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(1))
+    expect(apiMock.put.mock.calls[0][1]).toMatchObject({ audience: 'all', grants: [] })
+  })
+
+  // The admin does not receive their own targeted announcements, so this control is the only thing
+  // standing between "addressed correctly" and "addressed to nobody".
+  it('previews what a recipient would actually see', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('维护窗口')
+
+    apiMock.get.mockResolvedValueOnce({ items: [{ id: 1, level: 'warning', title: '华东停电', content: '' }] })
+    await openSelect(user, 'announcementAdmin.previewAs')
+    await user.click(await screen.findByTitle('华东'))
+
+    await waitFor(() =>
+      expect(apiMock.get).toHaveBeenCalledWith('/api/admin/announcements/preview?principal=g%3A7'),
+    )
+    expect(await screen.findByText('华东停电')).toBeTruthy()
+  })
+
+  it('says so plainly when a recipient would see nothing', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('维护窗口')
+
+    apiMock.get.mockResolvedValueOnce({ items: [] })
+    await openSelect(user, 'announcementAdmin.previewAs')
+    await user.click(await screen.findByTitle('华东'))
+
+    expect(await screen.findByText('announcementAdmin.previewEmpty')).toBeTruthy()
   })
 
   it('deletes through the row action', async () => {

@@ -412,14 +412,22 @@ func (s *Server) apiUsersBulk(w http.ResponseWriter, r *http.Request, user strin
 			}
 			s.st.SetUserRole(name, role)
 			n++
+		// Moving an account between OUs is a policy change, not bookkeeping: the OU decides what
+		// that person may read (ADR 0022/0024) and, since ADR 0025, what they are TOLD. The
+		// single-user path has always audited it; this one did not, so the bulk form of the same
+		// change left no trail at all — the shape of gap that is only noticed while investigating.
 		case "set_group":
 			if in.GroupID == 0 {
 				continue
 			}
 			s.st.SetPrimaryGroup(name, in.GroupID)
+			s.recordChange(r, user, AuditUserChange, "user", name,
+				map[string]any{"op": "set_group", "group_id": in.GroupID, "bulk": true})
 			n++
 		case "clear_group":
 			s.st.SetPrimaryGroup(name, 0)
+			s.recordChange(r, user, AuditUserChange, "user", name,
+				map[string]any{"op": "clear_group", "bulk": true})
 			n++
 		}
 	}

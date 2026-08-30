@@ -267,6 +267,9 @@ func RunServer(cfgPath string) {
 	// Site announcements (ADR 0025). PATCH is the list's two inline switches and only those: a
 	// whole-row PUT to flip one would also write back a stale audience.
 	mux.HandleFunc("GET /api/admin/announcements", s.requireAdminJSON(s.apiAdminAnnouncements))
+	// "Preview as": an admin does not receive a targeted announcement either, so without this,
+	// addressed-correctly and addressed-to-nobody look identical from the console.
+	mux.HandleFunc("GET /api/admin/announcements/preview", s.requireAdminJSON(s.apiAnnouncementPreview))
 	mux.HandleFunc("POST /api/admin/announcements", s.requireAdminJSON(s.apiAnnouncementAdd))
 	mux.HandleFunc("POST /api/admin/announcements/reorder", s.requireAdminJSON(s.apiAnnouncementReorder))
 	mux.HandleFunc("PUT /api/admin/announcements/{id}", s.requireAdminJSON(s.apiAnnouncementSave))

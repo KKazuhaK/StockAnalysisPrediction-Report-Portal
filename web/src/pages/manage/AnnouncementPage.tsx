@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   Popconfirm,
+  Radio,
   Segmented,
   Select,
   Space,
@@ -22,8 +23,15 @@ import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
 import { forgetTags } from '../../lib/conditionalGet'
-import type { AdminAnnouncement, AnnouncementLevel, AnnouncementScope } from '../../api/types'
+import type {
+  AdminAnnouncement,
+  Announcement,
+  AnnouncementAudience,
+  AnnouncementLevel,
+  AnnouncementScope,
+} from '../../api/types'
 import { AnnouncementAlert } from '../../components/SiteAnnouncement'
+import type { Principal } from '../../api/types'
 import { DragHandle, SortableItem, SortableWrapper } from './dnd'
 import LoadGate from '../../components/LoadGate'
 
@@ -49,6 +57,8 @@ interface FormValues {
   dismissible: boolean
   level: AnnouncementLevel
   scope: AnnouncementScope
+  audience: AnnouncementAudience
+  grants: string[]
   title: string
   content: string
   window?: [dayjs.Dayjs | null, dayjs.Dayjs | null] | null
@@ -61,6 +71,11 @@ export default function AnnouncementPage() {
   const { message } = App.useApp()
   const { token } = theme.useToken()
   const [items, setItems] = useState<AdminAnnouncement[]>([])
+  const [groups, setGroups] = useState<Principal[]>([])
+  const [users, setUsers] = useState<Principal[]>([])
+  const [usersTruncated, setUsersTruncated] = useState(false)
+  const [previewAs, setPreviewAs] = useState<string | undefined>()
+  const [preview, setPreview] = useState<Announcement[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
@@ -73,9 +88,14 @@ export default function AnnouncementPage() {
     setLoading(true)
     setLoadErr('')
     return api
-      .get<{ items: AdminAnnouncement[] }>('/api/admin/announcements')
+      .get<{ items: AdminAnnouncement[]; groups: Principal[]; users: Principal[]; usersTruncated: boolean }>(
+        '/api/admin/announcements',
+      )
       .then((r) => {
         setItems(r.items || [])
+        setGroups(r.groups || [])
+        setUsers(r.users || [])
+        setUsersTruncated(r.usersTruncated === true)
         setLoaded(true)
       })
       // Not a `finally`-only settle: a failed GET that renders as "no announcements yet" looks
@@ -123,6 +143,8 @@ export default function AnnouncementPage() {
       dismissible: a ? a.dismissible : false,
       level: a?.level || 'notice',
       scope: a?.scope || 'home',
+      audience: a?.audience || 'all',
+      grants: a?.grants || [],
       title: a?.title || '',
       content: a?.content || '',
       window: a && (a.startsAt || a.endsAt) ? [a.startsAt ? dayjs(a.startsAt) : null, a.endsAt ? dayjs(a.endsAt) : null] : null,
@@ -139,6 +161,10 @@ export default function AnnouncementPage() {
       dismissible: v.dismissible === true,
       level: v.level || 'notice',
       scope: v.scope || 'home',
+      audience: v.audience || 'all',
+      // Always sent from this form, which holds the whole row. The field is optional on the wire
+      // precisely so a partial writer can leave the audience alone; this is not one.
+      grants: v.audience === 'grant' ? v.grants || [] : [],
       title: v.title || '',
       content: v.content || '',
       startsAt: from ? from.toISOString() : '',
@@ -180,6 +206,34 @@ export default function AnnouncementPage() {
   // it are decorative this page load. Saying so on the row is the point: an ignored setting should
   // be visible where it is set, not discovered by an operator wondering why nothing popped up.
   const firstPopupId = items.find((a) => a.popup && a.enabled)?.id
+
+  // Two groups, the way the report-versions picker does it, so an admin who has used one knows
+  // this one. The value IS the principal string, which is what the server stores.
+  const principalOptions = [
+    { label: t('announcementAdmin.principalGroups'), options: groups.map((g) => ({
+      value: g.principal,
+      label: g.restricted ? `${g.name} · ${t('announcementAdmin.restrictedTag')}` : g.name,
+    })) },
+    { label: t('announcementAdmin.principalUsers'), options: users.map((u) => ({
+      value: u.principal,
+      label: u.display && u.display !== u.name ? `${u.display} (${u.name})` : u.name,
+    })) },
+  ]
+  const principalName = (p: string) =>
+    groups.find((g) => g.principal === p)?.name ?? users.find((u) => u.principal === p)?.name ?? p
+
+  const loadPreview = (principal?: string) => {
+    setPreviewAs(principal)
+    setPreview(null)
+    if (!principal) return
+    api
+      .get<{ items: Announcement[] }>(`/api/admin/announcements/preview?principal=${encodeURIComponent(principal)}`)
+      .then((r) => setPreview(r.items || []))
+      .catch((e) => {
+        message.error(errText(e, t))
+        setPreviewAs(undefined)
+      })
+  }
 
   const statusOf = (a: AdminAnnouncement) => {
     if (!a.enabled) return { key: 'draft', color: undefined }
@@ -232,6 +286,15 @@ export default function AnnouncementPage() {
         </Typography.Text>
         <Tag color={status.color}>{t(`announcementAdmin.status.${status.key}`)}</Tag>
         {a.scope === 'app' && <Tag color="geekblue">{t('announcementAdmin.scope.app')}</Tag>}
+        {a.audience === 'grant' && (
+          <Tooltip title={a.grants.map(principalName).join('、')}>
+            <Tag color="cyan">
+              {a.grants.length === 1
+                ? principalName(a.grants[0])
+                : t('announcementAdmin.audienceCount', { count: a.grants.length })}
+            </Tag>
+          </Tooltip>
+        )}
         {a.popup && a.enabled && a.id !== firstPopupId && (
           <Tooltip title={t('announcementAdmin.popupSkippedHint')}>
             <Tag>{t('announcementAdmin.popupSkipped')}</Tag>
@@ -254,7 +317,9 @@ export default function AnnouncementPage() {
     )
   }
 
-  const preview = useMemo(
+  // The editor's live rendering of the row being edited. Named apart from `preview`, which is the
+  // "what would this OU see" panel above the list — two different questions.
+  const livePreview = useMemo(
     () => (
       <Form.Item shouldUpdate noStyle>
         {({ getFieldValue }) => {
@@ -286,10 +351,50 @@ export default function AnnouncementPage() {
             <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit(null)}>
               {t('announcementAdmin.add')}
             </Button>
+            {/* You do not receive your own targeted announcements — the audience filter applies to
+                admins too — so "addressed correctly" and "addressed to nobody" look identical from
+                here. This is the only cheap way to tell them apart before publishing, and it asks
+                the server the same question a real reader's browser asks. */}
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              style={{ minWidth: 200 }}
+              placeholder={t('announcementAdmin.previewAs')}
+              value={previewAs}
+              onChange={loadPreview}
+              options={principalOptions}
+            />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('announcementAdmin.hint')}
             </Typography.Text>
           </Space>
+
+          {previewAs && (
+            <div
+              style={{
+                border: `1px dashed ${token.colorBorder}`,
+                borderRadius: 8,
+                padding: 12,
+                background: token.colorFillQuaternary,
+              }}
+            >
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                {t('announcementAdmin.previewFor', { name: principalName(previewAs) })}
+              </Typography.Text>
+              {preview === null ? (
+                <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+              ) : preview.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('announcementAdmin.previewEmpty')} />
+              ) : (
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {preview.map((a) => (
+                    <AnnouncementAlert key={a.id} announcement={a} />
+                  ))}
+                </Space>
+              )}
+            </div>
+          )}
 
           {items.length === 0 ? (
             <Empty description={t('announcementAdmin.empty')} />
@@ -366,6 +471,38 @@ export default function AnnouncementPage() {
               ]}
             />
           </Form.Item>
+          <Form.Item name="audience" label={t('announcementAdmin.audience')}>
+            <Radio.Group
+              options={[
+                { value: 'all', label: t('announcementAdmin.audience.all') },
+                { value: 'grant', label: t('announcementAdmin.audience.grant') },
+              ]}
+              optionType="button"
+            />
+          </Form.Item>
+          <Form.Item shouldUpdate={(a, b) => a.audience !== b.audience} noStyle>
+            {({ getFieldValue }) =>
+              getFieldValue('audience') === 'grant' ? (
+                <Form.Item
+                  name="grants"
+                  label={t('announcementAdmin.grants')}
+                  extra={usersTruncated ? t('announcementAdmin.grantsTruncated', { count: users.length }) : undefined}
+                  // Saving a targeted announcement with nobody in its audience stores a row that
+                  // reaches no one and reports no problem — the standard path to an operator
+                  // concluding the feature is broken. The server refuses it too.
+                  rules={[{ required: true, message: t('announcementAdmin.grantsRequired') }]}
+                >
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    options={principalOptions}
+                    optionFilterProp="label"
+                    placeholder={t('announcementAdmin.grantsPlaceholder')}
+                  />
+                </Form.Item>
+              ) : null
+            }
+          </Form.Item>
           <Form.Item
             name="title"
             label={t('settings.announcementTitle')}
@@ -388,7 +525,7 @@ export default function AnnouncementPage() {
           <Form.Item name="window" label={t('announcementAdmin.window')} extra={t('announcementAdmin.windowHint')}>
             <RangePicker showTime style={{ width: '100%' }} allowEmpty={[true, true]} />
           </Form.Item>
-          {preview}
+          {livePreview}
         </Form>
       </Drawer>
     </Space>

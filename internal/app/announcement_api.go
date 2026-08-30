@@ -103,12 +103,19 @@ func (s *Server) announcementPrincipals(user string) []string {
 
 // visibleAnnouncements filters the table down to what one reader may see, right now.
 func (s *Server) visibleAnnouncements(user string) []Announcement {
+	return s.visibleFor(s.announcementPrincipals(user))
+}
+
+// visibleFor is the filter itself, over an already-resolved principal set. The preview endpoint
+// calls it with a synthetic set, which is the point of the split: "what would this OU see" must be
+// answered by the same function that answers it for real, so the two can never drift.
+func (s *Server) visibleFor(readerPrincipals []string) []Announcement {
 	all := s.st.Announcements()
 	if len(all) == 0 {
 		return nil
 	}
 	principals := map[string]bool{}
-	for _, p := range s.announcementPrincipals(user) {
+	for _, p := range readerPrincipals {
 		principals[p] = true
 	}
 	var grants map[int64][]string
@@ -188,14 +195,93 @@ func adminAnnouncementJSON(a Announcement) map[string]any {
 	}
 }
 
-// apiAdminAnnouncements lists every row for the management page. Times go out as UTC instants and
-// the editor renders them in the operator's own clock, the way every other instant in this app is
-// shown (lib/datetime.ts) — the panel timezone governs scheduling, not display.
+// maxPickerUsers bounds the account list the editor offers. VersionsPage puts every account into a
+// Select with no paging, which is fine at fifty and unusable at five thousand; here the list is
+// capped, the page says so, and an admin who needs an account past the cap types the principal.
+const maxPickerUsers = 200
+
+// apiAdminAnnouncements lists every row for the management page, plus the principals a row can be
+// addressed to — one round trip, because the page cannot render the audience of an existing
+// announcement without the names to render it with.
+//
+// Times go out as UTC instants and the editor renders them in the operator's own clock, the way
+// every other instant in this app is shown (lib/datetime.ts): the panel timezone governs
+// scheduling, not display.
 func (s *Server) apiAdminAnnouncements(w http.ResponseWriter, r *http.Request, user string) {
 	list := s.st.AnnouncementsWithGrants()
 	items := make([]map[string]any, 0, len(list))
 	for _, a := range list {
 		items = append(items, adminAnnouncementJSON(a))
+	}
+	defaultOU := s.st.DefaultGroupID()
+	groups := make([]map[string]any, 0)
+	for _, g := range s.st.ListUserGroups() {
+		// The Default OU is on every account's chain, so addressing it is addressing everybody —
+		// which audience='all' already says. The save path refuses it; leaving it out of the picker
+		// means an admin never has to discover that by being rejected.
+		if g.ID == defaultOU {
+			continue
+		}
+		groups = append(groups, map[string]any{
+			"principal": groupPrincipal(g.ID), "name": g.Name, "restricted": g.RestrictedEffective,
+		})
+	}
+	all := s.st.Users()
+	users := make([]map[string]any, 0, len(all))
+	for _, u := range all {
+		if len(users) >= maxPickerUsers {
+			break
+		}
+		users = append(users, map[string]any{
+			"principal": userPrincipal(u.Username), "name": u.Username,
+			"restricted": u.Restricted, "display": u.Name(),
+		})
+	}
+	writeJSON(w, map[string]any{
+		"items": items, "groups": groups, "users": users,
+		"usersTruncated": len(all) > len(users),
+	})
+}
+
+// apiAnnouncementPreview answers "what would this principal actually see".
+//
+// It exists because admins are NOT exempt from the audience filter (see announcementPrincipals), so
+// a targeted announcement fails silently: the admin who wrote it cannot see it, the people who
+// should receive it do not know to expect it, and "addressed correctly" and "addressed to nobody"
+// look identical from the console. This is the only cheap way to tell them apart before publishing.
+//
+// It reuses visibleFor rather than reimplementing the predicate, so the preview cannot drift from
+// the real answer — a preview that lies is worse than no preview.
+func (s *Server) apiAnnouncementPreview(w http.ResponseWriter, r *http.Request, user string) {
+	raw := strings.TrimSpace(r.URL.Query().Get("principal"))
+	var principals []string
+	switch {
+	case strings.HasPrefix(raw, "g:"):
+		id, err := strconv.ParseInt(strings.TrimPrefix(raw, "g:"), 10, 64)
+		if err != nil || !s.userGroupExists(id) {
+			jsonErrorCode(w, http.StatusBadRequest, "unknown_principal", "投放对象不存在："+raw)
+			return
+		}
+		// A member of this OU, not the OU alone: an announcement addressed to a parent reaches the
+		// whole subtree, so the preview has to carry the ancestry the read path would have built.
+		for _, gid := range s.st.groupAncestry(id, s.st.DefaultGroupID()) {
+			principals = append(principals, groupPrincipal(gid))
+		}
+	case strings.HasPrefix(raw, "u:"):
+		name := strings.TrimSpace(strings.TrimPrefix(raw, "u:"))
+		if !s.st.UsernameTaken(name) {
+			jsonErrorCode(w, http.StatusBadRequest, "unknown_principal", "投放对象不存在："+raw)
+			return
+		}
+		principals = s.announcementPrincipals(name)
+	default:
+		jsonErrorCode(w, http.StatusBadRequest, "unknown_principal", "投放对象不存在："+raw)
+		return
+	}
+	list := s.visibleFor(principals)
+	items := make([]map[string]any, 0, len(list))
+	for _, a := range list {
+		items = append(items, readerAnnouncementJSON(a))
 	}
 	writeJSON(w, map[string]any{"items": items})
 }
