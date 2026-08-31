@@ -347,6 +347,26 @@ func clampWeight(w int) int {
 	return w
 }
 
+// apiGroupAnnouncements previews what deleting this OU would do to the announcements addressed to
+// it. The console asks before offering the delete, so an operator sees the consequence while it is
+// still avoidable rather than discovering it afterwards from an announcement nobody received.
+func (s *Server) apiGroupAnnouncements(w http.ResponseWriter, r *http.Request, user string) {
+	writeJSON(w, map[string]any{"affected": announcementImpactJSON(s.announcementImpactOf(groupPrincipal(pathID(r, "id"))))})
+}
+
+// apiGroupDelete removes an OU.
+//
+// Deleting one sweeps its announcement grants (ids are reassigned, so a left-behind row would be
+// inherited by the next OU), and an announcement whose ONLY recipient was this OU is then addressed
+// to nobody — still enabled, still "live" in the console, reaching no one and reporting nothing.
+// Rather than pick an answer to that, the endpoint refuses until the caller gives one:
+//
+//	?orphans=disable — switch those announcements off, so nothing pretends to be published
+//	?orphans=keep    — leave them; the console flags them as unreachable
+//
+// The refusal is deliberately at the API and not only in the console. Doing it in the UI alone
+// would leave the silent path open to every script that deletes an OU, which is the same class of
+// gap as the bulk group-move that recorded no audit line.
 func (s *Server) apiGroupDelete(w http.ResponseWriter, r *http.Request, user string) {
 	id := pathID(r, "id")
 	// Read before the delete: afterwards there is no name to record, and an id alone means
@@ -358,12 +378,31 @@ func (s *Server) apiGroupDelete(w http.ResponseWriter, r *http.Request, user str
 			break
 		}
 	}
+	// Also read before the delete: DeleteUserGroup sweeps the grants this is derived from.
+	impact := s.announcementImpactOf(groupPrincipal(id))
+	choice := strings.TrimSpace(r.URL.Query().Get("orphans"))
+	if len(impact.orphaned) > 0 && choice != "disable" && choice != "keep" {
+		jsonErrorCode(w, http.StatusConflict, "group_has_announcements",
+			"有公告只发给这个分组，删除后将无人可见，请先选择如何处理")
+		return
+	}
 	if err := s.st.DeleteUserGroup(id); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	disabled := 0
+	if choice == "disable" {
+		for _, aid := range impact.orphaned {
+			if s.st.SetAnnouncementFlag(aid, "enabled", false) == nil {
+				disabled++
+			}
+		}
+	}
 	// Deleting an OU takes its grants and viewer rows with it, so this is an access change too.
-	s.recordChange(r, user, AuditGroupDelete, "group", itoa64(id), map[string]any{"name": name})
+	s.recordChange(r, user, AuditGroupDelete, "group", itoa64(id), map[string]any{
+		"name": name, "announcements_affected": len(impact.affected),
+		"announcements_orphaned": len(impact.orphaned), "announcements_disabled": disabled,
+	})
 	writeJSON(w, okJSON)
 }
 

@@ -261,6 +261,49 @@ describe('AnnouncementPage', () => {
     expect(await screen.findByText('announcementAdmin.previewEmpty')).toBeTruthy()
   })
 
+  // The save path refuses to CREATE a targeted announcement with no recipients, but deleting the
+  // group it named produces the same state afterwards. Nothing else would say so.
+  it('flags an announcement whose recipients have all gone away', async () => {
+    apiMock.get.mockResolvedValue({
+      items: [announcement({ audience: 'grant', grants: [] })],
+      groups: GROUPS,
+      users: USERS,
+    })
+    renderPage()
+    expect(await screen.findByText('announcementAdmin.status.unreachable')).toBeTruthy()
+    expect(screen.queryByText('announcementAdmin.status.live')).toBeNull()
+  })
+
+  it('does not flag one that is merely switched off', async () => {
+    apiMock.get.mockResolvedValue({
+      items: [announcement({ enabled: false, audience: 'grant', grants: [] })],
+      groups: GROUPS,
+      users: USERS,
+    })
+    renderPage()
+    expect(await screen.findByText('announcementAdmin.status.draft')).toBeTruthy()
+  })
+
+  // Saving is never refused on count — a refusal at the moment somebody most needs to broadcast
+  // does not stop readers ignoring a crowded band. The console says so instead.
+  it('warns once too many announcements are live at the same time', async () => {
+    const many = Array.from({ length: 6 }, (_, i) => announcement({ id: i + 1, title: `第 ${i} 条` }))
+    apiMock.get.mockResolvedValue({ items: many, groups: GROUPS, users: USERS })
+    renderPage()
+    expect(await screen.findByText('announcementAdmin.crowded:6')).toBeTruthy()
+  })
+
+  it('counts what readers face, not the draft pile', async () => {
+    const items = [
+      ...Array.from({ length: 3 }, (_, i) => announcement({ id: i + 1, title: `生效 ${i}` })),
+      ...Array.from({ length: 8 }, (_, i) => announcement({ id: 100 + i, title: `草稿 ${i}`, enabled: false })),
+    ]
+    apiMock.get.mockResolvedValue({ items, groups: GROUPS, users: USERS })
+    renderPage()
+    await screen.findByText('生效 0')
+    expect(screen.queryByText(/announcementAdmin\.crowded/)).toBeNull()
+  })
+
   it('deletes through the row action', async () => {
     const user = userEvent.setup()
     const { container } = renderPage()

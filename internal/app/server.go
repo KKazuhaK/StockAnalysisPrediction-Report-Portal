@@ -307,6 +307,9 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("GET /api/admin/groups", s.requireAdminJSON(s.apiAdminGroups))
 	mux.HandleFunc("POST /api/admin/groups", s.requireAdminJSON(s.apiGroupAdd))
 	mux.HandleFunc("PUT /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupSave))
+	// Asked before the delete is offered: deleting an OU can leave an announcement addressed to
+	// nobody, and DELETE refuses until the caller says what should happen to those (ADR 0025).
+	mux.HandleFunc("GET /api/admin/groups/{id}/announcements", s.requireAdminJSON(s.apiGroupAnnouncements))
 	mux.HandleFunc("DELETE /api/admin/groups/{id}", s.requireAdminJSON(s.apiGroupDelete))
 	// Per-OU run allow-list matrix (ADR 0022 R3): which workflows an OU may run, on which surfaces.
 	// SSO administration (ADR 0023). Admin-only; a secret is never returned by any of these.

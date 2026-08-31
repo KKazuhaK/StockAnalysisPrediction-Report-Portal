@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  Alert,
   App,
   Button,
   DatePicker,
@@ -50,6 +51,12 @@ const LEVEL_DOT: Record<AnnouncementLevel, string> = {
 // one: an incident banner nobody remembers to take down is how a whole announcement band stops
 // being read.
 const STALE_DAYS = 14
+
+// Above this many announcements live at once, the console says so. Not a limit — saving is never
+// refused, because a refusal at the moment somebody most needs to broadcast does not actually stop
+// readers from ignoring an overcrowded band. It counts what readers face (enabled and inside its
+// window), not the draft pile, because that is the number that degrades the band.
+const CROWDED = 5
 
 interface FormValues {
   enabled: boolean
@@ -235,13 +242,21 @@ export default function AnnouncementPage() {
       })
   }
 
+  // A targeted announcement with no recipients left reaches nobody and says nothing about it. The
+  // save path refuses to create one, but deleting the group it named produces the same state after
+  // the fact — so it has to be a status the list reports, not only a validation rule.
+  const unreachable = (a: AdminAnnouncement) => a.audience === 'grant' && a.grants.length === 0
+
   const statusOf = (a: AdminAnnouncement) => {
     if (!a.enabled) return { key: 'draft', color: undefined }
+    if (unreachable(a)) return { key: 'unreachable', color: 'red' }
     const now = Date.now()
     if (a.startsAt && Date.parse(a.startsAt) > now) return { key: 'scheduled', color: 'blue' }
     if (a.endsAt && Date.parse(a.endsAt) <= now) return { key: 'expired', color: undefined }
     return { key: 'live', color: 'green' }
   }
+
+  const liveCount = items.filter((a) => statusOf(a).key === 'live').length
 
   const staleDays = (a: AdminAnnouncement) => {
     if (!a.enabled || a.endsAt || !a.updatedAt) return 0
@@ -284,7 +299,13 @@ export default function AnnouncementPage() {
         <Typography.Text type="secondary" ellipsis style={{ flex: 1, minWidth: 80, fontSize: 12 }}>
           {preview}
         </Typography.Text>
-        <Tag color={status.color}>{t(`announcementAdmin.status.${status.key}`)}</Tag>
+        {status.key === 'unreachable' ? (
+          <Tooltip title={t('announcementAdmin.unreachableHint')}>
+            <Tag color="red">{t('announcementAdmin.status.unreachable')}</Tag>
+          </Tooltip>
+        ) : (
+          <Tag color={status.color}>{t(`announcementAdmin.status.${status.key}`)}</Tag>
+        )}
         {a.scope === 'app' && <Tag color="geekblue">{t('announcementAdmin.scope.app')}</Tag>}
         {a.audience === 'grant' && (
           <Tooltip title={a.grants.map(principalName).join('、')}>
@@ -394,6 +415,15 @@ export default function AnnouncementPage() {
                 </Space>
               )}
             </div>
+          )}
+
+          {liveCount > CROWDED && (
+            <Alert
+              showIcon
+              type="warning"
+              message={t('announcementAdmin.crowded', { count: liveCount })}
+              style={{ borderRadius: 8 }}
+            />
           )}
 
           {items.length === 0 ? (

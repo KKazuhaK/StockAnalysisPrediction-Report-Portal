@@ -120,6 +120,31 @@ func (s *Store) AnnouncementsWithGrants() []Announcement {
 	return list
 }
 
+// AnnouncementsGrantedTo returns the announcements addressed to one principal, each carrying its
+// full recipient list. Deleting an OU or an account sweeps its grants, so this has to be read
+// BEFORE the delete — afterwards there is nothing left to ask.
+//
+// The grants matter, not just the match: deleting a group that is one of three recipients leaves
+// the announcement working, while deleting its only recipient leaves it reaching nobody. Those are
+// different things to tell an operator, so the caller gets both.
+func (s *Store) AnnouncementsGrantedTo(principal string) []Announcement {
+	grants := s.AllAnnouncementGrants()
+	var out []Announcement
+	for _, a := range s.Announcements() {
+		if a.Audience != "grant" {
+			continue
+		}
+		for _, p := range grants[a.ID] {
+			if p == principal {
+				a.Grants = grants[a.ID]
+				out = append(out, a)
+				break
+			}
+		}
+	}
+	return out
+}
+
 func (s *Store) CountAnnouncements() int {
 	var n int
 	s.queryRow("SELECT COUNT(*) FROM announcements").Scan(&n)

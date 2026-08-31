@@ -118,6 +118,38 @@ no trail, which is the shape of gap only noticed while investigating. That one i
 request and no OU snapshot is stored on the announcement, so a moved account's feed corrects itself
 within one poll either way.
 
+**There is no ceiling on the number of announcements.** A hard limit refuses a save at the moment an
+operator most needs to broadcast, to prevent a problem — readers ignoring an overcrowded band — that
+refusing does not actually solve. The console warns instead, above five **live** announcements
+(enabled and inside their window, not the draft pile, because that is the number readers face), and
+the reader side folds the overflow behind a counter. If a runaway script ever makes volume a real
+risk, the answer is a rate limit on creation, not a cap on the total.
+
+**An announcement can lose its last recipient after it is saved.** The save path refuses to create a
+targeted announcement with an empty audience, but deleting the OU it named produces exactly that
+state afterwards: still enabled, still "live", reaching nobody and reporting nothing. Two things
+answer it, and both are needed because they cover different paths:
+
+- The console reports **`unreachable`** as a status in its own right, red, with a tooltip saying
+  what to do. This is the safety net — it catches the state however it arose, including an account
+  deletion, a hand-edited database, or an API caller.
+- **`DELETE /api/admin/groups/{id}` refuses with 409 `group_has_announcements`** when the delete
+  would orphan an announcement, until the caller passes `?orphans=disable` or `?orphans=keep`.
+  `GET /api/admin/groups/{id}/announcements` is the preflight the console reads to show which
+  announcements are affected and which of them stop reaching anyone — an OU that is one of several
+  recipients orphans nothing, and saying so is the difference between an informative dialog and a
+  scary one.
+
+The refusal is at the **API**, not only in the console, and that placement is the decision. A
+dialog alone would leave the silent path open to every script that deletes an OU — the same class of
+gap as the bulk group-move that recorded no audit line. Neither `disable` nor `keep` is applied by
+default: picking one for the operator is picking whether a published announcement quietly stops or
+quietly lies, and that is theirs to choose.
+
+Account deletion deliberately does **not** block. An OU is the targeting unit and its deletion is
+rare and high-impact; account deletion is routine, already carries a long list of consequences, and
+has a bulk path. The `unreachable` status covers it.
+
 **Deleting the thing a principal names must take its grants with it.** Usernames are reusable and OU
 ids are reassigned by the database, so a left-behind row is inherited by whoever holds that name or
 id next — announcements addressed to somebody who left. `announcement_grants` is therefore swept in

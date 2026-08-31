@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { App } from 'antd'
 import OrgUnitDetail from './OrgUnitDetail'
 import type { UserGroupRow } from '../../api/types'
 
 const put = vi.hoisted(() => vi.fn())
 const get = vi.hoisted(() => vi.fn())
+const del = vi.hoisted(() => vi.fn())
 vi.mock('../../api/client', () => ({
-  api: { get, put, post: vi.fn(), del: vi.fn() },
+  api: { get, put, post: vi.fn(), del },
   errText: (e: unknown) => String(e),
 }))
 vi.mock('react-i18next', () => ({
@@ -31,6 +32,7 @@ const mount = (target: UserGroupRow, groups: UserGroupRow[] = [DEF, target]) =>
 describe('OrgUnitDetail', () => {
   beforeEach(() => {
     put.mockReset().mockResolvedValue({})
+    del.mockReset().mockResolvedValue({})
     get.mockReset().mockResolvedValue({ targets: [], granted: [] })
   })
 
@@ -152,5 +154,56 @@ describe('OrgUnitDetail', () => {
     expect(screen.queryByText('ou.sectionTargets')).toBeNull()
     mount(g({ id: 3, restricted: true, restricted_effective: true }))
     expect(screen.getAllByText('ou.sectionTargets').length).toBeGreaterThan(0)
+  })
+})
+
+// Deleting an OU sweeps the announcement grants naming it, which can leave an announcement
+// addressed to nobody: still enabled, still "live", reaching no one and reporting nothing. The
+// operator is shown that while it is still avoidable, and decides. The server refuses without a
+// decision too (409), so this dialog is the place to give one rather than the only thing stopping it.
+describe('OrgUnitDetail — deleting an OU that announcements are addressed to', () => {
+  beforeEach(() => {
+    put.mockReset().mockResolvedValue({})
+    del.mockReset().mockResolvedValue({})
+  })
+
+  const clickDelete = async () => {
+    fireEvent.click(screen.getByRole('button', { name: /ou\.deleteOu/ }))
+    // antd Popconfirm's own OK, before the impact dialog appears
+    const ok = await screen.findAllByRole('button')
+    fireEvent.click(ok.find((b) => /OK|确 定|确定/.test(b.textContent || '')) as HTMLElement)
+  }
+
+  it('asks what to do, and sends the answer, when an announcement would be left with nobody', async () => {
+    get.mockImplementation((url: string) =>
+      url.endsWith('/announcements')
+        ? Promise.resolve({ affected: [{ id: 5, title: '华东停电', enabled: true, orphaned: true }] })
+        : Promise.resolve({ targets: [], granted: [] }),
+    )
+    mount(g({ id: 2, name: '华东' }))
+    await clickDelete()
+
+    expect(await screen.findByText('华东停电')).toBeTruthy()
+    expect(screen.getByText('ou.announcementOrphaned')).toBeTruthy()
+    expect(del).not.toHaveBeenCalled() // nothing is deleted until the question is answered
+
+    // The dialog's confirm carries the same label as the page's button, so scope to the dialog.
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /ou\.deleteOu/ }))
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/api/admin/groups/2?orphans=disable'))
+  })
+
+  it('goes straight through when every affected announcement keeps other recipients', async () => {
+    get.mockImplementation((url: string) =>
+      url.endsWith('/announcements')
+        ? Promise.resolve({ affected: [{ id: 5, title: '两地停电', enabled: true, orphaned: false }] })
+        : Promise.resolve({ targets: [], granted: [] }),
+    )
+    mount(g({ id: 2, name: '华东' }))
+    await clickDelete()
+
+    // No decision to make, so no dialog: the announcement goes on working.
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/api/admin/groups/2'))
+    expect(screen.queryByText('两地停电')).toBeNull()
   })
 })
