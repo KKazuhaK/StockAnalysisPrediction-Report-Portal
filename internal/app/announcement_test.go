@@ -502,6 +502,46 @@ func TestOmittedGrantsLeaveTheAudienceAlone(t *testing.T) {
 	}
 }
 
+// The reader-facing bands show everything by default; folding is a site-wide switch an operator
+// turns on if they end up running many announcements at once. Default-off matters: hiding something
+// somebody decided was worth interrupting people with, behind a click, is not a saving.
+func TestFoldingIsOffUntilAnOperatorAsksForIt(t *testing.T) {
+	s := newV1Server(t)
+	mustAddAnnouncement(t, s, `{"title":"一"}`)
+
+	read := func() bool {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.apiAnnouncements(rec, httptest.NewRequest("GET", "/api/announcements", nil), "admin")
+		var out struct {
+			Collapse bool `json:"collapse"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out.Collapse
+	}
+
+	if read() {
+		t.Fatalf("a fresh portal folds its announcements; it should show them")
+	}
+	if rec := postSettingsJSON(t, s, map[string]any{"announcementCollapse": true}); rec.Code != http.StatusOK {
+		t.Fatalf("save status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !read() {
+		t.Errorf("the switch did not reach the reader feed")
+	}
+	// It rides the site-settings endpoint, whose whole design is per-field merge — posting it must
+	// not disturb the branding beside it, and posting branding must not disturb it.
+	postSettingsJSON(t, s, map[string]any{"siteTitle": "智研平台"})
+	if !read() {
+		t.Errorf("an unrelated settings save reset the fold switch")
+	}
+	if got := s.st.GetSetting("site_title", ""); got != "智研平台" {
+		t.Errorf("site_title=%q", got)
+	}
+}
+
 // ---------- "preview as" ----------
 
 func announcementPreview(t *testing.T, s *Server, principal string) *httptest.ResponseRecorder {

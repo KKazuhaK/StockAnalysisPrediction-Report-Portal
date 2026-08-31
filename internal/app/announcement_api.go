@@ -173,13 +173,23 @@ func readerAnnouncementJSON(a Announcement) map[string]any {
 
 // apiAnnouncements is the reader feed: every announcement addressed to the caller, in display
 // order. Polled, so it answers 304 with an empty body while nothing changes.
+// announcementCollapse reports whether the reader-facing bands fold their overflow behind a
+// counter. It defaults to FALSE — show everything — because folding costs a click to read something
+// an operator decided was worth interrupting people with, and because a band that hides its own
+// contents behind a chevron is one readers stop trusting. It is a switch rather than a fixed rule
+// because the right answer depends on how many announcements a portal actually runs at once, which
+// only its operator knows.
+func (s *Server) announcementCollapse() bool {
+	return settingBool(s.st.GetSetting("announcement_collapse", ""), false)
+}
+
 func (s *Server) apiAnnouncements(w http.ResponseWriter, r *http.Request, user string) {
 	list := s.visibleAnnouncements(user)
 	items := make([]map[string]any, 0, len(list))
 	for _, a := range list {
 		items = append(items, readerAnnouncementJSON(a))
 	}
-	writeJSONIfChanged(w, r, map[string]any{"items": items})
+	writeJSONIfChanged(w, r, map[string]any{"items": items, "collapse": s.announcementCollapse()})
 }
 
 // adminAnnouncementJSON is the full row, grants included — the admin console is where an operator
@@ -243,6 +253,7 @@ func (s *Server) apiAdminAnnouncements(w http.ResponseWriter, r *http.Request, u
 	writeJSON(w, map[string]any{
 		"items": items, "groups": groups, "users": users,
 		"usersTruncated": len(all) > len(users),
+		"collapse":       s.announcementCollapse(),
 	})
 }
 

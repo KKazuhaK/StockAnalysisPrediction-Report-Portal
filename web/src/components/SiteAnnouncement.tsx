@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Alert, Button, Space, Modal, Typography, theme } from 'antd'
 import type { AlertProps } from 'antd'
 import {
@@ -41,6 +41,10 @@ const LEVEL_ICON: Record<AnnouncementLevel, typeof InfoCircleFilled> = {
   warning: ExclamationCircleFilled,
   error: CloseCircleFilled,
 }
+
+// Severity order, so a band holding several announcements can be tinted by the loudest rather than
+// by whichever the operator happened to drag to the top.
+const LEVEL_RANK: Record<AnnouncementLevel, number> = { success: 0, notice: 1, warning: 2, error: 3 }
 
 // antd token names per level, for the strip. The alert stack gets these from antd itself.
 const LEVEL_TOKENS: Record<AnnouncementLevel, { bg: string; fg: string }> = {
@@ -116,14 +120,14 @@ function useReaderState(items: Announcement[]) {
 export default function SiteAnnouncement({ style, compact = false }: { style?: CSSProperties; compact?: boolean }) {
   const { t } = useTranslation()
   const loc = useLocation()
-  const { items } = useAnnouncements()
+  const { items, collapse } = useAnnouncements()
   const [expanded, setExpanded] = useState(false)
   const mine = useMemo(() => bandItems(items, loc.pathname), [items, loc.pathname])
   const { open, close } = useReaderState(mine)
 
   if (!open.length) return null
   const limit = compact ? MAX_STACKED_COMPACT : MAX_STACKED
-  const shown = expanded ? open : open.slice(0, limit)
+  const shown = collapse && !expanded ? open.slice(0, limit) : open
   const hidden = open.length - shown.length
 
   return (
@@ -152,18 +156,23 @@ export default function SiteAnnouncement({ style, compact = false }: { style?: C
 export function AnnouncementStrip({ compact = false, maxWidth }: { compact?: boolean; maxWidth?: number | string }) {
   const { t } = useTranslation()
   const { token } = theme.useToken()
-  const { items } = useAnnouncements()
+  const { items, collapse } = useAnnouncements()
   const [expanded, setExpanded] = useState(false)
   const mine = useMemo(() => stripItems(items), [items])
   const { open, close } = useReaderState(mine)
 
   if (!open.length) return null
-  const lead = open[0]
-  const rest = open.length - 1
-  const Icon = LEVEL_ICON[lead.level]
-  const tokens = LEVEL_TOKENS[lead.level]
   const palette = token as unknown as Record<string, string>
-  const line = (a: Announcement): ReactNode => a.title || a.content.split('\n')[0]
+  // The band is tinted by the loudest announcement in it, not by whichever happens to be first: a
+  // stack whose one incident notice sits third should not read as a calm blue bar.
+  const loudest = open.reduce((worst, a) => (LEVEL_RANK[a.level] > LEVEL_RANK[worst.level] ? a : worst), open[0])
+  const tokens = LEVEL_TOKENS[loudest.level]
+  // Folded is opt-in and off by default. It shows one line, and while folded it is the ONLY place
+  // the lead appears — the previous version kept that line visible after expanding, so the first
+  // announcement was drawn twice and the band looked broken.
+  const folded = collapse && !expanded
+  const shown = folded ? open.slice(0, 1) : open
+  const hidden = open.length - shown.length
 
   return (
     <div className="rp-announce-strip" style={{ background: palette[tokens.bg] }}>
@@ -173,79 +182,93 @@ export function AnnouncementStrip({ compact = false, maxWidth }: { compact?: boo
           margin: '0 auto',
           padding: compact ? '8px 12px' : '8px 20px',
           display: 'flex',
-          alignItems: 'flex-start',
-          gap: 10,
+          flexDirection: 'column',
+          gap: 6,
         }}
       >
-        <Icon style={{ color: palette[tokens.fg], fontSize: 15, flexShrink: 0, marginTop: 4 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {open.length > 1 || lead.content ? (
-            <button
-              type="button"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((v) => !v)}
-              style={{
-                background: 'none',
-                border: 0,
-                padding: 0,
-                cursor: 'pointer',
-                color: token.colorText,
-                font: 'inherit',
-                fontSize: 14,
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                maxWidth: '100%',
-              }}
-            >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line(lead)}</span>
-              {rest > 0 && (
-                <span
-                  style={{
-                    flexShrink: 0,
-                    fontSize: 12,
-                    padding: '0 6px',
-                    borderRadius: 10,
-                    background: token.colorFillSecondary,
-                    color: token.colorTextSecondary,
-                  }}
-                >
-                  +{rest}
-                </span>
+        {shown.map((a) => {
+          const Icon = LEVEL_ICON[a.level]
+          return (
+            <div key={a.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <Icon
+                style={{
+                  color: palette[LEVEL_TOKENS[a.level].fg],
+                  fontSize: 15,
+                  flexShrink: 0,
+                  marginTop: 4,
+                }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {a.title && (
+                  <div
+                    style={{
+                      color: token.colorText,
+                      fontSize: 14,
+                      fontWeight: a.content ? 600 : 400,
+                      ...(folded ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}),
+                    }}
+                  >
+                    {a.title}
+                  </div>
+                )}
+                {a.content && !folded && (
+                  <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line', lineHeight: 1.5 }}>
+                    {a.content}
+                  </Typography.Text>
+                )}
+                {!a.title && folded && (
+                  <div
+                    style={{
+                      color: token.colorText,
+                      fontSize: 14,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {a.content.split('\n')[0]}
+                  </div>
+                )}
+              </div>
+              {a.dismissible && (
+                <Button
+                  type="text"
+                  size="small"
+                  aria-label={t('announcement.close')}
+                  icon={<CloseOutlined />}
+                  onClick={() => close(a)}
+                  style={{ flexShrink: 0 }}
+                />
               )}
-              {expanded ? <UpOutlined style={{ fontSize: 10 }} /> : <DownOutlined style={{ fontSize: 10 }} />}
-            </button>
-          ) : (
-            <span style={{ color: token.colorText, fontSize: 14 }}>{line(lead)}</span>
-          )}
+            </div>
+          )
+        })}
 
-          {expanded && (
-            <Space direction="vertical" size={6} style={{ width: '100%', marginTop: 8 }}>
-              {open.map((a) => (
-                <div key={a.id}>
-                  {a.title && (
-                    <Typography.Text style={{ fontWeight: 600, display: 'block' }}>{a.title}</Typography.Text>
-                  )}
-                  {a.content && (
-                    <Typography.Text type="secondary" style={{ whiteSpace: 'pre-line', lineHeight: 1.5 }}>
-                      {a.content}
-                    </Typography.Text>
-                  )}
-                </div>
-              ))}
-            </Space>
-          )}
-        </div>
-        {lead.dismissible && (
-          <Button
-            type="text"
-            size="small"
-            aria-label={t('announcement.close')}
-            icon={<CloseOutlined />}
-            onClick={() => close(lead)}
-            style={{ flexShrink: 0 }}
-          />
+        {/* Only ever rendered when the site opted into folding: with the default there is nothing
+            left over to reveal. */}
+        {collapse && open.length > 1 && (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+            style={{
+              alignSelf: 'flex-start',
+              marginLeft: 25,
+              background: 'none',
+              border: 0,
+              padding: 0,
+              cursor: 'pointer',
+              color: token.colorTextSecondary,
+              font: 'inherit',
+              fontSize: 12,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            {hidden > 0 ? t('announcement.showMore', { count: hidden }) : t('announcement.showLess')}
+            {expanded ? <UpOutlined style={{ fontSize: 10 }} /> : <DownOutlined style={{ fontSize: 10 }} />}
+          </button>
         )}
       </div>
     </div>

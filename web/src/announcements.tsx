@@ -19,10 +19,12 @@ const LEVELS: AnnouncementLevel[] = ['notice', 'success', 'warning', 'error']
 
 interface AnnouncementsCtx {
   items: Announcement[]
+  /** Site-wide: fold the overflow behind a counter, or show every announcement. Default: show. */
+  collapse: boolean
   refresh: () => Promise<void>
 }
 
-const Ctx = createContext<AnnouncementsCtx>({ items: [], refresh: async () => {} })
+const Ctx = createContext<AnnouncementsCtx>({ items: [], collapse: false, refresh: async () => {} })
 
 // Defensive, like site.tsx's normalizeSettings and for the same reason: this renders inside the
 // app shell, so a malformed payload must degrade to "no banner", never to an exception that takes
@@ -67,6 +69,7 @@ function unexpired(items: Announcement[], now: number): Announcement[] {
 
 export function AnnouncementsProvider({ user = '', children }: { user?: string; children: ReactNode }) {
   const [items, setItems] = useState<Announcement[]>([])
+  const [collapse, setCollapse] = useState(false)
   const [tick, setTick] = useState(0)
   const held = useRef(false)
 
@@ -79,9 +82,12 @@ export function AnnouncementsProvider({ user = '', children }: { user?: string; 
     // announcements at all, and every poll for the next hour would re-confirm it.
     if (!held.current) forgetTags(URL)
     try {
-      const res = await getIfChanged<{ items: unknown }>(URL)
+      const res = await getIfChanged<{ items: unknown; collapse?: unknown }>(URL)
       held.current = true
-      if (res !== UNCHANGED) setItems(normalize(res))
+      if (res !== UNCHANGED) {
+        setItems(normalize(res))
+        setCollapse((res as { collapse?: unknown })?.collapse === true)
+      }
     } catch (e) {
       // A dead session must not leave a targeted announcement on the screen. Anything else — a
       // blip, a 500 — keeps the last good payload: blanking a live incident banner because one
@@ -123,8 +129,8 @@ export function AnnouncementsProvider({ user = '', children }: { user?: string; 
 
   const value = useMemo<AnnouncementsCtx>(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- tick is the clock, not data
-    () => ({ items: unexpired(items, Date.now()), refresh: load }),
-    [items, load, tick],
+    () => ({ items: unexpired(items, Date.now()), collapse, refresh: load }),
+    [items, collapse, load, tick],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

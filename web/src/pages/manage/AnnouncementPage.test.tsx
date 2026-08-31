@@ -142,7 +142,7 @@ describe('AnnouncementPage', () => {
     const user = userEvent.setup()
     renderPage()
 
-    await user.click(await screen.findByRole('switch'))
+    await user.click(await screen.findByRole('switch', { name: 'announcementAdmin.enabled' }))
     await waitFor(() => expect(apiMock.patch).toHaveBeenCalledTimes(1))
     expect(apiMock.patch).toHaveBeenCalledWith('/api/admin/announcements/1', { enabled: false })
     expect(apiMock.put).not.toHaveBeenCalled()
@@ -180,7 +180,7 @@ describe('AnnouncementPage', () => {
   it('drops the reader feed’s cached ETag after a change so the admin’s own shell updates now', async () => {
     const user = userEvent.setup()
     renderPage()
-    await user.click(await screen.findByRole('switch'))
+    await user.click(await screen.findByRole('switch', { name: 'announcementAdmin.enabled' }))
     await waitFor(() => expect(forgetTagsMock).toHaveBeenCalledWith('/api/announcements'))
   })
 

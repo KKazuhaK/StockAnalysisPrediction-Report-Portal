@@ -1108,6 +1108,10 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 		PublicUrl                                                                             *string
 		AnnouncementLevel, AnnouncementTitle, AnnouncementContent, HomeMoreStyle              *string
 		FooterShowInfo, FooterShowVersion, PwaEnabled, AnnouncementEnabled, AnnouncementPopup *bool
+		// Whether the reader-facing announcement bands fold their overflow (ADR 0025). A site-wide
+		// display switch, so it rides the site-settings endpoint rather than earning one of its
+		// own; the announcements page posts it by itself, which is what per-field merge is for.
+		AnnouncementCollapse *bool
 	}
 	readJSON(r, &in)
 	// Validate before writing anything so a bad field can't half-apply.
@@ -1200,6 +1204,9 @@ func (s *Server) apiSettingsSave(w http.ResponseWriter, r *http.Request, user st
 	}
 	if in.AnnouncementPopup != nil {
 		s.st.SetSetting("announcement_popup", strconv.FormatBool(*in.AnnouncementPopup))
+	}
+	if in.AnnouncementCollapse != nil {
+		s.st.SetSetting("announcement_collapse", strconv.FormatBool(*in.AnnouncementCollapse))
 	}
 	if in.AnnouncementLevel != nil {
 		s.st.SetSetting("announcement_level", normalizeAnnouncementLevel(*in.AnnouncementLevel))
