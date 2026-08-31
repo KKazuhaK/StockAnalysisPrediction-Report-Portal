@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.40](v0.4.40.md) | 2026-08-31 | Announcements stop hiding themselves |
 | [v0.4.39](v0.4.39.md) | 2026-08-30 | Announcements, plural |
 | [v0.4.38](v0.4.38.md) | 2026-08-26 | One prompt and one reload per deploy |
 | [v0.4.37](v0.4.37.md) | 2026-08-26 | A session that ends says so |
