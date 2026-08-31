@@ -238,13 +238,28 @@ the exclusions below — a `/chat`-scoped row would render on the mobile chat pa
 `display:none` precisely because that surface is stripped to the thread and composer.
 
 **The two scopes are drawn differently, and that is the point of having two.** A home-scoped
-announcement gets the roomy alert stack it has always had, on the page a reader visits deliberately.
-An app-scoped one follows the reader everywhere, so it is *chrome* and has to cost what chrome
-costs: a one-line tinted strip under the header — level icon, the leading announcement's title, a
-`+N` chip, an optional close — that expands in place. Three stacked alerts would be ~150px of every
-screen in the portal against ~36px for the strip, and a band that expensive is one readers learn to
-scroll past. Expansion is in place rather than a popover (360px of floating panel is unusable on a
-375px phone) or a drawer (a scrim over the whole app to read two sentences).
+announcement gets the roomy alert stack, on the page a reader visits deliberately. An app-scoped one
+follows the reader everywhere, so it gets a tinted band under the header — one row per announcement,
+level icon, title, body, an optional close — tinted by the **loudest** announcement in it rather
+than by whichever the operator dragged to the top, so a stack whose one incident notice sits third
+does not read as a calm blue bar.
+
+**Neither band folds by default, and that reverses an earlier decision here.** The strip originally
+collapsed to a single line on the argument that a band on every page is chrome and has to cost what
+chrome costs — ~36px against ~150px for three stacked alerts. Seen in use, that argument does not
+survive: folding hides, behind a click, something an operator decided was worth interrupting
+everybody with, and a band that conceals its own contents is one readers stop trusting. The saving
+was real and bought the wrong thing.
+
+Folding is now a site-wide switch (`announcement_collapse`, default off) rather than a fixed rule,
+because the right answer depends on how many announcements a portal actually runs at once — which
+only its operator knows. It rides the site-settings endpoint rather than earning one of its own:
+that endpoint merges per field, so the announcements page posts this alone without disturbing the
+branding beside it.
+
+While folded the strip shows the lead **and nothing else**. The first attempt kept the collapsed
+line visible after expanding and listed every announcement beneath it, so the lead was drawn twice
+and the band looked broken — visible in the very first screenshot of it in use.
 
 The two sets are disjoint by construction — the strip draws `scope='app'`, the band draws
 `scope='home'` and only on `/` — so nothing appears twice on the home page. The popup queue runs

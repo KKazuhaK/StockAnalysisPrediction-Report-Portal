@@ -81,6 +81,7 @@ export default function AnnouncementPage() {
   const [groups, setGroups] = useState<Principal[]>([])
   const [users, setUsers] = useState<Principal[]>([])
   const [usersTruncated, setUsersTruncated] = useState(false)
+  const [collapse, setCollapse] = useState(false)
   const [previewAs, setPreviewAs] = useState<string | undefined>()
   const [preview, setPreview] = useState<Announcement[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -95,11 +96,16 @@ export default function AnnouncementPage() {
     setLoading(true)
     setLoadErr('')
     return api
-      .get<{ items: AdminAnnouncement[]; groups: Principal[]; users: Principal[]; usersTruncated: boolean }>(
-        '/api/admin/announcements',
-      )
+      .get<{
+        items: AdminAnnouncement[]
+        groups: Principal[]
+        users: Principal[]
+        usersTruncated: boolean
+        collapse: boolean
+      }>('/api/admin/announcements')
       .then((r) => {
         setItems(r.items || [])
+        setCollapse(r.collapse === true)
         setGroups(r.groups || [])
         setUsers(r.users || [])
         setUsersTruncated(r.usersTruncated === true)
@@ -201,6 +207,19 @@ export default function AnnouncementPage() {
     } catch (e) {
       message.error(errText(e, t))
       load()
+    }
+  }
+
+  // One site-wide display switch, saved on its own the moment it is flipped — the settings endpoint
+  // merges per field, so posting this alone cannot disturb the branding beside it.
+  const saveCollapse = async (on: boolean) => {
+    setCollapse(on) // optimistic; a failure puts it back
+    try {
+      await api.post('/api/admin/settings', { announcementCollapse: on })
+      forgetTags('/api/announcements')
+    } catch (e) {
+      setCollapse(!on)
+      message.error(errText(e, t))
     }
   }
 
@@ -328,7 +347,12 @@ export default function AnnouncementPage() {
           </Tooltip>
         )}
         <Tooltip title={t('announcementAdmin.enabled')}>
-          <Switch size="small" checked={a.enabled} onChange={(v) => toggle(a, 'enabled', v)} />
+          <Switch
+            size="small"
+            aria-label={t('announcementAdmin.enabled')}
+            checked={a.enabled}
+            onChange={(v) => toggle(a, 'enabled', v)}
+          />
         </Tooltip>
         <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(a)} />
         <Popconfirm title={t('announcementAdmin.deleteConfirm')} onConfirm={() => remove(a.id)}>
@@ -388,6 +412,19 @@ export default function AnnouncementPage() {
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('announcementAdmin.hint')}
+            </Typography.Text>
+          </Space>
+
+          <Space size={8} align="center" wrap>
+            <Switch
+              size="small"
+              aria-label={t('announcementAdmin.collapse')}
+              checked={collapse}
+              onChange={saveCollapse}
+            />
+            <Typography.Text style={{ fontSize: 13 }}>{t('announcementAdmin.collapse')}</Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t('announcementAdmin.collapseHint')}
             </Typography.Text>
           </Space>
 

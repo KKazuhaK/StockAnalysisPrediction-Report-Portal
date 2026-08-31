@@ -6,11 +6,18 @@ import SiteAnnouncement, { AnnouncementPopup, AnnouncementStrip, announcementAle
 import { announcementSig, migrateLegacyDismissal } from '../lib/announcementDismissal'
 import type { Announcement } from '../api/types'
 
-const feed = vi.hoisted(() => ({ items: [] as Announcement[], user: 'alice' as string | null }))
+const feed = vi.hoisted(() => ({
+  items: [] as Announcement[],
+  user: 'alice' as string | null,
+  collapse: false,
+}))
 
 vi.mock('../announcements', async () => {
   const actual = await vi.importActual<typeof import('../announcements')>('../announcements')
-  return { ...actual, useAnnouncements: () => ({ items: feed.items, refresh: async () => {} }) }
+  return {
+    ...actual,
+    useAnnouncements: () => ({ items: feed.items, collapse: feed.collapse, refresh: async () => {} }),
+  }
 })
 
 vi.mock('../auth', () => ({
@@ -66,6 +73,7 @@ describe('SiteAnnouncement', () => {
     window.sessionStorage.clear()
     feed.items = []
     feed.user = 'alice'
+    feed.collapse = false
   })
 
   it('renders nothing when the feed is empty', () => {
@@ -83,7 +91,18 @@ describe('SiteAnnouncement', () => {
     expect(banners.map((n) => n.textContent)).toEqual(['第一条', '第二条'])
   })
 
-  it('folds the overflow behind a counter instead of burying the page in banners', async () => {
+  // Folding is off by default: hiding something an operator decided was worth interrupting people
+  // with, behind a click, is not a saving.
+  it('shows every home announcement by default', async () => {
+    feed.items = [1, 2, 3, 4, 5].map((id) => announcement({ id, title: `第 ${id} 条` }))
+    renderAt('/')
+
+    expect(await screen.findByText('第 5 条')).toBeTruthy()
+    expect(screen.queryByText(/announcement\.showMore/)).toBeNull()
+  })
+
+  it('folds the overflow behind a counter when the site asks for it', async () => {
+    feed.collapse = true
     feed.items = [1, 2, 3, 4, 5].map((id) => announcement({ id, title: `第 ${id} 条` }))
     const user = userEvent.setup()
     renderAt('/')
@@ -112,8 +131,24 @@ describe('SiteAnnouncement', () => {
     expect(screen.queryByText('首页公告')).toBeNull()
   })
 
-  // A band on every page is chrome, so it costs what chrome costs: one line, expanded on demand.
-  it('collapses the site-wide strip to one line and expands it in place', async () => {
+  it('shows every site-wide announcement in full by default', async () => {
+    feed.items = [
+      announcement({ id: 1, title: '第一条', content: '正文一', scope: 'app' }),
+      announcement({ id: 2, title: '第二条', content: '正文二', scope: 'app' }),
+    ]
+    renderAt('/queue')
+
+    expect(await screen.findByText('第一条')).toBeTruthy()
+    expect(screen.getByText('正文一')).toBeTruthy()
+    expect(screen.getByText('第二条')).toBeTruthy()
+    expect(screen.getByText('正文二')).toBeTruthy()
+    expect(screen.queryByRole('button', { expanded: false })).toBeNull()
+  })
+
+  // The bug this replaced: the folded lead line stayed visible after expanding, so the first
+  // announcement was drawn twice and the band looked broken.
+  it('never draws the lead twice when the site-wide strip is folded and then expanded', async () => {
+    feed.collapse = true
     feed.items = [
       announcement({ id: 1, title: '第一条', content: '正文一', scope: 'app' }),
       announcement({ id: 2, title: '第二条', content: '正文二', scope: 'app' }),
@@ -122,11 +157,13 @@ describe('SiteAnnouncement', () => {
     renderAt('/queue')
 
     expect(await screen.findByText('第一条')).toBeTruthy()
-    expect(screen.getByText('+1')).toBeTruthy()
-    expect(screen.queryByText('正文二')).toBeNull()
+    expect(screen.queryByText('第二条')).toBeNull()
+    expect(screen.queryByText('正文一')).toBeNull() // folded shows the title only
 
     await user.click(screen.getByRole('button', { expanded: false }))
-    expect(await screen.findByText('正文二')).toBeTruthy()
+    await screen.findByText('第二条')
+    expect(screen.getAllByText('第一条')).toHaveLength(1)
+    expect(screen.getAllByText('正文一')).toHaveLength(1)
   })
 
   it('closes a dismissible site-wide strip', async () => {
