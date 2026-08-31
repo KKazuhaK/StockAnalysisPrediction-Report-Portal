@@ -639,14 +639,141 @@ func TestAnnouncementValidationRejectsBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestAnnouncementCountIsCapped(t *testing.T) {
+// There is no ceiling on the count, deliberately: refusing a save is not how you stop readers
+// ignoring an overcrowded band, and it refuses at the moment an operator most needs to broadcast.
+// The console warns instead, and the reader folds the overflow behind a counter.
+func TestAnnouncementCountIsNotCapped(t *testing.T) {
 	s := newV1Server(t)
-	for i := 0; i < maxAnnouncements; i++ {
+	for i := 0; i < 60; i++ {
 		mustAddAnnouncement(t, s, fmt.Sprintf(`{"title":"第 %d 条"}`, i))
 	}
-	rec := announcementReq(t, s, http.MethodPost, "/api/admin/announcements", `{"title":"多余的一条"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("over-cap status=%d, want 400", rec.Code)
+	if n := s.st.CountAnnouncements(); n != 60 {
+		t.Fatalf("stored %d announcements, want 60", n)
+	}
+	if n := len(readerFeed(t, s, "admin")); n != 60 {
+		t.Errorf("reader feed returned %d, want all 60", n)
+	}
+}
+
+func groupDelete(t *testing.T, s *Server, id int64, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/admin/groups/%d%s", id, query), nil)
+	req.SetPathValue("id", fmt.Sprint(id))
+	s.apiGroupDelete(rec, req, "admin")
+	return rec
+}
+
+// Deleting an OU sweeps its grants, which can leave an announcement addressed to nobody: still
+// enabled, still "live", reaching no one and saying nothing about it. The endpoint refuses until
+// the caller decides what should happen — at the API, not only in the console, so a script that
+// deletes OUs cannot take the silent path.
+func TestDeletingAnOUDemandsADecisionAboutItsAnnouncements(t *testing.T) {
+	s := newV1Server(t)
+	gid, err := s.st.CreateUserGroup("华东", "", 0)
+	if err != nil {
+		t.Fatalf("create OU: %v", err)
+	}
+	id := mustAddAnnouncement(t, s, fmt.Sprintf(`{"title":"华东停电","audience":"grant","grants":["g:%d"]}`, gid))
+
+	rec := groupDelete(t, s, gid, "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("delete without a choice: status=%d, want 409 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if s.st.GetAnnouncement(id) == nil || len(s.st.ListUserGroups()) == 0 {
+		t.Fatalf("the refused delete went ahead anyway")
+	}
+
+	if rec := groupDelete(t, s, gid, "?orphans=disable"); rec.Code != http.StatusOK {
+		t.Fatalf("delete with a choice: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	a := s.st.GetAnnouncement(id)
+	if a == nil {
+		t.Fatal("the announcement was deleted; it should have been switched off")
+	}
+	if a.Enabled {
+		t.Errorf("orphans=disable left the announcement enabled and unreachable")
+	}
+	if got := s.st.AllAnnouncementGrants()[id]; len(got) != 0 {
+		t.Errorf("grants outlived the OU: %v", got)
+	}
+}
+
+func TestKeepingAnOrphanedAnnouncementIsAllowedWhenAsked(t *testing.T) {
+	s := newV1Server(t)
+	gid, err := s.st.CreateUserGroup("华东", "", 0)
+	if err != nil {
+		t.Fatalf("create OU: %v", err)
+	}
+	id := mustAddAnnouncement(t, s, fmt.Sprintf(`{"title":"华东停电","audience":"grant","grants":["g:%d"]}`, gid))
+
+	if rec := groupDelete(t, s, gid, "?orphans=keep"); rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if a := s.st.GetAnnouncement(id); a == nil || !a.Enabled {
+		t.Errorf("orphans=keep should leave the row exactly as it was; the console flags it instead")
+	}
+	// And it really does reach nobody now — which is what the console has to say out loud.
+	if n := len(readerFeed(t, s, "admin")); n != 0 {
+		t.Errorf("an announcement with no recipients was delivered to %d readers", n)
+	}
+}
+
+// An OU that is one of several recipients is not an orphan-maker: the announcement keeps working,
+// so there is nothing to decide and the delete goes straight through.
+func TestDeletingOneOfSeveralRecipientsNeedsNoDecision(t *testing.T) {
+	s := newV1Server(t)
+	a1, _ := s.st.CreateUserGroup("华东", "", 0)
+	a2, _ := s.st.CreateUserGroup("华西", "", 0)
+	id := mustAddAnnouncement(t, s,
+		fmt.Sprintf(`{"title":"两地停电","audience":"grant","grants":["g:%d","g:%d"]}`, a1, a2))
+
+	if rec := groupDelete(t, s, a1, ""); rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if a := s.st.GetAnnouncement(id); a == nil || !a.Enabled {
+		t.Fatalf("the announcement should be untouched")
+	}
+	if got := s.st.AllAnnouncementGrants()[id]; len(got) != 1 || got[0] != groupPrincipal(a2) {
+		t.Errorf("remaining grants = %v, want just the surviving OU", got)
+	}
+}
+
+func TestGroupAnnouncementImpactIsReadableBeforeDeleting(t *testing.T) {
+	s := newV1Server(t)
+	gid, _ := s.st.CreateUserGroup("华东", "", 0)
+	other, _ := s.st.CreateUserGroup("华西", "", 0)
+	mustAddAnnouncement(t, s, fmt.Sprintf(`{"title":"只发华东","audience":"grant","grants":["g:%d"]}`, gid))
+	mustAddAnnouncement(t, s,
+		fmt.Sprintf(`{"title":"两地都发","audience":"grant","grants":["g:%d","g:%d"]}`, gid, other))
+	mustAddAnnouncement(t, s, `{"title":"全体通告"}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/admin/groups/%d/announcements", gid), nil)
+	req.SetPathValue("id", fmt.Sprint(gid))
+	s.apiGroupAnnouncements(rec, req, "admin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var out struct {
+		Affected []struct {
+			Title    string `json:"title"`
+			Orphaned bool   `json:"orphaned"`
+		} `json:"affected"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Affected) != 2 {
+		t.Fatalf("affected = %v, want the two addressed to this OU (not the untargeted one)", out.Affected)
+	}
+	got := map[string]bool{}
+	for _, a := range out.Affected {
+		got[a.Title] = a.Orphaned
+	}
+	// The distinction the operator needs: one of these stops reaching anybody, the other does not.
+	if !got["只发华东"] || got["两地都发"] {
+		t.Errorf("orphaned flags = %v", got)
 	}
 }
 

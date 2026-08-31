@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.42](v0.4.42.md) | 2026-08-30 | An announcement that reaches nobody says so |
 | [v0.4.41](v0.4.41.md) | 2026-08-30 | An announcement for a particular group |
 | [v0.4.40](v0.4.40.md) | 2026-08-30 | An announcement that follows the reader |
 | [v0.4.39](v0.4.39.md) | 2026-08-30 | More than one announcement, in an order you choose |

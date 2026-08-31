@@ -21,11 +21,14 @@ import (
 const (
 	maxAnnouncementTitleRunes   = 160
 	maxAnnouncementContentRunes = 2000
-	// A ceiling, not a policy: it bounds the reader payload, the dismissal map every browser
-	// keeps, and the blast radius of a scripted mistake. Operators run out of screen long before
-	// they run out of rows.
-	maxAnnouncements = 50
 )
+
+// There is deliberately no ceiling on the number of announcements. A hard limit would refuse a save
+// at the moment an operator most needs to broadcast, to prevent a problem — readers ignoring an
+// overcrowded band — that a refusal does not actually solve. The console warns instead, counting
+// what readers actually face (enabled and inside its window, not the draft pile), and the reader
+// side already folds the overflow behind a counter. If a runaway script ever makes this a real
+// risk, the answer is a rate limit on creation, not a cap on the total.
 
 func validAnnouncementLevel(raw string) bool {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
@@ -241,6 +244,40 @@ func (s *Server) apiAdminAnnouncements(w http.ResponseWriter, r *http.Request, u
 		"items": items, "groups": groups, "users": users,
 		"usersTruncated": len(all) > len(users),
 	})
+}
+
+// announcementImpact describes what deleting a principal would do to the announcements addressed to
+// it. `orphaned` is the sharp end: this principal is the ONLY recipient, so once its grants are
+// swept the announcement reaches nobody and says nothing about it.
+type announcementImpact struct {
+	affected []Announcement
+	orphaned []int64
+}
+
+func (s *Server) announcementImpactOf(principal string) announcementImpact {
+	out := announcementImpact{}
+	for _, a := range s.st.AnnouncementsGrantedTo(principal) {
+		out.affected = append(out.affected, a)
+		if len(a.Grants) == 1 {
+			out.orphaned = append(out.orphaned, a.ID)
+		}
+	}
+	return out
+}
+
+func announcementImpactJSON(im announcementImpact) []map[string]any {
+	orphan := map[int64]bool{}
+	for _, id := range im.orphaned {
+		orphan[id] = true
+	}
+	items := make([]map[string]any, 0, len(im.affected))
+	for _, a := range im.affected {
+		items = append(items, map[string]any{
+			"id": a.ID, "title": a.Title, "level": a.Level,
+			"enabled": a.Enabled, "orphaned": orphan[a.ID],
+		})
+	}
+	return items
 }
 
 // apiAnnouncementPreview answers "what would this principal actually see".
@@ -476,10 +513,6 @@ func (s *Server) apiAnnouncementAdd(w http.ResponseWriter, r *http.Request, user
 	var in announcementInput
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
-		return
-	}
-	if s.st.CountAnnouncements() >= maxAnnouncements {
-		jsonErrorCode(w, http.StatusBadRequest, "too_many_announcements", "公告数量已达上限")
 		return
 	}
 	a, ok := s.validateAnnouncement(w, in, nil)

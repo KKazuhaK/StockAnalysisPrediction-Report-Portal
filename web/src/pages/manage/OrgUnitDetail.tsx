@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { App, Breadcrumb, Button, Card, Checkbox, Empty, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
+import { App, Breadcrumb, Button, Card, Checkbox, Empty, Input, InputNumber, Modal, Popconfirm, Radio, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { DeleteOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
@@ -35,6 +35,16 @@ interface Draft {
   quotaInherit: boolean
   dailyQuota: number
   quotaPeriod: string
+}
+
+// One announcement that names the OU being deleted. `orphaned` means this OU is its ONLY recipient,
+// so deleting leaves it addressed to nobody — the distinction the dialog has to make, because the
+// others go on working untouched.
+interface AffectedAnnouncement {
+  id: number
+  title: string
+  enabled: boolean
+  orphaned: boolean
 }
 
 function draftOf(g: UserGroupRow, def: UserGroupRow | undefined, groups: UserGroupRow[]): Draft {
@@ -95,6 +105,9 @@ export default function OrgUnitDetail({
 
   const [d, setD] = useState<Draft>(() => draftOf(group, def, groups))
   const [saving, setSaving] = useState(false)
+  const [impact, setImpact] = useState<AffectedAnnouncement[] | null>(null)
+  const [orphanChoice, setOrphanChoice] = useState<'disable' | 'keep'>('disable')
+  const [deleting, setDeleting] = useState(false)
   // Re-seed when the tree selection moves, or the pane would keep the previous OU's draft.
   useEffect(() => setD(draftOf(group, def, groups)), [group, def, groups])
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((p) => ({ ...p, [k]: v }))
@@ -134,13 +147,41 @@ export default function OrgUnitDetail({
     }
   }
 
+  // Deleting an OU takes the announcements addressed to it with it — not the rows, but their
+  // recipients, since a grant naming a deleted OU would be inherited by whichever OU is created
+  // next. An announcement whose ONLY recipient was this OU is then addressed to nobody: still
+  // enabled, still "live", reaching no one and reporting nothing.
+  //
+  // So the delete asks first. The server refuses without an answer (it is a 409, not a UI-only
+  // nicety, so a script cannot take the silent path either); this dialog is where the answer is
+  // given, showing which announcements are affected and which of them stop reaching anyone.
   const remove = async () => {
     try {
-      await api.del(`/api/admin/groups/${group.id}`)
+      const r = await api.get<{ affected: AffectedAnnouncement[] }>(
+        `/api/admin/groups/${group.id}/announcements`,
+      )
+      const affected = r.affected ?? []
+      if (affected.some((a) => a.orphaned)) {
+        setImpact(affected)
+        return
+      }
+      await doRemove()
+    } catch (e) {
+      message.error(errText(e, t))
+    }
+  }
+
+  const doRemove = async (orphans?: 'disable' | 'keep') => {
+    setDeleting(true)
+    try {
+      await api.del(`/api/admin/groups/${group.id}${orphans ? `?orphans=${orphans}` : ''}`)
       message.success(t('common.saved'))
+      setImpact(null)
       onDeleted()
     } catch (e) {
       message.error(errText(e, t))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -314,6 +355,41 @@ export default function OrgUnitDetail({
           </Button>
         </Popconfirm>
       )}
+
+      <Modal
+        open={!!impact}
+        title={t('ou.announcementImpactTitle')}
+        onCancel={() => setImpact(null)}
+        okText={t('ou.deleteOu')}
+        okButtonProps={{ danger: true, loading: deleting }}
+        cancelText={t('common.cancel')}
+        onOk={() => doRemove(orphanChoice)}
+        destroyOnHidden
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text>{t('ou.announcementImpactDesc', { name: group.name })}</Typography.Text>
+          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            {(impact ?? []).map((a) => (
+              <Space key={a.id} size={6}>
+                <Typography.Text>{a.title || t('announcementAdmin.untitled')}</Typography.Text>
+                {a.orphaned ? (
+                  <Tag color="red">{t('ou.announcementOrphaned')}</Tag>
+                ) : (
+                  <Tag>{t('ou.announcementKeepsWorking')}</Tag>
+                )}
+              </Space>
+            ))}
+          </Space>
+          <Radio.Group
+            value={orphanChoice}
+            onChange={(e) => setOrphanChoice(e.target.value)}
+            options={[
+              { value: 'disable', label: t('ou.orphanDisable') },
+              { value: 'keep', label: t('ou.orphanKeep') },
+            ]}
+          />
+        </Space>
+      </Modal>
     </Space>
   )
 }
