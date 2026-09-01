@@ -354,6 +354,11 @@ export default function LinksPage() {
       {!loading && rows.length === 0 ? (
         <Empty description={t('links.empty')} />
       ) : (
+        // Not SortableWrapper: dragging a group header has to carry its links with it, which needs
+        // the ACTIVE id and not just the reordered sequence the shared wrapper hands back. The one
+        // thing that must stay true either way is below — every SortableItem shares the single flex
+        // container, because restrictToParentElement clamps the drag to the dragged node's parent
+        // and a per-item wrapper would pin every row in place. See dnd.tsx.
         <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis, restrictToParentElement]} onDragEnd={onDragEnd}>
           <SortableContext items={ids} strategy={verticalListSortingStrategy}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

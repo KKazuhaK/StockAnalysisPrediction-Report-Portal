@@ -192,35 +192,33 @@ export default function RunPresetsEditor() {
       {presets.length === 0 ? (
         <Empty description={t('preset.none')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
-        <SortableWrapper ids={ids} onReorder={onReorder}>
-          <Space direction="vertical" size={6} style={{ width: '100%' }}>
-            {presets.map((p) => (
-              <SortableItem key={p.id} id={String(p.id)}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '6px 8px',
-                    border: '1px solid rgba(128,128,128,0.2)',
-                    borderRadius: 8,
-                  }}
-                >
-                  <DragHandle />
-                  <Switch size="small" checked={p.enabled} onChange={(v) => toggleEnabled(p, v)} />
-                  <span style={{ fontWeight: 500, minWidth: 80 }}>{p.label || t('preset.untitled')}</span>
-                  <Typography.Text type="secondary" style={{ flex: 1, minWidth: 120 }}>
-                    {presetSummary(p, t)}
-                  </Typography.Text>
-                  {p.invert ? <Tag color="orange">{t('preset.invertTag')}</Tag> : <Tag>{t('preset.overrun.' + p.on_overrun)}</Tag>}
-                  <Button size="small" icon={<EditOutlined />} onClick={() => edit(p)} />
-                  <Popconfirm title={t('preset.deleteConfirm')} onConfirm={() => remove(p.id)} okText={t('common.ok')} cancelText={t('common.cancel')}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                </div>
-              </SortableItem>
-            ))}
-          </Space>
+        <SortableWrapper ids={ids} onReorder={onReorder} gap={6}>
+          {presets.map((p) => (
+            <SortableItem key={p.id} id={String(p.id)}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 8px',
+                  border: '1px solid rgba(128,128,128,0.2)',
+                  borderRadius: 8,
+                }}
+              >
+                <DragHandle />
+                <Switch size="small" checked={p.enabled} onChange={(v) => toggleEnabled(p, v)} />
+                <span style={{ fontWeight: 500, minWidth: 80 }}>{p.label || t('preset.untitled')}</span>
+                <Typography.Text type="secondary" style={{ flex: 1, minWidth: 120 }}>
+                  {presetSummary(p, t)}
+                </Typography.Text>
+                {p.invert ? <Tag color="orange">{t('preset.invertTag')}</Tag> : <Tag>{t('preset.overrun.' + p.on_overrun)}</Tag>}
+                <Button size="small" icon={<EditOutlined />} onClick={() => edit(p)} />
+                <Popconfirm title={t('preset.deleteConfirm')} onConfirm={() => remove(p.id)} okText={t('common.ok')} cancelText={t('common.cancel')}>
+                  <Button size="small" danger icon={<DeleteOutlined />} />
+                </Popconfirm>
+              </div>
+            </SortableItem>
+          ))}
         </SortableWrapper>
       )}
       {/* Standing clear of the list: the add button is an action on the whole list, not another

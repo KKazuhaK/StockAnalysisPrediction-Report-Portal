@@ -36,9 +36,15 @@ export function DragHandle() {
   )
 }
 
-export function SortableRow(props: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key': string }) {
+export function SortableRow(props: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key': string | number }) {
+  // String(), because antd hands this through with the type the rowKey produced: `rowKey="id"` over
+  // numeric ids gives a NUMBER here, while SortableWrapper's ids are strings. dnd-kit matches a
+  // sortable to its context by identity, so 1 never finds "1" — the row registers at index -1 and
+  // silently refuses to sort, which is what the run-targets table did. Normalizing at the one place
+  // that reads the attribute makes every table agree with the wrapper by construction.
+  const id = String(props['data-row-key'])
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
-    id: props['data-row-key'],
+    id,
   })
   const style: React.CSSProperties = {
     ...props.style,
@@ -49,7 +55,7 @@ export function SortableRow(props: React.HTMLAttributes<HTMLTableRowElement> & {
   const ctx = useMemo<RowCtx>(() => ({ setActivatorNodeRef, listeners }), [setActivatorNodeRef, listeners])
   return (
     <RowContext.Provider value={ctx}>
-      <tr {...props} ref={setNodeRef} style={style} {...attributes} />
+      <tr {...props} ref={setNodeRef} data-sortable-id={id} style={style} {...attributes} />
     </RowContext.Provider>
   )
 }
@@ -69,21 +75,36 @@ export function SortableItem({ id, children }: { id: string; children: ReactNode
   const ctx = useMemo<RowCtx>(() => ({ setActivatorNodeRef, listeners }), [setActivatorNodeRef, listeners])
   return (
     <RowContext.Provider value={ctx}>
-      <div ref={setNodeRef} style={style} {...attributes}>
+      {/* data-sortable-id is for tests and for debugging a list that will not drag: it makes the
+          sortable nodes findable, so a test can assert they are siblings (see SortableWrapper). */}
+      <div ref={setNodeRef} data-sortable-id={id} style={style} {...attributes}>
         {children}
       </div>
     </RowContext.Provider>
   )
 }
 
-// SortableWrapper provides DndContext + SortableContext; onReorder receives the reordered key sequence.
+// SortableWrapper provides DndContext + SortableContext + the list container; onReorder receives the
+// reordered key sequence.
+//
+// The container is HERE, not in the caller, and that is the whole reason this function renders a
+// div at all. restrictToParentElement clamps the drag transform to the bounding box of the dragged
+// node's PARENT ELEMENT, so every sortable node has to share one tall parent for the modifier to
+// mean "stay inside the list". Wrap the items in an antd <Space> instead and each one lands in its
+// own `.ant-space-item` box, exactly its own size — the transform is then clamped to zero and the
+// row neither follows the pointer nor changes place, with no error anywhere to say why. Two pages
+// shipped that way before this was understood. Owning the container is what stops it recurring:
+// pass SortableItems straight in and set `gap`.
 export function SortableWrapper({
   ids,
   onReorder,
+  gap = 8,
   children,
 }: {
   ids: string[]
   onReorder: (orderedIds: string[]) => void
+  /** Vertical space between rows, in px. Ignored when the child is a Table. */
+  gap?: number
   children: ReactNode
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
@@ -102,7 +123,7 @@ export function SortableWrapper({
       onDragEnd={onDragEnd}
     >
       <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-        {children}
+        <div style={{ display: 'flex', flexDirection: 'column', gap }}>{children}</div>
       </SortableContext>
     </DndContext>
   )
