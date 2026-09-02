@@ -174,6 +174,26 @@ shipped state, and the one place in this portal's settings where zero is an answ
 "unset". Age-based retention is the storage console's fifth target (ADR 0017 decision 8), shipped
 disabled.
 
+The byline follows the text, not the saver. A save that changed no content does not take
+`reports.author` — it records no revision either, so taking it would leave the original author's
+name recoverable from nowhere, and the next real edit would file their words under whoever had
+happened to touch the audience in between.
+
+**The history is an internal surface, and refuses any caller whose reads are scoped.** A revision is
+authorized through its report, and a report's audience is *mutable* — the editor rewrites
+`report_viewers` on every save — while a revision is frozen. So a reader added to the audience today
+would otherwise inherit read access to every version written while the report was addressed to
+somebody else. That is not a contrived ordering: "take the internal detail out, then add the client"
+is the natural way to widen an audience, and it is exactly the sequence that would leave the
+pre-sanitisation text one request away for the reader just added — in full from the body endpoint,
+and as removed lines in the diff without even opening it. Before this feature that text was gone;
+the history is what makes it reachable, so the history is what refuses.
+
+The narrow alternative is to snapshot each version's audience and authorize a revision against the
+audience in force when it was written. That is the right answer the day somebody runs a scoped
+editor. Nobody does, and a second audience table serving nobody is how a read path acquires the two
+ways of being right ADR 0024 exists to prevent.
+
 `reports.author` was added for this: a revision records who wrote the content it holds, and the
 content a revision supersedes is the one currently on the report, so the report had to know. Nothing
 written before the column exists has an author and there is no backfill — the audit log is where

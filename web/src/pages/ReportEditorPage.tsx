@@ -430,10 +430,12 @@ export default function ReportEditorPage() {
           token={token}
           open={historyOpen}
           onClose={() => setHistoryOpen(false)}
-          onRestored={(updatedAt) => {
-            setToken(updatedAt)
-            setReloads((n) => n + 1)
-          }}
+          // Just "a restore landed" — the reload is what carries every consequence of it, the
+          // fresh token included. Setting the token here as well looks like belt and braces and is
+          // not: the reload blanks the page to a spinner until it answers, so there is no window in
+          // which the two could differ, and a second writer of the token is a second thing that can
+          // disagree with the server.
+          onRestored={() => setReloads((n) => n + 1)}
         />
       )}
     </Space>

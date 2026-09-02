@@ -132,12 +132,57 @@ func TestARevisionCarriesTheIdentityAndNotOnlyTheBody(t *testing.T) {
 	if len(revs) != 1 {
 		t.Fatalf("want 1 revision, got %d", len(revs))
 	}
-	if revs[0].Title != "手工补充" || revs[0].Author != "editor" || revs[0].RType != "深度分析" {
+	if revs[0].Title != "手工补充" || revs[0].RType != "深度分析" {
 		t.Fatalf("revision did not capture the identity: %+v", revs[0])
+	}
+	// The byline has to come from the row rather than from there being only one account: with a
+	// single-account fixture, asserting "editor" passes even if the field is never written.
+	if revs[0].Author != "editor" {
+		t.Fatalf("revision author = %q, want the account that wrote that text", revs[0].Author)
 	}
 	// The list is an index, not a pile of documents: bodies are counted, not shipped.
 	if revs[0].MD != "" || revs[0].Bytes == 0 {
 		t.Fatalf("the list carried a body: md=%q bytes=%d", revs[0].MD, revs[0].Bytes)
+	}
+}
+
+// A save that changed no content does not take the byline. It records no revision either, so taking
+// it would leave the original author's name recoverable from nowhere: the next real edit would file
+// their words under whoever had happened to touch the audience in between.
+func TestTheBylineFollowsTheTextAndNotTheLastPersonToPressSave(t *testing.T) {
+	s := editorFixture(t)
+	s.st.UpsertUser(User{Username: "second", PasswordHash: "h", Role: "editor"})
+	id := mustCreateManual(t, s, manualForm) // written by "editor"
+
+	// A different account saves without changing a word — the audience-only edit the no-op
+	// suppression exists for.
+	cur, _ := s.st.GetNew(id, nil)
+	body := fmt.Sprintf(`{"symbol":"600519","date":"2026-09-02","subtype":"深度分析","title":"手工补充",
+		"body_md":"# 手写\n正文","audience":"grant","viewers":["u:second"],"updated_at":%q}`, cur.Time)
+	req := httptest.NewRequest(http.MethodPut, "/api/reports", strings.NewReader(body))
+	req.SetPathValue("id", fmt.Sprint(id))
+	rec := httptest.NewRecorder()
+	s.apiReportSave(rec, req, "second")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("audience-only save: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := s.st.GetNew(id, nil); got.Author != "editor" {
+		t.Fatalf("byline moved to %q on a save that changed nothing", got.Author)
+	}
+	if n := s.st.countRevisions(id); n != 0 {
+		t.Fatalf("%d revision(s) for a save that changed nothing", n)
+	}
+
+	// Now a real edit by the second account: the superseded text is filed under whoever wrote it.
+	save(t, s, id, "手工补充", "第二个人真的改了")
+	revs := s.st.Revisions(id)
+	if len(revs) != 1 || revs[0].Author != "editor" {
+		t.Fatalf("superseded text filed under %+v, want editor", revs)
+	}
+	if got, _ := s.st.GetNew(id, nil); got.Author != "editor" {
+		// `save` posts as "editor", so this pins that a real change DOES take the byline only when
+		// the saver differs — asserted by the restore test below, which posts as a different user.
+		t.Fatalf("byline = %q after a real edit", got.Author)
 	}
 }
 
@@ -232,25 +277,124 @@ func TestTheStorageConsoleAgesRevisionsIndependentlyOfTheirReport(t *testing.T) 
 	id := mustCreateManual(t, s, manualForm)
 	save(t, s, id, "手工补充", "第二版")
 
-	// Backdate the one revision past the cutoff. The report itself is untouched — and could not age
-	// out anyway, because every save rewrites its sent_at.
+	save(t, s, id, "手工补充", "第三版")
+
+	// One revision on each side of the cutoff. Without the young one every assertion here is
+	// satisfied by a predicate equivalent to "true", and a retention pass that deleted the whole
+	// table would pass — which is the failure worth catching, since it is silent and permanent.
+	revs := s.st.Revisions(id)
+	if len(revs) != 2 {
+		t.Fatalf("want 2 revisions to age apart, got %d", len(revs))
+	}
 	old := time.Now().UTC().AddDate(0, 0, -400).Format(time.RFC3339Nano)
-	s.st.exec("UPDATE report_revisions SET saved_at=? WHERE report_id=?", old, id)
+	s.st.exec("UPDATE report_revisions SET saved_at=? WHERE id=?", old, revs[1].ID)
 
 	cut := time.Now().UTC().AddDate(0, 0, -30)
 	if n, _ := s.st.CountRevisionsBefore(cut); n != 1 {
-		t.Fatalf("preview counted %d eligible revisions, want 1", n)
+		t.Fatalf("preview counted %d eligible revisions, want exactly the aged one", n)
 	}
 	n, err := s.st.DeleteRevisionsBefore(cut)
 	if err != nil || n != 1 {
 		t.Fatalf("delete = %d, %v", n, err)
 	}
+	// The young one is still there, and it is the one the reader would go back to.
+	if left := s.st.Revisions(id); len(left) != 1 || left[0].ID != revs[0].ID {
+		t.Fatalf("the pass took the wrong rows: %+v", left)
+	}
 	if got, _ := s.st.GetNew(id, nil); got == nil {
 		t.Fatal("the report was deleted along with its history")
 	}
-	// Preview and delete share one predicate, so a second pass finds nothing.
+	// Preview and delete share one predicate, so what the console promised is what it removed.
 	if n, _ := s.st.CountRevisionsBefore(cut); n != 0 {
 		t.Fatalf("%d revisions survived the pass the preview counted", n)
+	}
+}
+
+// The console's wiring, end to end. Every piece of it was silent: a missing case in readTargets, a
+// missing term in the sum that decides whether a pass is recorded, a column dropped from the run
+// log — each one leaves the whole suite green while the console reports work it did not do, or does
+// work it does not report.
+func TestTheConsoleRunsTheRevisionTargetAndRecordsWhatItDid(t *testing.T) {
+	s := editorFixture(t)
+	id := mustCreateManual(t, s, manualForm)
+	save(t, s, id, "手工补充", "第二版")
+	old := time.Now().UTC().AddDate(0, 0, -400).Format(time.RFC3339Nano)
+	s.st.exec("UPDATE report_revisions SET saved_at=?", old)
+
+	// The named target, spelled exactly as the console spells it.
+	sel := s.readTargets(httptest.NewRequest("POST", "/x", strings.NewReader(`{"targets":["revisions"]}`)))
+	if !sel.Revisions || sel.Reports || sel.Audit {
+		t.Fatalf("readTargets(revisions) = %+v", sel)
+	}
+	// ...and the all-targets default, where a missing entry means "clean everything" quietly skips it.
+	if all := s.readTargets(httptest.NewRequest("POST", "/x", strings.NewReader(`{}`))); !all.Revisions {
+		t.Fatal(`"clean everything" does not include the edit history`)
+	}
+
+	if prev := s.runCleanup("manual", true, sel); prev.Revisions != 1 {
+		t.Fatalf("preview counted %d", prev.Revisions)
+	}
+	if n := s.st.countRevisions(id); n != 1 {
+		t.Fatal("the preview deleted something")
+	}
+	res := s.runCleanup("manual", false, sel)
+	if !res.OK || res.Revisions != 1 {
+		t.Fatalf("run = %+v", res)
+	}
+	if n := s.st.countRevisions(id); n != 0 {
+		t.Fatalf("%d revision(s) survived the pass", n)
+	}
+	// A pass that deleted only revisions is still history — the sum that gates the run log has to
+	// include them, or the one destructive pass an admin comes looking for is the one not recorded.
+	runs, err := s.st.ListCleanupRuns(10)
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("run log: %d rows, %v", len(runs), err)
+	}
+	if runs[0].RevisionsDeleted != 1 {
+		t.Fatalf("run log recorded %+v — the column is written and read in the wrong place",
+			runs[0])
+	}
+}
+
+// The history is an internal surface. A revision is authorized through its report, and a report's
+// audience is rewritten on every save while a revision is frozen — so a reader added today would
+// otherwise inherit every version written while the report was addressed to somebody else, which is
+// exactly what "take the internal detail out, then add the client" produces.
+func TestAScopedReaderCannotOpenTheHistoryAtAll(t *testing.T) {
+	s := editorFixture(t)
+	root := s.st.EnsureDefaultGroup()
+	ou, _ := s.st.CreateUserGroup("ext", "", 0)
+	s.st.SetGroupParent(ou, root)
+	s.st.SetGroupRestricted(ou, true)
+	// An editor who is themselves scoped: unusual, and the case the refusal is about.
+	s.st.UpsertUser(User{Username: "ext", PasswordHash: "h", Role: "editor"})
+	s.st.SetPrimaryGroup("ext", ou)
+	s.st.SetVersionGrants("manual", []string{groupPrincipal(ou)})
+
+	id := mustCreateManual(t, s, manualForm) // audience: all, so ext CAN read the report itself
+	save(t, s, id, "手工补充", "内部细节删掉之后的版本")
+	if rep, _ := s.st.GetNew(id, s.viewerScope("ext")); rep == nil {
+		t.Fatal("fixture is wrong: ext cannot read the report, so the history proves nothing")
+	}
+
+	for _, rev := range []string{"", "1"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/reports/x/revisions", nil)
+		req.SetPathValue("id", fmt.Sprint(id))
+		if rev != "" {
+			req.SetPathValue("rev", rev)
+		}
+		rec := httptest.NewRecorder()
+		if rev == "" {
+			s.apiReportRevisions(rec, req, "ext")
+		} else {
+			s.apiReportRevision(rec, req, "ext")
+		}
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("scoped reader got status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "内部细节") {
+			t.Fatal("the refusal leaked the body it was refusing")
+		}
 	}
 }
 
@@ -397,6 +541,57 @@ func TestAMachineReportHasNoHistorySurface(t *testing.T) {
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "report_not_manual") {
 			t.Fatalf("machine report: status=%d body=%s", rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// The list endpoint's response shape, which the drawer reads by name. Nothing asserted it, so
+// renaming a key or dropping `keep` left every test green and the drawer blank.
+func TestTheHistoryListSaysWhatTheDrawerReads(t *testing.T) {
+	s := editorFixture(t)
+	id := mustCreateManual(t, s, manualForm)
+	save(t, s, id, "手工补充", "第二版")
+	s.st.SetSetting(setReportRevisionsKeep, "5")
+
+	rec := revisionCall(t, s, http.MethodGet, fmt.Sprint(id), "", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Revisions []struct {
+			ID      int64  `json:"id"`
+			SavedAt string `json:"savedAt"`
+			Author  string `json:"author"`
+			Title   string `json:"title"`
+			Bytes   int    `json:"bytes"`
+			MD      string `json:"body_md"`
+		} `json:"revisions"`
+		Current struct {
+			SavedAt string `json:"savedAt"`
+			Author  string `json:"author"`
+			Title   string `json:"title"`
+			Bytes   int    `json:"bytes"`
+		} `json:"current"`
+		Keep int `json:"keep"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v", err)
+	}
+	if len(out.Revisions) != 1 {
+		t.Fatalf("revisions = %d", len(out.Revisions))
+	}
+	v := out.Revisions[0]
+	if v.ID == 0 || v.SavedAt == "" || v.Author != "editor" || v.Title != "手工补充" || v.Bytes == 0 {
+		t.Fatalf("list row = %+v", v)
+	}
+	// The list is an index: the body is counted, never shipped.
+	if v.MD != "" {
+		t.Fatalf("list carried a body: %q", v.MD)
+	}
+	if out.Current.SavedAt == "" || out.Current.Author != "editor" || out.Current.Bytes == 0 {
+		t.Fatalf("current = %+v", out.Current)
+	}
+	if out.Keep != 5 {
+		t.Fatalf("keep = %d, want the configured 5", out.Keep)
 	}
 }
 

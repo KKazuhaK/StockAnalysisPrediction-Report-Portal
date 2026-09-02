@@ -14,13 +14,37 @@ import (
 // — all of it inherited rather than reimplemented. That is the same argument the editor makes for
 // having no "fork" verb.
 //
-// Authorization is the parent report's, not the revision's. A revision carries no viewer rows and
-// must not: a second read path into the same content is exactly what ADR 0024 refuses.
+// Authorization is the parent report's, not the revision's — a revision carries no viewer rows and
+// must not, because a second read path into the same content is exactly what ADR 0024 refuses. That
+// leaves one gap the parent cannot cover, and it is closed by refusing the whole surface to any
+// caller whose reads are scoped at all: see revisionParent.
 
 // revisionParent resolves the report a revision request is about, refusing anything the caller may
-// not read and anything a workflow produced. Two gates, in the order the editor's own save uses
-// them, so the answers agree.
+// not read, anything a workflow produced, and anyone whose reads are scoped.
+//
+// That last refusal is the one worth explaining, because it is broader than it looks and it is
+// deliberate. A revision is authorized through its report, and a report's audience is MUTABLE: the
+// editor rewrites report_viewers on every save. A revision is not — it is a frozen copy of what the
+// report used to say. So a reader added to the audience today would inherit read access to every
+// version written while the report was addressed to somebody else.
+//
+// That is not a theoretical ordering. "Take the internal detail out, then add the client" is the
+// natural way an author widens an audience, and it is exactly the sequence that leaves the
+// pre-sanitisation text one request away for the reader who was just added — in full from the body
+// endpoint, and as removed lines in the diff without even opening it. Before this feature that text
+// was gone; the history is what makes it reachable, so the history is what has to refuse.
+//
+// The narrow fix would be to snapshot each version's audience and authorize a revision against the
+// audience in force when it was written. That is the right answer the day somebody actually runs a
+// scoped editor; nobody does, and inventing a second audience table to serve nobody is how a read
+// path acquires the two ways of being right ADR 0024 exists to prevent. So: the edit history is an
+// internal surface, and it says so by failing closed.
 func (s *Server) revisionParent(w http.ResponseWriter, r *http.Request, user string) *Rep {
+	if s.isRestricted(user) {
+		jsonErrorCode(w, http.StatusForbidden, "revision_history_internal_only",
+			"编辑历史仅对内部账号开放")
+		return nil
+	}
 	rep, _ := s.st.GetNew(pathID(r, "id"), s.viewerScope(user))
 	if rep == nil {
 		jsonError(w, http.StatusNotFound, "report not found")

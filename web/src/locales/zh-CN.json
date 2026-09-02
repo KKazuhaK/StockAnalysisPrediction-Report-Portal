@@ -550,6 +550,7 @@
   "err.report_not_found": "报告不存在。",
   "err.report_not_manual": "这是工作流生成的报告，不能直接修改；请另存为人工报告。",
   "err.report_stale": "报告已被他人修改，请刷新后重试。",
+  "err.revision_history_internal_only": "编辑历史仅对内部账号开放。",
   "err.revision_not_found": "该历史版本不存在。",
   "err.revisions_keep_invalid": "每篇保留版本数超出允许范围。",
   "err.run_not_found": "未找到该 run。",
