@@ -55,7 +55,14 @@ func jsonErrorCode(w http.ResponseWriter, status int, code, msg string) {
 
 // readJSON parses the request JSON body (capped at 1MB).
 func readJSON(r *http.Request, v any) error {
-	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v)
+	return readJSONLimit(r, v, 1<<20)
+}
+
+// readJSONLimit is readJSON with the cap named at the call site, for the endpoints that legitimately
+// carry a document rather than a form. The default 1MB is right for settings and CRUD bodies and
+// would silently truncate a report.
+func readJSONLimit(r *http.Request, v any, max int64) error {
+	return json.NewDecoder(io.LimitReader(r.Body, max)).Decode(v)
 }
 
 func pathID(r *http.Request, name string) int64 {

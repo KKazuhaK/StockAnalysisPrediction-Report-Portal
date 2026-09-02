@@ -226,33 +226,13 @@ func (s *Server) apiAdminAnnouncements(w http.ResponseWriter, r *http.Request, u
 	for _, a := range list {
 		items = append(items, adminAnnouncementJSON(a))
 	}
-	defaultOU := s.st.DefaultGroupID()
-	groups := make([]map[string]any, 0)
-	for _, g := range s.st.ListUserGroups() {
-		// The Default OU is on every account's chain, so addressing it is addressing everybody —
-		// which audience='all' already says. The save path refuses it; leaving it out of the picker
-		// means an admin never has to discover that by being rejected.
-		if g.ID == defaultOU {
-			continue
-		}
-		groups = append(groups, map[string]any{
-			"principal": groupPrincipal(g.ID), "name": g.Name, "restricted": g.RestrictedEffective,
-		})
-	}
-	all := s.st.Users()
-	users := make([]map[string]any, 0, len(all))
-	for _, u := range all {
-		if len(users) >= maxPickerUsers {
-			break
-		}
-		users = append(users, map[string]any{
-			"principal": userPrincipal(u.Username), "name": u.Username,
-			"restricted": u.Restricted, "display": u.Name(),
-		})
-	}
+	// The Default OU is on every account's chain, so addressing it is addressing everybody — which
+	// audience='all' already says. The save path refuses it; leaving it out of the picker means an
+	// admin never has to discover that by being rejected.
+	groups, users, truncated := s.recipientPicker(false)
 	writeJSON(w, map[string]any{
 		"items": items, "groups": groups, "users": users,
-		"usersTruncated": len(all) > len(users),
+		"usersTruncated": truncated,
 		"collapse":       s.announcementCollapse(),
 	})
 }
@@ -461,10 +441,19 @@ func (s *Server) userGroupExists(id int64) bool {
 	return false
 }
 
-// normalizeAnnouncementGrants validates every principal and re-encodes it. A hand-written
-// "u:Alice" stored verbatim would never match the lower-cased principal the read path builds:
-// an announcement nobody receives, with nothing anywhere to say so.
-func (s *Server) normalizeAnnouncementGrants(w http.ResponseWriter, in []string) ([]string, bool) {
+// normalizePrincipals validates every principal and re-encodes it. A hand-written "u:Alice" stored
+// verbatim would never match the lower-cased principal the read path builds: an audience nobody is
+// in, with nothing anywhere to say so.
+//
+// Shared with hand-written reports (report_edit_api.go), which address a reader through the same
+// "g:<id>" / "u:<name>" encoding. Deliberately one function: this validates the input to a
+// disclosure decision, and a second copy of it is a second thing that has to stay right.
+//
+// allowDefaultOU is the one difference between the two callers. groupChain always appends the
+// Default OU, so that principal matches every account there is; an announcement refuses it and
+// points at its own "everyone" setting, while a report's audience has no separate setting and
+// spells "everyone" as exactly this principal.
+func (s *Server) normalizePrincipals(w http.ResponseWriter, in []string, allowDefaultOU bool) ([]string, bool) {
 	seen := map[string]bool{}
 	out := []string{}
 	defaultOU := s.st.DefaultGroupID()
@@ -481,7 +470,7 @@ func (s *Server) normalizeAnnouncementGrants(w http.ResponseWriter, in []string)
 			// including every external tenant hanging beneath it. audience='all' already says
 			// that, out loud. Refusing here rather than only hiding it in the picker, because an
 			// admin who types it deserves the answer, not the outcome.
-			if id == defaultOU {
+			if id == defaultOU && !allowDefaultOU {
 				jsonErrorCode(w, http.StatusBadRequest, "announcement_default_ou_audience",
 					"默认分组等同于全体用户，请改用「所有人」")
 				return nil, false
@@ -532,7 +521,7 @@ func (s *Server) apiAnnouncementAdd(w http.ResponseWriter, r *http.Request, user
 	}
 	grants := []string{}
 	if in.Grants != nil {
-		if grants, ok = s.normalizeAnnouncementGrants(w, *in.Grants); !ok {
+		if grants, ok = s.normalizePrincipals(w, *in.Grants, false); !ok {
 			return
 		}
 	}
@@ -586,7 +575,7 @@ func (s *Server) apiAnnouncementSave(w http.ResponseWriter, r *http.Request, use
 	before := s.st.AllAnnouncementGrants()[id]
 	grants := before
 	if in.Grants != nil { // nil = leave the audience alone; see announcementInput
-		if grants, ok = s.normalizeAnnouncementGrants(w, *in.Grants); !ok {
+		if grants, ok = s.normalizePrincipals(w, *in.Grants, false); !ok {
 			return
 		}
 	}
