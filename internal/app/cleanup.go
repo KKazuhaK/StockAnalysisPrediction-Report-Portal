@@ -31,17 +31,25 @@ type cleanupConfig struct {
 	// that simply does not expire.
 	AuditEnabled bool
 	AuditDays    int
+	// Target E: the edit history of hand-written reports (ADR 0026). A revision is a whole prior copy
+	// of a body, so this is the target whose rows are largest per row — and the only one that ages
+	// independently of what it belongs to, because editing a report rewrites its own sent_at while
+	// each revision is stamped once and never touched again.
+	RevisionsEnabled bool
+	RevisionsDays    int
 }
 
 // cleanupTargets selects which targets a pass acts on.
-type cleanupTargets struct{ Batch, Tokens, Reports, Audit bool }
+type cleanupTargets struct{ Batch, Tokens, Reports, Audit, Revisions bool }
 
-func (t cleanupTargets) any() bool { return t.Batch || t.Tokens || t.Reports || t.Audit }
+func (t cleanupTargets) any() bool {
+	return t.Batch || t.Tokens || t.Reports || t.Audit || t.Revisions
+}
 
 // scheduledTargets is the set of targets a scheduled pass would act on (those enabled in config).
 func (c cleanupConfig) scheduledTargets() cleanupTargets {
 	return cleanupTargets{Batch: c.BatchEnabled, Tokens: c.TokensEnabled, Reports: c.ReportsEnabled,
-		Audit: c.AuditEnabled}
+		Audit: c.AuditEnabled, Revisions: c.RevisionsEnabled}
 }
 
 // cleanupResult is the outcome of one pass (also the JSON returned by run/preview and the
@@ -56,6 +64,7 @@ type cleanupResult struct {
 	Tokens     int64  `json:"tokens"`
 	Reports    int64  `json:"reports"`
 	Audit      int64  `json:"audit"`
+	Revisions  int64  `json:"revisions"`
 	DurationMs int64  `json:"duration_ms"`
 }
 
@@ -93,6 +102,9 @@ func (s *Server) cleanupConfigLoad() cleanupConfig {
 		ReportsDays:     atoi("cleanup_reports_days", 730),
 		AuditEnabled:    s.st.GetSetting("cleanup_audit_enabled", "0") == "1",
 		AuditDays:       atoi("cleanup_audit_days", 365),
+		// Ships disabled like every other target: nothing starts deleting on upgrade.
+		RevisionsEnabled: s.st.GetSetting("cleanup_revisions_enabled", "0") == "1",
+		RevisionsDays:    atoi("cleanup_revisions_days", 180),
 	}
 	if c.BatchDays < minBatchRetentionDays {
 		c.BatchDays = minBatchRetentionDays
@@ -102,6 +114,9 @@ func (s *Server) cleanupConfigLoad() cleanupConfig {
 	}
 	if c.ReportsDays < minReportsRetentionDays {
 		c.ReportsDays = minReportsRetentionDays
+	}
+	if c.RevisionsDays < minRevisionsRetentionDays {
+		c.RevisionsDays = minRevisionsRetentionDays
 	}
 	if c.TokensGraceDays < 0 {
 		c.TokensGraceDays = 0
@@ -114,7 +129,7 @@ func (s *Server) cleanupConfigLoad() cleanupConfig {
 // formatted from system-local time (NOT the panel timezone — a panel/container tz mismatch would
 // otherwise delete up to the offset short of the configured retention). reports compares against a
 // parsed UTC instant, so its cutoff is a UTC time.Time. now must be time.Now().
-func (c cleanupConfig) cutoffs(now time.Time) (batchCut, tokenCut string, reportsCut, auditCut time.Time) {
+func (c cleanupConfig) cutoffs(now time.Time) (batchCut, tokenCut string, reportsCut, auditCut, revisionsCut time.Time) {
 	batchCut = now.AddDate(0, 0, -c.BatchDays).Format("2006-01-02 15:04:05")
 	tokenCut = now.AddDate(0, 0, -c.TokensGraceDays).Format("2006-01-02 15:04:05")
 	reportsCut = now.UTC().AddDate(0, 0, -c.ReportsDays)
@@ -122,6 +137,9 @@ func (c cleanupConfig) cutoffs(now time.Time) (batchCut, tokenCut string, report
 	// auditBefore compares each row against a cutoff in its own format — so this passes the moment,
 	// not a rendering of it, and the store decides how to spell it.
 	auditCut = now.AddDate(0, 0, -c.AuditDays)
+	// A UTC instant, and exactly comparable: every saved_at is written by manualInstant, so unlike
+	// reports.sent_at there is no legacy spelling to parse around.
+	revisionsCut = now.UTC().AddDate(0, 0, -c.RevisionsDays)
 	return
 }
 
@@ -168,7 +186,7 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 
 	start := time.Now()
 	c := s.cleanupConfigLoad()
-	batchCut, tokenCut, reportsCut, auditCut := c.cutoffs(start)
+	batchCut, tokenCut, reportsCut, auditCut, revisionsCut := c.cutoffs(start)
 	res := cleanupResult{Trigger: trigger, DryRun: dryRun, OK: true}
 
 	if sel.Batch {
@@ -218,6 +236,18 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 		res.note(err)
 	}
 
+	if sel.Revisions {
+		var n int64
+		var err error
+		if dryRun {
+			n, err = s.st.CountRevisionsBefore(revisionsCut)
+		} else {
+			n, err = s.st.DeleteRevisionsBefore(revisionsCut)
+		}
+		res.Revisions, _ = n, err
+		res.note(err)
+	}
+
 	res.At = start.UTC().Format(time.RFC3339)
 	res.DurationMs = time.Since(start).Milliseconds()
 
@@ -227,12 +257,12 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 		// rows evict the one an admin would ever come looking for: the pass that actually deleted
 		// their report. The last-run stamp below is written either way, so "the scheduler is alive
 		// and found nothing" is still on the page; it just is not worth a row a day.
-		deleted := res.Batch + res.Tokens + res.Reports + res.Audit
+		deleted := res.Batch + res.Tokens + res.Reports + res.Audit + res.Revisions
 		if !res.OK || deleted > 0 {
 			s.st.InsertCleanupRun(CleanupRun{
 				RanAt: nowStr(), Trigger: trigger, DryRun: false, OK: res.OK, Error: res.Error,
 				BatchDeleted: res.Batch, TokensDeleted: res.Tokens, ReportsDeleted: res.Reports,
-				AuditDeleted: res.Audit, DurationMs: res.DurationMs,
+				AuditDeleted: res.Audit, RevisionsDeleted: res.Revisions, DurationMs: res.DurationMs,
 			})
 		}
 		if b, err := json.Marshal(res); err == nil {

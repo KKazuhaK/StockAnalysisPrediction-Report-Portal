@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Alert, App, Button, Card, Divider, InputNumber, Select, Space, Switch, Table, Tag, TimePicker, Typography, theme } from 'antd'
-import { AuditOutlined, DatabaseOutlined, FileTextOutlined, KeyOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { AuditOutlined, DatabaseOutlined, FileTextOutlined, HistoryOutlined, KeyOutlined, MessageOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
@@ -21,6 +21,7 @@ const CAT_COLOR: Record<string, { light: string; dark: string }> = {
   reports: { light: '#eda100', dark: '#c98500' }, // yellow
   chat: { light: '#008300', dark: '#008300' }, // green
   audit: { light: '#8452d6', dark: '#9366e0' }, // violet
+  revisions: { light: '#c8447a', dark: '#d65a8c' }, // magenta — the next slot in the ordered set
 }
 const CAT_ICON: Record<string, React.ReactNode> = {
   batch: <ThunderboltOutlined />,
@@ -28,6 +29,7 @@ const CAT_ICON: Record<string, React.ReactNode> = {
   reports: <FileTextOutlined />,
   chat: <MessageOutlined />,
   audit: <AuditOutlined />,
+  revisions: <HistoryOutlined />,
 }
 
 // fmtBytes renders an approximate byte count in human units.
@@ -83,6 +85,12 @@ export default function StoragePage() {
   const [batchFloor, setBatchFloor] = useState(7)
   const [reportsFloor, setReportsFloor] = useState(365)
   const [auditFloor, setAuditFloor] = useState(30)
+  const [revisionsEnabled, setRevisionsEnabled] = useState(false)
+  const [revisionsDays, setRevisionsDays] = useState(180)
+  const [revisionsFloor, setRevisionsFloor] = useState(14)
+  // 0 is a real value here, not "unset": it means keep every version, and it is the shipped state.
+  const [revisionsKeep, setRevisionsKeep] = useState(0)
+  const [revisionsKeepMax, setRevisionsKeepMax] = useState(1000)
   const [cfg, setCfg] = useState<CleanupConfig | null>(null) // last-saved view, drives the usage cards
   const [usage, setUsage] = useState<CleanupUsage | null>(null)
   const [history, setHistory] = useState<CleanupRun[]>([])
@@ -111,6 +119,11 @@ export default function StoragePage() {
         setBatchFloor(r.batch_floor)
         setReportsFloor(r.reports_floor)
         setAuditFloor(r.audit_floor)
+        setRevisionsEnabled(r.revisions_enabled)
+        setRevisionsDays(r.revisions_days)
+        setRevisionsFloor(r.revisions_floor)
+        setRevisionsKeep(r.revisions_keep)
+        setRevisionsKeepMax(r.revisions_keep_max)
       })
       .then(() => setLoaded(true))
       .catch((e) => setLoadErr(errText(e, t)))
@@ -146,6 +159,9 @@ export default function StoragePage() {
       reports_days: reportsDays,
       audit_enabled: auditEnabled,
       audit_days: auditDays,
+      revisions_enabled: revisionsEnabled,
+      revisions_days: revisionsDays,
+      revisions_keep: revisionsKeep,
     })
     message.success(t('common.saved'))
     loadConfig()
@@ -156,7 +172,10 @@ export default function StoragePage() {
     const r = await api.post<CleanupResult>('/api/admin/cleanup/run', { targets })
     // Every target the run could have touched. Leaving audit out reported an audit purge as
     // "cleaned 0 of everything" — the one category whose rows cannot be regenerated.
-    message.success(t('storage.cleaned', { batch: r.batch, reports: r.reports, tokens: r.tokens, audit: r.audit ?? 0 }))
+    message.success(t('storage.cleaned', {
+      batch: r.batch, reports: r.reports, tokens: r.tokens, audit: r.audit ?? 0,
+      revisions: r.revisions ?? 0,
+    }))
     loadUsage().catch(() => {})
     loadHistory().catch(() => {})
     loadConfig()
@@ -194,7 +213,7 @@ export default function StoragePage() {
     // Keyed, not a ternary. With two targets a two-way choice was total; the third and fourth
     // silently fell through to the tokens count, so the audit confirm promised to delete however
     // many TOKENS had expired.
-    const n = r[key as 'batch' | 'tokens' | 'reports' | 'audit'] ?? 0
+    const n = r[key as 'batch' | 'tokens' | 'reports' | 'audit' | 'revisions'] ?? 0
     modal.confirm({
       title: t('storage.confirmTitle'),
       content: t('storage.confirmBody', { n, days, cat: t(`storage.cat.${key}`) }),
@@ -206,14 +225,16 @@ export default function StoragePage() {
   }
 
   // retention/grace currently in effect for each category (last-saved, so labels match what a run does)
+  // Keyed, not a ternary chain, for the reason recorded above cleanCategory: a chain's fallthrough
+  // silently answers for whichever category is last, so every new one starts out mislabelled.
   const catDays = (key: string) =>
-    key === 'batch'
-      ? cfg?.batch_days ?? batchDays
-      : key === 'tokens'
-        ? cfg?.tokens_grace_days ?? tokensGraceDays
-        : key === 'audit'
-          ? cfg?.audit_days ?? auditDays
-          : cfg?.reports_days ?? reportsDays
+    ({
+      batch: cfg?.batch_days ?? batchDays,
+      tokens: cfg?.tokens_grace_days ?? tokensGraceDays,
+      audit: cfg?.audit_days ?? auditDays,
+      revisions: cfg?.revisions_days ?? revisionsDays,
+      reports: cfg?.reports_days ?? reportsDays,
+    })[key] ?? 0
 
   const cats = usage?.categories ?? []
   const totalBytes = cats.reduce((s, c) => s + c.bytes, 0)
@@ -286,6 +307,7 @@ export default function StoragePage() {
           tokens: r.tokens_deleted,
           reports: r.reports_deleted,
           audit: r.audit_deleted ?? 0,
+          revisions: r.revisions_deleted ?? 0,
         }),
     },
     {
@@ -389,6 +411,34 @@ export default function StoragePage() {
             // Off means never delete, which is a real choice for an audit trail in a way it is not
             // for batch history — so the hint says so rather than only naming the floor.
             t('storage.auditHint', { n: auditFloor }),
+          )}
+
+          {row(
+            t('storage.revisionsTarget'),
+            <Space>
+              <Switch checked={revisionsEnabled} onChange={setRevisionsEnabled} />
+              <InputNumber
+                min={revisionsFloor}
+                value={revisionsDays}
+                onChange={(v) => setRevisionsDays(v ?? revisionsFloor)}
+                addonAfter={t('batch.admin.days')}
+              />
+            </Space>,
+            t('storage.revisionsHint', { n: revisionsFloor }),
+          )}
+          {row(
+            t('storage.revisionsKeep'),
+            <InputNumber
+              min={0}
+              max={revisionsKeepMax}
+              value={revisionsKeep}
+              onChange={(v) => setRevisionsKeep(v ?? 0)}
+            />,
+            // The cap is a count enforced when a report is saved, not an age enforced by the pass —
+            // so it applies whether or not the switch above is on, and the hint has to say so.
+            revisionsKeep > 0
+              ? t('storage.revisionsKeepHint', { count: revisionsKeep })
+              : t('storage.revisionsKeepUnlimited'),
           )}
 
           <Divider style={{ margin: '4px 0' }} titlePlacement="left" plain>

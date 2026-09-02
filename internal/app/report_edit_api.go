@@ -223,6 +223,7 @@ func (s *Server) apiReportCreate(w http.ResponseWriter, r *http.Request, user st
 	if !ok {
 		return
 	}
+	rep.Author = user
 	id, err := s.st.CreateManualReport(rep)
 	if err != nil {
 		var exists ErrReportExists
@@ -272,7 +273,10 @@ func (s *Server) apiReportSave(w http.ResponseWriter, r *http.Request, user stri
 	if !ok {
 		return
 	}
-	written, err := s.st.UpdateManualReport(id, next, in.UpdatedAt)
+	// Read before the store opens its transaction. On SQLite the pool is one connection wide, so a
+	// setting read from inside that transaction would wait on the connection the transaction holds.
+	next.Author = user
+	written, err := s.st.UpdateManualReport(id, next, in.UpdatedAt, s.reportRevisionsKeep())
 	if err != nil {
 		var exists ErrReportExists
 		switch {

@@ -264,6 +264,12 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/reports", s.requirePermJSON(PermEditReport, s.apiReportCreate))
 	mux.HandleFunc("PUT /api/reports/{id}", s.requirePermJSON(PermEditReport, s.apiReportSave))
 	mux.HandleFunc("DELETE /api/reports/{id}", s.requirePermJSON(PermEditReport, s.apiReportDelete))
+	// The edit history. Same permission and same parent-report authorization as the editor: a
+	// revision carries no viewer rows of its own, so the report's read scope is the only scope there
+	// is. Restore is a save, not a fourth write path — see report_revision_api.go.
+	mux.HandleFunc("GET /api/reports/{id}/revisions", s.requirePermJSON(PermEditReport, s.apiReportRevisions))
+	mux.HandleFunc("GET /api/reports/{id}/revisions/{rev}", s.requirePermJSON(PermEditReport, s.apiReportRevision))
+	mux.HandleFunc("POST /api/reports/{id}/revisions/{rev}/restore", s.requirePermJSON(PermEditReport, s.apiReportRevisionRestore))
 	mux.HandleFunc("POST /api/mermaid-cache", s.requireUserJSON(s.apiMermaidCache))
 
 	// ---- Admin API: session + admin ----

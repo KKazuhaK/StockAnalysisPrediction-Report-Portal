@@ -1,62 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Empty, Modal, Select, Space, Spin, Tag, Typography, theme } from 'antd'
+import { Alert, Empty, Modal, Select, Space, Spin, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../api/client'
-import type { ComparableReport, ReportDiff, SectionDiff } from '../api/types'
+import type { ComparableReport, ReportDiff } from '../api/types'
+import { SectionBlock } from './DiffSections'
 
 // Comparing this report with another edition of the same analysis.
 //
 // The pipeline regenerates the same report for the same symbol over and over, so what changed IS
 // the news. The diff is computed server-side against the documents' own headings, which is what
 // makes it work across every report type without knowing anything about their formats.
-
-// A section's colour carries its status, so the shape of the change is readable before any text is.
-function statusTag(status: string, t: (k: string) => string) {
-  switch (status) {
-    case 'added':
-      return <Tag color="green">{t('compare.added')}</Tag>
-    case 'removed':
-      return <Tag color="red">{t('compare.removed')}</Tag>
-    case 'changed':
-      return <Tag color="gold">{t('compare.changed')}</Tag>
-    default:
-      return null
-  }
-}
-
-function SectionBlock({ sec }: { sec: SectionDiff }) {
-  const { t } = useTranslation()
-  const { token } = theme.useToken()
-  const tint = (op: string) =>
-    op === '+' ? token.colorSuccessBg : op === '-' ? token.colorErrorBg : 'transparent'
-
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <Space size={8} align="center" style={{ marginBottom: 4 }}>
-        <Typography.Text strong>{sec.heading || t('compare.preamble')}</Typography.Text>
-        {statusTag(sec.status, t)}
-      </Space>
-      {(sec.lines?.length ?? 0) > 0 && (
-        <div
-          style={{
-            border: `1px solid ${token.colorBorderSecondary}`,
-            borderRadius: token.borderRadius,
-            overflowX: 'auto',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            fontSize: 12,
-          }}
-        >
-          {sec.lines?.map((l, i) => (
-            <div key={i} style={{ background: tint(l.op), padding: '1px 8px', whiteSpace: 'pre-wrap' }}>
-              <span style={{ opacity: 0.45, userSelect: 'none' }}>{l.op === ' ' ? ' ' : l.op} </span>
-              {l.text}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 export default function CompareModal({
   reportId,

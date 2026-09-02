@@ -51,6 +51,12 @@ const (
 	// one rather than be forced to keep a year. The protection that matters here is the opposite
 	// one — the target ships OFF, so nothing is ever deleted until someone chooses it.
 	minAuditRetentionDays = 30
+	// A revision is a recoverable copy of something that still exists, not the thing itself, so its
+	// floor is the short one for the same reason the audit log's is: an operator who wants a
+	// fortnight of undo should get a fortnight. What protects the history is that the target ships
+	// off, and that the per-report cap — the bound most portals will actually use — is separate and
+	// unlimited by default.
+	minRevisionsRetentionDays = 14
 )
 
 // cleanupRunsKeep bounds the audit ring buffer: only the most recent N cleanup_runs rows are kept.
@@ -206,7 +212,8 @@ func (s *Store) DeleteReportsIngestedBefore(cutoff time.Time) (int64, error) {
 // re-asserting sent_at so a concurrently re-ingested report is skipped. tracking_items are removed
 // only for reports whose row actually matched (so a preserved report keeps its items), and so are
 // the viewer rows — a viewer row pointing at a deleted report is an access grant with nothing on the
-// other end (ADR 0024).
+// other end (ADR 0024) — and so is its edit history, which is whole prior copies of a body that
+// would otherwise stay on disk under an id nothing points at (ADR 0026).
 func (s *Store) deleteReportChunk(keys []reportKey) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -228,6 +235,10 @@ func (s *Store) deleteReportChunk(keys []reportKey) (int64, error) {
 			return n, err
 		}
 		if _, err := tx.Exec(s.bind("DELETE FROM tracking_items WHERE report_id=?"), k.id); err != nil {
+			tx.Rollback()
+			return n, err
+		}
+		if _, err := tx.Exec(s.bind("DELETE FROM report_revisions WHERE report_id=?"), k.id); err != nil {
 			tx.Rollback()
 			return n, err
 		}
@@ -295,16 +306,19 @@ type CleanupRun struct {
 	// The fourth target (ADR 0017). Same shape as the other three rather than a JSON blob, because
 	// the history table is read as columns and one target does not justify migrating the other three.
 	AuditDeleted int64 `json:"audit_deleted"`
-	DurationMs   int64 `json:"duration_ms"`
+	// The fifth (ADR 0026), same shape again for the same reason.
+	RevisionsDeleted int64 `json:"revisions_deleted"`
+	DurationMs       int64 `json:"duration_ms"`
 }
 
 // InsertCleanupRun appends an audit row and trims the ring buffer to the most recent
 // cleanupRunsKeep rows.
 func (s *Store) InsertCleanupRun(c CleanupRun) (int64, error) {
-	id, err := s.insertID(`INSERT INTO cleanup_runs(ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,audit_deleted,duration_ms)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+	id, err := s.insertID(`INSERT INTO cleanup_runs(ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,audit_deleted,revisions_deleted,duration_ms)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		c.RanAt, c.Trigger, boolInt(c.DryRun), boolInt(c.OK), c.Error,
-		c.BatchDeleted, c.TokensDeleted, c.ReportsDeleted, c.AuditDeleted, c.DurationMs)
+		c.BatchDeleted, c.TokensDeleted, c.ReportsDeleted, c.AuditDeleted, c.RevisionsDeleted,
+		c.DurationMs)
 	if err != nil {
 		return 0, err
 	}
@@ -325,14 +339,15 @@ func (s *Store) ListCleanupRuns(limit int) ([]CleanupRun, error) {
 		limit = cleanupRunsKeep
 	}
 	rows, err := s.query(`SELECT id,ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,
-		COALESCE(audit_deleted,0),duration_ms
+		COALESCE(audit_deleted,0),COALESCE(revisions_deleted,0),duration_ms
 		FROM cleanup_runs
 		-- A successful pass that deleted nothing is not history, and builds before v0.4.20 recorded
 		-- one per scheduled run. They are left in the table rather than deleted -- a retention log
 		-- is the last thing to go rewriting -- but they are not shown: on a portal whose targets
 		-- never match, they are the entire list.
 		WHERE NOT (ok <> 0 AND batch_deleted = 0 AND tokens_deleted = 0
-			AND COALESCE(audit_deleted,0) = 0 AND reports_deleted = 0)
+			AND COALESCE(audit_deleted,0) = 0 AND COALESCE(revisions_deleted,0) = 0
+			AND reports_deleted = 0)
 		ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -343,7 +358,7 @@ func (s *Store) ListCleanupRuns(limit int) ([]CleanupRun, error) {
 		var c CleanupRun
 		var dry, ok int64
 		if err := rows.Scan(&c.ID, &c.RanAt, &c.Trigger, &dry, &ok, &c.Error, &c.BatchDeleted, &c.TokensDeleted,
-			&c.ReportsDeleted, &c.AuditDeleted, &c.DurationMs); err != nil {
+			&c.ReportsDeleted, &c.AuditDeleted, &c.RevisionsDeleted, &c.DurationMs); err != nil {
 			return nil, err
 		}
 		c.DryRun = dry != 0
