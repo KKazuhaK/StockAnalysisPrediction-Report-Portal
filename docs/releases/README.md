@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.43](v0.4.43.md) | 2026-09-02 | A report remembers what it used to say |
 | [v0.4.42](v0.4.42.md) | 2026-09-02 | Reports you write yourself |
 | [v0.4.41](v0.4.41.md) | 2026-09-02 | Dragging works, and works without a mouse |
 | [v0.4.40](v0.4.40.md) | 2026-08-31 | Announcements stop hiding themselves |

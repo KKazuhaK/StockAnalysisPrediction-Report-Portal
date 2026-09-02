@@ -157,9 +157,28 @@ ones, so it will be seen more.
 viewerScope(user))`, so an author may only start from a report they could already read. An editor
 who is themselves scoped is a coherent, if unusual, configuration.
 
-**Editing has no history yet.** A save replaces the body. The next release adds a bounded revision
-log with a configurable retention, riding the storage cleanup console's existing category shape; the
-audit log already records who created and edited what, and when.
+**Editing keeps what it replaced** (added v0.4.43). A save snapshots the version it supersedes into
+`report_revisions`, on the transaction doing the overwriting — so the current text is never stored
+twice, a refused save leaves no trace, and a save that lands cannot fail to be recorded. The
+identity fields ride along with the body, because a restore that recovered the words under the wrong
+title would be a different report wearing the old text.
+
+Restore is a save rather than a fourth write path: it hands a prior state to `UpdateManualReport`,
+inheriting the version guard, the staleness token, the identity-collision translation and the
+audience-follows-date move. Which also means the restore snapshots the version *it* replaces — so
+restoring is undone by restoring again, and there is no way to lose text by pressing the button.
+
+Retention is two bounds that are deliberately not the same mechanism. The per-report cap is a
+**count**, enforced inside the save's own transaction by a ring trim, and `0` means unlimited — the
+shipped state, and the one place in this portal's settings where zero is an answer rather than
+"unset". Age-based retention is the storage console's fifth target (ADR 0017 decision 8), shipped
+disabled.
+
+`reports.author` was added for this: a revision records who wrote the content it holds, and the
+content a revision supersedes is the one currently on the report, so the report had to know. Nothing
+written before the column exists has an author and there is no backfill — the audit log is where
+that answer lives. This settles, narrowly, the question left open below: the author is stored and is
+shown in the editor's history, and still does not appear on the reading page.
 
 ## Not decided here
 
@@ -167,9 +186,11 @@ audit log already records who created and edited what, and when.
 keyed by report id) and the review queue would pick them up. Left out because nobody has asked for
 it and the editor is already the largest form in the product.
 
-**Whether an author should be shown on the report.** `reports` has no author column and the audit
-log answers "who wrote this" today. The version label already tells a reader the thing that changes
-how they read it — that a person wrote it, not a workflow.
+**Whether an author should be shown on the report** — partly settled in v0.4.43, and only partly.
+`reports.author` now exists because the edit history needs it, and the editor's history shows it. It
+is still absent from the reading page: the version label already tells a reader the thing that
+changes how they read a report — that a person wrote it, not a workflow — and naming that person to
+every reader is a disclosure decision nobody has asked for.
 
 **Whether editing should be restricted to one's own reports or one's own OU.** Currently anyone
 holding `report_edit` may edit any hand-written report they can read. A portal with several editors
