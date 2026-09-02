@@ -42,6 +42,10 @@ type Rep struct {
 	HTML, MD      string // body (only filled when reading)
 	Label         string // short tab label within a run
 	Version       string // which written form this is (ADR 0024); part of the report's identity
+	// Author is who wrote this by hand (ADR 0026), empty for anything a workflow produced. Filled
+	// only by the by-id read — the list queries do not select it, because no list shows it and a
+	// column read by nobody is width on every row of the widest table in the schema.
+	Author string
 }
 
 // Link is an entry button.
@@ -261,6 +265,12 @@ const reportIdentIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_ident ON
 func (s *Store) baseSchemaStmts() []string {
 	pk := s.pkAuto()
 	return []string{
+		// author (ADR 0026): who wrote this report by hand. Empty for everything a workflow produced —
+		// which is every report written before this column existed, and there is no backfill: the
+		// audit log is where the historical answer lives. It is here rather than on the revision
+		// table alone because a revision records who wrote the content it holds, and the content a
+		// revision supersedes is the one currently on the report.
+		//
 		// owner_group (ADR 0022): the OU that generated this report, stamped once at ingest
 		// (first-writer-wins). NULL = internal/legacy/unattributed. NOT part of report identity
 		// (idx_reports_ident below), so two OUs requesting the same symbol|date|subtype|title still
@@ -270,7 +280,7 @@ func (s *Store) baseSchemaStmts() []string {
 			title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
 			kind TEXT, run_id TEXT, owner_group BIGINT,
 			source TEXT, sent_at TEXT, body_md TEXT, body_html TEXT,
-			version TEXT NOT NULL DEFAULT '')`, pk),
+			version TEXT NOT NULL DEFAULT '', author TEXT DEFAULT '')`, pk),
 		// These two carry every lookup by code or date. Single-column idx_reports_sym(symbol) and
 		// idx_reports_date(rdate) used to sit beside them and are gone: a B-tree already serves its
 		// leftmost prefix, so both were answered by a wider index anyway. Measured on 30k rows,
@@ -613,7 +623,29 @@ func (s *Store) baseSchemaStmts() []string {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS cleanup_runs(
 			id %s, ran_at TEXT, trigger TEXT, dry_run INTEGER DEFAULT 0, ok INTEGER DEFAULT 1, error TEXT DEFAULT '',
 			batch_deleted INTEGER DEFAULT 0, tokens_deleted INTEGER DEFAULT 0, reports_deleted INTEGER DEFAULT 0,
-			duration_ms INTEGER DEFAULT 0, audit_deleted INTEGER DEFAULT 0)`, pk),
+			duration_ms INTEGER DEFAULT 0, audit_deleted INTEGER DEFAULT 0, revisions_deleted INTEGER DEFAULT 0)`, pk),
+		// Prior states of a hand-written report (ADR 0026). One row per SUPERSEDED version: a save
+		// snapshots what the report said BEFORE it was overwritten, inside the same transaction that
+		// overwrites it, so the current text lives only on the report and is never stored twice.
+		//
+		// The editable identity fields ride along, not just the body, because a restore has to put
+		// the report back exactly as it was — a restore that recovered the words and not the title
+		// would be a different report wearing the old text.
+		//
+		// The column is `author`, deliberately not `principal`: principal_sweep_test walks the schema
+		// for that name and would then require deleting an account to erase its rows. An edit history
+		// has to outlive the editor's account, the way run history outlives the account that
+		// submitted it.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS report_revisions(
+			id %s, report_id BIGINT, saved_at TEXT, author TEXT DEFAULT '',
+			title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT, kind TEXT,
+			source TEXT, body_md TEXT)`, pk),
+		// (report_id, id DESC) serves both reads there are: newest-first for one report's history,
+		// and the ring trim that enforces the per-report cap.
+		`CREATE INDEX IF NOT EXISTS idx_report_revisions_report ON report_revisions(report_id, id DESC)`,
+		// saved_at is the retention cutoff's column — a plain lexical compare, because every value is
+		// written by manualInstant and so is homogeneous UTC RFC3339Nano, unlike reports.sent_at.
+		`CREATE INDEX IF NOT EXISTS idx_report_revisions_saved ON report_revisions(saved_at)`,
 		// The audit log: who did what to which object, and when.
 		//
 		// One table for two audiences. "Who read this report" is the question a client asks and the
@@ -1720,15 +1752,15 @@ func (s *Store) NewBySymbol(symbol string, sc *ownerScope) ([]Rep, error) {
 // out-of-scope id returns (nil, nil), so every by-id read path fails closed at the SQL layer and its
 // existing "nil → 404" handling keeps another OU's report unreachable by id enumeration (ADR 0022 R1).
 func (s *Store) GetNew(rowid int64, sc *ownerScope) (*Rep, error) {
-	var title, sym, name, rt, rd, kind, runID, src, sent, md, html, version sql.NullString
-	q := "SELECT title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html,version FROM reports WHERE id=?"
+	var title, sym, name, rt, rd, kind, runID, src, sent, md, html, version, author sql.NullString
+	q := "SELECT title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html,version,COALESCE(author,'') FROM reports WHERE id=?"
 	args := []any{rowid}
 	if frag, fargs := sc.where(""); frag != "" {
 		q += " AND " + frag
 		args = append(args, fargs...)
 	}
 	err := s.queryRow(q, args...).
-		Scan(&title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html, &version)
+		Scan(&title, &sym, &name, &rt, &rd, &kind, &runID, &src, &sent, &md, &html, &version, &author)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1739,7 +1771,7 @@ func (s *Store) GetNew(rowid int64, sc *ownerScope) (*Rep, error) {
 		ID: rowid, Title: title.String, Symbol: sym.String, Name: name.String,
 		RType: rt.String, Date: rd.String, Kind: kind.String, RunID: runID.String,
 		Source: src.String, Time: sent.String, MD: md.String, HTML: html.String,
-		Version: version.String,
+		Version: version.String, Author: author.String,
 	}, nil
 }
 
@@ -1799,6 +1831,13 @@ func (s *Store) DeleteReport(id int64) (int64, error) {
 	// The viewer list is what the read path consults, so a row pointing at a report that no longer
 	// exists is not merely waste — it is an access grant with nothing on the other end (ADR 0024).
 	if _, err := tx.Exec(s.bind("DELETE FROM report_viewers WHERE report_id=?"), id); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	// And its history, which is whole prior copies of the body: keeping them would leave the text of
+	// a deleted report on disk under an id nothing points at, readable by nothing and deleted by
+	// nobody. ids are reassigned, so a later report would eventually inherit them (ADR 0026).
+	if _, err := tx.Exec(s.bind("DELETE FROM report_revisions WHERE report_id=?"), id); err != nil {
 		tx.Rollback()
 		return 0, err
 	}

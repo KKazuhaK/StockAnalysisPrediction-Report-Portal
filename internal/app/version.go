@@ -26,6 +26,12 @@ import (
 // a renameable identity would orphan every report on the next rename.
 const defaultVersionName = "default"
 
+// manualVersionName is where every hand-written report lands (ADR 0026). It is an ordinary registry
+// row — the read path, the grants and the version switcher know nothing special about it — with one
+// mechanical distinction, the mirror of the default's: no ingest may write it. That is what makes it
+// a place a person can put words without a workflow overwriting them on its next run.
+const manualVersionName = "manual"
+
 // Visibility decides WHOSE reports of a version a reader may see, once they have been granted the
 // version at all. It is the answer to "can I see a report I did not ask for".
 type Visibility string
@@ -74,6 +80,37 @@ func (s *Store) ensureDefaultVersion() error {
 		defaultVersionName, "", 0, string(VisibilityAll))
 	return err
 }
+
+// ensureManualVersion seeds the version hand-written reports land in. Same first-run seeding as
+// ensureDefaultVersion, and idempotent for the same reason: it must never overwrite a label or a
+// visibility an admin has since changed.
+//
+// VisibilityGroup, not VisibilityAll, and that choice is the whole per-report audience mechanism.
+// Under `all`, granting the version would hand a reader every hand-written report there is; under
+// `group` the reader additionally has to appear on the report's own report_viewers list, which is
+// exactly "who is this one for". So the two gates divide the question cleanly — the grant decides
+// who may read hand-written reports at all, the viewer list decides which ones — using the table
+// that already exists for it rather than a second parallel mechanism.
+func (s *Store) ensureManualVersion() error {
+	var n int
+	s.queryRow("SELECT COUNT(*) FROM report_versions WHERE name=?", manualVersionName).Scan(&n)
+	if n > 0 {
+		return nil
+	}
+	// ord 50 puts it after the seeded default (0) and before an auto-registered workflow version
+	// (100), so the switcher reads machine-first, hand-written-second without anyone ordering it.
+	_, err := s.exec("INSERT INTO report_versions(name,label,ord,visibility) VALUES(?,?,?,?)",
+		manualVersionName, "人工", 50, string(VisibilityGroup))
+	return err
+}
+
+// ManualVersion is the version a hand-written report carries.
+func (s *Store) ManualVersion() string { return manualVersionName }
+
+// isManualVersion answers the one question the write paths ask of a version name. Callers must
+// normalize nothing themselves; the trimming is here so an ingest payload of " manual " cannot slip
+// past the refusal in v1Ingest by not matching the constant exactly.
+func isManualVersion(name string) bool { return normalizeVersion(name) == manualVersionName }
 
 // DefaultVersion is the version a report carries when its producer named none.
 func (s *Store) DefaultVersion() string { return defaultVersionName }
@@ -134,6 +171,12 @@ func (s *Store) DeleteVersion(name string) error {
 	if name == defaultVersionName {
 		return fmt.Errorf("the default version cannot be deleted — every version-less report resolves to it")
 	}
+	// Same reason, from the other end: the hand-written version is where the editor writes, so
+	// deleting it would leave the write path pointing at a name nobody has registered and every
+	// hand-written report ungrantable — unreadable to exactly the readers it was addressed to.
+	if name == manualVersionName {
+		return fmt.Errorf("the manual version cannot be deleted — every hand-written report lands in it")
+	}
 	if _, err := s.exec("DELETE FROM version_grants WHERE version=?", name); err != nil {
 		return err
 	}
@@ -178,6 +221,11 @@ func (s *Store) resolveVersion(name string) string {
 // not, and the tests assert it rather than leaving it as an argument.
 func (s *Store) reconcileReportVersions() error {
 	if err := s.ensureDefaultVersion(); err != nil {
+		return err
+	}
+	// Seeded beside the default and before the early return below, so a portal that has already
+	// rebuilt the identity index — i.e. every portal upgrading to this release — still gets it.
+	if err := s.ensureManualVersion(); err != nil {
 		return err
 	}
 	// The index already covering version means step 2 ran to completion in an earlier boot — the

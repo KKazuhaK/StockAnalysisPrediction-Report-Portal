@@ -256,6 +256,20 @@ func RunServer(cfgPath string) {
 	// Compare any two reports the caller may read (both ids are scoped).
 	mux.HandleFunc("GET /api/reports/diff", s.requireUserJSON(s.apiReportDiff))
 	mux.HandleFunc("GET /api/reports/comparable", s.requireUserJSON(s.apiComparableReports))
+	// Hand-written reports (ADR 0026). PermEditReport, not PermManage: writing the commentary and
+	// administering the portal are different jobs, and 编辑员 holds only the first. Every write is
+	// additionally constrained to the manual version inside the store, so none of these can reach a
+	// report that records what a workflow said.
+	mux.HandleFunc("GET /api/reports/editor", s.requirePermJSON(PermEditReport, s.apiReportEditor))
+	mux.HandleFunc("POST /api/reports", s.requirePermJSON(PermEditReport, s.apiReportCreate))
+	mux.HandleFunc("PUT /api/reports/{id}", s.requirePermJSON(PermEditReport, s.apiReportSave))
+	mux.HandleFunc("DELETE /api/reports/{id}", s.requirePermJSON(PermEditReport, s.apiReportDelete))
+	// The edit history. Same permission and same parent-report authorization as the editor: a
+	// revision carries no viewer rows of its own, so the report's read scope is the only scope there
+	// is. Restore is a save, not a fourth write path — see report_revision_api.go.
+	mux.HandleFunc("GET /api/reports/{id}/revisions", s.requirePermJSON(PermEditReport, s.apiReportRevisions))
+	mux.HandleFunc("GET /api/reports/{id}/revisions/{rev}", s.requirePermJSON(PermEditReport, s.apiReportRevision))
+	mux.HandleFunc("POST /api/reports/{id}/revisions/{rev}/restore", s.requirePermJSON(PermEditReport, s.apiReportRevisionRestore))
 	mux.HandleFunc("POST /api/mermaid-cache", s.requireUserJSON(s.apiMermaidCache))
 
 	// ---- Admin API: session + admin ----
@@ -1077,6 +1091,16 @@ func (s *Server) tokenOK(r *http.Request, need string) bool {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONStatus is writeJSON at a chosen status. For a refusal that has to carry more than a
+// reason — jsonErrorCode's {error, code} shape covers almost all of them, but a conflict whose
+// answer is "here is the row you collided with" needs the row's id too, and an id squeezed into a
+// message is not something a caller can act on.
+func writeJSONStatus(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
 

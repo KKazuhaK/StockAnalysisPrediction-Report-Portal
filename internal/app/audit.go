@@ -104,10 +104,19 @@ const (
 	// Reports and runs.
 	AuditReportIngest = "report.ingest"
 	AuditReportDelete = "report.delete"
-	AuditRunSubmit    = "run.submit"
-	AuditRunCancel    = "run.cancel"
-	AuditRunChange    = "run.change"
-	AuditRunDelete    = "run.delete"
+	// Writing a report by hand is its own pair of actions, separate from report.ingest: "a person
+	// wrote this" and "a workflow produced this" are the two things a reader of the log most needs
+	// told apart, and one shared action would make that unanswerable.
+	AuditReportCreate = "report.create"
+	AuditReportEdit   = "report.edit"
+	// Its own action rather than another report.edit. A restore is the one edit whose content nobody
+	// composed just now, so "what did this say and who decided it should" is answered by the revision
+	// it came from — which only a distinct action can carry.
+	AuditReportRestore = "report.restore"
+	AuditRunSubmit     = "run.submit"
+	AuditRunCancel     = "run.cancel"
+	AuditRunChange     = "run.change"
+	AuditRunDelete     = "run.delete"
 
 	// Credentials and egress — the things that let something out of the portal.
 	AuditTokenCreate   = "token.create"
@@ -325,7 +334,8 @@ const likeT = "LIKE '%T%'"
 // recorded" from "has not happened yet" — a freshly upgraded portal would offer one option and
 // look like a log that records one thing.
 var auditVocabulary = []string{
-	AuditReportRead, AuditReportIngest, AuditReportDelete,
+	AuditReportRead, AuditReportIngest, AuditReportCreate, AuditReportEdit, AuditReportRestore,
+	AuditReportDelete,
 	AuditLogin, AuditLoginFailed, AuditLockout, AuditLogout,
 	AuditPasswordChange, AuditPasswordReset, AuditMFAChange,
 	AuditIdentityLink, AuditIdentityUnlink, AuditStepUp,
