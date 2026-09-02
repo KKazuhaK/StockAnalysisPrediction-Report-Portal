@@ -276,7 +276,7 @@ export default function BatchAdminPage() {
   }
 
   const targetCols: ColumnsType<BatchTarget> = [
-    { key: 'sort', width: 44, align: 'center', render: () => <DragHandle /> },
+    { key: 'sort', width: 44, align: 'center', render: () => <DragHandle label={t('common.reorder')} /> },
     {
       title: t('common.name'),
       render: (_: unknown, tg: BatchTarget) => (

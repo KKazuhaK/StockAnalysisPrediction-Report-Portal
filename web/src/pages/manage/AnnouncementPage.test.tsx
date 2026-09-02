@@ -304,6 +304,23 @@ describe('AnnouncementPage', () => {
     expect(screen.queryByText(/announcementAdmin\.crowded/)).toBeNull()
   })
 
+  // The page-level half of the guard in dnd.test.tsx: SortableWrapper owns the container now, but
+  // a future edit could still interpose a spacing wrapper inside it, and the symptom — rows that
+  // will not drag — is silent. Two rows is the case that was reported.
+  it('keeps every draggable row a sibling, so the rows can actually be dragged', async () => {
+    apiMock.get.mockResolvedValue({
+      items: [announcement({ id: 1, title: '第一条' }), announcement({ id: 2, title: '第二条' })],
+      groups: GROUPS,
+      users: USERS,
+    })
+    const { container } = renderPage()
+    await screen.findByText('第二条')
+
+    const rows = Array.from(container.querySelectorAll('[data-sortable-id]'))
+    expect(rows.map((r) => r.getAttribute('data-sortable-id'))).toEqual(['1', '2'])
+    expect(new Set(rows.map((r) => r.parentElement)).size).toBe(1)
+  })
+
   it('deletes through the row action', async () => {
     const user = userEvent.setup()
     const { container } = renderPage()
