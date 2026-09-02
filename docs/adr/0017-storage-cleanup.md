@@ -78,6 +78,27 @@ and the reconcile-not-retry `untracked` outcome (ADR 0015).
    admin-only via `requireAdminJSON`. The manual "clean now" acts on the admin's explicit target
    selection regardless of the scheduled-enable toggle; the toggle governs only the scheduled pass.
 
+8. **A fifth target: the edit history of hand-written reports** (v0.4.43, ADR 0026). Same shape as the
+   other four — a pair of `Count*/Delete*Before` over one shared predicate, a fifth column on
+   `cleanup_runs` rather than a JSON blob, a floor (`minRevisionsRetentionDays = 14`) clamped on save
+   and read, and shipped disabled.
+
+   Two things differ, and both are deliberate. Its cutoff needs no fail-closed parsing: every
+   `saved_at` is written by `manualInstant`, so the column is homogeneous UTC RFC3339Nano and the
+   predicate is a plain lexical compare — the heterogeneity decision 4 has to survive on `reports`
+   simply does not arise on a column this release created. And its floor is the short one, for the
+   reason the audit log's is: a revision is a recoverable copy of something that still exists, not the
+   thing itself.
+
+   It is also the first target whose rows age **independently of what they belong to**. Every save
+   rewrites a report's own `sent_at`, so an actively edited report never ages out while each of its
+   revisions is stamped once and never touched again. A portal that enables this target is choosing to
+   forget the history of reports it is still writing, which is the point, and worth knowing.
+
+   The per-report **count** cap that ships alongside it (ADR 0026) is not this target and is not
+   configured by it being on: it is enforced when a report is saved, not by a pass, and its zero value
+   means unlimited rather than off.
+
 ## Consequences
 
 - `batch_jobs`/`batch_items` and expired tokens can now be bounded; reports have a manual, guarded purge
