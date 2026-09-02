@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
+  Alert,
   App,
   Button,
   Drawer,
@@ -66,8 +67,12 @@ export default function ReportHistoryDrawer({
   token: string
   open: boolean
   onClose: () => void
-  /** Hands back the report's fresh token so the editor can keep working without a reload. */
-  onRestored: (updatedAt: string) => void
+  /**
+   * Reports that a restore landed. Deliberately carries no payload: the editor reloads, and the
+   * reload is where the new token, title, date and audience all come from at once. Handing the
+   * token back separately would give it two writers that could disagree.
+   */
+  onRestored: () => void
 }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -78,6 +83,11 @@ export default function ReportHistoryDrawer({
   const [keep, setKeep] = useState(0)
   const [picked, setPicked] = useState<number | null>(null)
   const [detail, setDetail] = useState<RevisionDetail | null>(null)
+  const [detailErr, setDetailErr] = useState('')
+  // The version whose fetch is allowed to land. Two clicks in a row race, and the answers can arrive
+  // in either order: without this the slower one wins and the drawer shows a version the reader is
+  // not pointing at, captioned with the one they are.
+  const wanted = useRef<number | null>(null)
   const [view, setView] = useState<'diff' | 'doc'>('diff')
   const [restoring, setRestoring] = useState(false)
 
@@ -89,6 +99,8 @@ export default function ReportHistoryDrawer({
     setLoading(true)
     setPicked(null)
     setDetail(null)
+    setDetailErr('')
+    wanted.current = null
     api
       .get<{ revisions: RevisionSummary[]; current: typeof current; keep: number }>(
         `/api/reports/${reportId}/revisions`,
@@ -110,21 +122,28 @@ export default function ReportHistoryDrawer({
   const pick = (id: number) => {
     setPicked(id)
     setDetail(null)
+    setDetailErr('')
+    wanted.current = id
     api
       .get<RevisionDetail>(`/api/reports/${reportId}/revisions/${id}`)
-      .then(setDetail)
-      .catch((e) => message.error(errText(e, t)))
+      .then((d) => {
+        if (wanted.current === id) setDetail(d)
+      })
+      .catch((e) => {
+        if (wanted.current !== id) return
+        // Recorded in place, not only as a toast: a toast is gone in three seconds and what it
+        // leaves behind is a spinner that never stops, which reads as a slow server rather than as
+        // a failure that has already happened.
+        setDetailErr(errText(e, t))
+      })
   }
 
   const restore = async (id: number) => {
     setRestoring(true)
     try {
-      const r = await api.post<{ updated_at: string }>(
-        `/api/reports/${reportId}/revisions/${id}/restore`,
-        { updated_at: token },
-      )
+      await api.post(`/api/reports/${reportId}/revisions/${id}/restore`, { updated_at: token })
       message.success(t('reportHistory.restored'))
-      onRestored(r.updated_at)
+      onRestored()
       onClose()
     } catch (e) {
       message.error(errText(e, t))
@@ -214,7 +233,9 @@ export default function ReportHistoryDrawer({
                   { value: 'doc', label: t('reportHistory.viewDoc') },
                 ]}
               />
-              {!detail ? (
+              {detailErr ? (
+                <Alert type="error" showIcon message={detailErr} />
+              ) : !detail ? (
                 <Spin />
               ) : view === 'diff' ? (
                 detail.changed === 0 ? (

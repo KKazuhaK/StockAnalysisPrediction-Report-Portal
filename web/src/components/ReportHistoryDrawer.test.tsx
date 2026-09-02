@@ -15,6 +15,8 @@ const state = {
   detail: {} as Record<string, unknown>,
   posted: null as unknown,
   postedTo: '',
+  put: null as unknown,
+  putTo: '',
   gets: [] as string[],
 }
 
@@ -33,7 +35,11 @@ vi.mock('../api/client', () => ({
       state.posted = b
       return Promise.resolve({ ok: true, updated_at: 'token-after-restore' })
     },
-    put: () => Promise.resolve({ updated_at: 'later' }),
+    put: (u: string, b: unknown) => {
+      state.putTo = u
+      state.put = b
+      return Promise.resolve({ updated_at: 'later' })
+    },
     del: () => Promise.resolve({ ok: true }),
   },
   errText: (_e: unknown, t: (k: string) => string) => t('common.error'),
@@ -99,6 +105,8 @@ beforeEach(() => {
   }
   state.posted = null
   state.postedTo = ''
+  state.put = null
+  state.putTo = ''
   state.gets = []
 })
 
@@ -147,6 +155,11 @@ describe('the history drawer', () => {
     await userEvent.click(screen.getByText('reportHistory.open'))
     await screen.findByText('alice')
 
+    // The server has applied the restore by the time the editor refetches, so the form it serves
+    // carries the new token. Staged before the click, not after, or the assertion below is racing
+    // the refetch rather than describing it.
+    state.form = { ...editorForm, updated_at: 'token-after-restore' }
+
     await userEvent.click(screen.getAllByText('reportHistory.restore')[0])
     // antd's Popconfirm renders its OK button with the default confirm label.
     await userEvent.click(await screen.findByText('OK'))
@@ -156,7 +169,12 @@ describe('the history drawer', () => {
     // before somebody else saved has to be refused, and only the caller's token can express that.
     expect(state.posted).toEqual({ updated_at: 'token-in-editor' })
 
-    // And the fresh token is adopted, so the next ordinary save does not conflict with the restore.
+    // The token the restore returned is what the editor saves against next. Asserting the refetch
+    // happened is not the same claim — a refetch that dropped the token would still have happened —
+    // so this drives an actual save and reads what it sent.
     await waitFor(() => expect(state.gets.filter((u) => u.includes('/reports/editor')).length).toBe(2))
+    await userEvent.click(await screen.findByText('common.save'))
+    await waitFor(() => expect(state.putTo).toBe('/api/reports/12'))
+    expect((state.put as Record<string, unknown>).updated_at).toBe('token-after-restore')
   })
 })

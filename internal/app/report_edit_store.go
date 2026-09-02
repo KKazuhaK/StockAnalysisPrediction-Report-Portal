@@ -107,10 +107,20 @@ func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (st
 		}
 		return "", err
 	}
+	// The author is who wrote the text the report now carries, not who last pressed save. A save
+	// that changed no content did not write it, so it does not take the byline — and because such a
+	// save records no revision either, taking it would leave the original author's name recoverable
+	// from nowhere: the next real edit would file their words under whoever had happened to touch
+	// the audience in between.
+	changed := reportContentDiffers(prev, r)
+	author := prev.Author
+	if changed {
+		author = r.Author
+	}
 	res, err := tx.Exec(s.bind(`UPDATE reports SET title=?, symbol=?, name=?, rtype=?, rdate=?, kind=?,
 		source=?, body_md=?, body_html='', sent_at=?, author=?
 		WHERE id=? AND version=? AND sent_at=?`),
-		r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.Source, r.MD, now, r.Author,
+		r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.Source, r.MD, now, author,
 		id, manualVersionName, expect)
 	if err != nil {
 		// Rolled back BEFORE the probe, not by a deferred rollback afterwards: on SQLite the pool is
@@ -131,7 +141,7 @@ func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (st
 		tx.Rollback()
 		return "", ErrReportStale
 	}
-	if err := s.snapshot(tx, id, prev, r, keep); err != nil {
+	if err := s.snapshot(tx, id, prev, changed, keep); err != nil {
 		tx.Rollback()
 		return "", err
 	}
@@ -159,8 +169,8 @@ func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (st
 // audience without touching a word, would otherwise bury the version they actually want under
 // identical copies of the one they are looking at — the same argument the cleanup console makes for
 // not recording a pass that deleted nothing.
-func (s *Store) snapshot(tx *sql.Tx, id int64, prev, next Rep, keep int) error {
-	if !reportContentDiffers(prev, next) {
+func (s *Store) snapshot(tx *sql.Tx, id int64, prev Rep, changed bool, keep int) error {
+	if !changed {
 		return nil
 	}
 	if _, err := tx.Exec(s.bind(`INSERT INTO report_revisions
@@ -181,9 +191,16 @@ func (s *Store) snapshot(tx *sql.Tx, id int64, prev, next Rep, keep int) error {
 	return err
 }
 
-// reportContentDiffers reports whether a save changed anything a revision would record. The audience
-// is deliberately not part of it: who a report is for is not what it said, it is stored in another
-// table, and a revision that cannot restore it should not claim to have captured it.
+// reportContentDiffers reports whether a save changed what the report SAYS. It is the one question
+// two decisions turn on — whether to file a revision, and whether the saver takes the byline — so it
+// is computed once, before the update, and passed to both.
+//
+// Author is deliberately not compared, though a revision records it: it is an ATTRIBUTE of the
+// content rather than part of it, and comparing it would make "a different person saved without
+// changing a word" a change, which is exactly the case the no-op suppression exists to swallow.
+//
+// The audience is not part of it either: who a report is for is not what it said, it is stored in
+// another table, and a revision that cannot restore it should not claim to have captured it.
 func reportContentDiffers(a, b Rep) bool {
 	return a.MD != b.MD || a.Title != b.Title || a.Symbol != b.Symbol || a.Name != b.Name ||
 		a.RType != b.RType || a.Date != b.Date || a.Source != b.Source

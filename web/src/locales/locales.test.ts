@@ -74,4 +74,24 @@ describe('locale bundles', () => {
       expect(b.dayjs, `${lang.code} dayjs id`).toBeTruthy()
     }
   })
+
+  // Key parity is not enough. A translation whose PLACEHOLDERS have drifted from the base is still
+  // a present, non-empty string of the right key — and i18next renders it and silently drops the
+  // value nobody interpolated. That is how the Traditional storage console came to report four
+  // cleanup categories out of five: the base string gained a {{revisions}} slot and zh-TW, which is
+  // only ever filled for MISSING keys, kept the old sentence. Nothing was empty, nothing was
+  // missing, and every test was green.
+  it('every language interpolates exactly the values the base does', async () => {
+    const slots = (v: string) =>
+      [...v.matchAll(/\{\{\s*([\w.]+)/g)].map((m) => m[1]).sort().join(',')
+    const base = (await findLang(BASE_LANG)!.load()).default.translation as Record<string, string>
+
+    for (const lang of LANGS) {
+      if (lang.code === BASE_LANG) continue
+      const b = (await lang.load()).default.translation as Record<string, string>
+      for (const [k, v] of Object.entries(base)) {
+        expect(slots(b[k] ?? ''), `${lang.code} ${k} placeholders`).toBe(slots(v))
+      }
+    }
+  })
 })
