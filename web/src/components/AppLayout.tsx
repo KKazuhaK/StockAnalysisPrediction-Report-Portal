@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, AuditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, AuditOutlined, EditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -86,6 +86,7 @@ export default function AppLayout() {
   const [showTop, setShowTop] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const canRun = can('run_batch')
+  const canWrite = can('report_edit')
   const swUpdateReady = useSWUpdateReady()
 
   // Show back-to-top once the window has scrolled past ~one screen. Self-controlled
@@ -267,6 +268,19 @@ export default function AppLayout() {
               title={t('nav.runAnalysis')}
             >
               {t('nav.runAnalysis')}
+            </Button>
+          )}
+          {canWrite && !chatFocus && (
+            // Writing a report by hand (ADR 0026). Primary only where 运行分析 is absent: an
+            // account that holds the editing permission and not the running one has this as its
+            // main action, and two primary buttons side by side name neither.
+            <Button
+              type={canRun ? 'default' : 'primary'}
+              icon={<EditOutlined />}
+              onClick={() => navigate('/report/new')}
+              title={t('nav.writeReport')}
+            >
+              {compact && canRun ? null : t('nav.writeReport')}
             </Button>
           )}
           {canRun && !chatFocus && (

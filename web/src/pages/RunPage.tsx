@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { RunResp, SubTab } from '../api/types'
 import Markdown from '../components/Markdown'
+import EditReportButton from '../components/EditReportButton'
 import ReaderControls from '../components/ReaderControls'
 import VersionSwitcher from '../components/VersionSwitcher'
 import { ExportPdfButton } from '../components/ExportButtons'
@@ -109,6 +110,7 @@ export default function RunPage() {
                 id={rep.id}
                 report={{ title: rep.displayTitle, date: rep.date, source: rep.source, html: rep.html, md: rep.md }}
               />
+              <EditReportButton reportId={rep.id} />
             </Space>
           )}
         </Space>

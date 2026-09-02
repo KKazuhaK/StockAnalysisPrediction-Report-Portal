@@ -7,6 +7,11 @@ import StockPage from './StockPage'
 // A hook called after those early returns (Grid.useBreakpoint) would run on the second
 // render but not the first — "rendered more hooks than during the previous render" — and
 // blank the page. This mounts through that transition to guard against the regression.
+// The reading pages render an "edit this report" button, which asks the session what it may do.
+// In the app they only ever mount inside <Protected>, so the context is always there; here it is not.
+vi.mock('../auth', () => ({
+  useAuth: () => ({ user: 'alice', name: 'Alice', admin: true, can: () => true, logout: vi.fn() }),
+}))
 vi.mock('../api/client', () => ({
   api: {
     get: () =>

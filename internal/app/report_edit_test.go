@@ -248,11 +248,13 @@ func TestACollisionNamesTheReportItCollidedWith(t *testing.T) {
 		t.Fatalf("duplicate create status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		Error string `json:"error"`
-		ID    int64  `json:"id"`
+		Code string `json:"code"`
+		ID   int64  `json:"id"`
 	}
 	json.Unmarshal(rec.Body.Bytes(), &out)
-	if out.Error != "report_exists" || out.ID != first {
+	// The code, not the message: the SPA translates the code, because the server writes the response
+	// before the browser's language choice is known.
+	if out.Code != "report_exists" || out.ID != first {
 		t.Fatalf("collision response = %+v, want report_exists on %d", out, first)
 	}
 }
