@@ -3,6 +3,7 @@ import { Button } from 'antd'
 import { HolderOutlined } from '@ant-design/icons'
 import {
   DndContext,
+  KeyboardSensor,
   PointerSensor,
   closestCenter,
   useSensor,
@@ -10,7 +11,13 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core'
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
 // Drag-to-sort: wire antd Table body rows to @dnd-kit. Use a "drag handle" instead of dragging the
@@ -19,24 +26,37 @@ import { CSS } from '@dnd-kit/utilities'
 interface RowCtx {
   setActivatorNodeRef?: (el: HTMLElement | null) => void
   listeners?: Record<string, any>
+  attributes?: Record<string, any>
 }
 const RowContext = createContext<RowCtx>({})
 
-export function DragHandle() {
-  const { setActivatorNodeRef, listeners } = useContext(RowContext)
+// The handle carries `attributes`, not the row.
+//
+// dnd-kit's `attributes` are role="button", tabIndex=0, aria-roledescription="sortable" and an
+// aria-describedby pointing at its "press space to pick up" instructions. On the row they describe
+// the wrong element: a <tr> loses its implicit `row` role, so a screen reader can no longer walk the
+// table by row and column, and a list item that contains a switch, an Edit button and a delete
+// confirm becomes one role="button" wrapping all three — which is invalid, and which also puts a
+// dead tab stop in front of every row, since Space on the row does nothing (see the sensors below;
+// the activator is this button, and dnd-kit ignores a key that lands anywhere else). Here they are
+// true: this button is the thing you pick up, and the instructions describe what it does.
+export function DragHandle({ label }: { label?: string }) {
+  const { setActivatorNodeRef, listeners, attributes } = useContext(RowContext)
   return (
     <Button
       type="text"
       size="small"
       icon={<HolderOutlined />}
       ref={setActivatorNodeRef}
+      aria-label={label ?? 'Reorder'}
       style={{ cursor: 'grab', touchAction: 'none' }}
+      {...attributes}
       {...listeners}
     />
   )
 }
 
-export function SortableRow(props: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key': string | number }) {
+function SortableTableRow(props: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key': string | number }) {
   // String(), because antd hands this through with the type the rowKey produced: `rowKey="id"` over
   // numeric ids gives a NUMBER here, while SortableWrapper's ids are strings. dnd-kit matches a
   // sortable to its context by identity, so 1 never finds "1" — the row registers at index -1 and
@@ -52,12 +72,25 @@ export function SortableRow(props: React.HTMLAttributes<HTMLTableRowElement> & {
     transition,
     ...(isDragging ? { position: 'relative', zIndex: 999 } : {}),
   }
-  const ctx = useMemo<RowCtx>(() => ({ setActivatorNodeRef, listeners }), [setActivatorNodeRef, listeners])
+  const ctx = useMemo<RowCtx>(
+    () => ({ setActivatorNodeRef, listeners, attributes }),
+    [setActivatorNodeRef, listeners, attributes],
+  )
   return (
     <RowContext.Provider value={ctx}>
-      <tr {...props} ref={setNodeRef} data-sortable-id={id} style={style} {...attributes} />
+      <tr {...props} ref={setNodeRef} data-sortable-id={id} style={style} />
     </RowContext.Provider>
   )
+}
+
+export function SortableRow(props: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key'?: string | number }) {
+  // rc-table renders its "no data" placeholder through this same component, with no row key — so an
+  // empty table used to register a sortable with the id "undefined", announced to a screen reader as
+  // a draggable item and reachable by Tab. It is one <tr> that says "no data"; there is nothing to
+  // sort. Splitting the hook into a child component is what lets this be a plain early return.
+  const key = props['data-row-key']
+  if (key === undefined) return <tr {...props} />
+  return <SortableTableRow {...props} data-row-key={key} />
 }
 
 export const sortableTableComponents = { body: { row: SortableRow } }
@@ -72,15 +105,32 @@ export function SortableItem({ id, children }: { id: string; children: ReactNode
     transition,
     ...(isDragging ? { position: 'relative', zIndex: 999 } : {}),
   }
-  const ctx = useMemo<RowCtx>(() => ({ setActivatorNodeRef, listeners }), [setActivatorNodeRef, listeners])
+  const ctx = useMemo<RowCtx>(
+    () => ({ setActivatorNodeRef, listeners, attributes }),
+    [setActivatorNodeRef, listeners, attributes],
+  )
   return (
     <RowContext.Provider value={ctx}>
       {/* data-sortable-id is for tests and for debugging a list that will not drag: it makes the
-          sortable nodes findable, so a test can assert they are siblings (see SortableWrapper). */}
-      <div ref={setNodeRef} data-sortable-id={id} style={style} {...attributes}>
+          sortable nodes findable, so a test can assert they are siblings (see SortableWrapper).
+          `attributes` go on the DragHandle, not here — see the comment there. */}
+      <div ref={setNodeRef} data-sortable-id={id} style={style}>
         {children}
       </div>
     </RowContext.Provider>
+  )
+}
+
+// Pointer and keyboard both, and the keyboard half is not optional: DndContext renders dnd-kit's
+// screen-reader instructions unconditionally ("To pick up a draggable item, press the space bar"),
+// so a list with only a PointerSensor tells every screen-reader user to press a key that does
+// nothing. Since ordering is the whole mechanism on these pages — there is no move-up button and no
+// order field anywhere — that left reordering impossible without a mouse while announcing itself as
+// available. Registering the sensor is what makes the instructions true.
+export function useSortableSensors() {
+  return useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 }
 
@@ -107,7 +157,7 @@ export function SortableWrapper({
   gap?: number
   children: ReactNode
 }) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  const sensors = useSortableSensors()
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     if (over && active.id !== over.id) {
       const from = ids.indexOf(String(active.id))

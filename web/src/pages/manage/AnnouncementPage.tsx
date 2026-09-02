@@ -301,7 +301,7 @@ export default function AnnouncementPage() {
           opacity: a.enabled ? 1 : 0.55, // a switched-off row reads as off at a glance
         }}
       >
-        <DragHandle />
+        <DragHandle label={t('common.reorder')} />
         <span
           aria-hidden
           style={{

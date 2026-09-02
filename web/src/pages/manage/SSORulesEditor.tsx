@@ -101,7 +101,7 @@ export default function SSORulesEditor({
     {
       title: '',
       width: 40,
-      render: () => <DragHandle />,
+      render: () => <DragHandle label={t('common.reorder')} />,
     },
     {
       title: t('sso.rules.enabled'),

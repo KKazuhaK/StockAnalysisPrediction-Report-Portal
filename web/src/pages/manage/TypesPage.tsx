@@ -251,7 +251,7 @@ export default function TypesPage() {
   const kindOptions = kinds.map((k) => ({ value: k, label: k }))
 
   const columns = [
-    { key: 'sort', width: 44, align: 'center' as const, render: () => <DragHandle /> },
+    { key: 'sort', width: 44, align: 'center' as const, render: () => <DragHandle label={t('common.reorder')} /> },
     {
       title: t('common.name'),
       dataIndex: 'name',
