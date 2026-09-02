@@ -301,7 +301,7 @@ export default function AnnouncementPage() {
           opacity: a.enabled ? 1 : 0.55, // a switched-off row reads as off at a glance
         }}
       >
-        <DragHandle />
+        <DragHandle label={t('common.reorder')} />
         <span
           aria-hidden
           style={{
@@ -468,14 +468,12 @@ export default function AnnouncementPage() {
           ) : (
             // Dragging is disabled until the list has actually loaded: reorder replaces the whole
             // order in one call, and a page that never rendered has no order worth sending.
-            <SortableWrapper ids={loaded ? ids : []} onReorder={reorder}>
-              <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                {items.map((a) => (
-                  <SortableItem key={a.id} id={String(a.id)}>
-                    {row(a)}
-                  </SortableItem>
-                ))}
-              </Space>
+            <SortableWrapper ids={loaded ? ids : []} onReorder={reorder} gap={8}>
+              {items.map((a) => (
+                <SortableItem key={a.id} id={String(a.id)}>
+                  {row(a)}
+                </SortableItem>
+              ))}
             </SortableWrapper>
           )}
         </Space>
