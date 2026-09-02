@@ -2,14 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { App, Button, Checkbox, Empty, Form, Input, Modal, Popconfirm, Radio, Select, Space, Switch, Tag, Tooltip, Typography, theme } from 'antd'
 import { DeleteOutlined, EditOutlined, FolderAddOutlined, FolderOutlined, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core'
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { api, errText } from '../../api/client'
 import { useAuth } from '../../auth'
 import type { AppSummary, AppsResp, BatchTarget, ChatTarget, LinkGroup, LinkGroupMode, LinkItem } from '../../api/types'
 import { difyModeKind } from '../../lib/batchUi'
-import { DragHandle, SortableItem } from './dnd'
+import { DragHandle, SortableItem, useSortableSensors } from './dnd'
 import { LINK_ICON_OPTIONS, linkIconComponent } from '../../components/linkIcons'
 import LoadGate from '../../components/LoadGate'
 import { APP_SHORTCUTS, builtinAppOptions, shortcutOfUrl, shortcutUrl } from '../../lib/shortcuts'
@@ -42,7 +42,9 @@ export default function LinksPage() {
   const [batchTargets, setBatchTargets] = useState<BatchTarget[]>([])
   const [chatTargets, setChatTargets] = useState<ChatTarget[]>([])
   const [appList, setAppList] = useState<AppSummary[]>([])
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  // Same sensors as SortableWrapper, from the same place: this page has its own DndContext (see the
+  // comment at the list below), and a second hand-rolled sensor list is how the two quietly diverge.
+  const sensors = useSortableSensors()
 
   const load = () => {
     setLoading(true)
@@ -274,7 +276,7 @@ export default function LinksPage() {
           opacity: g.visible === false ? 0.55 : 1, // dim a hidden group so its state reads at a glance
         }}
       >
-        <DragHandle />
+        <DragHandle label={t('common.reorder')} />
         <GroupIcon style={{ color: token.colorTextTertiary }} />
         <Typography.Text strong={!!g.name} type={g.name ? undefined : 'secondary'}>
           {g.name || t('links.unnamedGroup')}
@@ -314,7 +316,7 @@ export default function LinksPage() {
           opacity: l.visible === false ? 0.55 : 1, // dim a hidden entry so its state reads at a glance
         }}
       >
-        <DragHandle />
+        <DragHandle label={t('common.reorder')} />
         <Icon />
         <Typography.Text style={{ minWidth: 120, flexShrink: 0 }} ellipsis>
           {l.label}

@@ -205,7 +205,7 @@ export default function RunPresetsEditor() {
                   borderRadius: 8,
                 }}
               >
-                <DragHandle />
+                <DragHandle label={t('common.reorder')} />
                 <Switch size="small" checked={p.enabled} onChange={(v) => toggleEnabled(p, v)} />
                 <span style={{ fontWeight: 500, minWidth: 80 }}>{p.label || t('preset.untitled')}</span>
                 <Typography.Text type="secondary" style={{ flex: 1, minWidth: 120 }}>
