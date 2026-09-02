@@ -24,23 +24,28 @@ func (s *Server) apiCleanupConfigGet(w http.ResponseWriter, r *http.Request, use
 		}
 	}
 	writeJSON(w, map[string]any{
-		"freq":              c.Freq,
-		"time":              c.Time,
-		"weekday":           c.Weekday,
-		"monthday":          c.Monthday,
-		"batch_enabled":     c.BatchEnabled,
-		"batch_days":        c.BatchDays,
-		"tokens_enabled":    c.TokensEnabled,
-		"tokens_grace_days": c.TokensGraceDays,
-		"reports_enabled":   c.ReportsEnabled,
-		"reports_days":      c.ReportsDays,
-		"audit_enabled":     c.AuditEnabled,
-		"audit_days":        c.AuditDays,
-		"batch_floor":       minBatchRetentionDays,
-		"reports_floor":     minReportsRetentionDays,
-		"audit_floor":       minAuditRetentionDays,
-		"last_run_period":   s.st.GetSetting("cleanup_last_run_period", ""),
-		"last_result":       last,
+		"freq":               c.Freq,
+		"time":               c.Time,
+		"weekday":            c.Weekday,
+		"monthday":           c.Monthday,
+		"batch_enabled":      c.BatchEnabled,
+		"batch_days":         c.BatchDays,
+		"tokens_enabled":     c.TokensEnabled,
+		"tokens_grace_days":  c.TokensGraceDays,
+		"reports_enabled":    c.ReportsEnabled,
+		"reports_days":       c.ReportsDays,
+		"audit_enabled":      c.AuditEnabled,
+		"audit_days":         c.AuditDays,
+		"revisions_enabled":  c.RevisionsEnabled,
+		"revisions_days":     c.RevisionsDays,
+		"revisions_keep":     s.reportRevisionsKeep(),
+		"batch_floor":        minBatchRetentionDays,
+		"reports_floor":      minReportsRetentionDays,
+		"audit_floor":        minAuditRetentionDays,
+		"revisions_floor":    minRevisionsRetentionDays,
+		"revisions_keep_max": maxReportRevisionsKeep,
+		"last_run_period":    s.st.GetSetting("cleanup_last_run_period", ""),
+		"last_result":        last,
 	})
 }
 
@@ -58,6 +63,12 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 		ReportsDays     *int    `json:"reports_days"`
 		AuditEnabled    *bool   `json:"audit_enabled"`
 		AuditDays       *int    `json:"audit_days"`
+		// The edit-history target, plus the per-report cap. The cap is not a retention day count and
+		// is not clamped with them: 0 is a real answer here, meaning keep every version, and it is
+		// what an unconfigured portal does (ADR 0026).
+		RevisionsEnabled *bool `json:"revisions_enabled"`
+		RevisionsDays    *int  `json:"revisions_days"`
+		RevisionsKeep    *int  `json:"revisions_keep"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -89,6 +100,18 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 	}
 	if in.ReportsDays != nil && *in.ReportsDays < minReportsRetentionDays {
 		jsonError(w, http.StatusBadRequest, "reports_days below floor")
+		return
+	}
+	if in.RevisionsDays != nil && *in.RevisionsDays < minRevisionsRetentionDays {
+		jsonErrorCode(w, http.StatusBadRequest, "retention_too_short",
+			"编辑历史保留天数不能少于 "+strconv.Itoa(minRevisionsRetentionDays)+" 天")
+		return
+	}
+	// Refused, not clamped. A cap an admin typed and did not get is a history they think is bounded
+	// at one number and is bounded at another.
+	if in.RevisionsKeep != nil && (*in.RevisionsKeep < 0 || *in.RevisionsKeep > maxReportRevisionsKeep) {
+		jsonErrorCode(w, http.StatusBadRequest, "revisions_keep_invalid",
+			"每篇保留版本数应在 0（不限）到 "+strconv.Itoa(maxReportRevisionsKeep)+" 之间")
 		return
 	}
 
@@ -128,6 +151,15 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 	if in.ReportsEnabled != nil {
 		s.st.SetSetting("cleanup_reports_enabled", strconv.Itoa(boolInt(*in.ReportsEnabled)))
 	}
+	if in.RevisionsDays != nil {
+		s.st.SetSetting("cleanup_revisions_days", strconv.Itoa(*in.RevisionsDays))
+	}
+	if in.RevisionsEnabled != nil {
+		s.st.SetSetting("cleanup_revisions_enabled", strconv.Itoa(boolInt(*in.RevisionsEnabled)))
+	}
+	if in.RevisionsKeep != nil {
+		s.st.SetSetting(setReportRevisionsKeep, strconv.Itoa(*in.RevisionsKeep))
+	}
 	// Retention decides when evidence stops existing — including this table's own. A change to
 	// it has to be in the record that the change shortens.
 	s.recordChange(r, user, AuditPolicyChange, "cleanup_config", "",
@@ -139,17 +171,19 @@ func (s *Server) apiCleanupConfigSave(w http.ResponseWriter, r *http.Request, us
 
 func (s *Server) apiCleanupUsage(w http.ResponseWriter, r *http.Request, user string) {
 	c := s.cleanupConfigLoad()
-	batchCut, tokenCut, reportsCut, auditCut := c.cutoffs(time.Now())
+	batchCut, tokenCut, reportsCut, auditCut, revisionsCut := c.cutoffs(time.Now())
 
 	batchEligible, _ := s.st.CountFinishedJobsBefore(batchCut)
 	tokEligible, _ := s.st.CountExpiredTokensBefore(tokenCut)
 	repEligible, _ := s.st.CountReportsIngestedBefore(reportsCut)
 	auditEligible, _ := s.st.CountAuditBefore(auditCut)
+	revEligible, _ := s.st.CountRevisionsBefore(revisionsCut)
 
 	batchOld, batchNew := s.st.usageSpan("batch_jobs", "finished_at")
 	tokOld, tokNew := s.st.usageSpan("api_tokens", "created_at")
 	repOld, repNew := s.st.usageSpan("reports", "sent_at")
 	auditOld, auditNew := s.st.usageSpan("audit_log", "at")
+	revOld, revNew := s.st.usageSpan("report_revisions", "saved_at")
 
 	cat := func(key string, rows, bytes, eligible int64, oldest, newest string) map[string]any {
 		return map[string]any{"key": key, "rows": rows, "bytes": bytes, "eligible": eligible, "oldest": oldest, "newest": newest}
@@ -173,6 +207,12 @@ func (s *Server) apiCleanupUsage(w http.ResponseWriter, r *http.Request, user st
 				s.st.usageCount("audit_log"),
 				s.st.usageBytes("audit_log", "LENGTH(COALESCE(detail,''))+LENGTH(COALESCE(target_id,''))"),
 				auditEligible, auditOld, auditNew),
+			// Whole prior copies of a report body, so bytes here are the same order as the reports
+			// category's and are worth showing beside it rather than folded into it.
+			cat("revisions",
+				s.st.usageCount("report_revisions"),
+				s.st.usageBytes("report_revisions", "LENGTH(COALESCE(body_md,''))"),
+				revEligible, revOld, revNew),
 			cat("chat",
 				s.st.usageCount("chat_conversations"),
 				s.st.usageBytes("chat_conversations", "LENGTH(COALESCE(title,''))"),
@@ -190,7 +230,7 @@ func (s *Server) readTargets(r *http.Request) cleanupTargets {
 	}
 	_ = readJSON(r, &in)
 	if len(in.Targets) == 0 {
-		return cleanupTargets{Batch: true, Tokens: true, Reports: true, Audit: true}
+		return cleanupTargets{Batch: true, Tokens: true, Reports: true, Audit: true, Revisions: true}
 	}
 	var t cleanupTargets
 	for _, x := range in.Targets {
@@ -203,6 +243,8 @@ func (s *Server) readTargets(r *http.Request) cleanupTargets {
 			t.Tokens = true
 		case "reports":
 			t.Reports = true
+		case "revisions":
+			t.Revisions = true
 		}
 	}
 	return t
@@ -215,7 +257,7 @@ func (s *Server) apiCleanupPreview(w http.ResponseWriter, r *http.Request, user 
 	sel := s.readTargets(r)
 	c := s.cleanupConfigLoad()
 	now := time.Now()
-	batchCut, tokenCut, reportsCut, auditCut := c.cutoffs(now)
+	batchCut, tokenCut, reportsCut, auditCut, revisionsCut := c.cutoffs(now)
 	res := cleanupResult{Trigger: "preview", DryRun: true, OK: true, At: now.UTC().Format(time.RFC3339)}
 	if sel.Batch {
 		n, err := s.st.CountFinishedJobsBefore(batchCut)
@@ -235,6 +277,11 @@ func (s *Server) apiCleanupPreview(w http.ResponseWriter, r *http.Request, user 
 	if sel.Audit {
 		n, err := s.st.CountAuditBefore(auditCut)
 		res.Audit = n
+		res.note(err)
+	}
+	if sel.Revisions {
+		n, err := s.st.CountRevisionsBefore(revisionsCut)
+		res.Revisions = n
 		res.note(err)
 	}
 	writeJSON(w, res)

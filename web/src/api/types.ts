@@ -440,9 +440,17 @@ export interface CleanupConfig {
   reports_days: number
   audit_enabled: boolean
   audit_days: number
+  // The edit-history target (ADR 0026). revisions_keep is a per-report COUNT enforced when a report
+  // is saved, not an age enforced by the retention pass, so it applies whether or not the target is
+  // enabled — and 0 means keep every version, which is the shipped state.
+  revisions_enabled: boolean
+  revisions_days: number
+  revisions_keep: number
   batch_floor: number
   reports_floor: number
   audit_floor: number
+  revisions_floor: number
+  revisions_keep_max: number
   last_run_period: string
   last_result: CleanupResult | null
 }
@@ -458,6 +466,7 @@ export interface CleanupResult {
   tokens: number
   reports: number
   audit: number
+  revisions: number
   duration_ms: number
 }
 
@@ -487,6 +496,7 @@ export interface CleanupRun {
   tokens_deleted: number
   reports_deleted: number
   audit_deleted: number
+  revisions_deleted: number
   duration_ms: number
 }
 

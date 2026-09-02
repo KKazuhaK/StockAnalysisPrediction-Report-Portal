@@ -51,12 +51,12 @@ func (s *Store) CreateManualReport(r Rep) (int64, error) {
 	r.Time = manualInstant()
 	var id int64
 	err := s.queryRow(`
-		INSERT INTO reports(title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html,version)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+		INSERT INTO reports(title,symbol,name,rtype,rdate,kind,run_id,source,sent_at,body_md,body_html,version,author)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(`+reportIdentExpr+`) DO NOTHING
 		RETURNING id`,
 		r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, "", r.Source, r.Time, r.MD, "",
-		r.Version).Scan(&id)
+		r.Version, r.Author).Scan(&id)
 	if err == sql.ErrNoRows {
 		var prev int64
 		s.queryRow("SELECT id FROM reports WHERE "+reportIdentWhere,
@@ -69,7 +69,7 @@ func (s *Store) CreateManualReport(r Rep) (int64, error) {
 	return id, nil
 }
 
-// UpdateManualReport rewrites one hand-written report in place, by id.
+// UpdateManualReport rewrites one hand-written report in place, by id, keeping what it used to say.
 //
 // By id, and NOT through UpsertReport, because the editable fields include the identity ones: an
 // author who corrects the title of their own report would otherwise have it written to the new
@@ -78,16 +78,39 @@ func (s *Store) CreateManualReport(r Rep) (int64, error) {
 //
 // expect is the sent_at the editor loaded. A mismatch means somebody else saved in between, and the
 // update touches nothing rather than overwriting words the author never saw.
-func (s *Store) UpdateManualReport(id int64, r Rep, expect string) (string, error) {
+//
+// keep bounds how many superseded versions this report retains; 0 means unlimited, which is the
+// shipped state. It is passed in rather than read here because reading a setting through the pool
+// while this transaction is open deadlocks on SQLite — see the rollback comment below, which is the
+// same hazard from the other direction.
+func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (string, error) {
 	now := manualInstant()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return "", err
 	}
+	// The pre-image, read on the transaction and under the SAME three-part predicate the UPDATE
+	// uses. Two things follow from that. It has to be read BEFORE the UPDATE, because the UPDATE is
+	// what destroys it — a snapshot taken from the handler's earlier read would be a value nothing
+	// guarantees is still current. And no rows here means exactly the staleness the UPDATE would
+	// have reported, so the save is refused before anything is written at all.
+	var prev Rep
+	if err := tx.QueryRow(s.bind(`SELECT COALESCE(title,''), COALESCE(symbol,''), COALESCE(name,''),
+		COALESCE(rtype,''), COALESCE(rdate,''), COALESCE(kind,''), COALESCE(source,''),
+		COALESCE(body_md,''), COALESCE(sent_at,''), COALESCE(author,'')
+		FROM reports WHERE id=? AND version=? AND sent_at=?`), id, manualVersionName, expect).
+		Scan(&prev.Title, &prev.Symbol, &prev.Name, &prev.RType, &prev.Date, &prev.Kind,
+			&prev.Source, &prev.MD, &prev.Time, &prev.Author); err != nil {
+		tx.Rollback()
+		if err == sql.ErrNoRows {
+			return "", ErrReportStale
+		}
+		return "", err
+	}
 	res, err := tx.Exec(s.bind(`UPDATE reports SET title=?, symbol=?, name=?, rtype=?, rdate=?, kind=?,
-		source=?, body_md=?, body_html='', sent_at=?
+		source=?, body_md=?, body_html='', sent_at=?, author=?
 		WHERE id=? AND version=? AND sent_at=?`),
-		r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.Source, r.MD, now,
+		r.Title, r.Symbol, r.Name, r.RType, r.Date, r.Kind, r.Source, r.MD, now, r.Author,
 		id, manualVersionName, expect)
 	if err != nil {
 		// Rolled back BEFORE the probe, not by a deferred rollback afterwards: on SQLite the pool is
@@ -108,6 +131,10 @@ func (s *Store) UpdateManualReport(id int64, r Rep, expect string) (string, erro
 		tx.Rollback()
 		return "", ErrReportStale
 	}
+	if err := s.snapshot(tx, id, prev, r, keep); err != nil {
+		tx.Rollback()
+		return "", err
+	}
 	// The viewer list is keyed by rdate as well as report id (report_viewers is denormalized on it so
 	// the list page's sort is an index walk), so moving a report to another date has to move its
 	// audience with it, in the same transaction. Otherwise a failure here leaves the report readable
@@ -120,6 +147,46 @@ func (s *Store) UpdateManualReport(id int64, r Rep, expect string) (string, erro
 		return "", err
 	}
 	return now, nil
+}
+
+// snapshot files the superseded version of a report, on the transaction that superseded it.
+//
+// In the transaction and not beside it, so the two cannot come apart: a save that fails leaves no
+// history, and a save that succeeds cannot fail to be recorded. It runs after the staleness check,
+// which is what makes a refused save leave the log untouched.
+//
+// A save that changed nothing writes nothing. An author who presses save twice, or corrects the
+// audience without touching a word, would otherwise bury the version they actually want under
+// identical copies of the one they are looking at — the same argument the cleanup console makes for
+// not recording a pass that deleted nothing.
+func (s *Store) snapshot(tx *sql.Tx, id int64, prev, next Rep, keep int) error {
+	if !reportContentDiffers(prev, next) {
+		return nil
+	}
+	if _, err := tx.Exec(s.bind(`INSERT INTO report_revisions
+		(report_id, saved_at, author, title, symbol, name, rtype, rdate, kind, source, body_md)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`),
+		id, prev.Time, prev.Author, prev.Title, prev.Symbol, prev.Name, prev.RType, prev.Date,
+		prev.Kind, prev.Source, prev.MD); err != nil {
+		return err
+	}
+	if keep <= 0 {
+		return nil // unlimited, the shipped state
+	}
+	// The ring trim the recurring-run log already uses. Not `DELETE ... LIMIT`, which is a syntax
+	// error on this SQLite build and does not exist in Postgres at all; and report_id is named twice
+	// because bind() numbers placeholders positionally, so a repeated parameter is passed twice.
+	_, err := tx.Exec(s.bind(`DELETE FROM report_revisions WHERE report_id=? AND id NOT IN
+		(SELECT id FROM report_revisions WHERE report_id=? ORDER BY id DESC LIMIT ?)`), id, id, keep)
+	return err
+}
+
+// reportContentDiffers reports whether a save changed anything a revision would record. The audience
+// is deliberately not part of it: who a report is for is not what it said, it is stored in another
+// table, and a revision that cannot restore it should not claim to have captured it.
+func reportContentDiffers(a, b Rep) bool {
+	return a.MD != b.MD || a.Title != b.Title || a.Symbol != b.Symbol || a.Name != b.Name ||
+		a.RType != b.RType || a.Date != b.Date || a.Source != b.Source
 }
 
 // reportIdentHolder answers "who already holds the identity this report is trying to take", other

@@ -21,6 +21,7 @@ import {
 import {
   ArrowLeftOutlined,
   DeleteOutlined,
+  HistoryOutlined,
   SaveOutlined,
   UploadOutlined,
 } from '@ant-design/icons'
@@ -31,6 +32,7 @@ import { ApiError, api, errText } from '../api/client'
 import type { Principal } from '../api/types'
 import Markdown from '../components/Markdown'
 import { principalOptions } from '../components/principals'
+import ReportHistoryDrawer from '../components/ReportHistoryDrawer'
 
 // The report editor (ADR 0026).
 //
@@ -90,6 +92,11 @@ export default function ReportEditorPage() {
   // editing after saving without reloading the page — the alternative is a second save that
   // always reports a conflict against itself.
   const [token, setToken] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  // Bumped to re-run the loader after a restore. A restore rewrites the identity fields as well as
+  // the body, so putting the page back in step means refetching the form rather than patching the
+  // three or four pieces of state a restore happens to touch today.
+  const [reloads, setReloads] = useState(0)
 
   const editingId = id ? Number(id) : undefined
 
@@ -134,7 +141,7 @@ export default function ReportEditorPage() {
       live = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingId, from])
+  }, [editingId, from, reloads])
 
   const audienceOptions = useMemo(
     () =>
@@ -270,6 +277,11 @@ export default function ReportEditorPage() {
               title={t('reportEditor.body')}
               extra={
                 <Space size={8}>
+                  {editingId && (
+                    <Button size="small" icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>
+                      {t('reportHistory.open')}
+                    </Button>
+                  )}
                   <Upload accept=".md,.markdown,.txt" showUploadList={false} beforeUpload={importMarkdown}>
                     <Button size="small" icon={<UploadOutlined />}>
                       {t('reportEditor.import')}
@@ -409,6 +421,21 @@ export default function ReportEditorPage() {
           </Col>
         </Row>
       </Form>
+
+      {/* Outside the <Form> on purpose: anything rendered inside it registers on the same form
+          instance, and save()'s validateFields would then be gated on this drawer's controls. */}
+      {editingId && (
+        <ReportHistoryDrawer
+          reportId={editingId}
+          token={token}
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          onRestored={(updatedAt) => {
+            setToken(updatedAt)
+            setReloads((n) => n + 1)
+          }}
+        />
+      )}
     </Space>
   )
 }

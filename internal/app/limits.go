@@ -28,6 +28,11 @@ const (
 	setLoginFailMax       = "login_fail_max"
 	setLoginFailWindowMin = "login_fail_window_min"
 	setAPIV1RatePerMin    = "apiv1_rate_per_min"
+	// How many superseded versions of one hand-written report to keep (ADR 0026). Its shipped value
+	// is 0 = unlimited, which puts it in the same small class as the machine API's ceiling above:
+	// zero is a real answer here, not the "unset" that every other scalar refuses. The bound below
+	// is what stops a typo expressing a history nobody meant.
+	setReportRevisionsKeep = "report_revisions_keep"
 )
 
 // The shipped behaviour, and the fallback whenever a stored value cannot be read.
@@ -36,11 +41,19 @@ const (
 	defLoginFailWindow = 15 * time.Minute
 	// Ranges wide enough for any real policy and narrow enough that a typo cannot express one
 	// nobody meant: an hour to a year of session, and a login window of a minute to a day.
-	maxSessionTTLHours    = 24 * 365
-	maxLoginFailMax       = 1000
-	maxLoginFailWindowMin = 24 * 60
-	maxAPIV1RatePerMin    = 100000
+	maxSessionTTLHours     = 24 * 365
+	maxLoginFailMax        = 1000
+	maxLoginFailWindowMin  = 24 * 60
+	maxAPIV1RatePerMin     = 100000
+	maxReportRevisionsKeep = 1000
 )
+
+// reportRevisionsKeep is the per-report cap on superseded versions; 0 means keep all of them, and is
+// what an unconfigured portal does. settingInt with lo=0 rather than a bespoke reader, because 0 is
+// inside the accepted range here rather than the sentinel it is everywhere else.
+func (s *Server) reportRevisionsKeep() int {
+	return s.settingInt(setReportRevisionsKeep, 0, 0, maxReportRevisionsKeep)
+}
 
 // settingInt reads a meta scalar as an int inside [lo, hi]. Anything else — absent, blank, not a
 // number, out of range — is the default, never zero.
