@@ -332,13 +332,13 @@
           },
           "version": {
             "type": "string",
-            "description": "版本，如 对外版/客户版。同一篇分析的不同写法，各由各自的运行产出。参与身份键：身份 =（symbol + date + subtype + title + version）。留空即默认版本，与今天的行为完全一致。未注册的版本名会自动登记，且默认不授予任何人可见。",
+            "description": "版本，如 对外版/客户版。同一篇分析的不同写法，各由各自的运行产出。参与身份键：身份 =（symbol + date + subtype + title + version）。留空即默认版本，与今天的行为完全一致。未注册的版本名会自动登记，且默认不授予任何人可见。「manual」是保留版本名，专供门户中手写的报告；推送该版本会被拒绝（400 invalid_param），以确保工作流无法覆盖手写的内容。",
             "x-i18n": {
               "en-US": {
-                "description": "The written form of this analysis, e.g. an external or client edition. Each form is produced by its own run. Part of the identity key: identity = (symbol + date + subtype + title + version). Omit it for the default version, which behaves exactly as today. An unregistered name is registered on sight and granted to nobody."
+                "description": "The written form of this analysis, e.g. an external or client edition. Each form is produced by its own run. Part of the identity key: identity = (symbol + date + subtype + title + version). Omit it for the default version, which behaves exactly as today. An unregistered name is registered on sight and granted to nobody. The name \"manual\" is reserved for reports written by hand in the portal; ingesting it is refused with 400 invalid_param, so a workflow cannot overwrite what a person wrote."
               },
               "zh-TW": {
-                "description": "版本，如 對外版/客戶版。同一篇分析的不同寫法，各由各自的執行產出。參與身分鍵：身分 =（symbol + date + subtype + title + version）。留空即預設版本，與今天的行為完全一致。未註冊的版本名會自動登記，且預設不授予任何人可見。"
+                "description": "版本，如 對外版/客戶版。同一篇分析的不同寫法，各由各自的執行產出。參與身分鍵：身分 =（symbol + date + subtype + title + version）。留空即預設版本，與今天的行為完全一致。未註冊的版本名會自動登記，且預設不授予任何人可見。「manual」是保留版本名，專供入口網站中手寫的報告；推送該版本會被拒絕（400 invalid_param），以確保工作流無法覆蓋手寫的內容。"
               }
             }
           }

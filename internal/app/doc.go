@@ -91,6 +91,16 @@
 //     admin CRUD + reorder surface; audience resolution (announcementPrincipals) lives here too
 //   - announcement_store.go announcements + announcement_grants persistence
 //
+// Hand-written reports (ADR 0026)
+//   - report_edit_api.go   the editor's surface: the form endpoint that serves all three entrances
+//     (new / seeded from a report / edit in place), create, save, delete — all behind PermEditReport
+//   - report_edit_store.go the two things a run would otherwise supply: an identity a workflow
+//     cannot take (the reserved "manual" version) and a viewer list somebody chose on purpose;
+//     Store.snapshot also lives here, because history is written by the save that supersedes it
+//   - report_revision_api.go   the edit history: list, one prior version with a section diff against
+//     what the report says now, and restore — which is a save, not a fourth write path
+//   - report_revision_store.go the read and retention sides of report_revisions
+//
 // Notifications
 //   - email.go emails a submitter when their batch job finishes (opt-in)
 //

@@ -9,10 +9,17 @@ export class ApiError extends Error {
    * fall back to the message. See jsonErrorCode in internal/app/apiui.go.
    */
   code?: string
-  constructor(status: number, message: string, code?: string) {
+  /**
+   * The parsed response body, when the server sent JSON. A refusal sometimes has to carry more than
+   * a reason — a collision answers with the id of the row you collided with, so the UI can offer to
+   * open it — and squeezing that into `message` gives the caller a string it cannot act on.
+   */
+  data?: unknown
+  constructor(status: number, message: string, code?: string, data?: unknown) {
     super(message)
     this.status = status
     this.code = code
+    this.data = data
     this.name = 'ApiError'
   }
 }
@@ -76,7 +83,7 @@ async function request<T>(method: string, url: string, body?: unknown, extraHead
     const msg = (data && typeof data === 'object' && data.error) || res.statusText || 'request failed'
     const code = data && typeof data === 'object' && typeof data.code === 'string' ? data.code : undefined
     noteSessionLost(res.status, code)
-    throw new ApiError(res.status, msg, code)
+    throw new ApiError(res.status, msg, code, data)
   }
   return data as T
 }
@@ -96,7 +103,7 @@ async function requestForm<T>(method: string, url: string, body: FormData): Prom
     const msg = (data && typeof data === 'object' && data.error) || res.statusText || 'request failed'
     const code = data && typeof data === 'object' && typeof data.code === 'string' ? data.code : undefined
     noteSessionLost(res.status, code)
-    throw new ApiError(res.status, msg, code)
+    throw new ApiError(res.status, msg, code, data)
   }
   return data as T
 }

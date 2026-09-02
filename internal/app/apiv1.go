@@ -212,6 +212,15 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		v1err(w, http.StatusBadRequest, "missing_param", "subtype (or rtype) is required")
 		return
 	}
+	// The manual version is reserved for what people write by hand (ADR 0026), and this refusal is
+	// the whole of that reservation. Without it, "a workflow cannot overwrite your words" would be a
+	// convention held up by nobody thinking to send that version name — and the failure mode is
+	// silent: UpsertReport would find the identity, overwrite the body, and report success.
+	if isManualVersion(in.Version) {
+		v1err(w, http.StatusBadRequest, "invalid_param",
+			"version \""+manualVersionName+"\" is reserved for hand-written reports and cannot be ingested")
+		return
+	}
 	kind := in.Kind
 	if kind == "" {
 		kind = s.st.TypeKind(rtype)

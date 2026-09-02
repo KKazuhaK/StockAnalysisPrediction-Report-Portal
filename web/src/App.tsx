@@ -23,6 +23,7 @@ const AccountPage = lazyRetry(() => import('./pages/AccountPage'))
 const StockPage = lazyRetry(() => import('./pages/StockPage'))
 const RunPage = lazyRetry(() => import('./pages/RunPage'))
 const ReviewPage = lazyRetry(() => import('./pages/ReviewPage'))
+const ReportEditorPage = lazyRetry(() => import('./pages/ReportEditorPage'))
 const ManageLayout = lazyRetry(() => import('./pages/manage/ManageLayout'))
 const LinksPage = lazyRetry(() => import('./pages/manage/LinksPage'))
 const TypesPage = lazyRetry(() => import('./pages/manage/TypesPage'))
@@ -105,6 +106,25 @@ function AppRoutes() {
         <Route path="/stock/:symbol" element={<StockPage />} />
         <Route path="/run/:key" element={<RunPage />} />
         <Route path="/review" element={<ReviewPage />} />
+        {/* Writing a report by hand (ADR 0026). Both entrances land on one page: /report/new
+            optionally carries ?from=<id> to seed the text from a report the author was reading,
+            which still CREATES rather than modifies — a machine report is not editable at all. */}
+        <Route
+          path="/report/new"
+          element={
+            <RequirePerm perm="report_edit">
+              <ReportEditorPage />
+            </RequirePerm>
+          }
+        />
+        <Route
+          path="/report/:id/edit"
+          element={
+            <RequirePerm perm="report_edit">
+              <ReportEditorPage />
+            </RequirePerm>
+          }
+        />
         {/* The apps hub and installed iframe apps are open to any logged-in user;
             the built-in batch console stays permission-gated. */}
         <Route path="/apps" element={<AppsHub />} />

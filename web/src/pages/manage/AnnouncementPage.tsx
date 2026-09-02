@@ -34,6 +34,7 @@ import type {
 import { AnnouncementAlert } from '../../components/SiteAnnouncement'
 import type { Principal } from '../../api/types'
 import { DragHandle, SortableItem, SortableWrapper } from './dnd'
+import { principalName, principalOptions } from '../../components/principals'
 import LoadGate from '../../components/LoadGate'
 
 const { RangePicker } = DatePicker
@@ -234,19 +235,13 @@ export default function AnnouncementPage() {
   const firstPopupId = items.find((a) => a.popup && a.enabled)?.id
 
   // Two groups, the way the report-versions picker does it, so an admin who has used one knows
-  // this one. The value IS the principal string, which is what the server stores.
-  const principalOptions = [
-    { label: t('announcementAdmin.principalGroups'), options: groups.map((g) => ({
-      value: g.principal,
-      label: g.restricted ? `${g.name} · ${t('announcementAdmin.restrictedTag')}` : g.name,
-    })) },
-    { label: t('announcementAdmin.principalUsers'), options: users.map((u) => ({
-      value: u.principal,
-      label: u.display && u.display !== u.name ? `${u.display} (${u.name})` : u.name,
-    })) },
-  ]
-  const principalName = (p: string) =>
-    groups.find((g) => g.principal === p)?.name ?? users.find((u) => u.principal === p)?.name ?? p
+  // this one. Shared with the report editor, which addresses the same principals.
+  const audienceOptions = principalOptions(groups, users, {
+    groups: t('announcementAdmin.principalGroups'),
+    users: t('announcementAdmin.principalUsers'),
+    restricted: t('announcementAdmin.restrictedTag'),
+  })
+  const nameOf = (p: string) => principalName(groups, users, p)
 
   const loadPreview = (principal?: string) => {
     setPreviewAs(principal)
@@ -327,10 +322,10 @@ export default function AnnouncementPage() {
         )}
         {a.scope === 'app' && <Tag color="geekblue">{t('announcementAdmin.scope.app')}</Tag>}
         {a.audience === 'grant' && (
-          <Tooltip title={a.grants.map(principalName).join('、')}>
+          <Tooltip title={a.grants.map(nameOf).join('、')}>
             <Tag color="cyan">
               {a.grants.length === 1
-                ? principalName(a.grants[0])
+                ? nameOf(a.grants[0])
                 : t('announcementAdmin.audienceCount', { count: a.grants.length })}
             </Tag>
           </Tooltip>
@@ -408,7 +403,7 @@ export default function AnnouncementPage() {
               placeholder={t('announcementAdmin.previewAs')}
               value={previewAs}
               onChange={loadPreview}
-              options={principalOptions}
+              options={audienceOptions}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('announcementAdmin.hint')}
@@ -438,7 +433,7 @@ export default function AnnouncementPage() {
               }}
             >
               <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-                {t('announcementAdmin.previewFor', { name: principalName(previewAs) })}
+                {t('announcementAdmin.previewFor', { name: nameOf(previewAs) })}
               </Typography.Text>
               {preview === null ? (
                 <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
@@ -560,7 +555,7 @@ export default function AnnouncementPage() {
                   <Select
                     mode="multiple"
                     allowClear
-                    options={principalOptions}
+                    options={audienceOptions}
                     optionFilterProp="label"
                     placeholder={t('announcementAdmin.grantsPlaceholder')}
                   />
