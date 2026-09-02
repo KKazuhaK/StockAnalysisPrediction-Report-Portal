@@ -104,6 +104,11 @@ const (
 	// Reports and runs.
 	AuditReportIngest = "report.ingest"
 	AuditReportDelete = "report.delete"
+	// Writing a report by hand is its own pair of actions, separate from report.ingest: "a person
+	// wrote this" and "a workflow produced this" are the two things a reader of the log most needs
+	// told apart, and one shared action would make that unanswerable.
+	AuditReportCreate = "report.create"
+	AuditReportEdit   = "report.edit"
 	AuditRunSubmit    = "run.submit"
 	AuditRunCancel    = "run.cancel"
 	AuditRunChange    = "run.change"
@@ -325,7 +330,7 @@ const likeT = "LIKE '%T%'"
 // recorded" from "has not happened yet" — a freshly upgraded portal would offer one option and
 // look like a log that records one thing.
 var auditVocabulary = []string{
-	AuditReportRead, AuditReportIngest, AuditReportDelete,
+	AuditReportRead, AuditReportIngest, AuditReportCreate, AuditReportEdit, AuditReportDelete,
 	AuditLogin, AuditLoginFailed, AuditLockout, AuditLogout,
 	AuditPasswordChange, AuditPasswordReset, AuditMFAChange,
 	AuditIdentityLink, AuditIdentityUnlink, AuditStepUp,
