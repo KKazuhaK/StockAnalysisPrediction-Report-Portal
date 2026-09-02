@@ -202,6 +202,16 @@ func (s *Server) reportViewersFromInput(w http.ResponseWriter, in reportEditInpu
 	return viewers, true
 }
 
+// reportExists answers a collision in jsonErrorCode's shape — {error, code} — plus the id of the row
+// collided with. The shape matters: the SPA renders `code` through t() because a server message
+// cannot be localized, and it needs the id to offer "open that one instead", which is what an author
+// who hit this almost always wants.
+func reportExists(w http.ResponseWriter, id int64) {
+	writeJSONStatus(w, http.StatusConflict, map[string]any{
+		"error": "a report with this identity already exists",
+		"code":  "report_exists", "id": id})
+}
+
 // apiReportCreate writes a new hand-written report.
 func (s *Server) apiReportCreate(w http.ResponseWriter, r *http.Request, user string) {
 	var in reportEditInput
@@ -219,8 +229,7 @@ func (s *Server) apiReportCreate(w http.ResponseWriter, r *http.Request, user st
 		if errors.As(err, &exists) {
 			// The id travels with the refusal so the editor can offer to open it. A collision here
 			// almost always means the author is writing the report that already exists.
-			writeJSONStatus(w, http.StatusConflict, map[string]any{
-				"error": "report_exists", "message": "已存在同样的人工报告", "id": exists.ID})
+			reportExists(w, exists.ID)
 			return
 		}
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -268,8 +277,7 @@ func (s *Server) apiReportSave(w http.ResponseWriter, r *http.Request, user stri
 		var exists ErrReportExists
 		switch {
 		case errors.As(err, &exists):
-			writeJSONStatus(w, http.StatusConflict, map[string]any{
-				"error": "report_exists", "message": "已存在同样的人工报告", "id": exists.ID})
+			reportExists(w, exists.ID)
 		case errors.Is(err, ErrReportStale):
 			jsonErrorCode(w, http.StatusConflict, "report_stale", "报告已被他人修改，请刷新后重试")
 		default:

@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { StockResp } from '../api/types'
 import Markdown from '../components/Markdown'
+import EditReportButton from '../components/EditReportButton'
 import ReaderControls from '../components/ReaderControls'
 import CompareModal from '../components/CompareModal'
 import TimelinePanel from '../components/TimelinePanel'
@@ -222,6 +223,7 @@ export default function StockPage() {
                       <Button icon={<DiffOutlined />} onClick={() => setCompareFor(rep.id)}>
                         {t('compare.button')}
                       </Button>
+                      <EditReportButton reportId={rep.id} />
                       {exportControls}
                       <ReaderControls />
                     </Space>
