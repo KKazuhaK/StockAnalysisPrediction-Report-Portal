@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
@@ -59,11 +59,21 @@ export default function BatchAdminPage() {
         throw e
       })
       .finally(() => setPluginsLoaded(true))
-  const loadTargets = () =>
-    api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => {
+  // Sequenced, because this is the one list on the page that is refetched from four places — the
+  // initial load, a delete, a surfaces save and a reorder — and two GETs can be in flight at once
+  // with no ordering guarantee on their answers. Whichever landed last used to win, so a slow
+  // response could overwrite a newer one and leave the table showing an order the server does not
+  // hold. Since the table is also the source for the NEXT drag, that stale view then got written
+  // back. A counter is enough: only the newest request may set state.
+  const targetsReq = useRef(0)
+  const loadTargets = () => {
+    const seq = ++targetsReq.current
+    return api.get<{ targets: BatchTarget[] }>('/api/admin/batch/targets').then((r) => {
+      if (seq !== targetsReq.current) return
       setTargets(r.targets || [])
       setTargetsLoaded(true)
     })
+  }
 
   // Both tabs read "nothing is configured here" off their initial [], which on this page is the
   // sentence an admin came to check. Neither says it until its own list is in.
@@ -268,11 +278,18 @@ export default function BatchAdminPage() {
 
   // Persist the admin's drag order; optimistically reflect it, then save (same pattern as
   // links / report types).
-  const reorderTargets = async (orderedIds: string[]) => {
+  //
+  // Not async, and the failure is handled: SortableWrapper calls onReorder without awaiting, so a
+  // rejected save from an async function was an unhandled rejection — and because loadTargets sat
+  // after the await, even the corrective refetch was skipped. The admin was left with the order
+  // they had just made and nothing to say it had not been taken.
+  const reorderTargets = (orderedIds: string[]) => {
     const byId = new Map(targets.map((tg) => [String(tg.id), tg]))
     setTargets(orderedIds.map((id) => byId.get(id)!).filter(Boolean))
-    await api.post('/api/admin/batch/targets/reorder', { ids: orderedIds.map(Number) })
-    loadTargets()
+    api
+      .post('/api/admin/batch/targets/reorder', { ids: orderedIds.map(Number) })
+      .catch((e) => message.error(errText(e, t)))
+      .finally(() => loadTargets())
   }
 
   const targetCols: ColumnsType<BatchTarget> = [

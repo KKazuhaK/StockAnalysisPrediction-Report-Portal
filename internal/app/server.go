@@ -1024,12 +1024,61 @@ func (s *Server) orderAndDefault(members []Rep) ([]Rep, int64) {
 		}
 		return out[i].Time < out[j].Time
 	})
-	// append an index to same-named tabs so multiple "重组交易分析" entries can be told apart
-	seen := map[string]int{}
+	// Two tabs can share a label for two different reasons, and they need different answers.
+	//
+	// Several DIFFERENT reports of one type — title is part of a report's identity, so one
+	// code+date+subtype legitimately carries more than one — are told apart by a number, as they
+	// always have been.
+	//
+	// Two WRITTEN FORMS of one analysis (ADR 0024) are told apart by naming the form. A number says
+	// nothing about which one a reader is looking at, and until v0.4.42 that barely mattered because
+	// no workflow sent a version: the case was rare. A single hand-written correction (ADR 0026) now
+	// produces it every time, so a corrected report showed up as "深度分析 2" with no way to tell it
+	// from the workflow's own.
+	//
+	// The default version keeps the bare label, so a portal that has never used versions reads
+	// exactly as before.
+	versioned := map[string]map[string]bool{} // label -> the set of versions carrying it
 	for i := range out {
-		seen[out[i].Label]++
-		if n := seen[out[i].Label]; n > 1 {
+		v := out[i].Version
+		if v == "" {
+			v = defaultVersionName
+		}
+		if versioned[out[i].Label] == nil {
+			versioned[out[i].Label] = map[string]bool{}
+		}
+		versioned[out[i].Label][v] = true
+	}
+	verLabel := map[string]string{}
+	for _, v := range s.st.Versions() {
+		verLabel[v.Name] = firstNonEmpty(v.Label, v.Name)
+	}
+	// The number counts DISTINCT REPORTS sharing a label, not rows, so every written form of one
+	// report carries the same number: "重组交易分析 2" and "重组交易分析 2 · 人工" are the two forms of the
+	// same thing, and the number is what says which thing.
+	//
+	// Reports are told apart by title here, because that is what makes them different reports. A
+	// hand-written form that has since been retitled therefore gets a number of its own — the portal
+	// genuinely cannot know which report it was written from once the title stops matching, and
+	// guessing would put a reader on the wrong document. The form suffix still names it.
+	num := map[string]int{}
+	next := map[string]int{}
+	for i := range out {
+		v := out[i].Version
+		if v == "" {
+			v = defaultVersionName
+		}
+		base := out[i].Label
+		key := base + "\x00" + out[i].Title
+		if _, ok := num[key]; !ok {
+			next[base]++
+			num[key] = next[base]
+		}
+		if n := num[key]; n > 1 {
 			out[i].Label = out[i].Label + " " + strconv.Itoa(n)
+		}
+		if len(versioned[base]) > 1 && v != defaultVersionName {
+			out[i].Label = out[i].Label + " · " + firstNonEmpty(verLabel[v], v)
 		}
 	}
 	var def int64
