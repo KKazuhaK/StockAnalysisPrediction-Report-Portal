@@ -107,8 +107,20 @@ export default function LinksPage() {
 
   // Persist the whole layout after a drag: the backend re-derives each link's group + order
   // and each group's order from the item sequence.
+  //
+  // A rejection reloads rather than being swallowed. The optimistic order is already on screen by
+  // the time this runs, so a discarded error left the admin looking at an arrangement the server
+  // never took — and on THIS page that is not cosmetic: the same payload carries each button's
+  // group membership, so a failed save means buttons are not where the screen says they are.
   const persistLayout = (orderedIds: string[]) =>
-    api.post('/api/admin/links/layout', { items: orderedIds.map((k) => ({ kind: k.startsWith('g:') ? 'group' : 'link', id: Number(k.slice(2)) })) }).catch(() => {})
+    api
+      .post('/api/admin/links/layout', {
+        items: orderedIds.map((k) => ({ kind: k.startsWith('g:') ? 'group' : 'link', id: Number(k.slice(2)) })),
+      })
+      .catch((e) => {
+        message.error(errText(e, t))
+        load()
+      })
 
   // Optimistically rebuild links (group + order) and groups (order) from a new sequence.
   const applyOrder = (orderedIds: string[]) => {

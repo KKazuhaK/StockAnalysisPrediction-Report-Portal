@@ -626,6 +626,17 @@ func (s *Server) apiLinkDelete(w http.ResponseWriter, r *http.Request, user stri
 // apiLinkLayout persists the whole entry-button layout in one shot: the ordered mix of group
 // headers and links (from the admin's single drag list). Walked once — each group gets its
 // order; each link is assigned to the most recent group above it (0 = top-level) + an order.
+//
+// Group ids are checked against the ones that still exist, and a header naming a group that does
+// not sends the buttons under it to the top level instead. The payload is whatever the browser read
+// on its last GET, so a group deleted since — in another tab, or by another admin — is still in it;
+// the group's own UPDATE is a harmless no-op, but the links below it were being stamped with a
+// group id nothing resolves. That hides them from the home page AND from this admin page at once,
+// with no way back through the UI: re-creating the group gets a new id, so recovery was a hand-run
+// UPDATE on the links table.
+//
+// Top level is the right landing place rather than some other group, because it is exactly what
+// DeleteLinkGroup already does to the links a deleted group was holding.
 func (s *Server) apiLinkLayout(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		Items []struct {
@@ -633,20 +644,42 @@ func (s *Server) apiLinkLayout(w http.ResponseWriter, r *http.Request, user stri
 			ID   int64  `json:"id"`
 		} `json:"items"`
 	}
-	readJSON(r, &in)
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	live := map[int64]bool{}
+	for _, g := range s.st.LinkGroups() {
+		live[g.ID] = true
+	}
 	groupOrd, linkOrd := 0, 0
 	var current int64
+	var orphaned int
 	for _, it := range in.Items {
 		if it.Kind == "group" {
-			s.st.SetLinkGroupOrder(it.ID, groupOrd)
+			if !live[it.ID] {
+				current = 0
+				orphaned++
+				continue
+			}
+			if err := s.st.SetLinkGroupOrder(it.ID, groupOrd); err != nil {
+				jsonError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 			groupOrd++
 			current = it.ID
-		} else {
-			s.st.SetLinkGroupAndOrder(it.ID, current, linkOrd)
-			linkOrd++
+			continue
 		}
+		if err := s.st.SetLinkGroupAndOrder(it.ID, current, linkOrd); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		linkOrd++
 	}
-	writeJSON(w, okJSON)
+	if orphaned > 0 {
+		log.Printf("link layout: %d group header(s) no longer exist; their buttons moved to the top level", orphaned)
+	}
+	writeJSON(w, map[string]any{"ok": true, "orphanedGroups": orphaned})
 }
 
 func normalizeLinkGroupMode(m string) string {
@@ -834,15 +867,50 @@ func (s *Server) apiTypesAdd(w http.ResponseWriter, r *http.Request, user string
 	writeJSON(w, okJSON)
 }
 
+// apiTypesReorder persists the strip's order. It writes only names that still exist.
+//
+// SetTypeOrder is an upsert, and deliberately so: a DISCOVERED type — one that reports carry but
+// nobody has configured — has no row to update, and dragging it has to create one. The same upsert
+// will just as happily create a row for a name that no longer exists anywhere, and the browser is
+// full of those: the list it drags came from a GET, and a type deleted since (by this admin in
+// another tab, or by another admin) is still in it. The type came back — uncategorised, unlabelled,
+// and back in the reader's category filter and every run form — and deleting it again only held
+// until the next drag.
+//
+// Reordering is not a creating operation, so it refuses to be one. Unknown names are dropped rather
+// than rejected: a stale drag is a race, not a mistake, and failing the whole save would strand the
+// order of the rows that ARE still there.
 func (s *Server) apiTypesReorder(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		Names []string `json:"names"`
 	}
-	readJSON(r, &in)
-	for i, n := range in.Names {
-		s.st.SetTypeOrder(n, i)
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
 	}
-	writeJSON(w, okJSON)
+	known := map[string]bool{}
+	for _, n := range s.st.DiscoveredTypes() {
+		known[n] = true
+	}
+	ord := 0
+	var dropped []string
+	for _, n := range in.Names {
+		if !known[n] {
+			dropped = append(dropped, n)
+			continue
+		}
+		if err := s.st.SetTypeOrder(n, ord); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		ord++
+	}
+	if len(dropped) > 0 {
+		// Said out loud, because from the admin's seat the drag succeeded and the strip they were
+		// looking at was already out of date. The page reloads on the answer below.
+		log.Printf("types reorder: ignored %d name(s) that no longer exist: %v", len(dropped), dropped)
+	}
+	writeJSON(w, map[string]any{"ok": true, "dropped": dropped})
 }
 
 func (s *Server) apiTypesDelete(w http.ResponseWriter, r *http.Request, user string) {

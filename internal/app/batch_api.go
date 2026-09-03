@@ -300,8 +300,16 @@ func (s *Server) apiBatchTargetReorder(w http.ResponseWriter, r *http.Request, u
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
+	// The error is not discarded. A half-applied reorder — a locked SQLite file, a Postgres blip
+	// partway down the loop — used to answer ok, so the console kept the order the admin had just
+	// made while the table held something else, and nothing in that page load ever corrected it.
+	// SetTargetOrder is a plain UPDATE, so an id that no longer exists is a no-op rather than a
+	// resurrection; only a real failure reaches here.
 	for i, id := range in.IDs {
-		s.st.SetTargetOrder(id, i)
+		if err := s.st.SetTargetOrder(id, i); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, okJSON)
 }

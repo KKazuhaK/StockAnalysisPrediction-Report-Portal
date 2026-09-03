@@ -175,13 +175,19 @@ export default function TypesPage() {
   const update = (name: string, patch: Partial<TypeRow>) =>
     setGroups((gs) => gs.map((g) => ({ ...g, rows: g.rows.map((r) => (r.name === name ? { ...r, ...patch } : r)) })))
 
-  const reorderGroup = async (kind: string, orderedNames: string[]) => {
+  // Not async: SortableWrapper calls onReorder without awaiting it, so a rejected save from an
+  // async function was an unhandled promise rejection — no toast, no revert, and the admin left
+  // looking at an order the server never took. Handled here instead, and a rejection reloads.
+  const reorderGroup = (kind: string, orderedNames: string[]) => {
     setGroups((gs) =>
       gs.map((g) =>
         g.kind === kind ? { ...g, rows: orderedNames.map((n) => g.rows.find((r) => r.name === n)!) } : g,
       ),
     )
-    await api.post('/api/admin/types/reorder', { names: orderedNames })
+    api.post('/api/admin/types/reorder', { names: orderedNames }).catch((e) => {
+      message.error(errText(e, t))
+      load()
+    })
   }
 
   const remove = async (name: string) => {
