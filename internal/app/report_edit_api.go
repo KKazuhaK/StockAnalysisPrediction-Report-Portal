@@ -96,7 +96,7 @@ func (s *Server) reportAudience(viewers []string) (string, []string) {
 func (s *Server) apiReportEditor(w http.ResponseWriter, r *http.Request, user string) {
 	groups, users, truncated := s.recipientPicker(false)
 	out := map[string]any{
-		"subtypes": s.st.DiscoveredTypes(), "groups": groups, "users": users,
+		"subtypes": pickableTypes(s.st.DiscoveredTypes()), "groups": groups, "users": users,
 		"usersTruncated": truncated, "today": s.panelToday(),
 		"audience": "grant", "viewers": []string{},
 	}

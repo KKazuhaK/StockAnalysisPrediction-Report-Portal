@@ -85,6 +85,7 @@ func (s *Server) reportDayZip(w http.ResponseWriter, r *http.Request, user strin
 		return
 	}
 	meta, err := s.st.NewBySymbol(symbol, s.viewerScope(user))
+	meta = dropInternal(meta) // a day's export is for readers; cache entries are not reports
 	if err != nil {
 		log.Printf("day-export db error: %v", err)
 		http.Error(w, "database error", http.StatusInternalServerError)

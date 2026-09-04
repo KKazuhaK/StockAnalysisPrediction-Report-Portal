@@ -350,7 +350,7 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 	}
 	// oldTotal stays 0: legacy reports were migrated into the reports table and now
 	// come back via SearchNew above (the live old-portal read path is gone).
-	groups := buildGroups(reps, s.names.Get)
+	groups := buildGroups(dropInternal(reps), s.names.Get)
 	// Browse/search feed shows one card per stock (its latest run); the full per-date
 	// history stays on the stock detail page. Thematic (symbol-less) reports are unaffected.
 	groups = collapseLatestBySymbol(groups)
@@ -416,6 +416,7 @@ func groupsJSON(gs []Group) []map[string]any {
 func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	symbol := r.PathValue("symbol")
 	all, _ := s.st.NewBySymbol(symbol, s.viewerScope(user))
+	all = dropInternal(all) // cache/plumbing entries are not reports; see internalTypes
 	if len(all) == 0 {
 		jsonErrorCode(w, http.StatusNotFound, "no_reports_for_symbol", "该标的暂无报告")
 		return
