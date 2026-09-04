@@ -276,9 +276,13 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		s.st.SetTracking(id, in.Symbol, items)
 	}
 	log.Printf("v1 ingest %s %s id=%d created=%v", in.Symbol, in.Date, id, created)
+	// version and author are here so this payload and the hand-written one (announceReport) are the
+	// same shape. author is empty for everything a workflow produced, which is the honest answer:
+	// the byline exists only on reports a person wrote.
 	s.fireEvent(EventReportIngested, map[string]any{
 		"id": id, "symbol": in.Symbol, "name": name, "date": in.Date,
-		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source, "created": created,
+		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source,
+		"version": in.Version, "author": "", "created": created,
 	})
 	writeJSON(w, map[string]any{"ok": true, "id": id, "created": created})
 }

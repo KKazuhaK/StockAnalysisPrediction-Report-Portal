@@ -186,3 +186,77 @@ describe('the edit entry point', () => {
     expect(await screen.findByText('editor')).toBeTruthy()
   })
 })
+
+// The editor is the one page in the portal where a wrong click loses work that exists nowhere else:
+// the draft is only in the textarea until a save. These pin the two exits an author actually takes
+// mid-draft.
+describe('unsaved work', () => {
+  const loaded = {
+    ...baseForm,
+    from: 12,
+    manual: true,
+    id: 12,
+    updated_at: 'tok',
+    symbol: '600519',
+    date: '2026-09-02',
+    subtype: '深度分析',
+    title: '手工补充',
+    body_md: '原文',
+    audience: 'all',
+  }
+
+  // beforeunload is the browser's guard: preventDefault is the whole API, so that is what is
+  // asserted — that the page asks to be asked.
+  const leavingIsBlocked = () => {
+    const e = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(e)
+    return e.defaultPrevented
+  }
+
+  it('lets a clean page go without a word', async () => {
+    state.form = { ...loaded }
+    renderEditor('/report/12/edit')
+    await screen.findByText('reportEditor.titleEdit')
+
+    expect(leavingIsBlocked()).toBe(false)
+    await userEvent.click(screen.getByRole('button', { name: /common.back/ }))
+    // No dialog: nothing was typed, so there is nothing to lose.
+    expect(screen.queryByText('reportEditor.discardTitle')).toBeNull()
+  })
+
+  it('asks before a back button throws away a draft', async () => {
+    state.form = { ...loaded }
+    renderEditor('/report/12/edit')
+    await screen.findByText('reportEditor.titleEdit')
+
+    await userEvent.type(screen.getByLabelText('reportEditor.body'), '又写了一段')
+    expect(leavingIsBlocked()).toBe(true)
+
+    await userEvent.click(screen.getByRole('button', { name: /common.back/ }))
+    // findAllByText: antd renders the modal title in both the heading and the aria label.
+    expect((await screen.findAllByText('reportEditor.discardTitle')).length).toBeGreaterThan(0)
+  })
+
+  it('stops asking once the work is saved', async () => {
+    state.form = { ...loaded }
+    renderEditor('/report/12/edit')
+    await screen.findByText('reportEditor.titleEdit')
+
+    await userEvent.type(screen.getByLabelText('reportEditor.body'), '改一句')
+    expect(leavingIsBlocked()).toBe(true)
+
+    await userEvent.click(screen.getByText('common.save'))
+    await waitFor(() => expect(state.putTo).toBe('/api/reports/12'))
+    // The saved snapshot moved with the save; leaving now loses nothing.
+    await waitFor(() => expect(leavingIsBlocked()).toBe(false))
+  })
+
+  it('notices a changed title, not only a changed body', async () => {
+    state.form = { ...loaded }
+    renderEditor('/report/12/edit')
+    await screen.findByText('reportEditor.titleEdit')
+
+    await userEvent.type(screen.getByLabelText('reportEditor.reportTitle'), '（补充）')
+    expect(leavingIsBlocked()).toBe(true)
+  })
+})

@@ -389,11 +389,46 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 		"groups":   groupsJSON(groups[lo:hi]),
 		"newTotal": newTotal, "oldTotal": oldTotal, "totalRuns": totalRuns,
 		"page": page, "pages": pages, "size": size,
-		"types": types, "kinds": kinds,
+		"types": types, "kinds": kinds, "versions": s.presentVersions(sc),
 		// Home shows only entries/groups toggled visible; the admin manager sees them all.
 		"links": linksJSON(homeVisibleLinks(s.st.Links(), homeGroups)), "linkGroups": linkGroupsJSON(visibleGroups(homeGroups)),
 		"kindColors": s.st.KindColors(),
 	})
+}
+
+// presentVersions lists the written forms (ADR 0024) the caller can actually see, in registry order,
+// for the browse page's version filter. It is what makes "show me only what people wrote by hand"
+// expressible at all — the manual version is just one entry in it (ADR 0026).
+//
+// Offered only when there is more than one: a portal that has never registered a second version, or
+// a reader granted only one, should not be shown a filter whose every setting means the same thing.
+func (s *Server) presentVersions(sc *ownerScope) []map[string]any {
+	present := map[string]bool{}
+	for _, v := range s.st.ReportVersionsPresent(sc) {
+		present[v] = true
+	}
+	if len(present) < 2 {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(present))
+	for _, v := range s.st.Versions() { // registry order, so the filter does not reshuffle itself
+		if present[v.Name] {
+			out = append(out, map[string]any{"name": v.Name, "label": firstNonEmpty(v.Label, v.Name)})
+			delete(present, v.Name)
+		}
+	}
+	// A version written into reports but absent from the registry cannot happen through resolveVersion,
+	// which registers on sight — but a restored backup or a hand-edited row could produce one, and
+	// dropping it here would hide those reports behind a filter that never lists them.
+	names := make([]string, 0, len(present))
+	for v := range present {
+		names = append(names, v)
+	}
+	sort.Strings(names)
+	for _, v := range names {
+		out = append(out, map[string]any{"name": v, "label": v})
+	}
+	return out
 }
 
 func groupsJSON(gs []Group) []map[string]any {
