@@ -569,7 +569,7 @@ func serve(srv *http.Server, st *Store) {
 		}
 		return
 	case sig := <-stop:
-		log.Printf("%v received; finishing in-flight requests (up to %s)", sig, shutdownGrace)
+		log.Printf("shutting down on %v; finishing in-flight requests (up to %s)", sig, shutdownGrace)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
