@@ -83,11 +83,15 @@ func (s *Store) CreateManualReport(r Rep) (int64, error) {
 // shipped state. It is passed in rather than read here because reading a setting through the pool
 // while this transaction is open deadlocks on SQLite — see the rollback comment below, which is the
 // same hazard from the other direction.
-func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (string, error) {
+//
+// changed reports whether the save rewrote the report's content, as opposed to only its audience or
+// its metadata. It is the same question that decides whether a revision is filed and whether the
+// byline moves, and callers use it to decide whether the outside world hears about the save.
+func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (written string, changed bool, err error) {
 	now := manualInstant()
 	tx, err := s.db.Begin()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	// The pre-image, read on the transaction and under the SAME three-part predicate the UPDATE
 	// uses. Two things follow from that. It has to be read BEFORE the UPDATE, because the UPDATE is
@@ -103,16 +107,16 @@ func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (st
 			&prev.Source, &prev.MD, &prev.Time, &prev.Author); err != nil {
 		tx.Rollback()
 		if err == sql.ErrNoRows {
-			return "", ErrReportStale
+			return "", false, ErrReportStale
 		}
-		return "", err
+		return "", false, err
 	}
 	// The author is who wrote the text the report now carries, not who last pressed save. A save
 	// that changed no content did not write it, so it does not take the byline — and because such a
 	// save records no revision either, taking it would leave the original author's name recoverable
 	// from nowhere: the next real edit would file their words under whoever had happened to touch
 	// the audience in between.
-	changed := reportContentDiffers(prev, r)
+	changed = reportContentDiffers(prev, r)
 	author := prev.Author
 	if changed {
 		author = r.Author
@@ -133,17 +137,17 @@ func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (st
 		// asking the database who holds it, rather than by reading a driver's error text, which
 		// SQLite and Postgres word differently.
 		if prev, taken := s.reportIdentHolder(r, id); taken {
-			return "", ErrReportExists{ID: prev}
+			return "", false, ErrReportExists{ID: prev}
 		}
-		return "", err
+		return "", false, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		tx.Rollback()
-		return "", ErrReportStale
+		return "", false, ErrReportStale
 	}
 	if err := s.snapshot(tx, id, prev, changed, keep); err != nil {
 		tx.Rollback()
-		return "", err
+		return "", false, err
 	}
 	// The viewer list is keyed by rdate as well as report id (report_viewers is denormalized on it so
 	// the list page's sort is an index walk), so moving a report to another date has to move its
@@ -151,12 +155,12 @@ func (s *Store) UpdateManualReport(id int64, r Rep, expect string, keep int) (st
 	// by nobody — silently, because a viewer row whose date no longer matches simply never joins.
 	if _, err := tx.Exec(s.bind("UPDATE report_viewers SET rdate=? WHERE report_id=?"), r.Date, id); err != nil {
 		tx.Rollback()
-		return "", err
+		return "", false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return now, nil
+	return now, changed, nil
 }
 
 // snapshot files the superseded version of a report, on the transaction that superseded it.

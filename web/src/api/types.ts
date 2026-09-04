@@ -272,6 +272,9 @@ export interface HomeResp {
   size: number
   types: string[]
   kinds: string[] // 大类 (top-level categories) for the home filter
+  // Written forms present in what this reader can see (ADR 0024), for the version filter. Empty
+  // when there is only one — a filter whose every setting means the same thing is not a filter.
+  versions: { name: string; label: string }[]
   links: LinkItem[]
   linkGroups: LinkGroup[] // named, foldable groups of entry buttons
   kindColors: Record<string, string> // 大类 → antd Tag preset color, admin-configured

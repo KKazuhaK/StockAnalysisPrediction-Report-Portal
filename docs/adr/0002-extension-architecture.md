@@ -75,7 +75,12 @@ Extension points and their status:
 
 Event catalogue (initial):
 
-- `report.ingested` — a report was upserted via `/api/reports` or `/api/v1/reports`.
+- `report.ingested` — a report arrived or changed: upserted via `/api/v1/reports`, written by hand in
+  the editor, or edited there (ADR 0026). One event rather than a second `report.written`, because a
+  subscriber's contract is "a report arrived", and a new type would leave every existing subscriber
+  silently missing hand-written ones. The payload carries `version`, `author` and `created` for a
+  subscriber that does want to tell them apart. An edit that rewrote no content fires nothing — the
+  same rule that decides whether a revision is filed.
 - `batch.job.finished` — a batch job reached a terminal state.
 
 Delivery contract:
