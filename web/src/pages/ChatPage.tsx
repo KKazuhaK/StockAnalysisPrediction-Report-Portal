@@ -772,7 +772,7 @@ export default function ChatPage() {
         {convsErr ? (
           <div style={{ fontSize: 12, padding: 8 }}>
             <Typography.Text type="secondary">{t('common.loadFailedContent')}</Typography.Text>{' '}
-            <Typography.Link onClick={() => loadConvs(targetId)}>{t('common.retry')}</Typography.Link>
+            <Typography.Link {...clickable(() => loadConvs(targetId))}>{t('common.retry')}</Typography.Link>
           </div>
         ) : !convsLoaded ? (
           <div style={{ padding: 16, textAlign: 'center' }}>

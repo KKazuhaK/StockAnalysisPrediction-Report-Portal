@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 // A card that is a clickable <div> is invisible to anyone not using a mouse: it takes no focus, it
 // is not announced as anything actionable, and Enter does nothing. antd's `hoverable` + `onClick`
@@ -16,7 +16,7 @@ import type { KeyboardEvent } from 'react'
 // label is optional and should be OMITTED when the element already shows its own text: an aria-label
 // replaces the visible name rather than adding to it, so supplying one there is a way to make a
 // control announce something different from what it reads.
-export function clickable(onActivate: () => void, label?: string) {
+export function clickable(onActivate: (e: SyntheticEvent) => void, label?: string) {
   return {
     role: 'button',
     tabIndex: 0,
@@ -28,7 +28,7 @@ export function clickable(onActivate: () => void, label?: string) {
       // would open the card behind whatever the inner control just did.
       if (e.target !== e.currentTarget) return
       e.preventDefault()
-      onActivate()
+      onActivate(e)
     },
   }
 }

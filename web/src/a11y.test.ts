@@ -77,6 +77,32 @@ describe('controls have an accessible name', () => {
     expect(offenders, 'spread {...clickable(fn)} — a bare onClick is unreachable without a mouse').toEqual([])
   })
 
+  // Two antd components render markup that is NOT keyboard-operable, which the capitalised-tag
+  // exemption above would otherwise wave through. Both were verified by rendering them, and
+  // antdKeyboardBehaviour below pins that verification so an antd upgrade that fixes either one
+  // makes a test fail rather than leaving a rule here that is quietly obsolete.
+  //
+  //   Typography.Link  — an <a> with no href: focusable (antd sets tabIndex=0), but Enter does
+  //                      nothing, because an anchor's activation behaviour requires an href.
+  //   List.Item        — rendered with tabIndex=-1, so it is not reachable by Tab at all.
+  const UNSAFE_ANTD = ['Typography.Link', 'List.Item']
+
+  it('every clickable antd component that is not keyboard-operable goes through clickable()', () => {
+    const offenders: string[] = []
+    for (const [path, src] of production) {
+      for (const tag of UNSAFE_ANTD) {
+        const pattern = new RegExp(`<${tag.replace('.', '\\.')}\\b((?:[^<>]|\\{[^{}]*\\}|\\{\\{[^{}]*\\}\\})*?)>`, 'g')
+        for (const m of src.matchAll(pattern)) {
+          const attrs = m[1]
+          if (!/\bonClick=/.test(attrs)) continue
+          if (/\bhref=/.test(attrs) || attrs.includes('clickable(')) continue
+          offenders.push(`${path}:${lineOf(src, m.index ?? 0)} (${tag})`)
+        }
+      }
+    }
+    expect(offenders, 'spread {...clickable(fn)} — antd does not make these operable by itself').toEqual([])
+  })
+
   // A scan that silently matches nothing is the failure it exists to prevent: if the regexes stop
   // matching (a formatter change, a component rename), both assertions above pass for ever while
   // finding nothing at all.
