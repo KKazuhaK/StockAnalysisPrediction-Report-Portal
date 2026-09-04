@@ -151,7 +151,7 @@ export default function AppsAdminPage() {
       width: 90,
       render: (_: unknown, a: AppSummary) => (
         <Popconfirm title={t('apps.deleteConfirm')} onConfirm={() => remove(a.id)}>
-          <Button size="small" danger icon={<DeleteOutlined />} />
+          <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
         </Popconfirm>
       ),
     },

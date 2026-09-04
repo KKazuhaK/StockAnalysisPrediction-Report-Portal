@@ -383,7 +383,7 @@ export default function BatchAdminPage() {
       width: 80,
       render: (_: unknown, p: BatchPlugin) => (
         <Popconfirm title={t('batch.admin.deletePluginConfirm')} onConfirm={() => deletePlugin(p.slug)}>
-          <Button size="small" danger icon={<DeleteOutlined />} />
+          <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
         </Popconfirm>
       ),
     },

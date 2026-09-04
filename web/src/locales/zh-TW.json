@@ -789,6 +789,7 @@
   "preset.overrunHint": "視窗結束時仍未開始的任務如何處理；執行中的一律跑完。",
   "preset.overrunLabel": "超時未跑",
   "preset.pickWeekdays": "選擇星期",
+  "preset.removeRow": "刪除這一行",
   "preset.summaryExcept": "避開",
   "preset.untitled": "（未命名）",
   "preset.viewRule": "檢視完整規則",

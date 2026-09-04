@@ -127,7 +127,7 @@ export default function VersionsPage() {
                   }
                 }}
               >
-                <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                <Button type="text" danger size="small" icon={<DeleteOutlined />} aria-label={t('common.delete')} />
               </Popconfirm>
             )
           }

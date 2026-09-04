@@ -789,6 +789,7 @@
   "preset.overrunHint": "What to do with a run still waiting when the window closes; a run already in progress always finishes.",
   "preset.overrunLabel": "If it misses the window",
   "preset.pickWeekdays": "Pick weekdays",
+  "preset.removeRow": "Remove this row",
   "preset.summaryExcept": "except",
   "preset.untitled": "(untitled)",
   "preset.viewRule": "View the full rule",

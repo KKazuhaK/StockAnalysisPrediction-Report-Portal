@@ -305,7 +305,7 @@ export default function TypesPage() {
       align: 'right' as const,
       render: (_: any, r: TypeRow) => (
         <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => remove(r.name)}>
-          <Button size="small" danger icon={<DeleteOutlined />} />
+          <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
         </Popconfirm>
       ),
     },

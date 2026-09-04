@@ -303,9 +303,9 @@ export default function LinksPage() {
         <Tooltip title={t('links.showOnHome')}>
           <Switch size="small" checked={g.visible !== false} onChange={(v) => toggleGroupVisible(g, v)} />
         </Tooltip>
-        <Button size="small" icon={<EditOutlined />} onClick={() => openGroupEdit(g)} />
+        <Button size="small" icon={<EditOutlined />} onClick={() => openGroupEdit(g)} aria-label={t('common.edit')} />
         <Popconfirm title={t('links.deleteGroupConfirm')} onConfirm={() => deleteGroup(g.id)}>
-          <Button size="small" danger icon={<DeleteOutlined />} />
+          <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
         </Popconfirm>
       </div>
     )
@@ -342,9 +342,9 @@ export default function LinksPage() {
         <Tooltip title={t('links.showOnHome')}>
           <Switch size="small" checked={l.visible !== false} onChange={(v) => toggleLinkVisible(l, v)} />
         </Tooltip>
-        <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(l)} />
+        <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(l)} aria-label={t('common.edit')} />
         <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => remove(l.id)}>
-          <Button size="small" danger icon={<DeleteOutlined />} />
+          <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
         </Popconfirm>
       </div>
     )
