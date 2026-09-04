@@ -34,6 +34,11 @@ const RESP = {
 // Mirrors user-event's own precondition: an element is reachable only if neither it nor any
 // ancestor switches pointer events off.
 const reachable = (el: Element | null): boolean => {
+  // A node that is no longer in the document is not reachable, and saying so is the whole point.
+  // getComputedStyle on a detached node reports no pointer-events at all, so the loop below would
+  // walk it and conclude "reachable" — which is exactly backwards, and exactly what happens to a
+  // node captured before antd re-rendered the table.
+  if (!el || !el.isConnected) return false
   for (let n: Element | null = el; n; n = n.parentElement) {
     if (getComputedStyle(n).pointerEvents === 'none') return false
   }
@@ -84,13 +89,19 @@ describe('AuditPage', () => {
   // sentence leaves out for being uninformative. One click, not a second page.
   it('opens a row in full, with the stored payload verbatim', async () => {
     mount()
-    const openers = await screen.findAllByTitle('audit.details')
+    await screen.findAllByTitle('audit.details')
     // A row appearing is not the same as a row being clickable: while the table is loading antd
     // blurs it with pointer-events: none, and user-event refuses to click through that. Waiting
     // for the button to be genuinely reachable is what a person does, and it is what this test
     // failed to do on a loaded CI runner while passing on an idle laptop.
-    await waitFor(() => expect(reachable(openers[1])).toBe(true))
-    await userEvent.click(openers[1]) // the grant change: the row with a payload worth reading
+    //
+    // Re-queried inside the wait, and again for the click, rather than held from before it. Holding
+    // one was the remaining half of the same flake: the wait is satisfied the moment the table
+    // re-renders and replaces the node, because a DETACHED node reports no pointer-events and so
+    // looks reachable — and the click then lands on a node that is no longer in the page. Under load
+    // the re-render is likelier, which is why this failed where it did.
+    await waitFor(() => expect(reachable(screen.getAllByTitle('audit.details')[1])).toBe(true))
+    await userEvent.click(screen.getAllByTitle('audit.details')[1]) // the grant change: a payload worth reading
 
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('{"before":[],"after":["u:client@corp.example"]}')).toBeTruthy()

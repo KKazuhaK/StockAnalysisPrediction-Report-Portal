@@ -109,11 +109,11 @@ func TestEditingFiresOnlyWhenTheWordsChange(t *testing.T) {
 	events := eventSink(t, s)
 
 	rep, _ := s.st.GetNew(created.ID, nil)
-	save := func(md, audience string) {
+	save := func(title, md, audience string) {
 		t.Helper()
 		rec := editorCall(t, s, http.MethodPut, id, fmt.Sprintf(
-			`{"symbol":"002594","date":"2026-09-04","subtype":"深度分析","title":"稿子",
-			  "body_md":%q,%s,"updated_at":%q}`, md, audience, rep.Time))
+			`{"symbol":"002594","date":"2026-09-04","subtype":"深度分析","title":%q,
+			  "body_md":%q,%s,"updated_at":%q}`, title, md, audience, rep.Time))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
 		}
@@ -124,7 +124,7 @@ func TestEditingFiresOnlyWhenTheWordsChange(t *testing.T) {
 		rep.Time = out.UpdatedAt
 	}
 
-	save("第二版", `"audience":"all"`)
+	save("稿子", "第二版", `"audience":"all"`)
 	ev := waitEvent(t, events, "an edit that rewrote the body")
 	if ev["created"] != false {
 		t.Error("an edit must be announced as an update, not a creation")
@@ -133,6 +133,22 @@ func TestEditingFiresOnlyWhenTheWordsChange(t *testing.T) {
 		t.Errorf("event id = %v, want %d", ev["id"], created.ID)
 	}
 
-	save("第二版", `"audience":"grant","viewers":["u:editor"]`) // same words, narrower audience
-	expectNoEvent(t, events, "a save that changed no content")
+	// Now the case that must stay silent — and it is checked by ORDER rather than by waiting a
+	// window and hoping. A fixed wait can pass for the wrong reason: under load the event that
+	// should not exist simply arrives after the deadline, and the assertion reports success while
+	// guarding nothing.
+	//
+	// So: a save that changes only the audience, then one that changes the words. Exactly one event
+	// must exist, and it must be the second. If the silent save fired, it arrives first and its
+	// title gives it away.
+	save("稿子", "第二版", `"audience":"grant","viewers":["u:editor"]`) // same words, narrower audience
+	save("改过标题的稿子", "第三版", `"audience":"all"`)                     // this one is real news
+
+	next := waitEvent(t, events, "the edit that followed a content-neutral save")
+	if next["title"] != "改过标题的稿子" {
+		t.Errorf("the first event after the audience-only save was %v — that save should have "+
+			"produced nothing at all", next["title"])
+	}
+	// And nothing else is queued behind it.
+	expectNoEvent(t, events, "anything beyond the one real edit")
 }
