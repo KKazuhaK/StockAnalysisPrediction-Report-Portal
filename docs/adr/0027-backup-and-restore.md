@@ -124,6 +124,20 @@ path is covered by its own integration tests behind `TEST_POSTGRES_DSN`.
 - **Ephemeral tables are included** (`auth_requests`, `sso_assertion_seen`). They are purged by
   expiry anyway, and a backup that decides on the operator's behalf which rows do not matter is a
   backup nobody can reason about.
-- **Restoring across a major schema boundary is not supported**, and does not need its own rule: the
-  restore opens the store first, so `requireSchemaBaseline` (ADR 0013) has already refused a database
-  the build cannot run, and a dump from before a squash names columns this build does not have.
+- **Restoring across a major schema boundary is refused, by its own check.** An earlier draft of this
+  ADR claimed `requireSchemaBaseline` (ADR 0013) already covered it. It does not, and cannot:
+  that guard runs at open time against the **target** database — which at that moment is empty or
+  current-generation — and never sees the dump. Without a check of its own, a cross-generation
+  restore "succeeded", wrote the dump's `schema_version` into `meta`, and only failed on the *next*
+  boot: a delayed failure after a destructive operation, in the worst possible order.
+
+  So the dump records its generation **in the header**, not among the `meta` rows (which sort into the
+  middle of the file), and the restore refuses a mismatch up front, naming which way it is wrong and
+  the remedy — restore with the release that wrote it and let that release upgrade, or upgrade the
+  portal first. A dump with no recorded generation is allowed rather than rejected over a question it
+  cannot answer.
+
+  The generation is read on the dump's own transaction rather than through the pool. On SQLite the
+  pool is one connection wide and the dump's transaction is holding it, so the obvious
+  `Store.schemaVersion()` call deadlocks — which is what the first version of this did, caught by the
+  test rather than in production.

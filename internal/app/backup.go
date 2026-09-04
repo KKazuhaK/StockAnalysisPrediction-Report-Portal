@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,12 +47,16 @@ const (
 // backupHeader is the first line of a dump. Driver and app version are recorded for the operator
 // reading a file months later, not for validation: a dump restores across drivers by design.
 type backupHeader struct {
-	Format     string   `json:"format"`
-	Version    int      `json:"version"`
-	CreatedAt  string   `json:"created_at"`
-	Driver     string   `json:"driver"`
-	AppVersion string   `json:"app_version"`
-	Tables     []string `json:"tables"`
+	Format  string `json:"format"`
+	Version int    `json:"version"`
+	// SchemaVersion is the database's generation marker (ADR 0013), and it is in the HEADER rather
+	// than left to be discovered among the `meta` rows for a reason: a restore has to be able to
+	// refuse a dump BEFORE it deletes anything, and `meta` sorts into the middle of the file.
+	SchemaVersion int      `json:"schema_version"`
+	CreatedAt     string   `json:"created_at"`
+	Driver        string   `json:"driver"`
+	AppVersion    string   `json:"app_version"`
+	Tables        []string `json:"tables"`
 }
 
 // backupSection introduces one table. Columns are recorded per dump rather than assumed, so a file
@@ -130,12 +135,13 @@ func (s *Store) dumpTo(w io.Writer) (int, int64, error) {
 
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(backupHeader{
-		Format:     backupFormat,
-		Version:    backupFormatVersion,
-		CreatedAt:  time.Now().Format(time.RFC3339),
-		Driver:     s.driver,
-		AppVersion: version.Version,
-		Tables:     names,
+		Format:        backupFormat,
+		Version:       backupFormatVersion,
+		SchemaVersion: schemaVersionTx(tx),
+		CreatedAt:     time.Now().Format(time.RFC3339),
+		Driver:        s.driver,
+		AppVersion:    version.Version,
+		Tables:        names,
 	}); err != nil {
 		return 0, 0, err
 	}
@@ -149,6 +155,23 @@ func (s *Store) dumpTo(w io.Writer) (int, int64, error) {
 		total += n
 	}
 	return len(names), total, nil
+}
+
+// schemaVersionTx reads the generation marker ON THE TRANSACTION, not through the pool.
+//
+// Store.schemaVersion() would be the obvious call and it deadlocks: on SQLite the pool is a single
+// connection, this function's own transaction is holding it, and a pooled read would wait for a
+// connection it can never get. Reading it here also makes the header describe the same snapshot as
+// the rows underneath it, which is what a dump is for.
+func schemaVersionTx(tx *sql.Tx) int {
+	var v sql.NullString
+	if err := tx.QueryRow("SELECT v FROM meta WHERE k='schema_version'").Scan(&v); err != nil {
+		return 0 // unknown rather than guessed; the restore treats 0 as "not recorded"
+	}
+	if n, err := strconv.Atoi(v.String); err == nil && n > 0 {
+		return n
+	}
+	return 0
 }
 
 // dumpTable streams one table. Every statement goes through tx, never the pool: on SQLite the pool
@@ -330,6 +353,9 @@ func (s *Store) restoreFrom(r io.Reader, force bool) (*RestoreReport, error) {
 	if rep.Header.Version > backupFormatVersion {
 		return nil, fmt.Errorf("backup format v%d is newer than this build understands (v%d): upgrade the portal first",
 			rep.Header.Version, backupFormatVersion)
+	}
+	if err := checkSchemaGeneration(rep.Header.SchemaVersion); err != nil {
+		return nil, err
 	}
 
 	var tx *sql.Tx
@@ -542,4 +568,34 @@ func (s *Store) rowCounts(tables []string) (map[string]int64, error) {
 		}
 	}
 	return out, nil
+}
+
+// checkSchemaGeneration refuses a dump this build cannot represent.
+//
+// It runs before the transaction is opened. That is cheapness, not safety — the rollback is what
+// keeps a failed restore from leaving a partial database, whatever the reason — but there is no
+// sense emptying 36 tables to then throw the work away.
+//
+// Without it a cross-generation restore "succeeds": the tables were created by the running binary in
+// its own shape, the rows arrive from an older or newer one, and the dump's schema_version lands in
+// `meta`. Nothing complains until the NEXT boot, where requireSchemaBaseline finally refuses — a
+// delayed failure after a destructive operation, and the worst possible order for the two.
+// requireSchemaBaseline itself cannot catch this: it runs at open time against the TARGET database,
+// which at that moment is empty or current, and it never sees the dump at all.
+//
+// 0 means a dump written before the header carried the field. Allowed rather than refused: the
+// alternative is rejecting a backup over a question it cannot answer, and this format has not shipped
+// outside the branch that introduced it.
+func checkSchemaGeneration(dump int) error {
+	switch {
+	case dump == 0 || dump == schemaBaseline:
+		return nil
+	case dump < schemaBaseline:
+		return fmt.Errorf("this backup is from schema generation %d and the portal now requires %d: "+
+			"restore it with the release that wrote it and let that release upgrade the database, "+
+			"then back it up again", dump, schemaBaseline)
+	default:
+		return fmt.Errorf("this backup is from schema generation %d, which is newer than this build's %d: "+
+			"upgrade the portal before restoring", dump, schemaBaseline)
+	}
 }

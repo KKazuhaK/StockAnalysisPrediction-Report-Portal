@@ -369,3 +369,66 @@ func TestTruncatedRestoreLeavesNothingBehind(t *testing.T) {
 		t.Error("a failed restore must roll back completely — the target is byte-identical or it is corrupt")
 	}
 }
+
+// TestRestoreRefusesAnotherSchemaGeneration is the failure the ADR claimed requireSchemaBaseline
+// already handled, and it did not: that guard runs at open time against the TARGET database — empty
+// or current at that moment — and never sees the dump. So a cross-generation backup restored
+// "successfully" and only broke on the NEXT boot, which is a delayed failure after a destructive
+// operation, in the worst possible order.
+func TestRestoreRefusesAnotherSchemaGeneration(t *testing.T) {
+	src := newTestStore(t)
+	seedForBackup(t, src)
+	dump := string(dumpOf(t, src))
+
+	if !strings.Contains(dump, `"schema_version":`) {
+		t.Fatal("the dump must record its schema generation in the HEADER, before any row")
+	}
+
+	for _, c := range []struct{ name, from, to, want string }{
+		{"older than this build", `"schema_version":2`, `"schema_version":1`, "restore it with the release that wrote it"},
+		{"newer than this build", `"schema_version":2`, `"schema_version":9`, "upgrade the portal before restoring"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			mutated := strings.Replace(dump, c.from, c.to, 1)
+			if mutated == dump {
+				t.Fatalf("the dump did not contain %q — fix the test, not the code", c.from)
+			}
+			dst := newTestStore(t)
+			mustExec(t, dst, `INSERT INTO reports(id,title,symbol,rtype,rdate,version) VALUES(?,?,?,?,?,?)`,
+				int64(5), "本来就在库里", "000001", "深度分析", "2026-01-01", "")
+			before := dumpOf(t, dst)
+
+			_, err := dst.restoreFrom(strings.NewReader(mutated), true)
+			if err == nil {
+				t.Fatal("a dump from another schema generation must be refused")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("the error must name the remedy %q; got: %v", c.want, err)
+			}
+			// And the target survives it. Moving the check after the DELETE would still leave the
+			// target intact — the rollback does that, and TestTruncatedRestoreLeavesNothingBehind is
+			// what proves it — so this asserts the outcome, not the ordering. The ordering is a
+			// cheapness property: refuse before opening a transaction and emptying 36 tables to
+			// throw the work away.
+			if !bytes.Equal(stripHeader(before), stripHeader(dumpOf(t, dst))) {
+				t.Error("a refused restore must leave the target exactly as it was")
+			}
+		})
+	}
+}
+
+// TestRestoreAcceptsADumpWithoutTheField keeps the check from rejecting a backup over a question it
+// cannot answer: a dump written before the header carried the generation.
+func TestRestoreAcceptsADumpWithoutTheField(t *testing.T) {
+	src := newTestStore(t)
+	seedForBackup(t, src)
+	dump := strings.Replace(string(dumpOf(t, src)), `"schema_version":2,`, "", 1)
+
+	dst := newTestStore(t)
+	if _, err := dst.restoreFrom(strings.NewReader(dump), true); err != nil {
+		t.Fatalf("a dump with no recorded generation must still restore: %v", err)
+	}
+	if n := scalar[int](t, dst, `SELECT COUNT(*) FROM reports`); n != 2 {
+		t.Errorf("reports = %d; want 2", n)
+	}
+}
