@@ -160,6 +160,11 @@ func RunServer(cfgPath string) {
 			"limiter and the audit log. Only safe when the listen port is unreachable except " +
 			"through your proxy.")
 	}
+	// Said before anything else touches the database, because it is about the file the operator is
+	// most likely to have copied into place by hand.
+	if msg := config.WarnIfWorldReadable(cfgPath); msg != "" {
+		log.Print(msg)
+	}
 	if err := os.MkdirAll(config.DirOf(cfg.DBPath), 0o755); err != nil {
 		log.Fatal(err)
 	}
