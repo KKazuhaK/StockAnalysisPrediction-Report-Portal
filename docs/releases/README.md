@@ -10,7 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
-| [v0.4.51](v0.4.51.md) | 2026-09-04 | Six more controls that needed a mouse |
+| [v0.4.51](v0.4.51.md) | 2026-09-04 | Ten more controls that needed a mouse |
 | [v0.4.50](v0.4.50.md) | 2026-09-04 | A failing request stops being invisible |
 | [v0.4.49](v0.4.49.md) | 2026-09-04 | The portal without a mouse |
 | [v0.4.48](v0.4.48.md) | 2026-09-04 | A restart stops cutting requests in half, and cleanup gives the disk back |
