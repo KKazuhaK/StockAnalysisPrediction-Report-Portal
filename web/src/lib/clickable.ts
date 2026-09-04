@@ -8,15 +8,19 @@ import type { KeyboardEvent } from 'react'
 // a tab stop so it can be reached, a name so the announcement says which one, and Enter/Space so it
 // can be activated. Spread it onto the Card:
 //
-//   <Card hoverable {...clickable(open, displayName)}>
+//   <Card hoverable {...clickable(open, displayName)}>   // no text of its own: name it
+//   <a {...clickable(toggle)}>Show unchanged</a>                 // its text is the name already
 //
 // Space is preventDefault'd because its default on a focused element is to scroll the page, which
 // would otherwise happen instead of (and then as well as) the activation.
-export function clickable(onActivate: () => void, label: string) {
+// label is optional and should be OMITTED when the element already shows its own text: an aria-label
+// replaces the visible name rather than adding to it, so supplying one there is a way to make a
+// control announce something different from what it reads.
+export function clickable(onActivate: () => void, label?: string) {
   return {
     role: 'button',
     tabIndex: 0,
-    'aria-label': label,
+    ...(label ? { 'aria-label': label } : null),
     onClick: onActivate,
     onKeyDown: (e: KeyboardEvent) => {
       if (e.key !== 'Enter' && e.key !== ' ') return

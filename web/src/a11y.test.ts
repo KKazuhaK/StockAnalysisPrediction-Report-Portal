@@ -55,14 +55,38 @@ describe('controls have an accessible name', () => {
     expect(offenders, 'spread {...clickable(open, name)} instead of onClick — a div is not a control').toEqual([])
   })
 
+  // A plain DOM element with onClick is the same defect as the Card, wearing a different tag: no
+  // focus, no role, and Enter does nothing. This rule found six the Card rule did not — a captcha
+  // refresh on the LOGIN page, and three that are primary navigation (the reader's date timeline,
+  // the review queue's link to a report, the chat's conversation list).
+  //
+  // antd components are excluded: they manage their own semantics. This is about raw tags.
+  it('every clickable plain element is a real control', () => {
+    const pattern = /<(div|span|li|td|tr|p|img|a|section|article)\b((?:[^<>]|\{[^{}]*\}|\{\{[^{}]*\}\})*?)>/g
+    const offenders: string[] = []
+    for (const [path, src] of production) {
+      for (const m of src.matchAll(pattern)) {
+        const attrs = m[2]
+        if (!/\bonClick=/.test(attrs)) continue
+        // href makes an <a> focusable and Enter-activatable by itself; role+tabIndex (what
+        // clickable() spreads) does the same for anything else.
+        if (/\bhref=/.test(attrs) || (attrs.includes('role=') && attrs.includes('tabIndex'))) continue
+        offenders.push(`${path}:${lineOf(src, m.index ?? 0)}`)
+      }
+    }
+    expect(offenders, 'spread {...clickable(fn)} — a bare onClick is unreachable without a mouse').toEqual([])
+  })
+
   // A scan that silently matches nothing is the failure it exists to prevent: if the regexes stop
   // matching (a formatter change, a component rename), both assertions above pass for ever while
   // finding nothing at all.
   it('actually finds the components it is scanning', () => {
     const buttons = production.reduce((n, [, s]) => n + [...s.matchAll(/<Button\b/g)].length, 0)
     const cards = production.reduce((n, [, s]) => n + [...s.matchAll(/<Card\b/g)].length, 0)
+    const clicks = production.reduce((n, [, s]) => n + [...s.matchAll(/onClick=/g)].length, 0)
     expect(buttons).toBeGreaterThan(50)
     expect(cards).toBeGreaterThan(10)
+    expect(clicks).toBeGreaterThan(100)
     expect(production.length).toBeGreaterThan(40)
   })
 })

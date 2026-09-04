@@ -1,5 +1,6 @@
 import { Timeline, Typography, theme } from 'antd'
 import type { TimelineNode } from '../api/types'
+import { clickable } from '../lib/clickable'
 
 interface Props {
   nodes: TimelineNode[]
@@ -58,7 +59,7 @@ export default function TimelinePanel({ nodes, selected, onSelect, horizontal }:
             color: active ? token.colorPrimary : 'gray',
             children: (
               <a
-                onClick={() => onSelect(n.date)}
+                {...clickable(() => onSelect(n.date))}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'baseline',

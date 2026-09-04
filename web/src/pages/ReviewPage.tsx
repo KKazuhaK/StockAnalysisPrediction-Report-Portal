@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
 import type { TrackingResp, TrackingRow } from '../api/types'
+import { clickable } from '../lib/clickable'
 
 // The review queue: what the reports ASSUMED, and whether it held.
 //
@@ -81,7 +82,7 @@ export default function ReviewPage() {
             {r.itype && <Tag>{r.itype}</Tag>}
             {/* The report the assumption came from — clicking through is the point: a claim with
                 no context behind it cannot be judged. */}
-            <a onClick={() => navigate(`/stock/${r.symbol}?date=${r.report_date}`)}>
+            <a {...clickable(() => navigate(`/stock/${r.symbol}?date=${r.report_date}`))}>
               {r.symbol} {r.name} · {r.report_date} · {r.report_title}
             </a>
           </Space>

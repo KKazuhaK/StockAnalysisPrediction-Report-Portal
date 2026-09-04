@@ -10,6 +10,7 @@ import Markdown from '../components/Markdown'
 import LoadGate from '../components/LoadGate'
 import { difyModeTag } from '../lib/batchUi'
 import type { ChatConversation, ChatTarget, ChatTurn } from '../api/types'
+import { clickable } from '../lib/clickable'
 
 type Msg = { role: 'user' | 'assistant'; content: string }
 
@@ -47,7 +48,7 @@ function ThinkBlock({ content }: { content: string }) {
   return (
     <div style={{ margin: '2px 0 8px' }}>
       <span
-        onClick={() => setOpen((o) => !o)}
+        {...clickable(() => setOpen((o) => !o))}
         style={{ cursor: 'pointer', fontSize: 12, color: 'var(--ant-color-text-tertiary)', userSelect: 'none' }}
       >
         {open ? '▾' : '▸'} {t('chat.thinking')}
@@ -789,7 +790,7 @@ export default function ChatPage() {
             return (
               <div
                 key={c.id}
-                onClick={() => pickConv(c.id)}
+                {...clickable(() => pickConv(c.id))}
                 onMouseEnter={() => setHoverConv(c.id)}
                 onMouseLeave={() => setHoverConv((h) => (h === c.id ? null : h))}
                 style={{
