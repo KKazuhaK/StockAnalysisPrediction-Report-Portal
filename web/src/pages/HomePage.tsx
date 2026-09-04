@@ -32,6 +32,7 @@ import ReportCard from '../components/ReportCard'
 import { linkIconComponent } from '../components/linkIcons'
 import { shortcutOfUrl, shortcutPerm, triggerShortcut } from '../lib/shortcuts'
 import { startVisiblePoll } from '../lib/visiblePoll'
+import { versionLabel } from '../lib/versionLabel'
 
 const { RangePicker } = DatePicker
 
@@ -142,7 +143,7 @@ export default function HomePage() {
   // The server sends nothing here until a second written form exists, so the filter appears the day
   // one does and never before. It is also how the reports people wrote by hand become a set you can
   // ask for, rather than something you find one at a time.
-  const versionOptions = (data?.versions || []).map((v) => ({ value: v.name, label: v.label }))
+  const versionOptions = (data?.versions || []).map((v) => ({ value: v.name, label: versionLabel(v.name, v.label, t) }))
 
   // Render one entry button. A shortcut link (url = "rp:<action>[:<target>]") triggers an
   // internal action, optionally pre-selected on a specific target; a shortcut whose target the
