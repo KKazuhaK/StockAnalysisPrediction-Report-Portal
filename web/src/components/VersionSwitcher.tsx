@@ -3,6 +3,7 @@ import { Segmented, Tooltip } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import { formatReportDateTime } from '../lib/datetime'
+import { versionLabel } from '../lib/versionLabel'
 
 // The reading page's version switcher (ADR 0024). One analysis is published in several written
 // forms — an internal one carrying the scoring table, an external one carrying the conclusion — and
@@ -57,7 +58,7 @@ export default function VersionSwitcher({
           // runs and can legitimately differ in age, which a reader comparing them needs to know, but
           // it is not what they are choosing between.
           <Tooltip title={v.time ? t('version.generatedAt', { when: formatReportDateTime(v.time) }) : undefined}>
-            <span>{v.label}</span>
+            <span>{versionLabel(v.version, v.label, t)}</span>
           </Tooltip>
         ),
       }))}

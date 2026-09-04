@@ -49,7 +49,9 @@ const base: Partial<HomeResp> = {
 }
 
 const twoVersions = [
-  { name: 'default', label: '标准版' },
+  // The default version arrives with no label of its own — the server falls back to the identifier —
+  // so the filter has to name it rather than showing "default" to every reader.
+  { name: 'default', label: 'default' },
   { name: 'manual', label: '人工' },
 ]
 
@@ -92,7 +94,7 @@ describe('the version filter', () => {
     // The options are the server's labels, not the internal names: "人工" is what an author reads.
     await userEvent.click(document.querySelector('#version') as HTMLElement)
     expect(await screen.findByTitle('人工')).toBeTruthy()
-    expect(screen.getByTitle('标准版')).toBeTruthy()
+    expect(screen.getByTitle('versions.default')).toBeTruthy()
   })
 
   it('asks the server for the chosen version', async () => {
