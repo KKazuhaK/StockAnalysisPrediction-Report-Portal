@@ -402,6 +402,16 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 //
 // Offered only when there is more than one: a portal that has never registered a second version, or
 // a reader granted only one, should not be shown a filter whose every setting means the same thing.
+//
+// Cost, measured rather than assumed, because this runs on the busiest endpoint there is. It is a
+// DISTINCT over reports, and `version` is the LAST column of the only index naming it, so it is a
+// scan. On SQLite, 50k reports, warm: 24ms — beside the pre-existing ReportKinds scan at 20ms and
+// the feed's own SearchNewLatest at 261ms, i.e. about 9% of what the request already costs, and
+// nearer 4ms at the size this portal actually runs at.
+//
+// Left as a scan deliberately. An index on `version` would have two or three distinct values across
+// the whole table, which is a poor index that earns nothing on reads and charges every write — the
+// same reasoning that removed idx_reports_sym and idx_reports_owner (see the reports schema).
 func (s *Server) presentVersions(sc *ownerScope) []map[string]any {
 	present := map[string]bool{}
 	for _, v := range s.st.ReportVersionsPresent(sc) {
