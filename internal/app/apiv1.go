@@ -238,6 +238,16 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	// Identity is resolved by the store's unique index (code-or-title + date + subtype + version),
 	// so a re-ingest overwrites in place and hands back the same id, while a different version is a
 	// row of its own rather than an overwrite of the analysis it was derived from.
+	// The version the report will actually carry, not the one the payload happened to send. The
+	// store resolves an empty version to the default, so reporting the raw field would describe the
+	// report as version "" while the row says "default" — a difference a subscriber comparing this
+	// event against a later read has no way to reconcile. Computed rather than re-resolved, because
+	// resolveVersion also REGISTERS an unknown name and calling it twice for one ingest is a side
+	// effect nobody asked for.
+	version := strings.TrimSpace(in.Version)
+	if version == "" {
+		version = s.st.DefaultVersion()
+	}
 	id, created, err := s.st.UpsertReport(Rep{
 		RunID: in.RunID, Symbol: in.Symbol, Name: name, Date: in.Date, Kind: kind,
 		RType: rtype, Title: in.Title, Source: in.Source, Time: ingestInstant(in.Time),
@@ -252,7 +262,7 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	// key upserts, so "the report changed and nobody knows when" is otherwise unanswerable.
 	s.recordChange(r, "", AuditReportIngest, "report", strconv.FormatInt(id, 10), map[string]any{
 		"created": created, "symbol": in.Symbol, "date": in.Date, "subtype": rtype,
-		"version": in.Version, "run_id": in.RunID})
+		"version": version, "run_id": in.RunID})
 	// Stamp the generating OU first-writer-wins from the signed owner_token (ADR 0022 R1). A missing
 	// or invalid token leaves owner_group NULL (internal/unattributed), which fails closed for
 	// restricted viewers. Ownership is never taken from a plain client-supplied field.
@@ -282,7 +292,7 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	s.fireEvent(EventReportIngested, map[string]any{
 		"id": id, "symbol": in.Symbol, "name": name, "date": in.Date,
 		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source,
-		"version": in.Version, "author": "", "created": created,
+		"version": version, "author": "", "created": created,
 	})
 	writeJSON(w, map[string]any{"ok": true, "id": id, "created": created})
 }
