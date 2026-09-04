@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.48](v0.4.48.md) | 2026-09-04 | A restart stops cutting requests in half, and cleanup gives the disk back |
 | [v0.4.47](v0.4.47.md) | 2026-09-04 | The hand-written reports stop being invisible |
 | [v0.4.46](v0.4.46.md) | 2026-09-04 | A way to copy the database, and a way back from a rotated key |
 | [v0.4.45](v0.4.45.md) | 2026-09-04 | Settings that were read and never written |

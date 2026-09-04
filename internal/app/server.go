@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -15,11 +17,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -64,6 +68,7 @@ type Server struct {
 	ssoInsecureForTest bool                                                                       // test-only: permit a plain-http loopback IdP (ADR 0023)
 	dekOnce            dekCache                                                                   // lazily unwrapped data key for stored auth secrets (ADR 0023)
 	captchaSvc         *captcha.Service                                                           // public-form captcha (login / forgot password / registration)
+	health             healthCache                                                                // memoized /healthz database verdict, so a public probe cannot be a query amplifier
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -481,9 +486,67 @@ func RunServer(cfgPath string) {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	serve(srv, st)
+}
+
+// shutdownGrace bounds how long a stop waits for requests already in flight. Deliberately shorter
+// than the compose file's stop_grace_period, so the portal's own ending is the one that happens
+// rather than a SIGKILL arriving in the middle of it.
+//
+// Long enough for a PDF export or a report upsert to finish; not long enough to wait out an SSE
+// stream, which by construction never ends on its own. Those are closed at the deadline.
+const shutdownGrace = 10 * time.Second
+
+// serve runs the HTTP server until SIGINT or SIGTERM, then stops taking new connections and lets the
+// requests already in flight finish.
+//
+// Without this, `docker compose restart`, a rolling update and Ctrl-C all cut every open response
+// mid-body: a report upsert answered with a truncated JSON body the caller has to guess about, an
+// export half-written, an audit entry that may or may not have been recorded.
+//
+// The background loops (scheduling, cleanup, recurring tasks, the auth sweep) are NOT drained. They
+// are tickers doing whole units of work, and a batch run interrupted by a restart is already the
+// case ADR 0015 exists for — the next boot reconciles it from the queue rather than trusting that
+// the previous process finished anything. Waiting on them would trade that guarantee for a slower
+// stop and no more safety.
+func serve(srv *http.Server, st *Store) {
+	// Registered BEFORE the listener starts. The other order has a window — short, but real — in
+	// which the process is already serving and a SIGTERM still has its default disposition, which is
+	// to die on the spot: the exact ungraceful stop this function exists to prevent.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
+
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+
+	select {
+	case err := <-errc:
+		// The listener failed to start (a port already taken is the usual one), which is fatal and
+		// has nothing to do with shutting down.
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+		return
+	case sig := <-stop:
+		log.Printf("%v received; finishing in-flight requests (up to %s)", sig, shutdownGrace)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		// The deadline passed with connections still open — an SSE stream, or a client that stopped
+		// reading. Close them: the alternative is hanging until the orchestrator's own patience runs
+		// out and it sends SIGKILL, which is the ungraceful stop this exists to avoid.
+		log.Printf("shutdown: %v; closing remaining connections", err)
+		srv.Close()
+	}
+	// Last, and after the handlers are done: closing it earlier would fail the very requests the
+	// grace period was granted for.
+	if err := st.Close(); err != nil {
+		log.Printf("closing the database: %v", err)
+	}
+	log.Printf("stopped")
 }
 
 // securityHeadersMiddleware supplies browser defenses consistently for JSON, downloads,
@@ -529,10 +592,6 @@ func validateSessionSecret(secret string) error {
 // no data counts (business volume) and no build identity (version/commit), both of which would
 // help an anonymous scanner fingerprint the instance. Ops read the build from /api/version (which
 // requires a session) or the server logs.
-func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"ok": true})
-}
-
 // handleVersion returns build identity for the signed-in app footer. It is session-gated
 // (registered behind requireUserJSON) precisely so version/commit are NOT exposed to anonymous
 // callers: commit especially pins the exact public source, making CVE fingerprinting trivial.
