@@ -79,22 +79,62 @@ type statusRecorder struct {
 
 func (w *statusRecorder) WriteHeader(code int) { w.status = code; w.ResponseWriter.WriteHeader(code) }
 
-// logMiddleware logs every request: method, status, latency, and path (static assets are excluded to avoid noise).
-func logMiddleware(next http.Handler) http.Handler {
+// slowRequest is the latency at which a successful API read becomes worth a log line on its own.
+// A page that takes a second is a complaint waiting to happen, and it is the one class of problem
+// that leaves no other trace: no error, no audit entry, nothing.
+const slowRequest = time.Second
+
+// logMiddleware logs requests: method, status, latency, client address, path.
+//
+// It used to skip /api/ entirely, with a comment claiming those endpoints "have their own concise
+// logs". They do not — a handful of handlers log an event apiece (an ingest, an app install) and the
+// rest log nothing at all. So a 500 on an unaudited endpoint left NO trace anywhere: the audit log
+// covers mutations it was told about, and reads and failures were invisible.
+//
+// The reason /api/ was skipped is real though: the SPA polls (home feed, announcements, queue badge)
+// on a timer, per open tab, so logging every API request would bury everything else. The rule that
+// keeps both properties is to log every API request EXCEPT a fast, successful read — which is
+// exactly the polling traffic and nothing else. Errors, every mutation, and anything slow are
+// always logged, and nothing that was logged before has stopped being logged.
+//
+// Static assets and the health probe stay silent: they are high-volume and say nothing.
+func (s *Server) logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if strings.HasPrefix(p, "/assets/") || strings.HasPrefix(p, "/app-assets/") || strings.HasPrefix(p, "/site-assets/") || strings.HasPrefix(p, "/api/") ||
+		if strings.HasPrefix(p, "/assets/") || strings.HasPrefix(p, "/app-assets/") || strings.HasPrefix(p, "/site-assets/") ||
 			p == "/healthz" || p == "/favicon.svg" || p == "/favicon.ico" || p == "/manifest.webmanifest" ||
 			p == "/pwa-icon" || p == "/sw.js" {
-			next.ServeHTTP(w, r) // SPA static assets / health checks / API (which have their own concise logs) are skipped here to avoid noise
+			next.ServeHTTP(w, r)
 			return
 		}
 		start := time.Now()
 		sw := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(sw, r)
+		took := time.Since(start)
+		if !worthLogging(p, r.Method, sw.status, took) {
+			return
+		}
 		path, _ := url.QueryUnescape(r.URL.RequestURI())
-		log.Printf("%-4s %3d %7s  %s", r.Method, sw.status, time.Since(start).Round(time.Millisecond).String(), path)
+		// The client address, resolved through the same trusted-proxy rules the rate limiter and the
+		// audit log use — so a reverse-proxied deployment logs the visitor rather than the gateway,
+		// and an untrusted upstream cannot claim to be someone else.
+		log.Printf("%-4s %3d %7s  %-15s %s", r.Method, sw.status, took.Round(time.Millisecond).String(),
+			clientIP(r, s.trustedNets), path)
 	})
+}
+
+// worthLogging decides whether one finished request earns a line. Split out because it is the whole
+// policy, and a policy buried in an if-chain inside a middleware is one nobody can test.
+func worthLogging(path, method string, status int, took time.Duration) bool {
+	if status >= 400 || took >= slowRequest {
+		return true // a failure or a slow request is always worth a line, whatever it was
+	}
+	if !strings.HasPrefix(path, "/api/") {
+		return true // page loads are low-volume; they were logged before and still are
+	}
+	// A fast, successful API read is the SPA's own polling. Everything else on /api/ — every
+	// mutation included — is a thing somebody did.
+	return method != http.MethodGet && method != http.MethodHead
 }
 
 // RunServer loads config, opens the store, bootstraps first-run state, wires the
@@ -482,7 +522,7 @@ func RunServer(cfgPath string) {
 	// bounded by its own MaxBytesReader / context deadline instead.
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           logMiddleware(gzipMiddleware(securityHeadersMiddleware(mux))),
+		Handler:           s.logMiddleware(gzipMiddleware(securityHeadersMiddleware(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
