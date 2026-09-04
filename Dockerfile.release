@@ -88,7 +88,20 @@ EXPOSE 8790
 # process; what it cannot see is the portal up with its database unreachable, serving an error on
 # every page. The app caches the verdict, so probing costs at most one query every couple of
 # seconds. start-period covers first-run schema creation on a cold database.
+#
+# This is a READINESS signal, not a liveness one: it goes red for a reason restarting the portal
+# cannot fix. Plain Docker only reports it, which is what we want. If you run this under something
+# that restarts unhealthy containers (Swarm, Kubernetes with this as a livenessProbe), point that at
+# the process instead, or an unreachable database becomes a restart loop on top of an outage.
+#
+# wget's exit code is what carries the verdict: GNU wget exits 8 on a 5xx and 0 on 200, so the 503
+# this endpoint returns when the database is unreachable marks the container unhealthy.
+#
+# The port follows RP_LISTEN rather than being hardcoded. Hardcoded, an operator who moves the
+# listener gets a container that reports unhealthy for ever while serving perfectly — a trap that
+# looks like the healthcheck working. ${RP_LISTEN##*:} takes the port off ":9000", "0.0.0.0:9000"
+# or a bare port alike, and falls back to the default when the variable is unset.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:8790/healthz || exit 1
+  CMD p="${RP_LISTEN##*:}"; wget -qO- "http://127.0.0.1:${p:-8790}/healthz" || exit 1
 # Start as root (the entrypoint fixes bind-mount ownership), then gosu drops to PUID/PGID (default 10001).
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
