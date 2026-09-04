@@ -4,6 +4,17 @@ One file per release, the same text as the annotated git tag (`git tag -n99 <tag
 still where a release is cut; these exist so the notes are readable in the repo and in a diff,
 which a tag message is not.
 
+Cutting one:
+
+```sh
+scripts/tag-release.sh v0.4.42 <commit>   # annotated, message = this note; commit defaults to HEAD
+git push origin v0.4.42                    # separate and deliberate: it is the irreversible step
+```
+
+The script refuses a version with no note, a tag that already exists, and — the mistake worth
+catching — a commit that does not contain its own release note, which is how a tag ends up
+describing a release the commit predates. It does not push.
+
 The 0.4 line is where external users, SSO and report versions landed. Read the upgrade section of
 whichever release you are moving TO — the portal is pre-1.0, so per semver each `0.y` bump is a
 major boundary, and a database has to reach the last release of a line before crossing one.
