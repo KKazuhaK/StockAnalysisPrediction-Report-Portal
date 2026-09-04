@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -151,4 +152,50 @@ func TestEditingFiresOnlyWhenTheWordsChange(t *testing.T) {
 	}
 	// And nothing else is queued behind it.
 	expectNoEvent(t, events, "anything beyond the one real edit")
+}
+
+// TestIngestEventReportsTheStoredVersion closes the gap between what the event says and what the row
+// holds. The store resolves an empty version to the default, so echoing the payload's raw field
+// described the report as version "" while the database said "default" — a difference a subscriber
+// comparing this event against a later read has no way to reconcile, and one that only appears for
+// the commonest ingest of all: the one that does not mention a version.
+func TestIngestEventReportsTheStoredVersion(t *testing.T) {
+	s := editorFixture(t)
+	s.st.CreateToken("ingest-tok", "test", "all", "")
+	events := eventSink(t, s)
+
+	post := func(body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/reports", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer ingest-tok")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		s.v1Ingest(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("ingest: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	// No version in the payload — the commonest shape, and the one that was wrong.
+	post(`{"symbol":"600519","date":"2026-09-04","rtype":"深度分析","title":"没写版本","body_md":"正文"}`)
+	ev := waitEvent(t, events, "an ingest with no version")
+	if ev["version"] != s.st.DefaultVersion() {
+		t.Errorf("event version = %v; the stored row carries %q", ev["version"], s.st.DefaultVersion())
+	}
+	// And it matches what a later read of that report would say.
+	var id int64
+	if err := s.st.queryRow(`SELECT id FROM reports WHERE title='没写版本'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	rep, _ := s.st.GetNew(id, nil)
+	if rep == nil || fmt.Sprint(ev["version"]) != rep.Version {
+		t.Errorf("event says %v, the report says %q — a subscriber cannot reconcile that", ev["version"], rep.Version)
+	}
+
+	// An explicit version still travels verbatim.
+	post(`{"symbol":"600519","date":"2026-09-04","rtype":"深度分析","title":"写了版本","body_md":"正文","version":"对外版"}`)
+	ev = waitEvent(t, events, "an ingest naming a version")
+	if ev["version"] != "对外版" {
+		t.Errorf("event version = %v; want the one the payload named", ev["version"])
+	}
 }
