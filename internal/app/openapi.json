@@ -1871,23 +1871,31 @@
           "meta"
         ],
         "operationId": "healthz",
-        "summary": "健康探针（公开）",
+        "summary": "健康探针（公开）——同时检查数据库",
         "x-scope": "public",
         "security": [],
         "x-i18n": {
           "en-US": {
-            "summary": "Liveness probe, public",
+            "summary": "Health probe, public — checks the database too",
+            "description": "200 means the process and its database are both answering; 503 means the database is unreachable. The verdict is cached for about two seconds, so frequent probing does not become database load. A failure returns only \"unreachable\", never the driver's message, which can carry the DSN's host, user and database name.",
             "responses": {
               "200": {
-                "description": "ok"
+                "description": "process and database both answering"
+              },
+              "503": {
+                "description": "database unreachable; this instance should not receive traffic"
               }
             }
           },
           "zh-TW": {
-            "summary": "健康探針（公開）",
+            "summary": "健康探針（公開）——同時檢查資料庫",
+            "description": "回傳 200 表示行程與資料庫都正常；資料庫連不上時回傳 503。結果在伺服端快取約 2 秒，所以高頻探測不會變成資料庫壓力。失敗時只回 `\"unreachable\"`，不回驅動的原始錯誤——那可能帶出 DSN 裡的主機、使用者與資料庫名。",
             "responses": {
               "200": {
-                "description": "ok"
+                "description": "行程與資料庫均正常"
+              },
+              "503": {
+                "description": "資料庫連不上；此實例不應再接收流量"
               }
             }
           }
@@ -1900,16 +1908,29 @@
         ],
         "responses": {
           "200": {
-            "description": "ok",
+            "description": "进程与数据库均正常",
             "content": {
               "application/json": {
                 "example": {
-                  "ok": true
+                  "ok": true,
+                  "db": "ok"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库连不上；此实例不应再接收流量",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": false,
+                  "db": "unreachable"
                 }
               }
             }
           }
-        }
+        },
+        "description": "返回 200 表示进程和数据库都正常；数据库连不上时返回 503。结果在服务端缓存约 2 秒，所以高频探测不会变成数据库压力。失败时只回 `\"unreachable\"`，不回驱动的原始报错——那可能带出 DSN 里的主机、用户和库名。"
       }
     }
   }
