@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { App, Button, Card, Empty, Popconfirm, Space, Table, Tag, Typography, Upload } from 'antd'
+import { App, Button, Card, Empty, Input, Popconfirm, Space, Table, Tag, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { AppstoreOutlined, CloudDownloadOutlined, DeleteOutlined, ShopOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -25,6 +25,10 @@ export default function AppsAdminPage() {
   const [uploading, setUploading] = useState(false)
   const [market, setMarket] = useState<AppMarketEntry[] | null>(null)
   const [marketLoading, setMarketLoading] = useState(false)
+  // Where the market reads its index. The constant behind it has promised since the market shipped
+  // that an admin could repoint it; nothing could write the setting, and the value was never shown.
+  const [indexUrl, setIndexUrl] = useState('')
+  const [savingIndex, setSavingIndex] = useState(false)
   const [pending, setPending] = useState<PendingInstall | null>(null)
   const [confirming, setConfirming] = useState(false)
 
@@ -62,6 +66,7 @@ export default function AppsAdminPage() {
     try {
       const r = await api.get<AppMarketResp>('/api/admin/apps/market')
       setMarket(r.apps || [])
+      setIndexUrl(r.index_url || '')
     } catch (e) {
       message.error(t('apps.marketError', { error: e instanceof Error ? e.message : String(e) }))
     } finally {
@@ -240,6 +245,31 @@ export default function AppsAdminPage() {
       >
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('apps.marketHint')}</Typography.Text>
+          <Space.Compact style={{ width: '100%', maxWidth: 720 }}>
+            <Input
+              value={indexUrl}
+              onChange={(e) => setIndexUrl(e.target.value)}
+              placeholder={t('apps.marketIndexHint')}
+              aria-label={t('apps.marketIndex')}
+            />
+            <Button
+              loading={savingIndex}
+              onClick={() => {
+                setSavingIndex(true)
+                api
+                  .post<{ index_url: string }>('/api/admin/apps/market/index', { index_url: indexUrl })
+                  .then((r) => {
+                    setIndexUrl(r.index_url || '')
+                    message.success(t('common.saved'))
+                    if (market) fetchMarket()
+                  })
+                  .catch((e) => message.error(errText(e, t)))
+                  .finally(() => setSavingIndex(false))
+              }}
+            >
+              {t('common.save')}
+            </Button>
+          </Space.Compact>
           {market === null ? null : market.length === 0 ? (
             <Empty description={t('apps.marketEmpty')} />
           ) : (

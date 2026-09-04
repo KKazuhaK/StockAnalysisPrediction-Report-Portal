@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type Key } from 'react'
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -198,6 +199,20 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
         ) : null
       }
     >
+      {/* A job the queue calls "running" is not necessarily running HERE: after a restart the row
+          survives while the goroutine driving it does not, and the portal reconciles it by polling
+          rather than by executing. The server has always computed this; nothing rendered it, so the
+          one signal that tells an admin whether a stuck job is stuck in THIS process or merely
+          being watched was unreachable. Only said when it is worth saying — a running job. */}
+      {detail && detail.job.status === 'running' && !detail.running_in_process && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={t('queue.notInProcess')}
+          description={t('queue.notInProcessHint')}
+        />
+      )}
       {detail && (
         <Table
           rowKey="id"

@@ -502,6 +502,8 @@ export interface CleanupRun {
 
 export interface BatchConfig {
   max_jobs: number
+  /** The per-job worker ceiling every requested concurrency is clamped to (ADR 0001). */
+  max_concurrency?: number
   reserved_slots: number
   ticket_period_days: number
   default_priority: number
@@ -770,6 +772,12 @@ export interface RecurringDetail extends RecurringTask {
 
 export interface RecurringTasksResp {
   tasks: RecurringTask[]
+  /**
+   * The per-job worker ceiling the server clamps every task's concurrency to (ADR 0001). It rides
+   * this list because the recurring form is the only one offering a concurrency picker, and that
+   * picker must not offer more than the server will honour.
+   */
+  maxConcurrency?: number
 }
 
 // A login-page SSO button (ADR 0023). Deliberately minimal — the public endpoint exposes no
@@ -829,6 +837,12 @@ export interface SSOProvidersResp {
    * the public URL and the default slug, and the setup guide needs them before anything is stored.
    */
   sp_defaults?: Record<string, { sp_entity_id?: string; sp_acs_url?: string; redirect_url?: string }>
+  /**
+   * Whether an SSO flow may reach an RFC1918 address. Off by default: an IdP URL is admin-supplied
+   * and points wherever it says, so the portal refuses private targets rather than become a way to
+   * probe the host's own network. On for the portal whose IdP genuinely is on the intranet.
+   */
+  allow_private?: boolean
 }
 
 // One group rule. Order in the array is the contract — first match wins — so `ord` and `id` are
