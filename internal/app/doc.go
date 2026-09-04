@@ -36,6 +36,10 @@
 //   - migrate.go schemaBaseline + requireSchemaBaseline (the major-boundary upgrade gate)
 //     and ensureColumns (additive-column reconcile). The v0.1→v0.2 fold step that used to
 //     sit beside it was folded into the base schema at the v0.3 boundary, per CLAUDE.md.
+//   - backup.go  whole-database dump and restore behind the `backup` / `restore` subcommands
+//     (ADR 0027). One JSON Lines format for both drivers, so a dump is portable between them;
+//     the table list is read from baseSchemaStmts, so a new table is covered the day it is
+//     declared. Restore without --force is a dry run.
 //
 // Reports: grouping, reading, export
 //   - group.go      collapse a run (symbol+date) into one card

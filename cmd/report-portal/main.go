@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -51,6 +53,29 @@ func main() {
 			}
 			fmt.Printf("user saved: %s (role=%s)\n", os.Args[2], role)
 			return
+		case "backup": // report-portal backup <file|-> — dump the whole database to a portable file
+			path := "-"
+			if len(os.Args) > 2 {
+				path = os.Args[2]
+			}
+			tables, rows, err := app.Backup(configPath(), path)
+			if err != nil {
+				log.Fatalf("backup failed: %v", err)
+			}
+			// To stderr: stdout may be the dump itself.
+			fmt.Fprintf(os.Stderr, "backup: %d tables, %d rows -> %s\n", tables, rows, path)
+			return
+		case "restore": // report-portal restore <file|-> [--force] — load a dump, replacing everything
+			if len(os.Args) < 3 {
+				log.Fatal("usage: report-portal restore <file|-> [--force]   (without --force it is a dry run)")
+			}
+			force := len(os.Args) > 3 && os.Args[3] == "--force"
+			rep, err := app.Restore(configPath(), os.Args[2], force)
+			if err != nil {
+				log.Fatalf("restore failed: %v", err)
+			}
+			printRestore(rep, force)
+			return
 		case "recompute-kinds": // report-portal recompute-kinds — re-derive every report's top-level kind after a taxonomy change
 			n, err := app.RecomputeKinds(configPath())
 			if err != nil {
@@ -68,6 +93,38 @@ func main() {
 		}
 	}
 	app.RunServer(configPath())
+}
+
+// printRestore reports what happened, or — without --force — what would have. The dry run is the
+// default on purpose: restore replaces every table, and that should never be one typo away.
+func printRestore(rep *app.RestoreReport, force bool) {
+	verb := "would load"
+	if force {
+		verb = "loaded"
+	}
+	fmt.Printf("backup written %s by %s (%s)\n", rep.Header.CreatedAt, rep.Header.AppVersion, rep.Header.Driver)
+	tables := make([]string, 0, len(rep.Rows))
+	for t := range rep.Rows {
+		tables = append(tables, t)
+	}
+	sort.Strings(tables)
+	for _, t := range tables {
+		line := fmt.Sprintf("  %-24s %8d", t, rep.Rows[t])
+		if n := rep.Existing[t]; n > 0 {
+			line += fmt.Sprintf("   (replaces %d)", n)
+		}
+		if cols := rep.SkipCols[t]; len(cols) > 0 {
+			line += "   [not in the backup, left at default: " + strings.Join(cols, ", ") + "]"
+		}
+		fmt.Println(line)
+	}
+	fmt.Printf("%s %d rows into %d of the backup's %d tables\n", verb, rep.Total, len(rep.Rows), len(rep.Header.Tables))
+	if force {
+		fmt.Printf("restore complete; %d existing rows were replaced\n", rep.Replaced)
+		return
+	}
+	fmt.Printf("DRY RUN — nothing was written. This would DELETE %d existing rows.\n", rep.Replaced)
+	fmt.Println("Re-run with --force to apply, after stopping the portal.")
 }
 
 func configPath() string {

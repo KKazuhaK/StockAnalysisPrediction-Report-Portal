@@ -23,6 +23,14 @@ trusted_proxies: []
 # The auto-generated config already fills this in randomly; usually no need to change it.
 secret_key: "" # Required when copying this file: generate with `openssl rand -hex 32`.
 
+# Rotating secret_key: put the OLD key here, restart once, then delete this line.
+#
+# SSO secrets are encrypted with a data key that is itself wrapped under secret_key. Changing
+# secret_key alone leaves that wrapping unopenable, and the portal refuses to start SSO rather than
+# mint a new one (which would orphan every stored secret). Naming the old key lets one boot re-wrap
+# it — the secrets themselves are untouched and nothing has to be re-entered.
+# secret_key_previous: "the key you rotated away from"
+
 # Database: sqlite (default for the standalone binary, single file, zero deps) or postgres.
 # The Docker stack defaults to Postgres via env vars (see docker-compose.yml).
 db_driver: "sqlite"
@@ -31,4 +39,5 @@ db_path: "data/portal.db"
 # db_dsn: "postgres://user:pass@127.0.0.1:5432/reports?sslmode=disable"
 #
 # Env overrides (take precedence over this file; used by the Docker image):
-#   RP_LISTEN, RP_SECRET_KEY, RP_TRUSTED_PROXIES, RP_DB_DRIVER, RP_DB_DSN, RP_DB_PATH
+#   RP_LISTEN, RP_SECRET_KEY, RP_SECRET_KEY_PREVIOUS, RP_TRUSTED_PROXIES, RP_DB_DRIVER, RP_DB_DSN,
+#   RP_DB_PATH

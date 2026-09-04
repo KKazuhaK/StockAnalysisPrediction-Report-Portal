@@ -10,6 +10,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.46](v0.4.46.md) | 2026-09-04 | A way to copy the database, and a way back from a rotated key |
 | [v0.4.45](v0.4.45.md) | 2026-09-04 | Settings that were read and never written |
 | [v0.4.44](v0.4.44.md) | 2026-09-03 | A corrected report says so, and a drag stops losing things |
 | [v0.4.43](v0.4.43.md) | 2026-09-02 | A report remembers what it used to say |
