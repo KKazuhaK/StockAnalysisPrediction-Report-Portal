@@ -17,12 +17,24 @@ import (
 
 // Config is the infrastructure config: listen port, session key, database.
 type Config struct {
-	Listen         string   `yaml:"listen"`
-	SecretKey      string   `yaml:"secret_key"`
-	TrustedProxies []string `yaml:"trusted_proxies"` // CIDRs/IPs allowed to supply X-Forwarded-For
-	DBDriver       string   `yaml:"db_driver"`       // "sqlite" (default) | "postgres"
-	DBPath         string   `yaml:"db_path"`         // sqlite file path
-	DBDSN          string   `yaml:"db_dsn"`          // postgres DSN
+	Listen    string `yaml:"listen"`
+	SecretKey string `yaml:"secret_key"`
+	// SecretKeyPrevious is the key secret_key was rotated AWAY from, supplied for one boot so the
+	// sealed-secret keyring can be re-wrapped under the new one (ADR 0023, secretbox.go).
+	//
+	// It exists because the keyring is envelope-encrypted: stored secrets are encrypted with a data
+	// key, and only that data key is wrapped under secret_key — so a rotation should re-wrap one row
+	// rather than re-encrypt everything. That was the stated design and nothing implemented it, so
+	// rotating secret_key made the data key permanently unopenable: SSO stopped working and no page
+	// in the product could repair it, because saving a secret needs the same key that will not open.
+	//
+	// Set it beside the new secret_key, restart once, and remove it. Leaving it set is not dangerous
+	// but it is a second live key on disk, so the portal says so on every boot.
+	SecretKeyPrevious string   `yaml:"secret_key_previous"`
+	TrustedProxies    []string `yaml:"trusted_proxies"` // CIDRs/IPs allowed to supply X-Forwarded-For
+	DBDriver          string   `yaml:"db_driver"`       // "sqlite" (default) | "postgres"
+	DBPath            string   `yaml:"db_path"`         // sqlite file path
+	DBDSN             string   `yaml:"db_dsn"`          // postgres DSN
 }
 
 // DBSource returns the connection source for OpenStore (sqlite=file path, postgres=DSN).
@@ -54,6 +66,8 @@ func writeDefaultConfig(path string) error {
 # etc. are all managed in the web UI and stored in the database.
 listen: ":8790"
 secret_key: "%s"          # session signing key, randomly generated
+# Rotating secret_key: put the OLD key in secret_key_previous, restart once, then delete that line.
+# Without it the SSO secret keyring cannot be reopened and the portal refuses to guess.
 db_driver: "sqlite"        # sqlite (default) | postgres
 db_path: "data/portal.db"
 # To use Postgres: set db_driver to postgres and fill in db_dsn
@@ -82,6 +96,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("RP_SECRET_KEY"); v != "" {
 		c.SecretKey = v
+	}
+	if v := os.Getenv("RP_SECRET_KEY_PREVIOUS"); v != "" {
+		c.SecretKeyPrevious = v
 	}
 	if v := os.Getenv("RP_TRUSTED_PROXIES"); v != "" {
 		c.TrustedProxies = splitNonEmpty(v)

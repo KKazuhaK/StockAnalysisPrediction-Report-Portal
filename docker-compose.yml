@@ -25,6 +25,13 @@ services:
       POSTGRES_DB: reports
       TZ: Asia/Shanghai
     volumes:
+      # NOTE: `docker compose down -v` deletes this volume, and the database with it. Take a dump
+      # first — it is one command and it works on both drivers:
+      #   docker compose exec report-portal /app/report-portal backup - | gzip > dump.gz
+      # and back:
+      #   zcat dump.gz | docker compose exec -T report-portal /app/report-portal restore - --force
+      # Keep ./config beside it: secret_key lives there and is NOT in the dump, so a backup without
+      # it restores everything except working SSO. See docs/adr/0027-backup-and-restore.md.
       - rp-pgdata:/var/lib/postgresql/data
     # Not published to the host — only reachable on the internal compose network.
     healthcheck:

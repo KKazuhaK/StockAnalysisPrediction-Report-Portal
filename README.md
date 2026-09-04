@@ -47,6 +47,56 @@ db_path: "data/portal.db"
 # db_dsn: "postgres://user:pass@127.0.0.1:5432/reports?sslmode=disable"
 ```
 
+### 备份与恢复
+
+门户的一切都在库里——账号、分组、报告正文、人工版与修订历史、应用、令牌、Webhook、设置。所以有两条命令：
+
+```bash
+report-portal backup dump.jsonl          # 导出整库（"-" 表示写到标准输出）
+report-portal backup - | gzip > dump.gz  # 想压缩就自己接一段管道
+
+report-portal restore dump.jsonl         # 默认是试运行：只校验+报数，什么都不写
+report-portal restore dump.jsonl --force # 真的恢复（会清空并替换整库，先停掉门户）
+```
+
+Docker 里这么用（注意 compose 的 `down -v` 会连库一起删）：
+
+```bash
+docker compose exec report-portal /app/report-portal backup - | gzip > dump-$(date +%F).gz
+zcat dump-2026-09-04.gz | docker compose exec -T report-portal /app/report-portal restore - --force
+```
+
+几点值得知道：
+
+- **一个格式，两种驱动**。同一个文件在 SQLite 和 Postgres 之间可以互导，所以「用大了，搬去 PG」和
+  「搬回单文件」都只是导一次、恢复一次。
+- **不带 `--force` 就是试运行**：会完整读一遍、校验一遍、报出会加载多少行、会删掉多少行，但一个字都不写。
+  想确认「这份备份还能不能用」，在跑着的机器上直接跑这条就行。
+- **恢复是替换，不是合并**，而且整个过程在一个事务里——文件中途断了，库还是原样。
+- **备份文件本身是机密**（含密码哈希、令牌哈希），落盘权限是 `0600`。SSO 密钥在里面是密文，
+  解它的 `secret_key` 在 `config.yaml` 里、**不在备份里**——所以 `config/` 目录要跟备份一起存，
+  不然恢复出来的 SSO 是打不开的。
+
+详见 [ADR 0027](docs/adr/0027-backup-and-restore.md)。
+
+### 轮换 secret_key
+
+`secret_key` 除了签会话，还包着 SSO 密钥环——存下来的 OIDC/SAML 密钥用一把数据密钥加密，而那把数据密钥被
+`secret_key` 派生的密钥包起来。所以直接改 `secret_key` 会打不开密钥环；程序会**明确报错并且什么都不改**，
+而不是重新生成一把（那会把已经存下的密钥全部变成永久无法解密）。
+
+正确做法是把旧的那把一起写上，重启一次，然后删掉：
+
+```yaml
+secret_key: "新的长随机串"
+secret_key_previous: "旧的那把"   # 或环境变量 RP_SECRET_KEY_PREVIOUS
+```
+
+重启后只重新包了**一行**——数据密钥本身没变，任何已存密钥都不用重新录入。日志会提示可以删掉
+`secret_key_previous`；留着不危险，但那是磁盘上的第二把活密钥，所以每次启动都会提醒一次。
+旧密钥彻底丢了的话，只能删掉 `meta` 表里的 `keyring_salt` / `keyring_wrapped_dek` 两行再重新录入 SSO 密钥。
+换 `secret_key` 同时也会让所有人的登录会话失效，需要重新登录。
+
 ### Postgres
 
 内部小用 SQLite 即可（单文件零依赖）。要多实例共享/上规模/跟 Dify 的 PG 合并，改 `db_driver: postgres` + `db_dsn` 即可，代码不变（已用真 PG 18 验证）。
@@ -100,7 +150,7 @@ cd web && npm run build              # 产出 internal/web/dist/
 go run ./cmd/report-portal           # 访问 :8790，SPA 由二进制内嵌服务
 ```
 
-辅助命令：`go run ./cmd/report-portal hashpw '密码'`（生成 bcrypt）、`... adduser <名> <密码> admin`（兜底建管理员）、`... fetchnames`（抓全量 A 股名称）、`... version`（版本/commit/构建时间）。
+辅助命令：`go run ./cmd/report-portal hashpw '密码'`（生成 bcrypt）、`... adduser <名> <密码> admin`（兜底建管理员）、`... fetchnames`（抓全量 A 股名称）、`... backup <文件|->` / `... restore <文件|-> [--force]`（整库导出/恢复，见上文「备份与恢复」）、`... recompute-kinds`（改过分类后重算 kind）、`... freeze-names`（把当前名称固化到历史报告上）、`... version`（版本/commit/构建时间）。
 
 ## 发布
 
