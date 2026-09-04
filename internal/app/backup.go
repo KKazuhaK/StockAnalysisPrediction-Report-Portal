@@ -103,12 +103,24 @@ func Backup(cfgPath, path string) (tables int, rows int64, err error) {
 	if path != "-" {
 		// 0600: a dump carries password hashes, API token hashes and the sealed SSO keyring. The
 		// SSO secrets are useless without config secret_key, which is NOT in here — but the rest is
-		// plenty, so the file is created unreadable to anyone else and stays that way.
+		// plenty, so the file must not be readable by anyone else.
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			return 0, 0, err
 		}
 		defer f.Close()
+		// The mode above applies only when O_CREATE actually creates the file. Overwriting an
+		// existing one keeps whatever mode it already had — which is precisely the shape of a
+		// nightly script writing to the same path forever, so the guarantee has to be made again
+		// here or it is a guarantee about the first run only.
+		//
+		// Fatal rather than a warning: the promise is that this file is not readable by others, and
+		// a backup tool that quietly writes password hashes world-readable because a chmod failed
+		// has broken the one property it was asked for. A warning in a cron job is not read.
+		if err := f.Chmod(0o600); err != nil {
+			return 0, 0, fmt.Errorf("cannot make %s readable only by you (it carries password and "+
+				"token hashes): %w", path, err)
+		}
 		out = f
 	}
 	w := bufio.NewWriterSize(out, 1<<16)

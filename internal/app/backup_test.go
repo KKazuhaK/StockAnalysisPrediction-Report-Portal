@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -430,5 +432,58 @@ func TestRestoreAcceptsADumpWithoutTheField(t *testing.T) {
 	}
 	if n := scalar[int](t, dst, `SELECT COUNT(*) FROM reports`); n != 2 {
 		t.Errorf("reports = %d; want 2", n)
+	}
+}
+
+// TestBackupFileIsNotReadableByOthers pins a promise the ADR makes and the code only half kept: a
+// dump carries bcrypt password hashes and API token hashes, and the 0600 passed to OpenFile applies
+// only when O_CREATE actually creates the file. Overwriting an existing one kept whatever mode it
+// already had — which is exactly the shape of a nightly script writing to the same path forever, so
+// the guarantee held for the first run and no other.
+func TestBackupFileIsNotReadableByOthers(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfg, []byte("secret_key: \"0123456789abcdef0123456789abcdef\"\n"+
+		"db_driver: \"sqlite\"\ndb_path: \""+filepath.Join(dir, "portal.db")+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		name string
+		pre  os.FileMode // 0 = the file does not exist yet
+	}{
+		{"a new file", 0},
+		{"overwriting a group-readable one", 0o644},
+		{"overwriting a world-writable one", 0o666},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(dir, "dump-"+strings.ReplaceAll(c.name, " ", "-")+".jsonl")
+			if c.pre != 0 {
+				if err := os.WriteFile(path, []byte("stale\n"), c.pre); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, c.pre); err != nil { // WriteFile's mode is umask-masked
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := Backup(cfg, path); err != nil {
+				t.Fatalf("Backup: %v", err)
+			}
+			fi, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if perm := fi.Mode().Perm(); perm != 0o600 {
+				t.Errorf("dump is mode %o; it carries password hashes and must be 0600", perm)
+			}
+			// And it really does carry them, so the assertion above is about something.
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), "password_hash") {
+				t.Error("the fixture dumped no users, so this test is not guarding what it claims")
+			}
+		})
 	}
 }

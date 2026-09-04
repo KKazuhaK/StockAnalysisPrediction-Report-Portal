@@ -112,7 +112,12 @@ path is covered by its own integration tests behind `TEST_POSTGRES_DSN`.
 ## Consequences
 
 - **A dump is a secret.** It carries password hashes, API token hashes (and any legacy plaintext
-  token), and the wrapped keyring. Files are created `0600`. The SSO secrets inside it are sealed
+  token), and the wrapped keyring. Files are `0600` — set explicitly after opening, not only via
+  `O_CREATE`'s mode, because that mode applies only when the file is actually created: overwriting an
+  existing one keeps whatever mode it already had, which is exactly the shape of a nightly script
+  writing to the same path forever. A failure to set it is fatal rather than a warning; a backup tool
+  that quietly writes password hashes world-readable has broken the one property it was asked for,
+  and a warning in a cron job is not read. The SSO secrets inside it are sealed
   under a data key that is itself wrapped under `secret_key`, which is in `config.yaml` and *not* in
   the dump — so a stolen backup does not yield them. That also means **a backup without a copy of
   `config.yaml` cannot restore working SSO**, and the README says so beside the command.
