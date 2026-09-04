@@ -116,6 +116,17 @@ path is covered by its own integration tests behind `TEST_POSTGRES_DSN`.
   under a data key that is itself wrapped under `secret_key`, which is in `config.yaml` and *not* in
   the dump — so a stolen backup does not yield them. That also means **a backup without a copy of
   `config.yaml` cannot restore working SSO**, and the README says so beside the command.
+- **A backup pauses writes on SQLite, briefly.** The dump is one read transaction, and SQLite's pool
+  here is a single connection, so nothing else writes while it runs. Measured: **1.2 seconds for
+  50,000 reports** with realistic bodies (~41k rows/s). That is a pause, not an outage, and it buys
+  the snapshot — a table-by-table read of a moving database is not a backup of anything. Postgres has
+  no such pause: its dump runs at repeatable-read alongside everything else.
+
+- **A dump is about the size of your report bodies.** 50,000 reports came to 307 MiB uncompressed —
+  the format adds almost nothing over the text itself, which is the intent, but it does mean an
+  operator writing straight to a file gets a large one. `backup - | gzip` is the reason `-` exists,
+  and prose compresses well.
+
 - **`restore` is offline.** It must run with the portal stopped. Nothing enforces that — it would
   mean a lock the CLI does not otherwise have — so it is stated in the output of every dry run.
 - **It is not a point-in-time recovery system.** One file, one moment. Deployments that need more
