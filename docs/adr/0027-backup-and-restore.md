@@ -127,6 +127,19 @@ path is covered by its own integration tests behind `TEST_POSTGRES_DSN`.
   operator writing straight to a file gets a large one. `backup - | gzip` is the reason `-` exists,
   and prose compresses well.
 
+- **A restore is slower than the dump, and silent while it runs.** Measured on the same 50,000
+  reports: **7.6 seconds** to load (~6.6k rows/s), against 1.2 to dump — one INSERT per row inside a
+  single transaction. A 200,000-report database is therefore about half a minute of nothing on the
+  terminal, on a command that is replacing the database, which is exactly the situation that invites
+  a Ctrl-C.
+
+  Interrupting it is safe and that is worth saying out loud: the transaction is never committed, so
+  the next process to open the database rolls it back and nothing has changed. The dry run is the
+  other half of the answer — 1.7 seconds over the same file — so the question "will this file load?"
+  never requires the slow, destructive form. Per-row progress output was considered and skipped: it
+  is a parameter threaded through two call sites to narrate an operation that runs once in a blue
+  moon and already has a fast rehearsal.
+
 - **`restore` is offline.** It must run with the portal stopped. Nothing enforces that — it would
   mean a lock the CLI does not otherwise have — so it is stated in the output of every dry run.
 - **It is not a point-in-time recovery system.** One file, one moment. Deployments that need more
