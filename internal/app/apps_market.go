@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -34,8 +35,40 @@ type appMarketEntry struct {
 	URL         string   `json:"url"`  // absolute bundle URL (overrides Path when set)
 }
 
+const setAppMarketIndexURL = "app_market_index_url"
+
 func (s *Server) appMarketIndexURL() string {
-	return s.st.GetSetting("app_market_index_url", defaultAppMarketIndexURL)
+	if u := strings.TrimSpace(s.st.GetSetting(setAppMarketIndexURL, "")); u != "" {
+		return u
+	}
+	return defaultAppMarketIndexURL
+}
+
+// apiAppMarketIndexSave repoints the market at another index, which the constant above has promised
+// an admin could do since the market shipped — with nothing anywhere able to write the setting.
+//
+// An empty value returns to the built-in index rather than storing a blank, so "undo" is expressible
+// without knowing the default URL by heart. The URL goes through the same SSRF guard the fetch
+// itself uses, so a saved value cannot be a probe of the host's own network.
+func (s *Server) apiAppMarketIndexSave(w http.ResponseWriter, r *http.Request, user string) {
+	var in struct {
+		IndexURL *string `json:"index_url"`
+	}
+	if err := readJSON(r, &in); err != nil || in.IndexURL == nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	next := strings.TrimSpace(*in.IndexURL)
+	if next != "" {
+		if err := newSafeClient(false).checkURL(next); err != nil {
+			jsonErrorCode(w, http.StatusBadRequest, "app_market_url_refused", "该地址不可用："+err.Error())
+			return
+		}
+	}
+	s.st.SetSetting(setAppMarketIndexURL, next)
+	s.recordChange(r, user, AuditPolicyChange, "app_market_index", "",
+		map[string]any{"index_url": firstNonEmpty(next, defaultAppMarketIndexURL)})
+	writeJSON(w, map[string]any{"ok": true, "index_url": s.appMarketIndexURL()})
 }
 
 // fetchURL downloads up to `limit` bytes from rawURL over an HTTP GET. The index is

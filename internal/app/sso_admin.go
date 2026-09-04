@@ -64,10 +64,33 @@ func (s *Server) apiAdminSSOProviders(w http.ResponseWriter, r *http.Request, us
 	// one, saving the portal side is step four. Sending them only per stored row left a portal that
 	// had never touched SSO showing the guide with two empty boxes.
 	writeJSON(w, map[string]any{"providers": out, "public_url": s.publicBaseURL(),
+		// Whether the SSRF guard lets a flow reach a private address. safefetch's own comment calls
+		// this "a setting" because a self-hosted IdP is the common case — but nothing could ever
+		// write it, so the escape hatch it describes was unreachable and an intranet IdP simply
+		// could not be configured.
+		"allow_private": s.ssoAllowPrivate(),
 		"sp_defaults": map[string]any{
 			"saml": map[string]any{"sp_entity_id": s.samlEntityID(defaultSAMLSlug), "sp_acs_url": s.samlACSURL(defaultSAMLSlug)},
 			"oidc": map[string]any{"redirect_url": s.oidcRedirectURL(defaultOIDCSlug)},
 		}})
+}
+
+// apiAdminSSOAllowPrivate throws the SSRF escape hatch, and is deliberately its own endpoint rather
+// than a field on the provider form: it is not a property of any one provider, and it widens what
+// EVERY outbound SSO call may reach. Off by default, and turning it on is recorded — a change to
+// what the portal may connect to belongs in the log next to the grant changes.
+func (s *Server) apiAdminSSOAllowPrivate(w http.ResponseWriter, r *http.Request, user string) {
+	var in struct {
+		Allow *bool `json:"allow"`
+	}
+	if err := readJSON(r, &in); err != nil || in.Allow == nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	s.st.SetSetting(setSSOAllowPrivate, boolSetting(*in.Allow))
+	s.recordChange(r, user, AuditPolicyChange, "sso_allow_private", "",
+		map[string]any{"allow": *in.Allow})
+	writeJSON(w, map[string]any{"ok": true, "allow_private": *in.Allow})
 }
 
 // ssoProviderInput is the write shape. Secrets are pointers so "absent" (keep) is distinct from

@@ -29,6 +29,11 @@ import (
 // so a large cap only bounds a genuinely stuck run, not a healthy long one.
 const difyRunTimeout = 240 * time.Minute
 
+// maxBatchConcurrencyCeiling bounds what an admin may set the per-job ceiling to. Wide enough for
+// any real workflow and narrow enough that a typo cannot express a number nobody meant — the same
+// shape every other admin scalar uses.
+const maxBatchConcurrencyCeiling = 100
+
 // batchMaxConcurrency is the admin-set ceiling a per-job concurrency is clamped to.
 func (s *Server) batchMaxConcurrency() int {
 	n, err := strconv.Atoi(s.st.GetSetting("batch_max_concurrency", "10"))

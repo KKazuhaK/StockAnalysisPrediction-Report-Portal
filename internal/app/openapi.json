@@ -453,6 +453,18 @@
           "subtype": {
             "type": "string"
           },
+          "version": {
+            "type": "string",
+            "description": "版本（ADR 0024）：同一篇分析的哪一种写法。每次读取都会返回；留空的旧数据即默认版本。「manual」是门户中手写的报告。",
+            "x-i18n": {
+              "en-US": {
+                "description": "The written form of this analysis (ADR 0024). Returned on every read; an empty value on older rows means the default version. \"manual\" is a report written by hand in the portal."
+              },
+              "zh-TW": {
+                "description": "版本（ADR 0024）：同一篇分析的哪一種寫法。每次讀取都會返回；留空的舊資料即預設版本。「manual」是入口網站中手寫的報告。"
+              }
+            }
+          },
           "title": {
             "type": "string"
           },
