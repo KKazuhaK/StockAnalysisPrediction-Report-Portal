@@ -52,3 +52,32 @@ describe('a clickable card', () => {
     expect(open).not.toHaveBeenCalled()
   })
 })
+
+// The label is optional, and getting that wrong is subtle: aria-label REPLACES the visible name
+// rather than adding to it, so supplying one on an element that already shows its own text makes
+// the control announce something different from what it reads.
+describe('naming a clickable element', () => {
+  it('lets its own text be the name when no label is given', () => {
+    render(
+      <a {...clickable(vi.fn())}>
+        Show unchanged
+      </a>,
+    )
+    expect(screen.getByRole('button', { name: 'Show unchanged' })).toBeTruthy()
+  })
+
+  it('takes a label when there is no text to read', () => {
+    render(<img {...clickable(vi.fn(), '换一张')} alt="captcha" />)
+    expect(screen.getByRole('button', { name: '换一张' })).toBeTruthy()
+  })
+
+  it('makes an href-less anchor focusable, which it is not on its own', async () => {
+    const open = vi.fn()
+    render(<a {...clickable(open)}>Open the report</a>)
+    await userEvent.tab()
+    const link = screen.getByRole('button', { name: 'Open the report' })
+    expect(document.activeElement).toBe(link)
+    await userEvent.keyboard('{Enter}')
+    expect(open).toHaveBeenCalledTimes(1)
+  })
+})
