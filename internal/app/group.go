@@ -205,3 +205,60 @@ func buildGroups(reps []Rep, nameOf func(string) string) []Group {
 	})
 	return out
 }
+
+// internalTypes are report types a pipeline writes for its own use rather than for a
+// reader: cache entries, handoff blobs, and the like. They live in the reports table
+// because that is the only durable store the portal exposes, but they are plumbing, not
+// reports, and showing them buries the real ones under a 未分类 tab on every stock.
+//
+// 公司基础快照 is the per-symbol, per-day facts snapshot that 获取公司基本信息 writes so its
+// thirteen callers do not each spend ~47s re-fetching the same numbers from iFind.
+//
+// This hides them from the browse feed and the stock page ONLY. The v1 API
+// (v1QueryReports) still returns them, because that is how the producing workflow reads
+// its own cache back — filtering there would silently disable the cache.
+var internalTypes = map[string]bool{
+	"公司基础快照": true,
+}
+
+// isInternalReport reports whether r is pipeline plumbing that no reader should see.
+func isInternalReport(r Rep) bool { return internalTypes[r.RType] }
+
+// dropInternal returns reps without the plumbing entries. It keeps the input order and
+// returns the input untouched when there is nothing to drop, so the common path does not
+// copy the slice.
+func dropInternal(reps []Rep) []Rep {
+	n := 0
+	for _, r := range reps {
+		if isInternalReport(r) {
+			n++
+		}
+	}
+	if n == 0 {
+		return reps
+	}
+	out := make([]Rep, 0, len(reps)-n)
+	for _, r := range reps {
+		if !isInternalReport(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// pickableTypes drops the plumbing types from a subtype list offered to a human. Writing a
+// report under a cache type would land it in that cache's namespace: the identity key is
+// symbol|date|subtype|title, so a hand-written 公司基础快照 can be handed back to the workflow
+// that thinks it is reading its own snapshot.
+//
+// Type management (the admin page) deliberately still lists them — an admin seeing what
+// exists in the data is useful; a writer being able to pick one is not.
+func pickableTypes(all []string) []string {
+	out := make([]string, 0, len(all))
+	for _, t := range all {
+		if !internalTypes[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
