@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { SiteProvider, useSite } from './site'
 
 const apiMock = vi.hoisted(() => ({
@@ -12,7 +13,9 @@ vi.mock('./api/client', () => ({
 }))
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (k: string) => k }),
+  // i18n as well as t: SiteProvider stamps the document language from it, which is what a screen
+  // reader picks its pronunciation from.
+  useTranslation: () => ({ t: (k: string) => k, i18n: { language: 'en-US' } }),
 }))
 
 function SiteProbe() {
@@ -54,9 +57,11 @@ describe('SiteProvider', () => {
     })
 
     render(
-      <SiteProvider>
-        <SiteProbe />
-      </SiteProvider>,
+      <MemoryRouter>
+        <SiteProvider>
+          <SiteProbe />
+        </SiteProvider>
+      </MemoryRouter>,
     )
 
     await waitFor(() => expect(screen.getByTestId('title').textContent).toBe('智研平台'))
@@ -87,9 +92,11 @@ describe('SiteProvider', () => {
       .mockResolvedValueOnce({ siteTitle: ' 二次刷新 ', pwaIconUrl: ' /b.png ' })
 
     render(
-      <SiteProvider>
-        <SiteProbe />
-      </SiteProvider>,
+      <MemoryRouter>
+        <SiteProvider>
+          <SiteProbe />
+        </SiteProvider>
+      </MemoryRouter>,
     )
 
     await waitFor(() => expect(apiMock.get).toHaveBeenCalledTimes(1))
