@@ -57,6 +57,9 @@ export function routeTitle(pathname: string, t: (k: string) => string): string {
     return key ? t(key) : ''
   }
   if (/^\/report\/[^/]+\/edit$/.test(p)) return t('reportEditor.titleEdit')
+  // An installed app's own name is not available here (the breadcrumb has the same problem), so the
+  // section is the best that can be said — still better than a tab indistinguishable from home.
+  if (p.startsWith('/apps/x/')) return t('nav.apps')
   // A reader page is named by what it is showing, which is the only thing that tells two open
   // reports apart — and telling them apart is the whole reason the tab has a title.
   if (p.startsWith('/stock/') || p.startsWith('/run/')) {
