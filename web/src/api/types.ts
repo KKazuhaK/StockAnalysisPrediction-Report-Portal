@@ -470,6 +470,11 @@ export interface CleanupResult {
   reports: number
   audit: number
   revisions: number
+  /** Bytes handed back to the filesystem — the number an admin runs a pass to change. Always 0 on
+   *  Postgres, where autovacuum reclaims for reuse and VACUUM FULL would be a full outage. */
+  reclaimed: number
+  /** "sqlite" | "postgres", so a zero above can be explained rather than guessed at. */
+  driver: string
   duration_ms: number
 }
 
@@ -500,6 +505,7 @@ export interface CleanupRun {
   reports_deleted: number
   audit_deleted: number
   revisions_deleted: number
+  bytes_reclaimed: number
   duration_ms: number
 }
 

@@ -60,6 +60,15 @@ services:
     ports:
       - "127.0.0.1:8790:8790"   # bind to localhost only; expose via host nginx reverse proxy + TLS
 
+    # The image carries its own HEALTHCHECK (see Dockerfile.release): /healthz checks the DATABASE,
+    # not just the process, because the failure worth catching is the portal up and Postgres
+    # unreachable — which looks fine from outside and serves an error on every page.
+    #
+    # stop_grace_period is longer than the portal's own 10s, so its shutdown is what ends the
+    # process: it stops taking connections and lets in-flight requests finish instead of having them
+    # cut mid-response.
+    stop_grace_period: 15s
+
     volumes:
       - ./config:/app/config    # holds the auto-generated secret_key (persisted across restarts)
       - rp-data:/app/data       # runtime data (unused for the DB when Postgres is active)

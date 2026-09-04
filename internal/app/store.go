@@ -623,7 +623,8 @@ func (s *Store) baseSchemaStmts() []string {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS cleanup_runs(
 			id %s, ran_at TEXT, trigger TEXT, dry_run INTEGER DEFAULT 0, ok INTEGER DEFAULT 1, error TEXT DEFAULT '',
 			batch_deleted INTEGER DEFAULT 0, tokens_deleted INTEGER DEFAULT 0, reports_deleted INTEGER DEFAULT 0,
-			duration_ms INTEGER DEFAULT 0, audit_deleted INTEGER DEFAULT 0, revisions_deleted INTEGER DEFAULT 0)`, pk),
+			duration_ms INTEGER DEFAULT 0, audit_deleted INTEGER DEFAULT 0, revisions_deleted INTEGER DEFAULT 0,
+			bytes_reclaimed BIGINT DEFAULT 0)`, pk),
 		// Prior states of a hand-written report (ADR 0026). One row per SUPERSEDED version: a save
 		// snapshots what the report said BEFORE it was overwritten, inside the same transaction that
 		// overwrites it, so the current text lives only on the report and is never stored twice.

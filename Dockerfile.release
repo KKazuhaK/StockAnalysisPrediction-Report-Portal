@@ -84,5 +84,11 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /app/report-portal /usr/local/bin/docker-entrypoint.sh \
  && mkdir -p /app/config /app/data
 EXPOSE 8790
+# /healthz checks the database, not just the process — an orchestrator can already see a dead
+# process; what it cannot see is the portal up with its database unreachable, serving an error on
+# every page. The app caches the verdict, so probing costs at most one query every couple of
+# seconds. start-period covers first-run schema creation on a cold database.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8790/healthz || exit 1
 # Start as root (the entrypoint fixes bind-mount ownership), then gosu drops to PUID/PGID (default 10001).
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

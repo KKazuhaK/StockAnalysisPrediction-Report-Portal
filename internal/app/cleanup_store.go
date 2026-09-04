@@ -308,17 +308,20 @@ type CleanupRun struct {
 	AuditDeleted int64 `json:"audit_deleted"`
 	// The fifth (ADR 0026), same shape again for the same reason.
 	RevisionsDeleted int64 `json:"revisions_deleted"`
-	DurationMs       int64 `json:"duration_ms"`
+	// Bytes handed back to the filesystem by the pass. Not a target — it is the consequence of the
+	// others, and the number that answers "did this actually free any disk?".
+	BytesReclaimed int64 `json:"bytes_reclaimed"`
+	DurationMs     int64 `json:"duration_ms"`
 }
 
 // InsertCleanupRun appends an audit row and trims the ring buffer to the most recent
 // cleanupRunsKeep rows.
 func (s *Store) InsertCleanupRun(c CleanupRun) (int64, error) {
-	id, err := s.insertID(`INSERT INTO cleanup_runs(ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,audit_deleted,revisions_deleted,duration_ms)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+	id, err := s.insertID(`INSERT INTO cleanup_runs(ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,audit_deleted,revisions_deleted,bytes_reclaimed,duration_ms)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		c.RanAt, c.Trigger, boolInt(c.DryRun), boolInt(c.OK), c.Error,
 		c.BatchDeleted, c.TokensDeleted, c.ReportsDeleted, c.AuditDeleted, c.RevisionsDeleted,
-		c.DurationMs)
+		c.BytesReclaimed, c.DurationMs)
 	if err != nil {
 		return 0, err
 	}
@@ -339,7 +342,7 @@ func (s *Store) ListCleanupRuns(limit int) ([]CleanupRun, error) {
 		limit = cleanupRunsKeep
 	}
 	rows, err := s.query(`SELECT id,ran_at,trigger,dry_run,ok,error,batch_deleted,tokens_deleted,reports_deleted,
-		COALESCE(audit_deleted,0),COALESCE(revisions_deleted,0),duration_ms
+		COALESCE(audit_deleted,0),COALESCE(revisions_deleted,0),COALESCE(bytes_reclaimed,0),duration_ms
 		FROM cleanup_runs
 		-- A successful pass that deleted nothing is not history, and builds before v0.4.20 recorded
 		-- one per scheduled run. They are left in the table rather than deleted -- a retention log
@@ -358,7 +361,7 @@ func (s *Store) ListCleanupRuns(limit int) ([]CleanupRun, error) {
 		var c CleanupRun
 		var dry, ok int64
 		if err := rows.Scan(&c.ID, &c.RanAt, &c.Trigger, &dry, &ok, &c.Error, &c.BatchDeleted, &c.TokensDeleted,
-			&c.ReportsDeleted, &c.AuditDeleted, &c.RevisionsDeleted, &c.DurationMs); err != nil {
+			&c.ReportsDeleted, &c.AuditDeleted, &c.RevisionsDeleted, &c.BytesReclaimed, &c.DurationMs); err != nil {
 			return nil, err
 		}
 		c.DryRun = dry != 0

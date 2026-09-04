@@ -99,6 +99,26 @@ and the reconcile-not-retry `untracked` outcome (ADR 0015).
    configured by it being on: it is enforced when a report is saved, not by a pass, and its zero value
    means unlimited rather than off.
 
+9. **The pass returns disk, not only rows** (v0.4.48). Deleting rows never moved the file: SQLite parks
+   the freed pages on its freelist, Postgres marks them reusable within the table. So the console
+   reported "cleaned 12,431 rows" while `df` did not move at all — the number an admin ran the pass to
+   change was the one it could not change.
+
+   A pass that deleted something now ends by reclaiming, and the driver decides what that means:
+
+   - **SQLite**: `VACUUM`, which rewrites the file and hands the space back to the filesystem. Gated on
+     the freelist being at least a tenth of the file and the file being over ~8 MiB, because the
+     rewrite needs roughly the database's own size in temporary disk and blocks every other query for
+     its duration (the pool is one connection wide). Doing it for a handful of pages costs more than
+     it returns. It runs last, after the deletions, and never on a preview.
+   - **Postgres**: nothing at all. Autovacuum already reclaims for reuse continuously; returning space
+     to the OS needs `VACUUM FULL`, which takes an `ACCESS EXCLUSIVE` lock on every table it touches —
+     an outage of unbounded length, scheduled by a background ticker, on a database this portal does
+     not own exclusively. The console says so rather than leaving a permanent zero to look like a bug.
+
+   Bytes reclaimed rides on the result and on a sixth `cleanup_runs` column. It is not a target: it is
+   the consequence of the others, and there is nothing to enable or configure.
+
 ## Consequences
 
 - `batch_jobs`/`batch_items` and expired tokens can now be bounded; reports have a manual, guarded purge
