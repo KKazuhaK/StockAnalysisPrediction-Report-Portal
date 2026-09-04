@@ -134,7 +134,11 @@ path is covered by its own integration tests behind `TEST_POSTGRES_DSN`.
   a Ctrl-C.
 
   Interrupting it is safe and that is worth saying out loud: the transaction is never committed, so
-  the next process to open the database rolls it back and nothing has changed. The dry run is the
+  the next process to open the database rolls it back and nothing has changed. Verified under the
+  harshest form — `SIGKILL` three seconds into a 60,000-row restore, leaving a hot journal behind and
+  the file grown to 316 MiB. The next open rolled it back to one report and one account, exactly what
+  was there before, and SQLite truncated the file back to 360 KiB with it. The portal then started
+  normally on that database. The dry run is the
   other half of the answer — 1.7 seconds over the same file — so the question "will this file load?"
   never requires the slow, destructive form. Per-row progress output was considered and skipped: it
   is a parameter threaded through two call sites to narrate an operation that runs once in a blue
