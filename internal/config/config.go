@@ -80,6 +80,34 @@ db_path: "data/portal.db"
 }
 
 // LoadConfig reads and parses the YAML config, applying defaults for empty fields.
+// WarnIfWorldReadable reports the config file's permissions when anyone but its owner can read it.
+//
+// The file holds secret_key — which signs every session cookie and, through HKDF, wraps the SSO
+// keyring — and since the rotation work it can hold secret_key_previous beside it, so a readable
+// config is briefly TWO live keys on disk. The generated file is 0600, but a config copied from the
+// example, restored from an archive, or checked out of a repository arrives with whatever mode it
+// had, and nothing said anything.
+//
+// A warning rather than a refusal: the portal starting is almost always more valuable than the
+// portal being right about this, and the operator may not be able to chmod it (a read-only mount, a
+// bind mount owned by the host). It follows the two warnings the boot log already carries.
+//
+// Returns the message rather than logging it, so the caller decides where it goes and a test can
+// read it.
+func WarnIfWorldReadable(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		return ""
+	}
+	perm := fi.Mode().Perm()
+	if perm&0o077 == 0 {
+		return ""
+	}
+	return fmt.Sprintf("WARNING: %s is mode %04o — readable by more than its owner. It holds "+
+		"secret_key (and secret_key_previous during a rotation), which signs every session and "+
+		"unwraps the stored SSO secrets. Run: chmod 600 %s", path, perm, path)
+}
+
 func LoadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
