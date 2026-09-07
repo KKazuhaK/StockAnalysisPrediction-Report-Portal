@@ -1600,3 +1600,43 @@ func TestQuoteSinaOrderingStandsInForTheIdentity(t *testing.T) {
 		quoteEqInt(t, "last", resp.Snapshot.Last, 3335)
 	})
 }
+
+// ---------- the endpoint the interval picks ----------
+
+// fetchTencentAt's 5日 refusal, which is the single line that makes quoteIntervalIntraday and
+// quoteIntervalIntraday5D two capabilities rather than one. Replacing it with a call to
+// fetchTencentIntraday left the whole suite green, and what that costs is written out at the
+// interval's declaration: this vendor's minute endpoint answers ONE trading day and has no window
+// parameter, so a 5日 request served from it comes back as today's single session under a five-day
+// label — a well-formed series of the wrong span, which is the exact failure the declaration
+// mechanism exists to prevent.
+//
+// It is asserted with an ALREADY-CANCELLED context, which is what makes this a hermetic test of the
+// refusal rather than of the network: a request that gets past this switch reaches vendorGet and dies
+// of the cancellation, so the two outcomes are distinguishable without a wire. The 分时 and daily
+// rows are the control — they are refused by the CONTEXT, which proves the 5日 row is refused by the
+// switch and not by the same cancellation.
+func TestFetchTencentAtRefusesTheFiveDayWindowBeforeItAsks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := fetchTencentAt(ctx, "sh", "600519", quoteRange5D, quoteIntervalIntraday5D)
+	if err == nil {
+		t.Fatal("tencent accepted a 5日 request; its minute endpoint answers one session and has no window parameter")
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("the 5日 request reached the network (%v); it must be refused by the interval switch, "+
+			"before any endpoint is chosen", err)
+	}
+	if !strings.Contains(err.Error(), string(quoteIntervalIntraday5D)) {
+		t.Errorf("the refusal reads %q and does not name the interval it refused", err)
+	}
+
+	// The control: the intervals this source DOES serve are not refused here, so they get as far as
+	// the cancelled context. Without these two rows, a fetcher that refused everything would pass.
+	for _, iv := range []quoteInterval{quoteIntervalIntraday, quoteIntervalDaily, quoteIntervalSnapshot} {
+		if _, err := fetchTencentAt(ctx, "sh", "600519", 60, iv); !errors.Is(err, context.Canceled) {
+			t.Errorf("%s was answered with %v rather than reaching an endpoint", iv, err)
+		}
+	}
+}

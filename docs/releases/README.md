@@ -26,6 +26,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.47](v0.4.47.md) | 2026-09-07 | Prices on the home cards, a minute-by-minute chart, and a source you can switch on |
 | [v0.4.46](v0.4.46.md) | 2026-09-07 | The chart gets its own app, and stops being A-share only |
 | [v0.4.45](v0.4.45.md) | 2026-09-07 | Live quotes, a database you can copy, and a portal you can use without a mouse |
 | [v0.4.44](v0.4.44.md) | 2026-09-04 | A workflow's cache is not a report |

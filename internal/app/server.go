@@ -299,7 +299,13 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/password/reset", s.apiResetPassword)
 	mux.HandleFunc("GET /api/home", s.requireUserJSON(s.apiHome))
 	mux.HandleFunc("GET /api/stock/{symbol}", s.requireUserJSON(s.apiStock))
-	mux.HandleFunc("GET /api/quote/{symbol}", s.requireUserJSON(s.apiQuote)) // live quote + daily bars; cached and single-flighted (quote_cache.go)
+	mux.HandleFunc("GET /api/quote/{symbol}", s.requireUserJSON(s.apiQuote)) // one symbol: live quote + its series; cached and single-flighted (quote_cache.go)
+	// Many symbols at once, for the home feed's cards: ONE upstream call for a page of codes, the
+	// same cache as the line above, and per-symbol results so one bad code cannot blank the page.
+	// Behind a session for the same reason /api/quote is — it makes this server fetch on the
+	// caller's behalf — and behind the home_quotes switch, because it is the one quote request a
+	// reader makes without asking for a quote.
+	mux.HandleFunc("GET /api/quotes", s.requireUserJSON(s.apiQuotes))
 	mux.HandleFunc("GET /api/run/{key}", s.requireUserJSON(s.apiRun))
 	// The review queue (tracking items). Session-scoped, unlike /api/v1/tracking, which runs on an
 	// ingest token that already has access to everything.

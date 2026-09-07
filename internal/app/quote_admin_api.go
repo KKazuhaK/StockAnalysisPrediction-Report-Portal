@@ -40,6 +40,16 @@ type quoteSourceStatus struct {
 	Enabled  bool     `json:"enabled"`
 	Position int      `json:"position"` // 1-based place in the failover order; 0 when disabled
 	Markets  []string `json:"markets"`
+	// What the source DECLARES it can serve, split by interval. Markets above is the union over all
+	// of them and is therefore a wider claim than either of these: Tencent names the US there for a
+	// price it serves correctly, and must not appear in Daily for a series it answers with two rows
+	// fifteen years apart. An operator dragging a source up the order is choosing among THESE, so a
+	// panel that showed only the union would make that move look like something it is not.
+	//
+	// Both are always arrays, never null: the page renders an empty one as a dash, which is a real
+	// answer ("serves no intraday") and must not be confusable with a field the server did not send.
+	Daily    []string `json:"daily"`
+	Intraday []string `json:"intraday"`
 	// The three timestamps are RFC3339 in UTC, and EMPTY when the thing has never happened — not
 	// the year 1 that a zero time.Time marshals to, which a panel would render as "0001-01-01" and
 	// an operator would read as a real event from a broken clock.
@@ -80,6 +90,8 @@ func (s *Server) quoteSourceStatuses(cfg quoteConfig) []quoteSourceStatus {
 			Enabled:     position[src.Name] > 0,
 			Position:    position[src.Name],
 			Markets:     src.Markets,
+			Daily:       src.Daily,
+			Intraday:    src.Intraday,
 			LastSuccess: quoteAdminTime(h.LastSuccess),
 			LastError:   h.LastError,
 			LastErrorAt: quoteAdminTime(h.LastErrorAt),
@@ -116,10 +128,16 @@ func (s *Server) quoteAdminState() map[string]any {
 		"cacheBytes":   stats.Bytes,
 		// Already clamped both ways by quoteConfigLoad, so a form that round-trips this back cannot
 		// re-save a value the portal is not honouring.
-		"ttlOpenSecs":    quoteTTLSecs(cfg.TTLOpen),
-		"ttlClosedSecs":  quoteTTLSecs(cfg.TTLClosed),
-		"ttlOpenFloor":   quoteTTLSecs(quoteTTLOpenFloor),
-		"ttlClosedFloor": quoteTTLSecs(quoteTTLClosedFloor),
+		"ttlOpenSecs":      quoteTTLSecs(cfg.TTLOpen),
+		"ttlClosedSecs":    quoteTTLSecs(cfg.TTLClosed),
+		"ttlIntradaySecs":  quoteTTLSecs(cfg.TTLIntraday),
+		"ttlOpenFloor":     quoteTTLSecs(quoteTTLOpenFloor),
+		"ttlClosedFloor":   quoteTTLSecs(quoteTTLClosedFloor),
+		"ttlIntradayFloor": quoteTTLSecs(quoteTTLIntradayFloor),
+		// The home feed's switch. It is here rather than on the general settings page because it is a
+		// fact about the quote vendors — the panel that says which of them this portal talks to is
+		// where "and it talks to them on every home page view" belongs.
+		"homeCards": s.quoteHomeCards(),
 	}
 }
 
@@ -142,9 +160,11 @@ func (s *Server) apiAdminQuotesSave(w http.ResponseWriter, r *http.Request, user
 	// absent from the comma list is off. A separate `enabled` array would be a second way to say the
 	// same thing, and the two would be free to disagree.
 	var in struct {
-		Order         *string `json:"order"`
-		TTLOpenSecs   *int    `json:"ttlOpenSecs"`
-		TTLClosedSecs *int    `json:"ttlClosedSecs"`
+		Order           *string `json:"order"`
+		TTLOpenSecs     *int    `json:"ttlOpenSecs"`
+		TTLClosedSecs   *int    `json:"ttlClosedSecs"`
+		TTLIntradaySecs *int    `json:"ttlIntradaySecs"`
+		HomeCards       *bool   `json:"homeCards"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -174,6 +194,16 @@ func (s *Server) apiAdminQuotesSave(w http.ResponseWriter, r *http.Request, user
 	}
 	if in.TTLClosedSecs != nil {
 		s.st.SetSetting(setQuoteTTLClosedSecs, strconv.Itoa(quoteClampSecs(*in.TTLClosedSecs, quoteTTLClosedFloor)))
+	}
+	if in.TTLIntradaySecs != nil {
+		s.st.SetSetting(setQuoteTTLIntradaySecs, strconv.Itoa(quoteClampSecs(*in.TTLIntradaySecs, quoteTTLIntradayFloor)))
+	}
+	if in.HomeCards != nil {
+		// The writer for setQuoteHomeCards, in the same change as its reader (quoteHomeCards) and its
+		// place on the panel — the rule wired_settings_test.go exists to enforce. strconv.FormatBool
+		// rather than "1"/"0" so that a row an operator greps out of meta reads as what it means; the
+		// reader accepts either.
+		s.st.SetSetting(setQuoteHomeCards, strconv.FormatBool(*in.HomeCards))
 	}
 
 	// Which source answers a price, and for how long that answer is repeated, is a policy about what

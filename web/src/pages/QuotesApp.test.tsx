@@ -56,6 +56,13 @@ interface ChartProps {
   unavailable?: string
   height?: number
   currency?: string
+  /**
+   * Declared by the page and never sniffed from the bars — a string here rather than the chart's
+   * own union, so what these tests assert is the VALUE that arrived and not merely that something
+   * type-checked. `undefined` is a real answer and a failing one: it is what a page that added the
+   * intraday windows and forgot to say so hands over.
+   */
+  interval?: string
 }
 const chartProps: ChartProps[] = []
 vi.mock('../components/QuoteStrip', () => ({
@@ -403,4 +410,152 @@ describe('QuotesApp', () => {
     })
     expect(lastChart().height).toBe(320)
   })
+  // 分时 (1d) and 5 日 (5d). These are not merely shorter windows: they are about 400 one-minute
+  // points and about 330 five-minute ones against the 22-250 a daily range carries, which is why
+  // the chart draws them as a line. Two independent things have to be right, and the second is the
+  // one with no visible symptom — the window that is REQUESTED, and what the chart is TOLD it was
+  // handed. A page that asks for 1d and lets the chart go on believing it has candles draws 400
+  // two-pixel candles under a date axis and raises nothing.
+  function intradayQuote(over: Record<string, unknown> = {}) {
+    return quote({
+      // The SAME instrument the daily fixture describes: a range switch changes the window and
+      // nothing else, and a fixture that quietly changed the name too would let a page that blanked
+      // the card on every range click pass this suite.
+      symbol: '600519',
+      name: '贵州茅台',
+      // A full stamp where a daily bar carries a bare date. The chart is never allowed to read this
+      // difference — the page declares the interval — and the fixture carries it so that a page
+      // which stopped declaring it could not be rescued by the shape of its own data.
+      bars: [
+        { d: '2026-09-07 09:31', o: 3331, h: 3336, l: 3330, c: 3335, v: 12000 },
+        { d: '2026-09-07 09:32', o: 3335, h: 3340, l: 3334, c: 3338, v: 9800 },
+        { d: '2026-09-07 09:33', o: 3338, h: 3339, l: 3330, c: 3332, v: 8700 },
+      ],
+      ...over,
+    })
+  }
+
+  for (const r of ['1d', '5d'] as const) {
+    it(`asks for the ${r} window and tells the chart the series is intraday`, async () => {
+      renderApp('/apps/quotes?symbol=600519')
+      await waitFor(() => expect(pending).toHaveLength(1))
+      await act(async () => {
+        pending[0].resolve(MAOTAI)
+      })
+      await screen.findByTestId('chart')
+      expect(lastChart().interval).toBe('daily')
+
+      await userEvent.click(screen.getByText(dict[`quote.range.${r}`]))
+      await waitFor(() => expect(pending).toHaveLength(2))
+      expect(pending[1].url).toBe(`/api/quote/600519?range=${r}`)
+      // An explicit window is worth writing into the URL; only the default 3m stays out of it.
+      expect(screen.getByTestId('loc').textContent).toBe(`?symbol=600519&range=${r}`)
+
+      await act(async () => {
+        pending[1].resolve(intradayQuote())
+      })
+      await waitFor(() => expect(lastChart().interval).toBe('intraday'))
+      expect(lastChart().bars).toHaveLength(3)
+      // Still the same instrument. Changing the shape of the picture is not changing the subject.
+      expect(screen.getByTestId('strip').textContent).toBe('strip:600519:贵州茅台')
+    })
+  }
+
+  it('loads an intraday window that arrives in the URL, so a 分时 chart is linkable too', async () => {
+    renderApp('/apps/quotes?symbol=600519&range=1d')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    // A range the page does not know about falls back to 3m silently, so a 1d that reached the
+    // vendor as 3m would look like nothing worse than a slightly wrong chart.
+    expect(pending[0].url).toBe('/api/quote/600519?range=1d')
+    await act(async () => {
+      pending[0].resolve(intradayQuote())
+    })
+    await screen.findByTestId('chart')
+    expect(lastChart().interval).toBe('intraday')
+  })
+
+  it('keeps the bars it still has labelled as what they are while the next window is in flight', async () => {
+    renderApp('/apps/quotes?symbol=600519')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    await act(async () => {
+      pending[0].resolve(MAOTAI)
+    })
+    await screen.findByTestId('chart')
+
+    await userEvent.click(screen.getByText(dict['quote.range.1d']))
+    await waitFor(() => expect(pending).toHaveLength(2))
+
+    // The previous window stays up for the whole round trip — that is the property the symbol/range
+    // split exists for — so what the chart is holding here is still three months of DAILY candles.
+    // Taking the interval from the URL's range instead of from the answer's would tell it to draw
+    // them as a 分时 line under a clock axis, for exactly as long as the vendor is slow: a chart
+    // mislabelling what it is showing, which is the one failure a price chart must not have.
+    expect(lastChart().bars).toHaveLength(2)
+    expect(lastChart().bars[0]).toEqual(MAOTAI.bars[0])
+    expect(lastChart().interval).toBe('daily')
+    expect(screen.getByTestId('strip').textContent).toBe('strip:600519:贵州茅台')
+
+    await act(async () => {
+      pending[1].resolve(intradayQuote())
+    })
+    await waitFor(() => expect(lastChart().interval).toBe('intraday'))
+
+    // And the mirror image: an intraday series left on screen under a daily range would be drawn as
+    // three minute-bars' worth of candles labelled 六个月.
+    await userEvent.click(screen.getByText(dict['quote.range.6m']))
+    await waitFor(() => expect(pending).toHaveLength(3))
+    expect(pending[2].url).toBe('/api/quote/600519?range=6m')
+    expect(lastChart().bars).toHaveLength(3)
+    expect(lastChart().interval).toBe('intraday')
+    await act(async () => {
+      pending[2].resolve(MAOTAI)
+    })
+    await waitFor(() => expect(lastChart().interval).toBe('daily'))
+  })
+
+  it('offers every window before the first answer lands', async () => {
+    renderApp('/apps/quotes?symbol=600519')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    // Nothing has answered yet, and the switcher is already there. A control that appears with the
+    // data looks broken for exactly as long as the vendor is slow — and 分时 is the window a person
+    // reaches for first when they came to watch a price move.
+    expect(screen.queryByTestId('chart')).toBeNull()
+    for (const r of ['1d', '5d', '1m', '3m', '6m', '1y']) {
+      expect(screen.getByText(dict[`quote.range.${r}`])).toBeTruthy()
+    }
+  })
+
+  // WHICH SOURCE DREW THE CHART. The strip prints one source line and it is the SNAPSHOT's; now
+  // that a source declares what it can serve per interval rather than per market, one answer can
+  // carry a snapshot from one vendor and a series from another, and letting that single line stand
+  // for both attributes a chart to a vendor that never drew it.
+  const BARS_SOURCES = [
+    { what: 'a series drawn by another vendor', over: { barsSource: 'yahoo' }, named: 'quote.source.yahoo' },
+    // The ordinary answer. Printing "Tencent" twice, six lines apart, is noise that trains a reader
+    // to stop reading the line that matters in the case above.
+    { what: 'one vendor for both halves', over: { barsSource: 'tencent' }, named: '' },
+    // i18next echoes a key it has no string for, so this would print the literal
+    // `quote.source.acme` under somebody's chart. Saying nothing is the honest answer, the same
+    // rule the market badge follows.
+    { what: 'a source this build has no name for', over: { barsSource: 'acme' }, named: '' },
+  ]
+
+  for (const c of BARS_SOURCES) {
+    it(`names the source behind the chart: ${c.what}`, async () => {
+      renderApp('/apps/quotes?symbol=600519')
+      await waitFor(() => expect(pending).toHaveLength(1))
+      await act(async () => {
+        pending[0].resolve(quote({ source: 'tencent', ...c.over }))
+      })
+      await screen.findByTestId('chart')
+
+      const line = screen.queryByTestId('quote-bars-source')
+      if (!c.named) {
+        expect(line).toBeNull()
+        return
+      }
+      expect(line?.textContent).toContain(dict['quote.source'])
+      expect(line?.textContent).toContain(dict[c.named])
+    })
+  }
 })

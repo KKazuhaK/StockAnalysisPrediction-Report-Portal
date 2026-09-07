@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { api, qs, errText, ApiError } from '../api/client'
 import type { QuoteResp } from '../api/types'
 import QuoteStrip from '../components/QuoteStrip'
-import PriceChart from '../components/PriceChart'
+import PriceChart, { type ChartInterval } from '../components/PriceChart'
 import { NO_ITEM_TOOLTIP } from '../lib/segmented'
 
 // The Quotes app (/apps/quotes) — the one place in this portal where a chart filling the screen is
@@ -20,21 +20,51 @@ import { NO_ITEM_TOOLTIP } from '../lib/segmented'
 // stays compact; everything a reader wants to do WITH a price lives here, where nothing is being
 // buried because the price is the whole page.
 //
+// WHAT THIS PAGE OWNS, AND WHAT IT DOES NOT. It owns the request — which symbol, which window, and
+// which of two answers is allowed to land — and the frame around the picture. It renders no price
+// itself: every number on screen comes from QuoteStrip and PriceChart, the same two components the
+// reading page uses, because a second implementation of "what a snapshot looks like" is how the two
+// surfaces drift apart while both keep passing their own tests (ADR 0030, Consequences).
+//
 // Scope: quote VIEWING is multi-market, reports are not. See the note under the chart.
 
-// The four windows /api/quote accepts (internal/app/quote_api.go), spelled out rather than derived
-// from a response — same reason StockPage spells them out: the switcher has to render before the
-// first fetch lands, and a control that appears only after data arrives is a control that looks
-// broken for exactly as long as the network is slow.
-const QUOTE_RANGES = ['1m', '3m', '6m', '1y'] as const
+// The windows /api/quote accepts (internal/app/quote_api.go), spelled out rather than derived from
+// a response — same reason StockPage spells them out: the switcher has to render before the first
+// fetch lands, and a control that appears only after data arrives is a control that looks broken
+// for exactly as long as the network is slow.
+//
+// Shortest first, which puts the two INTRADAY windows on the left. They are not merely shorter
+// daily windows: 分时 is about 400 one-minute points and 5日 about 330 five-minute ones (both
+// measured against the vendor), so the chart draws them as a line rather than as candles two pixels
+// wide. The four on the right are the daily candles this app shipped with and are unchanged.
+const QUOTE_RANGES = ['1d', '5d', '1m', '3m', '6m', '1y'] as const
 type QuoteRange = (typeof QUOTE_RANGES)[number]
 const DEFAULT_RANGE: QuoteRange = '3m'
+
+// Which of those windows are minute-resolution.
+//
+// The chart is TOLD what kind of series it was handed and never sniffs it: an intraday bar's `d` is
+// a full timestamp and a daily bar's is a date, so a regex on bars[0] looks like a free answer and
+// is silently wrong in both directions — PriceChart's own doc says so, and this is the caller it is
+// talking about. The range is where the answer actually lives, because the range is what was asked
+// for.
+const INTRADAY_RANGES = new Set<string>(['1d', '5d'])
+
+function intervalFor(r: QuoteRange): ChartInterval {
+  return INTRADAY_RANGES.has(r) ? 'intraday' : 'daily'
+}
 
 // The markets the endpoint answers for (frozen quote v2 contract). The badge is rendered through
 // t() as `quote.market.<m>`, and i18next echoes a key it has no string for, so a market this build
 // has never heard of gets NO badge rather than the literal text `quote.market.xx` on the page. Same
 // rule PriceChart applies to the currency code, for the same reason.
 const MARKET_KEYS = new Set(['sh', 'sz', 'bj', 'hk', 'us'])
+
+// The sources this build can name, under the same rule and for the same reason — `quote.source.<s>`
+// also goes through t(). The set is the bundles' own list rather than the response type's, because
+// which sources are compiled in is an operator's choice that moves faster than this file does: a
+// source added to the server before its label exists here prints nothing, not `quote.source.acme`.
+const SOURCE_KEYS = new Set(['tencent', 'sina', 'yahoo'])
 
 // Where a report can exist at all. The `stocks` table, the ingest path and the search index are
 // A-share only and this change did not widen them — what widened is quote viewing. An INDEX is
@@ -68,6 +98,23 @@ function viewportHeight(): number {
 // transport error that named no code at all) is worth one more try.
 const BAD_SYMBOL = 'quote_bad_symbol'
 
+/**
+ * The answer on screen and THE WINDOW THAT PRODUCED IT, held as one value because they are one
+ * fact.
+ *
+ * A range switch deliberately keeps the previous window's bars up for the whole round trip (see the
+ * effect below), so between the click on 分时 and the vendor's answer the chart is holding DAILY
+ * bars while `range` already reads `1d`. Taking the chart's interval from `range` there would draw
+ * three months of candles as a 分时 line under a clock axis — precisely the mislabelling PriceChart
+ * refuses to guess its way into, reintroduced from the caller's side, and visible for exactly as
+ * long as the vendor is slow. The interval travels with the bars, so it can only ever describe the
+ * bars it arrived with.
+ */
+interface Answer {
+  resp: QuoteResp
+  range: QuoteRange
+}
+
 export default function QuotesApp() {
   const { t } = useTranslation()
   const [sp, setSp] = useSearchParams()
@@ -82,18 +129,18 @@ export default function QuotesApp() {
     : DEFAULT_RANGE
 
   const [draft, setDraft] = useState(symbol)
-  const [data, setData] = useState<QuoteResp | null>(null)
+  const [answer, setAnswer] = useState<Answer | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<unknown>(null)
   // Bumped by the retry button: the request is a pure function of (symbol, range), so re-running it
   // needs a dependency that means nothing except "again".
   const [nonce, setNonce] = useState(0)
   const [chartH, setChartH] = useState(() => chartHeightPx(viewportHeight()))
-  // Which symbol the answer currently in `data` is about. Not derived from data.symbol: the server
-  // echoes its own CANONICAL code, so "sh600519" in the box comes back as "600519", and comparing
-  // against the echo would read every range switch on a prefixed code as a symbol switch and blank
-  // the card for the round trip. What the effect needs to know is whether the URL's symbol changed,
-  // so the URL's spelling is what is remembered.
+  // Which symbol the answer currently on screen is about. Not derived from answer.resp.symbol: the
+  // server echoes its own CANONICAL code, so "sh600519" in the box comes back as "600519", and
+  // comparing against the echo would read every range switch on a prefixed code as a symbol switch
+  // and blank the card for the round trip. What the effect needs to know is whether the URL's
+  // symbol changed, so the URL's spelling is what is remembered.
   const shownSymbol = useRef('')
 
   // Browser back/forward, and a link opened into an already-mounted page, both change the URL
@@ -119,7 +166,7 @@ export default function QuotesApp() {
     if (!symbol) {
       // Clearing the box has to clear the answer with it. A chart left standing under the "type a
       // code" empty state is a price the page is no longer claiming to be showing.
-      setData(null)
+      setAnswer(null)
       setError(null)
       setLoading(false)
       shownSymbol.current = ''
@@ -136,7 +183,7 @@ export default function QuotesApp() {
     // and market badge are the page's own, not the strip's, so typing AAPL over a loaded 600519
     // leaves 贵州茅台 and an `sh` badge standing over an in-flight US request for as long as the
     // vendor takes. Nothing on screen admits it, and a slow vendor makes it seconds.
-    if (shownSymbol.current !== symbol) setData(null)
+    if (shownSymbol.current !== symbol) setAnswer(null)
     setLoading(true)
     setError(null)
     api
@@ -144,7 +191,12 @@ export default function QuotesApp() {
       .then((d) => {
         if (cancelled) return
         shownSymbol.current = symbol
-        setData(d)
+        // `range` here is the one this request was BUILT from, out of the effect's own closure, not
+        // whatever the URL says by the time the answer lands. They are the same value for the
+        // answer that is allowed through — a range switch re-runs the effect and the cancelled flag
+        // drops the older answer — and pairing them at the point of arrival is what keeps that true
+        // without anyone having to re-check it.
+        setAnswer({ resp: d, range })
         setError(null)
       })
       .catch((e) => {
@@ -153,7 +205,7 @@ export default function QuotesApp() {
         // strip prints a name and a code, so keeping them would attribute one instrument's price
         // to another one's request.
         shownSymbol.current = ''
-        setData(null)
+        setAnswer(null)
         setError(e)
       })
       .finally(() => {
@@ -234,10 +286,24 @@ export default function QuotesApp() {
       />
     )
   } else {
+    const data = answer?.resp ?? null
     const marketKey = data && MARKET_KEYS.has(data.market) ? `quote.market.${data.market}` : ''
     const isIndex = data?.kind === 'index'
     // Whether the rest of the portal has anything to say about this instrument.
     const hasReports = !!data && A_SHARE_MARKETS.has(data.market) && !isIndex
+    // WHICH SOURCE DREW THE CHART, and only when it is not the one that priced the snapshot.
+    //
+    // The strip prints one source line and it is the SNAPSHOT's. Sources now declare what they can
+    // serve per interval rather than per market, so one answer can legitimately carry a snapshot
+    // from one vendor and a series from another — the whole point of the arrangement is that a
+    // market whose dailies one source cannot serve gets them from one that can. Letting the strip's
+    // single line stand for both would then attribute a chart to a vendor that never drew it, which
+    // is a false statement about provenance on a page whose entire job is provenance. Said only on
+    // the difference, because repeating "Tencent" twice on the ordinary answer is noise.
+    const barsSource =
+      data && data.bars.length > 0 && data.barsSource !== data.source && SOURCE_KEYS.has(data.barsSource)
+        ? data.barsSource
+        : ''
     // A five-digit HK code and a six-digit A-share code look alike at a glance, and 00700 vs 000700
     // is one keystroke. The badges are how a reader confirms they are looking at what they meant to
     // look at before drawing a conclusion from the line.
@@ -249,37 +315,81 @@ export default function QuotesApp() {
       </Space>
     )
     body = (
-      <Card size="small" title={header} extra={rangeSwitcher} styles={{ body: { paddingTop: 12 } }}>
-        {data ? (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <QuoteStrip data={data} loading={loading} />
-            <PriceChart
-              bars={data.bars}
-              loading={loading}
-              unavailable={data.barsUnavailable}
-              height={chartH}
-              currency={data.currency}
-            />
-            {!hasReports && (
-              // Said plainly and said quietly. This portal analyses A-shares; the quote endpoint is
-              // wider than that on purpose, and a US ticker or an index rendering here with no word
-              // about it implies a library of reports behind it that does not exist. The key is the
-              // existing err.no_reports_for_symbol — its three translations already say exactly
-              // this, and inventing a fourth string for the same sentence is how one language ends
-              // up rendering a raw dotted path.
-              <Typography.Text type="secondary" data-testid="quote-no-reports" style={{ fontSize: 12 }}>
-                {t('err.no_reports_for_symbol')}
-              </Typography.Text>
-            )}
-          </Space>
-        ) : (
-          // The skeleton reserves the chart's real height rather than a token two lines, so the
-          // page does not jump by half a screen at the moment the answer lands.
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <Card size="small" title={header} styles={{ body: { paddingTop: 12 } }}>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {answer ? (
+            // Everything a person came here for that is not the line itself — open, previous close,
+            // high, low, volume, turnover, the market and currency badges, the vendor's own clock
+            // with the zone it belongs to, and which source answered. All of it is the strip's,
+            // unchanged from the reading page: this app renders a bigger chart, not a different
+            // set of facts.
+            <QuoteStrip data={answer.resp} loading={loading} />
+          ) : (
+            // The skeleton stands in for the strip's own two rows rather than for a spinner, so the
+            // page does not jump at the moment the answer lands.
             <Skeleton active title={false} paragraph={{ rows: 2 }} />
+          )}
+
+          {/* THE RANGE STRIP BELONGS TO THE CHART, not to the card's header, which is where it used
+              to sit. With 分时 and 5日 added there are six windows, and six of them squeezed into a
+              header beside an instrument's name and two badges wraps into a second line on a laptop
+              and collides on a phone. Directly above the picture they change is also where every
+              market app puts them, and it is what makes the row below read as a chart rather than
+              as the output of the form at the top of the page.
+
+              Rendered whether or not an answer has landed: a switcher that appears only with the
+              data is a control that looks broken for exactly as long as the vendor is slow, which
+              is the same reason QUOTE_RANGES is a literal instead of something read off a
+              response. */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              flexWrap: 'wrap',
+            }}
+          >
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t('quote.trend')}
+            </Typography.Text>
+            {rangeSwitcher}
+          </div>
+
+          {answer ? (
+            <PriceChart
+              bars={answer.resp.bars}
+              loading={loading}
+              unavailable={answer.resp.barsUnavailable}
+              height={chartH}
+              currency={answer.resp.currency}
+              // From the answer's own range, never from the URL's: see Answer above.
+              interval={intervalFor(answer.range)}
+            />
+          ) : (
+            // The skeleton reserves the chart's real height rather than a token two lines, so the
+            // page does not jump by half a screen at the moment the answer lands.
             <Skeleton.Node active style={{ width: '100%', height: chartH }} />
-          </Space>
-        )}
+          )}
+
+          {barsSource && (
+            <Typography.Text type="secondary" data-testid="quote-bars-source" style={{ fontSize: 12 }}>
+              {t('quote.source')} {t(`quote.source.${barsSource}`)}
+            </Typography.Text>
+          )}
+
+          {answer && !hasReports && (
+            // Said plainly and said quietly. This portal analyses A-shares; the quote endpoint is
+            // wider than that on purpose, and a US ticker or an index rendering here with no word
+            // about it implies a library of reports behind it that does not exist. The key is the
+            // existing err.no_reports_for_symbol — its three translations already say exactly
+            // this, and inventing a fourth string for the same sentence is how one language ends
+            // up rendering a raw dotted path.
+            <Typography.Text type="secondary" data-testid="quote-no-reports" style={{ fontSize: 12 }}>
+              {t('err.no_reports_for_symbol')}
+            </Typography.Text>
+          )}
+        </Space>
       </Card>
     )
   }
