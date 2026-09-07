@@ -43,6 +43,17 @@
 //   - day_export.go "all of a stock's reports on one date" bundle export
 //   - names.go      A-share company-name fetch + ingest-time snapshot
 //
+// Live market data (ADR 0028) — read-through only; nothing here writes to the database
+//   - vendorfetch.go  the one bounded, status-checked HTTP path to a market-data vendor,
+//     shared by the name fetch and the quote fetch. Everything outbound to Tencent, Sina
+//     and eastmoney goes through it; nothing else in the package builds its own client.
+//   - quote.go        the two vendor parsers and the five-check drift gate. Positional
+//     index reads over bodies with no schema, so the gate — not the parse — is the
+//     load-bearing part; see ADR 0028 on why a range check alone is not one.
+//   - quote_cache.go  bounded in-memory LRU, TTL taken from the vendor's own session
+//     field, single-flight, and a semaphore on upstream calls
+//   - quote_api.go    GET /api/quote/{symbol} (cookie session, same gate as /api/stock)
+//
 // Batch / run queue (ADR 0001/0004/0006/0008/0011/0014)
 //   - batch_api.go     admin HTTP surface (/api/admin/batch/*) + run-queue config
 //   - batch_run.go     orchestration: scheduler, provider build, resume/reconcile
