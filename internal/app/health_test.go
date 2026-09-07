@@ -14,7 +14,7 @@ import (
 // identity (version/commit) and no data count (report total). Either would let an anonymous
 // scanner fingerprint the instance (version/commit → known CVEs) or read business volume.
 //
-// It reports the DATABASE too as of v0.4.49, which is a fact about reachability and deliberately
+// It reports the DATABASE too as of v0.4.45, which is a fact about reachability and deliberately
 // not about contents: "ok" or "unreachable", never a driver message (those can carry the DSN's
 // host, user and database name) and never a count.
 func TestHealthzExposesLivenessOnly(t *testing.T) {

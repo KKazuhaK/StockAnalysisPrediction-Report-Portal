@@ -99,7 +99,7 @@ and the reconcile-not-retry `untracked` outcome (ADR 0015).
    configured by it being on: it is enforced when a report is saved, not by a pass, and its zero value
    means unlimited rather than off.
 
-9. **The pass returns disk, not only rows** (v0.4.49). Deleting rows never moved the file: SQLite parks
+9. **The pass returns disk, not only rows** (v0.4.45). Deleting rows never moved the file: SQLite parks
    the freed pages on its freelist, Postgres marks them reusable within the table. So the console
    reported "cleaned 12,431 rows" while `df` did not move at all — the number an admin ran the pass to
    change was the one it could not change.
