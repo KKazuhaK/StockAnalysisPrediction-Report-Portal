@@ -55,16 +55,22 @@ func (c cleanupConfig) scheduledTargets() cleanupTargets {
 // cleanupResult is the outcome of one pass (also the JSON returned by run/preview and the
 // last-result blob stored in meta).
 type cleanupResult struct {
-	At         string `json:"at"`      // UTC RFC3339 instant the pass ran
-	Trigger    string `json:"trigger"` // "schedule" | "manual" | "preview"
-	DryRun     bool   `json:"dry_run"`
-	OK         bool   `json:"ok"`
-	Error      string `json:"error"`
-	Batch      int64  `json:"batch"`
-	Tokens     int64  `json:"tokens"`
-	Reports    int64  `json:"reports"`
-	Audit      int64  `json:"audit"`
-	Revisions  int64  `json:"revisions"`
+	At        string `json:"at"`      // UTC RFC3339 instant the pass ran
+	Trigger   string `json:"trigger"` // "schedule" | "manual" | "preview"
+	DryRun    bool   `json:"dry_run"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error"`
+	Batch     int64  `json:"batch"`
+	Tokens    int64  `json:"tokens"`
+	Reports   int64  `json:"reports"`
+	Audit     int64  `json:"audit"`
+	Revisions int64  `json:"revisions"`
+	// Reclaimed is bytes actually returned to the filesystem, which is the number an admin ran the
+	// pass to change — deleting rows on its own moves neither driver's file size. Driver rides along
+	// so a zero can be explained rather than guessed at: on Postgres nothing is attempted at all
+	// (autovacuum reclaims for reuse, and VACUUM FULL is a full outage nobody should schedule).
+	Reclaimed  int64  `json:"reclaimed"`
+	Driver     string `json:"driver"`
 	DurationMs int64  `json:"duration_ms"`
 }
 
@@ -248,6 +254,15 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 		res.note(err)
 	}
 
+	// After the deletions and only on a real pass: VACUUM rewrites the whole file, so it must see
+	// the freed pages, and a preview must not rewrite anything at all.
+	res.Driver = s.st.driver
+	if !dryRun && res.Batch+res.Tokens+res.Reports+res.Audit+res.Revisions > 0 {
+		freed, err := s.st.reclaim()
+		res.Reclaimed = freed
+		res.note(err)
+	}
+
 	res.At = start.UTC().Format(time.RFC3339)
 	res.DurationMs = time.Since(start).Milliseconds()
 
@@ -262,7 +277,8 @@ func (s *Server) runCleanup(trigger string, dryRun bool, sel cleanupTargets) cle
 			s.st.InsertCleanupRun(CleanupRun{
 				RanAt: nowStr(), Trigger: trigger, DryRun: false, OK: res.OK, Error: res.Error,
 				BatchDeleted: res.Batch, TokensDeleted: res.Tokens, ReportsDeleted: res.Reports,
-				AuditDeleted: res.Audit, RevisionsDeleted: res.Revisions, DurationMs: res.DurationMs,
+				AuditDeleted: res.Audit, RevisionsDeleted: res.Revisions,
+				BytesReclaimed: res.Reclaimed, DurationMs: res.DurationMs,
 			})
 		}
 		if b, err := json.Marshal(res); err == nil {

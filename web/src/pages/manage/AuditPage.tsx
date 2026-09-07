@@ -28,6 +28,7 @@ import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
 import { auditDetail } from '../../lib/auditDetail'
 import type { AuditEntry, AuditResp } from '../../api/types'
+import { clickable } from '../../lib/clickable'
 
 // The audit log: who read what, and who changed who can read it.
 //
@@ -198,10 +199,10 @@ export default function AuditPage() {
             <Space size={4} wrap>
               <Typography.Link
                 style={{ fontSize: 11 }}
-                onClick={() => {
+                {...clickable(() => {
                   setIP(r.ip ?? '')
                   setPage(1)
-                }}
+                })}
               >
                 {r.ip}
               </Typography.Link>
@@ -384,11 +385,11 @@ export default function AuditPage() {
               style={{ fontSize: 12 }}
               // The address filters the log; the card opens the record. Without this, tapping the
               // address does both and the modal covers the result.
-              onClick={(e) => {
+              {...clickable((e) => {
                 e.stopPropagation()
                 setIP(r.ip ?? '')
                 setPage(1)
-              }}
+              })}
             >
               {r.ip}
             </Typography.Link>

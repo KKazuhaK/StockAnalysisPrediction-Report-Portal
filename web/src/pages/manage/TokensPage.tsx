@@ -141,7 +141,7 @@ export default function TokensPage() {
             align: 'right',
             render: (_, r) => (
               <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => remove(r.id)}>
-                <Button size="small" danger icon={<DeleteOutlined />} />
+                <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
               </Popconfirm>
             ),
           },

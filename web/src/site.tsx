@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useLocation } from 'react-router'
 import { api } from './api/client'
 import type { HomeMoreStyle, SiteSettings } from './api/types'
 import { BrandIcon } from './components/icons'
 import { clearSWUpdate, trackSWUpdates } from './lib/swUpdate'
+import { pageTitle, routeTitle } from './lib/pageTitle'
 import { startVisiblePoll } from './lib/visiblePoll'
 
 const DEFAULT_FAVICON = '/favicon.svg'
@@ -52,7 +54,8 @@ function faviconLink(): HTMLLinkElement {
 }
 
 export function SiteProvider({ children }: { children: ReactNode }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const loc = useLocation()
   const [settings, setSettings] = useState<SiteSettings>(DEFAULT_SETTINGS)
 
   const refresh = useCallback(async () => {
@@ -82,8 +85,20 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   const title = settings.siteTitle || t('brand')
   const logoUrl = settings.siteLogoUrl
 
+  // The tab shows which page this is, not only which portal. The site name stays as the second
+  // half, so a row of tabs is still recognisably one deployment.
   useEffect(() => {
-    document.title = title
+    document.title = pageTitle(routeTitle(loc.pathname, t), title)
+  }, [title, loc.pathname, t])
+
+  // The document language, which was hard-coded to zh in index.html. A screen reader picks its
+  // pronunciation from this: an English UI announced with Chinese phonetics is unintelligible, and
+  // it is the one accessibility property no amount of correct markup can compensate for.
+  useEffect(() => {
+    if (i18n.language) document.documentElement.lang = i18n.language
+  }, [i18n.language])
+
+  useEffect(() => {
     const link = faviconLink()
     if (logoUrl) {
       link.href = logoUrl
@@ -92,7 +107,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       link.href = DEFAULT_FAVICON
       link.type = 'image/svg+xml'
     }
-  }, [title, logoUrl])
+  }, [logoUrl])
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return

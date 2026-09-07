@@ -94,7 +94,11 @@ func (s *Server) apiBatchPluginDelete(w http.ResponseWriter, r *http.Request, us
 func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user string) {
 	pw := s.prioWeights()
 	cfg := map[string]any{
-		"max_jobs":                 s.batchBudget(),                                   // queue budget: jobs running at once (ADR 0004)
+		"max_jobs": s.batchBudget(), // queue budget: jobs running at once (ADR 0004)
+		// The per-job worker ceiling every requested concurrency is clamped to (ADR 0001). It had a
+		// reader and no writer, so it sat at its compiled-in 10 while the run forms offered 20 —
+		// the console promised twice what the server would honour, silently.
+		"max_concurrency":          s.batchMaxConcurrency(),
 		"reserved_slots":           s.batchReserved(),                                 // slots held for 加急 (ADR 0004)
 		"ticket_period_days":       s.ticketPeriodDays(),                              // how often 加急 tickets refill (ADR 0005)
 		"default_priority":         s.runDefaultPriority(),                            // base priority (0..100) for no-group runs (ADR 0008)
@@ -123,6 +127,7 @@ func (s *Server) apiBatchConfigGet(w http.ResponseWriter, r *http.Request, user 
 func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		MaxJobs               *int    `json:"max_jobs"`
+		MaxConcurrency        *int    `json:"max_concurrency"`
 		ReservedSlots         *int    `json:"reserved_slots"`
 		TicketPeriodDays      *int    `json:"ticket_period_days"`
 		DefaultPriority       *string `json:"default_priority"`
@@ -161,6 +166,9 @@ func (s *Server) apiBatchConfigSave(w http.ResponseWriter, r *http.Request, user
 	}
 	if in.MaxJobs != nil && *in.MaxJobs >= 1 {
 		s.st.SetSetting("batch_max_concurrent_jobs", strconv.Itoa(*in.MaxJobs))
+	}
+	if in.MaxConcurrency != nil && *in.MaxConcurrency >= 1 && *in.MaxConcurrency <= maxBatchConcurrencyCeiling {
+		s.st.SetSetting("batch_max_concurrency", strconv.Itoa(*in.MaxConcurrency))
 	}
 	if in.ReservedSlots != nil && *in.ReservedSlots >= 0 {
 		s.st.SetSetting("batch_reserved_slots", strconv.Itoa(*in.ReservedSlots))
@@ -300,8 +308,16 @@ func (s *Server) apiBatchTargetReorder(w http.ResponseWriter, r *http.Request, u
 		jsonError(w, http.StatusBadRequest, "bad json")
 		return
 	}
+	// The error is not discarded. A half-applied reorder — a locked SQLite file, a Postgres blip
+	// partway down the loop — used to answer ok, so the console kept the order the admin had just
+	// made while the table held something else, and nothing in that page load ever corrected it.
+	// SetTargetOrder is a plain UPDATE, so an id that no longer exists is a no-op rather than a
+	// resurrection; only a real failure reaches here.
 	for i, id := range in.IDs {
-		s.st.SetTargetOrder(id, i)
+		if err := s.st.SetTargetOrder(id, i); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, okJSON)
 }

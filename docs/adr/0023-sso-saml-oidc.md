@@ -140,7 +140,7 @@ fallback (host-header poisoning), which is exactly the property SAML needs.
 
 Secrets (SP private key, OIDC client secret) are sealed with AES-256-GCM under a DEK wrapped by
 `HKDF-SHA256(secret_key, salt, …)`, so rotating `secret_key` re-wraps **one row** instead of
-re-encrypting every secret. A blank secret on write keeps the stored one (the existing Dify
+re-encrypting every secret — see `secret_key_previous` under Consequences for the actual procedure. A blank secret on write keeps the stored one (the existing Dify
 `api_key` precedent); reads return `has_secret` booleans and never a value.
 
 ### Flows
@@ -377,8 +377,13 @@ exactly once, and a consumed pending token cannot be replayed.
   login is untouched.
 - **SAML requires an https `public_url`.** Accepted: the ACS flow cookie must be `SameSite=None;
   Secure`, and the alternative — dropping the browser binding — is strictly worse.
-- **Rotating `secret_key` requires re-entering SSO secrets** unless `rotate-kek` is run first. Must be
-  in the release notes.
+- **Rotating `secret_key` takes one extra boot.** Set the old key as `secret_key_previous` (or
+  `RP_SECRET_KEY_PREVIOUS`) beside the new one and restart: the keyring is re-wrapped in place, the
+  data key is unchanged, and no stored secret is re-encrypted or re-entered. Remove the setting
+  afterwards — the portal logs a line on every boot while it is still there. Rotating **without** it
+  fails loudly and changes nothing, naming both remedies (restore the old key, or delete the two
+  `meta` keyring rows and re-enter the SSO secrets); it deliberately does not mint a fresh data key,
+  which would silently orphan everything already sealed.
 - **Deprovisioning lags until SCIM.** An IdP-side disable is invisible to us for the session lifetime;
   admin-side disable is already instant. Mitigated by a shorter session for SSO users (`session_hours`),
   which is stamped into the **signed token**, not only the cookie's `MaxAge` — `MaxAge` is a hint the

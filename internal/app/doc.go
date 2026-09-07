@@ -13,6 +13,7 @@
 // Bootstrap & HTTP plumbing
 //   - server.go       config load, first-run bootstrap, ALL route registration, serve loop
 //   - spa.go          serve the embedded SPA (index.html for client-side deep links)
+//   - health.go       /healthz, which checks the DATABASE (cached, so a public probe is cheap)
 //   - gzip.go         transparent gzip middleware for text responses
 //   - pwa.go          PWA manifest + icon
 //   - site_assets.go  serve admin-uploaded site branding assets (logo, favicon)
@@ -36,6 +37,10 @@
 //   - migrate.go schemaBaseline + requireSchemaBaseline (the major-boundary upgrade gate)
 //     and ensureColumns (additive-column reconcile). The v0.1→v0.2 fold step that used to
 //     sit beside it was folded into the base schema at the v0.3 boundary, per CLAUDE.md.
+//   - backup.go  whole-database dump and restore behind the `backup` / `restore` subcommands
+//     (ADR 0027). One JSON Lines format for both drivers, so a dump is portable between them;
+//     the table list is read from baseSchemaStmts, so a new table is covered the day it is
+//     declared. Restore without --force is a dry run.
 //
 // Reports: grouping, reading, export
 //   - group.go      collapse a run (symbol+date) into one card
@@ -61,6 +66,8 @@
 //   - cleanup.go       retention engine + the daily/weekly/monthly cadence loop (cleanupLoop)
 //   - cleanup_api.go   admin console HTTP surface (/api/admin/cleanup/*)
 //   - cleanup_store.go usage stats, retention delete queries, cleanup_runs audit log
+//   - cleanup_reclaim.go returns freed pages to the filesystem after a pass. SQLite gets a gated
+//     VACUUM; Postgres gets nothing, because autovacuum has it and VACUUM FULL is an outage.
 //
 // Interactive chat / assistant (ADR 0012)
 //   - chat_api.go   HTTP handlers (send / stop / history / conversations)

@@ -440,11 +440,14 @@ function ProviderForm({
 
 export default function SSOPage() {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const [providers, setProviders] = useState<SSOProviderAdmin[]>([])
   const [groups, setGroups] = useState<UserGroupRow[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [publicUrl, setPublicUrl] = useState('')
   const [spDefaults, setSpDefaults] = useState<NonNullable<SSOProvidersResp['sp_defaults']>>({})
+  const [allowPrivate, setAllowPrivate] = useState(false)
+  const [savingPrivate, setSavingPrivate] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
   const [loadErr, setLoadErr] = useState('')
@@ -474,6 +477,7 @@ export default function SSOPage() {
         setProviders(r.providers || [])
         setPublicUrl(r.public_url || '')
         setSpDefaults(r.sp_defaults || {})
+        setAllowPrivate(r.allow_private === true)
         setLoaded(true)
       })
       .catch((e) => setLoadErr(errText(e, t)))
@@ -493,6 +497,32 @@ export default function SSOPage() {
   return (
     <Card>
       <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load}>
+      {/* Not a field on either provider form: it is not a property of one provider, and it widens
+          what EVERY outbound SSO call may reach. It sits above the tabs for the same reason. */}
+      <Space align="start" size={12} style={{ marginBottom: 16 }}>
+        <Switch
+          checked={allowPrivate}
+          loading={savingPrivate}
+          aria-label={t('sso.allowPrivate')}
+          onChange={(next) => {
+            setSavingPrivate(true)
+            setAllowPrivate(next)
+            api
+              .post('/api/admin/sso/allow-private', { allow: next })
+              .catch((e) => {
+                message.error(errText(e, t))
+                setAllowPrivate(!next) // the server is the arbiter; put the switch back
+              })
+              .finally(() => setSavingPrivate(false))
+          }}
+        />
+        <div>
+          <Typography.Text strong>{t('sso.allowPrivate')}</Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+            {t('sso.allowPrivateHint')}
+          </Typography.Paragraph>
+        </div>
+      </Space>
       <Tabs
         items={[
           ...(['saml', 'oidc'] as const).map((kind) => ({

@@ -92,7 +92,7 @@ export default function WebhooksPage() {
             {t('webhook.test')}
           </Button>
           <Popconfirm title={t('webhook.deleteConfirm')} onConfirm={() => remove(h.id)}>
-            <Button size="small" danger icon={<DeleteOutlined />} />
+            <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
           </Popconfirm>
         </Space>
       ),

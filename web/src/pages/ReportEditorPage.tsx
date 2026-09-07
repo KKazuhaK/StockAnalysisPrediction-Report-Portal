@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   App,
   Button,
@@ -97,6 +97,21 @@ export default function ReportEditorPage() {
   // the body, so putting the page back in step means refetching the form rather than patching the
   // three or four pieces of state a restore happens to touch today.
   const [reloads, setReloads] = useState(0)
+  // What the server currently holds, as one comparable string. Set when the form loads and after
+  // every successful save, so "has this draft got unsaved work in it?" is answered by comparing
+  // against it at the moment someone tries to leave — rather than by a dirty flag that has to be
+  // kept in step with every keystroke, every import, and every restore.
+  const [saved, setSaved] = useState('')
+  // Read inside listeners that are registered once, so the beforeunload handler is not torn down
+  // and re-added on every character typed.
+  const bodyRef = useRef(body)
+  const savedRef = useRef(saved)
+  useEffect(() => {
+    bodyRef.current = body
+  }, [body])
+  useEffect(() => {
+    savedRef.current = saved
+  }, [saved])
 
   const editingId = id ? Number(id) : undefined
 
@@ -134,6 +149,12 @@ export default function ReportEditorPage() {
           audience: r.audience ?? 'grant',
           viewers: r.viewers ?? [],
         })
+        // Taken from the form rather than from `r`, so it is built by the same code path the
+        // comparison uses; a snapshot assembled a second way is a guard that fires on a difference
+        // it invented itself. getFieldsValue(TRUE) — the whole store — because the form is still
+        // behind the loading spinner here and antd's default only reports fields that are mounted,
+        // which would make every freshly loaded page read as unsaved.
+        setSaved(snapshot(form.getFieldsValue(true), r.body_md ?? ''))
       })
       .catch((e) => live && message.error(errText(e, t)))
       .finally(() => live && setLoading(false))
@@ -152,6 +173,63 @@ export default function ReportEditorPage() {
       }),
     [data, t],
   )
+
+  // snapshot is exactly the set of fields a save sends, so "changed" means "a save would write
+  // something different" — not "a control was touched". Reusing the payload's own shape is what
+  // keeps the two from drifting: a field added to one is missing from the other and the guard
+  // silently stops noticing it.
+  const snapshot = useCallback(
+    (v: Record<string, unknown>, md: string) =>
+      JSON.stringify({
+        symbol: String(v.symbol ?? '').trim(),
+        name: String(v.name ?? '').trim(),
+        date: v.date ? (v.date as dayjs.Dayjs).format(DATE_FMT) : '',
+        subtype: v.subtype ?? '',
+        title: String(v.title ?? '').trim(),
+        source: String(v.source ?? '').trim(),
+        audience: v.audience,
+        viewers: v.audience === 'grant' ? (v.viewers ?? []) : [],
+        body: md,
+      }),
+    [],
+  )
+
+  const isDirty = useCallback(
+    () => savedRef.current !== '' && snapshot(form.getFieldsValue(true), bodyRef.current) !== savedRef.current,
+    [form, snapshot],
+  )
+
+  // The browser's own guard, for the exits this page does not own: closing the tab, reloading,
+  // typing a different address. The text is the browser's — it has not been ours to write for a
+  // decade — so all this can do is ask for the prompt at all.
+  useEffect(() => {
+    const onLeave = (e: BeforeUnloadEvent) => {
+      if (!isDirty()) return
+      e.preventDefault()
+      e.returnValue = '' // still required by Safari and older Chrome
+    }
+    window.addEventListener('beforeunload', onLeave)
+    return () => window.removeEventListener('beforeunload', onLeave)
+  }, [isDirty])
+
+  // The exits this page DOES own. In-app navigation from elsewhere in the shell — a sidebar link,
+  // say — is not covered: useBlocker needs a data router and this app mounts a plain BrowserRouter,
+  // so the honest options were this or a router migration touching every route. The two exits an
+  // author actually uses mid-draft are the back button and the tab, and both are covered.
+  const leave = (go: () => void) => {
+    if (!isDirty()) {
+      go()
+      return
+    }
+    modal.confirm({
+      title: t('reportEditor.discardTitle'),
+      content: t('reportEditor.discardBody'),
+      okText: t('reportEditor.discardOk'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: go,
+    })
+  }
 
   // Importing a .md file fills the body rather than uploading anything: the report is the text, and
   // a file that lands on the server before the author has looked at it is a file nobody checked.
@@ -196,6 +274,7 @@ export default function ReportEditorPage() {
       if (editingId) {
         const r = await api.put<{ updated_at: string }>(`/api/reports/${editingId}`, payload)
         setToken(r.updated_at ?? '')
+        setSaved(snapshot(form.getFieldsValue(true), body)) // what is on the server now, so leaving stops asking
         message.success(t('reportEditor.saved'))
       } else {
         const r = await api.post<{ id: number }>('/api/reports', payload)
@@ -256,7 +335,7 @@ export default function ReportEditorPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Space size={12} wrap>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => leave(() => navigate(-1))}>
           {t('common.back')}
         </Button>
         <Typography.Title level={4} style={{ margin: 0 }}>

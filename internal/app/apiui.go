@@ -389,11 +389,56 @@ func (s *Server) apiHome(w http.ResponseWriter, r *http.Request, user string) {
 		"groups":   groupsJSON(groups[lo:hi]),
 		"newTotal": newTotal, "oldTotal": oldTotal, "totalRuns": totalRuns,
 		"page": page, "pages": pages, "size": size,
-		"types": types, "kinds": kinds,
+		"types": types, "kinds": kinds, "versions": s.presentVersions(sc),
 		// Home shows only entries/groups toggled visible; the admin manager sees them all.
 		"links": linksJSON(homeVisibleLinks(s.st.Links(), homeGroups)), "linkGroups": linkGroupsJSON(visibleGroups(homeGroups)),
 		"kindColors": s.st.KindColors(),
 	})
+}
+
+// presentVersions lists the written forms (ADR 0024) the caller can actually see, in registry order,
+// for the browse page's version filter. It is what makes "show me only what people wrote by hand"
+// expressible at all — the manual version is just one entry in it (ADR 0026).
+//
+// Offered only when there is more than one: a portal that has never registered a second version, or
+// a reader granted only one, should not be shown a filter whose every setting means the same thing.
+//
+// Cost, measured rather than assumed, because this runs on the busiest endpoint there is. It is a
+// DISTINCT over reports, and `version` is the LAST column of the only index naming it, so it is a
+// scan. On SQLite, 50k reports, warm: 24ms — beside the pre-existing ReportKinds scan at 20ms and
+// the feed's own SearchNewLatest at 261ms, i.e. about 9% of what the request already costs, and
+// nearer 4ms at the size this portal actually runs at.
+//
+// Left as a scan deliberately. An index on `version` would have two or three distinct values across
+// the whole table, which is a poor index that earns nothing on reads and charges every write — the
+// same reasoning that removed idx_reports_sym and idx_reports_owner (see the reports schema).
+func (s *Server) presentVersions(sc *ownerScope) []map[string]any {
+	present := map[string]bool{}
+	for _, v := range s.st.ReportVersionsPresent(sc) {
+		present[v] = true
+	}
+	if len(present) < 2 {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(present))
+	for _, v := range s.st.Versions() { // registry order, so the filter does not reshuffle itself
+		if present[v.Name] {
+			out = append(out, map[string]any{"name": v.Name, "label": firstNonEmpty(v.Label, v.Name)})
+			delete(present, v.Name)
+		}
+	}
+	// A version written into reports but absent from the registry cannot happen through resolveVersion,
+	// which registers on sight — but a restored backup or a hand-edited row could produce one, and
+	// dropping it here would hide those reports behind a filter that never lists them.
+	names := make([]string, 0, len(present))
+	for v := range present {
+		names = append(names, v)
+	}
+	sort.Strings(names)
+	for _, v := range names {
+		out = append(out, map[string]any{"name": v, "label": v})
+	}
+	return out
 }
 
 func groupsJSON(gs []Group) []map[string]any {
@@ -627,6 +672,17 @@ func (s *Server) apiLinkDelete(w http.ResponseWriter, r *http.Request, user stri
 // apiLinkLayout persists the whole entry-button layout in one shot: the ordered mix of group
 // headers and links (from the admin's single drag list). Walked once — each group gets its
 // order; each link is assigned to the most recent group above it (0 = top-level) + an order.
+//
+// Group ids are checked against the ones that still exist, and a header naming a group that does
+// not sends the buttons under it to the top level instead. The payload is whatever the browser read
+// on its last GET, so a group deleted since — in another tab, or by another admin — is still in it;
+// the group's own UPDATE is a harmless no-op, but the links below it were being stamped with a
+// group id nothing resolves. That hides them from the home page AND from this admin page at once,
+// with no way back through the UI: re-creating the group gets a new id, so recovery was a hand-run
+// UPDATE on the links table.
+//
+// Top level is the right landing place rather than some other group, because it is exactly what
+// DeleteLinkGroup already does to the links a deleted group was holding.
 func (s *Server) apiLinkLayout(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		Items []struct {
@@ -634,20 +690,42 @@ func (s *Server) apiLinkLayout(w http.ResponseWriter, r *http.Request, user stri
 			ID   int64  `json:"id"`
 		} `json:"items"`
 	}
-	readJSON(r, &in)
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	live := map[int64]bool{}
+	for _, g := range s.st.LinkGroups() {
+		live[g.ID] = true
+	}
 	groupOrd, linkOrd := 0, 0
 	var current int64
+	var orphaned int
 	for _, it := range in.Items {
 		if it.Kind == "group" {
-			s.st.SetLinkGroupOrder(it.ID, groupOrd)
+			if !live[it.ID] {
+				current = 0
+				orphaned++
+				continue
+			}
+			if err := s.st.SetLinkGroupOrder(it.ID, groupOrd); err != nil {
+				jsonError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 			groupOrd++
 			current = it.ID
-		} else {
-			s.st.SetLinkGroupAndOrder(it.ID, current, linkOrd)
-			linkOrd++
+			continue
 		}
+		if err := s.st.SetLinkGroupAndOrder(it.ID, current, linkOrd); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		linkOrd++
 	}
-	writeJSON(w, okJSON)
+	if orphaned > 0 {
+		log.Printf("link layout: %d group header(s) no longer exist; their buttons moved to the top level", orphaned)
+	}
+	writeJSON(w, map[string]any{"ok": true, "orphanedGroups": orphaned})
 }
 
 func normalizeLinkGroupMode(m string) string {
@@ -835,15 +913,50 @@ func (s *Server) apiTypesAdd(w http.ResponseWriter, r *http.Request, user string
 	writeJSON(w, okJSON)
 }
 
+// apiTypesReorder persists the strip's order. It writes only names that still exist.
+//
+// SetTypeOrder is an upsert, and deliberately so: a DISCOVERED type — one that reports carry but
+// nobody has configured — has no row to update, and dragging it has to create one. The same upsert
+// will just as happily create a row for a name that no longer exists anywhere, and the browser is
+// full of those: the list it drags came from a GET, and a type deleted since (by this admin in
+// another tab, or by another admin) is still in it. The type came back — uncategorised, unlabelled,
+// and back in the reader's category filter and every run form — and deleting it again only held
+// until the next drag.
+//
+// Reordering is not a creating operation, so it refuses to be one. Unknown names are dropped rather
+// than rejected: a stale drag is a race, not a mistake, and failing the whole save would strand the
+// order of the rows that ARE still there.
 func (s *Server) apiTypesReorder(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
 		Names []string `json:"names"`
 	}
-	readJSON(r, &in)
-	for i, n := range in.Names {
-		s.st.SetTypeOrder(n, i)
+	if err := readJSON(r, &in); err != nil {
+		jsonError(w, http.StatusBadRequest, "bad json")
+		return
 	}
-	writeJSON(w, okJSON)
+	known := map[string]bool{}
+	for _, n := range s.st.DiscoveredTypes() {
+		known[n] = true
+	}
+	ord := 0
+	var dropped []string
+	for _, n := range in.Names {
+		if !known[n] {
+			dropped = append(dropped, n)
+			continue
+		}
+		if err := s.st.SetTypeOrder(n, ord); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		ord++
+	}
+	if len(dropped) > 0 {
+		// Said out loud, because from the admin's seat the drag succeeded and the strip they were
+		// looking at was already out of date. The page reloads on the answer below.
+		log.Printf("types reorder: ignored %d name(s) that no longer exist: %v", len(dropped), dropped)
+	}
+	writeJSON(w, map[string]any{"ok": true, "dropped": dropped})
 }
 
 func (s *Server) apiTypesDelete(w http.ResponseWriter, r *http.Request, user string) {

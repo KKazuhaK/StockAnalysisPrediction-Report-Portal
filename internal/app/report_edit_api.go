@@ -245,6 +245,7 @@ func (s *Server) apiReportCreate(w http.ResponseWriter, r *http.Request, user st
 		"audience": strings.ToLower(strings.TrimSpace(in.Audience)), "viewers": len(viewers),
 		"from": strings.TrimSpace(r.URL.Query().Get("from")),
 	})
+	s.announceReport(id, rep, s.st.ManualVersion(), true)
 	writeJSON(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -276,7 +277,7 @@ func (s *Server) apiReportSave(w http.ResponseWriter, r *http.Request, user stri
 	// Read before the store opens its transaction. On SQLite the pool is one connection wide, so a
 	// setting read from inside that transaction would wait on the connection the transaction holds.
 	next.Author = user
-	written, err := s.st.UpdateManualReport(id, next, in.UpdatedAt, s.reportRevisionsKeep())
+	written, changed, err := s.st.UpdateManualReport(id, next, in.UpdatedAt, s.reportRevisionsKeep())
 	if err != nil {
 		var exists ErrReportExists
 		switch {
@@ -297,6 +298,12 @@ func (s *Server) apiReportSave(w http.ResponseWriter, r *http.Request, user stri
 		"symbol": next.Symbol, "date": next.Date, "subtype": next.RType, "title": next.Title,
 		"audience": strings.ToLower(strings.TrimSpace(in.Audience)), "viewers": len(viewers),
 	})
+	if changed {
+		// A save that rewrote nothing — an audience change, say — is not news. The same question
+		// decides whether a revision is filed, so the event stream and the history agree on what
+		// counts as an edit rather than each having its own idea.
+		s.announceReport(id, next, rep.Version, false)
+	}
 	writeJSON(w, map[string]any{"ok": true, "id": id, "updated_at": written})
 }
 
@@ -323,4 +330,23 @@ func (s *Server) apiReportDelete(w http.ResponseWriter, r *http.Request, user st
 		"manual": true,
 	})
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// announceReport fires report.ingested for a report a person wrote or edited in the browser.
+//
+// Deliberately the SAME event as the v1 ingest rather than a new one. A subscriber's contract has
+// been "a report arrived or changed" since ADR 0002, and a hand-written report is a report arriving;
+// minting report.written instead would mean every existing subscriber goes on missing them until
+// somebody notices and subscribes again — which is the bug this fixes, wearing a different name.
+// `version`, `author` and `created` are in the payload for a subscriber that does want to tell the
+// two apart, and they are on the v1 ingest's payload too so there is one shape, not two.
+//
+// Deletion still fires nothing. There is no report.deleted event for machine reports either, so
+// adding one only for hand-written ones would be a catalogue that is inconsistent in a new way.
+func (s *Server) announceReport(id int64, r Rep, version string, created bool) {
+	s.fireEvent(EventReportIngested, map[string]any{
+		"id": id, "symbol": r.Symbol, "name": r.Name, "date": r.Date,
+		"rtype": r.RType, "kind": r.Kind, "title": r.Title, "source": r.Source,
+		"version": version, "author": r.Author, "created": created,
+	})
 }

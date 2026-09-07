@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Spin, Typography } from 'antd'
+import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Spin, Tooltip, Typography } from 'antd'
 import { PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
+import { formatReportDateTime } from '../lib/datetime'
 import { buildRow, isFileInput } from '../lib/difyInputs'
 import { readPrefetched } from '../lib/prefetch'
 import {
@@ -372,12 +373,18 @@ export default function RunAnalysisModal({
             and admins see the form exactly as before. The window is part of the sentence — "2 of 5
             left" is a different fact depending on whether it refills tomorrow or never. */}
         {quota?.limited && (
-          <Typography.Text type={(quota.remaining ?? 0) <= 0 ? 'danger' : 'secondary'}>
-            {t(`run.quotaRemaining.${quotaPeriod(quota.period)}`, {
-              remaining: quota.remaining ?? 0,
-              limit: quota.limit ?? 0,
-            })}
-          </Typography.Text>
+          // The exact refill moment sits in a tooltip rather than in the line. "2 of 5 left today"
+          // is what somebody about to run needs; WHEN the 0 becomes a 5 is what they need only once
+          // they have hit it, and the server has always sent it — nothing rendered it, so the answer
+          // to "when can I run again" was in the payload and on no screen.
+          <Tooltip title={quota.resets_at ? t('run.quotaResetsAt', { when: formatReportDateTime(quota.resets_at) }) : undefined}>
+            <Typography.Text type={(quota.remaining ?? 0) <= 0 ? 'danger' : 'secondary'}>
+              {t(`run.quotaRemaining.${quotaPeriod(quota.period)}`, {
+                remaining: quota.remaining ?? 0,
+                limit: quota.limit ?? 0,
+              })}
+            </Typography.Text>
+          </Tooltip>
         )}
 
         <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} showRule={defaults.showPresetRule} />

@@ -623,7 +623,8 @@ func (s *Store) baseSchemaStmts() []string {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS cleanup_runs(
 			id %s, ran_at TEXT, trigger TEXT, dry_run INTEGER DEFAULT 0, ok INTEGER DEFAULT 1, error TEXT DEFAULT '',
 			batch_deleted INTEGER DEFAULT 0, tokens_deleted INTEGER DEFAULT 0, reports_deleted INTEGER DEFAULT 0,
-			duration_ms INTEGER DEFAULT 0, audit_deleted INTEGER DEFAULT 0, revisions_deleted INTEGER DEFAULT 0)`, pk),
+			duration_ms INTEGER DEFAULT 0, audit_deleted INTEGER DEFAULT 0, revisions_deleted INTEGER DEFAULT 0,
+			bytes_reclaimed BIGINT DEFAULT 0)`, pk),
 		// Prior states of a hand-written report (ADR 0026). One row per SUPERSEDED version: a save
 		// snapshots what the report said BEFORE it was overwritten, inside the same transaction that
 		// overwrites it, so the current text lives only on the report and is never stored twice.
@@ -1134,7 +1135,12 @@ func (s *Store) DiscoveredTypes() []string {
 type Filters struct {
 	Q, Scope, Symbol, RType string
 	Kind                    string // 大类 (top-level category) filter, matched against reports.kind
-	DateFrom, DateTo, Sort  string
+	// Version narrows to one written form (ADR 0024) — which is also how "show me only the reports
+	// people wrote by hand" is expressed, since those are exactly the manual version (ADR 0026).
+	// A version nobody may read still cannot be seen through it: the row filter is ANDed with the
+	// caller's scope, so naming a version only ever narrows what that scope already allows.
+	Version                string
+	DateFrom, DateTo, Sort string
 }
 
 func dir(sort string) string {
@@ -1176,6 +1182,10 @@ func (s *Store) newReportFilter(f Filters, sc *ownerScope) (string, []any) {
 	if f.Kind != "" {
 		where = append(where, "r.kind = ?")
 		args = append(args, f.Kind)
+	}
+	if f.Version != "" {
+		where = append(where, "r.version = ?")
+		args = append(args, f.Version)
 	}
 	if f.DateFrom != "" {
 		where = append(where, "r.rdate >= ?")
@@ -1942,6 +1952,19 @@ func (s *Store) ReportKinds(sc *ownerScope) []string {
 		q += " AND " + frag
 	}
 	return s.distinct(q+" ORDER BY kind", args...)
+}
+
+// ReportVersionsPresent lists the versions that actually appear in the reports a caller may read,
+// which is what the browse filter offers. Derived from the data rather than from the registry, so a
+// version nobody has written a report in is not offered, and — because the scope is applied here
+// too — a restricted viewer is not told that a version they cannot read exists.
+func (s *Store) ReportVersionsPresent(sc *ownerScope) []string {
+	q := "SELECT DISTINCT version FROM reports WHERE version<>''"
+	frag, args := sc.where("")
+	if frag != "" {
+		q += " AND " + frag
+	}
+	return s.distinct(q+" ORDER BY version", args...)
 }
 
 // FreezeReportNames snapshots the current stocks-cache name onto each report that has no
