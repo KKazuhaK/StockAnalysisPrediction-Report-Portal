@@ -7,6 +7,7 @@
 - **omnibox 主搜索**：一个搜索框输代码或名字 → `AutoComplete` 补全（代码 + 名字 + 报告数 + 最近日期）→ 回车/选中进个股详情。**高级搜索**（类型/日期范围/关键字/来源/排序）折叠在可展开面板里，不占主路径。
 - **个股详情时间线**：一只票的所有报告聚合，`Timeline` 选日期 → 大类 `Segmented` → 小文档 `Tabs` → 正文。
 - **自给自足**：旧门户的历史报告已一次性导入本地库，与新报告同库同源；读透旧门户的实时通道和一次性导入器都已随旧门户退役而删除。
+- **实时行情与日 K 线**：个股页在报告上方显示实时价格（现价/涨跌/开高低收/量额/行情时间）和一张手写 SVG 的日 K 线图（1 月 / 3 月 / 6 月 / 1 年），腾讯为主源、新浪为备源，读时抓取 + TTL + 单飞，**不落库、不轮询、不加后台循环**。价格一律**整数分**，涨跌幅用厂商自己的字符串（自己重算会在除权日打印出一次假暴跌），K 线取**不复权**（前复权的历史价会随分红被反复重算）。解析器带一道防漂移闸门：厂商加一个字段所有区间检查依然通过，真正兜住的是"厂商自报涨跌幅必须与现价/昨收算得上"这条恒等式。北交所只给快照，不给 K 线 —— 两家的日线一家为空、一家停在十六个月前，看起来像数据的陈旧数据比没有更糟。详见 [ADR 0028](docs/adr/0028-live-quotes.md)。
 - **正文渲染**：`react-markdown` + GFM（表格/任务列表），旧报告 HTML 回退直渲。
 - **导出**：Markdown（原生）+ PDF（镜像内 wkhtmltopdf）。
 - **网页管理**（管理员）：入口按钮、报告类型（按大类分组/**拖拽排序**/默认页/改名/增删）、账号（角色）、系统设置（多令牌 + 接口文档）。入口按钮与类型顺序都用 **@dnd-kit 拖拽排序**、松手即存。
@@ -187,6 +188,8 @@ internal/
     group.go             按 run 分组 + 类别推断 + tab 标签
     roles.go             角色/权限注册表(RBAC-lite)
     names.go             股票代码→名映射(内嵌种子 + 运行时抓全量)
+    vendorfetch.go       行情/名称厂商的唯一出网通道(限长 + 查状态码 + 限频日志)
+    quote.go quote_cache.go quote_api.go  实时行情 + 日K线：双源解析 + 防漂移闸门 + 内存 LRU + /api/quote
     pdf.go md.go         wkhtmltopdf 生成 PDF / markdown 渲染
     user.go              账号类型
     templates/pdf.html   唯一保留的服务端模板(PDF 导出)
@@ -198,7 +201,7 @@ web/  (React + Ant Design + Vite + TS)
   src/App.tsx            ConfigProvider(主题/locale) + 路由 + 鉴权
   src/api/               fetch 封装 + 后端 JSON 契约类型
   src/auth.tsx prefs.tsx i18n.ts   会话 / 主题+语言偏好 / 界面词条
-  src/components/        AppLayout · Omnibox · ReportCard · Markdown · icons
+  src/components/        AppLayout · Omnibox · ReportCard · Markdown · QuoteStrip · PriceChart · icons
   src/pages/             Login · Home · Stock · Run · manage/(Links/Types/Users/Settings)
   (build → internal/web/dist → go:embed 进二进制)
 ```

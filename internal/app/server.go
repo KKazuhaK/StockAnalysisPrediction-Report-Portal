@@ -65,6 +65,7 @@ type Server struct {
 	v1Rate             *rateLimiter                                                               // per-source request ceiling on the machine API (limits.go); off until configured
 	trustedNets        []*net.IPNet                                                               // reverse proxies allowed to supply the client IP chain
 	mermaidCharts      mermaidChartCache                                                          // user-scoped, bounded rendered SVG cache for PDF export (ADR 0020)
+	quotes             quoteCache                                                                 // vendor quotes: its OWN bounded LRU + single-flight + upstream ceiling; lazily initialised (quote_cache.go)
 	ssoInsecureForTest bool                                                                       // test-only: permit a plain-http loopback IdP (ADR 0023)
 	dekOnce            dekCache                                                                   // lazily unwrapped data key for stored auth secrets (ADR 0023)
 	captchaSvc         *captcha.Service                                                           // public-form captcha (login / forgot password / registration)
@@ -298,6 +299,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/password/reset", s.apiResetPassword)
 	mux.HandleFunc("GET /api/home", s.requireUserJSON(s.apiHome))
 	mux.HandleFunc("GET /api/stock/{symbol}", s.requireUserJSON(s.apiStock))
+	mux.HandleFunc("GET /api/quote/{symbol}", s.requireUserJSON(s.apiQuote)) // live quote + daily bars; cached and single-flighted (quote_cache.go)
 	mux.HandleFunc("GET /api/run/{key}", s.requireUserJSON(s.apiRun))
 	// The review queue (tracking items). Session-scoped, unlike /api/v1/tracking, which runs on an
 	// ingest token that already has access to everything.

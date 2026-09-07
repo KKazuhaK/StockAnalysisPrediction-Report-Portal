@@ -4,12 +4,14 @@ import { ArrowLeftOutlined, ClockCircleOutlined, DiffOutlined } from '@ant-desig
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
-import type { StockResp } from '../api/types'
+import type { QuoteResp, StockResp } from '../api/types'
 import Markdown from '../components/Markdown'
 import EditReportButton from '../components/EditReportButton'
 import ReaderControls from '../components/ReaderControls'
 import CompareModal from '../components/CompareModal'
 import TimelinePanel from '../components/TimelinePanel'
+import QuoteStrip from '../components/QuoteStrip'
+import PriceChart from '../components/PriceChart'
 import { ExportMenu } from '../components/ExportButtons'
 import { useReaderPrefs } from '../reader'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
@@ -19,6 +21,11 @@ import { NO_ITEM_TOOLTIP } from '../lib/segmented'
 // How stale a warmed report may be and still render without waiting. The live request goes out
 // regardless and corrects it, so this only bounds how long a re-ingested body can linger.
 const READ_WARM_MAX_AGE = 5 * 60_000
+
+// The four windows the quote endpoint accepts (internal/app/quote_api.go). They are spelled out
+// here rather than derived from the response so the control renders before the first fetch lands.
+const QUOTE_RANGES = ['1m', '3m', '6m', '1y'] as const
+type QuoteRange = (typeof QUOTE_RANGES)[number]
 
 export default function StockPage() {
   const { t } = useTranslation()
@@ -37,6 +44,13 @@ export default function StockPage() {
   // Which report the compare dialog is open for; null when closed.
   const [compareFor, setCompareFor] = useState<number | null>(null)
   const [notFound, setNotFound] = useState(false)
+  const [quote, setQuote] = useState<QuoteResp | null>(null)
+  const [quoteLoading, setQuoteLoading] = useState(true)
+  const [quoteError, setQuoteError] = useState<unknown>(null)
+  const [quoteRange, setQuoteRange] = useState<QuoteRange>('3m')
+  // Bumped by the retry button. The quote is the one thing on this page a reader may want to
+  // re-request without navigating, and a nonce is the smallest way to say "run that effect again".
+  const [quoteNonce, setQuoteNonce] = useState(0)
 
   const query = { date: sp.get('date') || '', kind: sp.get('kind') || '', r: sp.get('r') || '' }
   // One place builds the URL, so what gets warmed and what gets loaded cannot drift apart — a
@@ -69,6 +83,40 @@ export default function StockPage() {
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, sp])
+
+  // The quote is deliberately NOT part of the report request. It has its own cache, its own TTL and
+  // its own failure mode, and a vendor being unreachable must never keep somebody from reading the
+  // report they came for — so it loads beside the page rather than in front of it.
+  //
+  // The cancelled flag is not decoration: switching range twice quickly, or stepping to the next
+  // stock while a fetch is in flight, resolves the requests in whatever order the network feels
+  // like, and without this the older answer can land last and overwrite the newer one.
+  useEffect(() => {
+    if (!symbol) return
+    let cancelled = false
+    setQuoteLoading(true)
+    setQuoteError(null)
+    api
+      .get<QuoteResp>(`/api/quote/${encodeURIComponent(symbol)}${qs({ range: quoteRange })}`)
+      .then((d) => {
+        if (cancelled) return
+        setQuote(d)
+        setQuoteError(null)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        // The stale quote is dropped rather than left on screen under an error: a price with no
+        // indication of when it stopped updating is the one thing worse than no price.
+        setQuote(null)
+        setQuoteError(e)
+      })
+      .finally(() => {
+        if (!cancelled) setQuoteLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [symbol, quoteRange, quoteNonce])
 
   // Warm the neighbours on the timeline. Stepping a day forward or back is the move a reader makes
   // most, and it is the one that costs a whole report — measured at ~96% report, ~4% navigation
@@ -158,6 +206,36 @@ export default function StockPage() {
       <div className={`rp-reader${wide ? ' rp-reader--wide' : ''}`} style={layoutVars}>
         {/* Back + stock name/code lead every layout, above the timeline. */}
         <div style={{ marginBottom: 12 }}>{navBar}</div>
+
+        {/* Live quote + daily chart (ADR 0028). It sits under the identity header and above the
+            timeline because it describes the STOCK, not the report being read — the report's own
+            actions live in its card header further down. */}
+        <Card
+          size="small"
+          title={t('quote.title')}
+          style={{ marginBottom: 12 }}
+          styles={{ body: { paddingTop: 12 } }}
+          extra={
+            <Segmented
+              size="small"
+              value={quoteRange}
+              onChange={(v) => setQuoteRange(v as QuoteRange)}
+              options={QUOTE_RANGES.map((r) => ({ label: t(`quote.range.${r}`), value: r, title: NO_ITEM_TOOLTIP }))}
+            />
+          }
+        >
+          <QuoteStrip
+            data={quote}
+            loading={quoteLoading}
+            error={quoteError}
+            onRetry={() => setQuoteNonce((n) => n + 1)}
+          />
+          <PriceChart
+            bars={quote?.bars ?? []}
+            loading={quoteLoading}
+            unavailable={quote?.barsUnavailable}
+          />
+        </Card>
 
         {/* Narrow / wide mode: the timeline is a horizontal strip on top; normal mode on a
             roomy screen floats it as a left rail (container query in index.css). */}

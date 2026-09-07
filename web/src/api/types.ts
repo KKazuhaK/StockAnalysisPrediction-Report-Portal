@@ -1022,3 +1022,61 @@ export interface AuditResp {
    */
   proxy_hint?: boolean
 }
+
+/**
+ * Live market data for one A-share code (ADR 0028). Everything that is money is an INTEGER
+ * number of 分 (fen): the Go schema has no floating-point column anywhere, and a price that may
+ * one day be written down must not pass through a float on the way. Divide by 100 to display.
+ */
+export interface QuoteBar {
+  /** Trading date, YYYY-MM-DD, as the vendor dated it — not derived from a clock here. */
+  d: string
+  o: number
+  h: number
+  l: number
+  c: number
+  /** Shares (股), normalised across vendors: Tencent quotes 手, which is 100 shares. */
+  v: number
+}
+
+export interface QuoteSnapshot {
+  last: number
+  prevClose: number
+  open: number
+  high: number
+  low: number
+  /** Signed, in 分. The UI takes the up/down sign from HERE, never from changePct. */
+  change: number
+  /**
+   * The vendor's own percentage string, e.g. "0.12" — rendered verbatim, never recomputed.
+   * Recomputing it from last/prevClose prints a fake double-digit crash on every ex-rights
+   * day, because the previous close is the pre-dividend one and the last price is not.
+   */
+  changePct: string
+  volume: number
+  amount: number
+  /** The vendor's own timestamp (RFC3339, +08:00), so a stale feed is visible as stale. */
+  asOf: string
+  session: 'open' | 'close' | 'unknown'
+}
+
+export interface QuoteResp {
+  symbol: string
+  /** The live name from the quote feed — not the name frozen onto a report at ingest. */
+  name: string
+  market: 'sh' | 'sz' | 'bj'
+  source: 'tencent' | 'sina'
+  snapshot: QuoteSnapshot
+  /** Oldest first. Always an array, never null. Empty when barsUnavailable is set. */
+  bars: QuoteBar[]
+  barsSource: string
+  /**
+   * Why there is no history, when there is none. 'market_unsupported' is the Beijing exchange,
+   * whose daily series neither vendor serves usably; the UI must say so rather than draw an
+   * empty chart that reads as a flat one.
+   */
+  barsUnavailable: '' | 'market_unsupported' | 'source_failed'
+  /** Always false: we serve 不复权 (bfq) prices, whose value for a past date never changes. */
+  adjusted: boolean
+  cached: boolean
+}
