@@ -1,6 +1,6 @@
 package app
 
-// quote.go —— the A-share quote feature's vendor parsers and its drift gate.
+// quote.go —— the quote feature's vendor parsers and its drift gate, for five markets.
 //
 // Two vendors answer the same question in two different shapes. Tencent packs history, snapshot and
 // market-session state into a single JSON call; Sina needs two calls and answers one of them as a
@@ -11,12 +11,22 @@ package app
 // That is what the drift gate at the bottom of this file exists to catch, and it is why the parsing
 // lives here rather than inside the handler.
 //
-// Every price in here is an integer 分 (fen). This feature feeds a schema with 222 TEXT, 61 INTEGER
-// and 24 BIGINT columns and not one REAL, DOUBLE, FLOAT or NUMERIC, and a price that has been
-// through a float64 does not reliably come back: in float64, 0.29 * 100 is 28.999999999999996, and
-// converting that to int64 truncates towards zero and yields 28 分 for a price of 0.29 元. So no
-// vendor decimal is ever handed to strconv.ParseFloat — quoteScaled does the whole conversion in
-// integer arithmetic, and quote_test.go pins that exact case.
+// The SAME Tencent endpoint answers Shanghai, Shenzhen, Beijing, Hong Kong and the US, and answering
+// them in one array is exactly what makes it dangerous: the array has the same LENGTH-ish shape and
+// the same field POSITIONS everywhere, while three of the things read out of those positions mean
+// different things per market — the timestamp's layout and zone, the unit of 成交量, and the unit of
+// 成交额. None of the three is a parse error when it is got wrong; each one is a number that renders
+// perfectly and is off by a factor of a hundred or by half a day. quoteMarkets below is the one
+// place those differences live, and every one of its rows was measured against the captured bodies
+// in testdata/quote/ rather than assumed from the others.
+//
+// Every price in here is an integer 分 (fen) — cents of whatever currency the market quotes, per
+// ADR 0028 §10. This feature feeds a schema with 222 TEXT, 61 INTEGER and 24 BIGINT columns and not
+// one REAL, DOUBLE, FLOAT or NUMERIC, and a price that has been through a float64 does not reliably
+// come back: in float64, 0.29 * 100 is 28.999999999999996, and converting that to int64 truncates
+// towards zero and yields 28 分 for a price of 0.29 元. So no vendor decimal is ever handed to
+// strconv.ParseFloat — quoteScaled does the whole conversion in integer arithmetic, and
+// quote_test.go pins that exact case.
 
 import (
 	"context"
@@ -25,13 +35,27 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
+
+	// time/tzdata is imported for its side effect: it embeds the IANA zone database in the binary.
+	// America/New_York is the reason. It is -04:00 in September and -05:00 in January, so unlike
+	// +08:00 it cannot be a time.FixedZone, and reading it means time.LoadLocation, which without
+	// this import reads /usr/share/zoneinfo off the filesystem. The release image installs tzdata
+	// (Dockerfile.release), but a parser must not depend on the image it happens to be running in:
+	// a scratch or distroless build, or a `go test` on a stripped host, turns that read into an
+	// error — and the only fallback the standard library offers is time.Local, the server's own
+	// zone, which is precisely the substitution QuoteSnapshot.AsOf exists to prevent. It is stdlib,
+	// so it costs go.mod nothing and the binary about 450 KB.
+	_ "time/tzdata"
 )
 
 // ---------- the wire contract (mirrored in web/src/api/types.ts) ----------
 
-// QuoteBar is one daily candle. Prices are 分; Volume is 股 (shares) on both vendors, which for
-// Tencent means its 手 have already been multiplied by 100 on the way in.
+// QuoteBar is one daily candle. Prices are 分; Volume is 股 (shares) everywhere, which on the
+// Chinese exchanges means Tencent's 手 have already been multiplied by 100 on the way in — and on
+// Hong Kong and the US means they have NOT, because those two count shares already. See
+// quoteMarket.lots.
 type QuoteBar struct {
 	Date   string `json:"d"`
 	Open   int64  `json:"o"`
@@ -57,19 +81,33 @@ type QuoteSnapshot struct {
 	// beside it can never contradict each other. Sina publishes neither, which is the one place this
 	// promise cannot be kept — see parseSinaSnapshot.
 	ChangePct string `json:"changePct"`
-	Volume    int64  `json:"volume"`
-	Amount    int64  `json:"amount"`
-	// AsOf is RFC3339 in +08:00 taken from the VENDOR's clock, never this server's. A feed that has
-	// stopped updating is only visible as stale if the timestamp shown is the feed's own.
+	// Volume is 股 (shares) whatever unit the vendor quoted, and Amount is a whole unit of the
+	// market's own currency — 元, HKD or USD. Neither unit is the same across markets on the wire we
+	// read: Tencent sends 成交量 in 手 on the three Chinese exchanges and in shares on Hong Kong and
+	// the US, and 成交额 in 万元 on the Chinese exchanges and in whole currency on the other two.
+	Volume int64 `json:"volume"`
+	Amount int64 `json:"amount"`
+	// AsOf is RFC3339 in the MARKET's own zone, taken from the VENDOR's clock and never from this
+	// server's. A feed that has stopped updating is only visible as stale if the timestamp shown is
+	// the feed's own, and a New York close stamped +08:00 is half a day out — see quoteVendorTime.
 	AsOf    string `json:"asOf"`
 	Session string `json:"session"`
 }
 
 // QuoteResp is one stock's quote as the SPA receives it.
 type QuoteResp struct {
-	Symbol          string        `json:"symbol"`
-	Name            string        `json:"name"`
-	Market          string        `json:"market"`
+	Symbol string `json:"symbol"`
+	Name   string `json:"name"`
+	Market string `json:"market"`
+	// Kind is what the VENDOR calls this instrument, "stock" or "index" — never inferred from the
+	// code, because the same six digits are an index on one exchange and a company on the other
+	// (000001 is 上证指数 on Shanghai and 平安银行 on Shenzhen). See quoteMarket.kindAt.
+	Kind string `json:"kind"`
+	// Currency and TZ exist so that the strip cannot print a bare number: 319.97 beside a Chinese
+	// report is a yuan price to every reader who is not told otherwise, and an instant with no zone
+	// is a time the browser will happily render in its own.
+	Currency        string        `json:"currency"`
+	TZ              string        `json:"tz"`
 	Source          string        `json:"source"`
 	Snapshot        QuoteSnapshot `json:"snapshot"`
 	Bars            []QuoteBar    `json:"bars"`
@@ -83,16 +121,278 @@ const (
 	quoteSourceTencent = "tencent"
 	quoteSourceSina    = "sina"
 
-	// quoteBarsMarketUnsupported is the Beijing exchange: Tencent answers "day":[] for it and Sina's
-	// series for the same code is over a year stale, which is worse than empty because it looks like
-	// data. The UI has to say so out loud — an empty chart rendered as a flat one is a lie.
+	// quoteBarsMarketUnsupported is a market whose daily series does not exist rather than one that
+	// failed today: Beijing, where Tencent answers "day":[] and Sina's series for the same code is
+	// over a year stale, and the US, where the same endpoint answers a sixty-bar request with two
+	// rows fifteen years apart. Both are worse than empty because they look like data, and the UI
+	// has to say so out loud — an empty chart rendered as a flat one is a lie.
 	quoteBarsMarketUnsupported = "market_unsupported"
 	quoteBarsSourceFailed      = "source_failed"
 
 	quoteSessionOpen    = "open"
 	quoteSessionClose   = "close"
 	quoteSessionUnknown = "unknown"
+
+	quoteKindStock = "stock"
+	quoteKindIndex = "index"
 )
+
+// ---------- the market model ----------
+//
+// Everything below is a MEASURED difference between the five markets one Tencent endpoint serves.
+// Each row of quoteMarkets was read off the captured bodies in testdata/quote/ on 2026-09-07, and
+// each column is here because getting it wrong produces a plausible wrong number rather than an
+// error: a US volume multiplied by a hundred is four billion Apple shares a day, a Hong Kong
+// 成交额 read as 万 is ten thousand times the money that changed hands, and a New York close
+// stamped +08:00 is an instant half a day from the one the vendor meant.
+
+const (
+	// The three timestamp layouts qt[30] arrives in. They are not interchangeable and they are not
+	// guessable from the string: "2026-09-04 16:00:01" and "2026/09/07 14:41:33" differ only in a
+	// separator, and time.Parse is happy to be told the wrong one about the right instant.
+	quoteStampCN = "20060102150405"      // sh/sz/bj: 20260907145703
+	quoteStampHK = "2006/01/02 15:04:05" // hk:       2026/09/07 14:57:39
+	quoteStampUS = "2006-01-02 15:04:05" // us:       2026-09-04 16:00:01
+
+	// quoteVendorKindIndex is the vendor's own word for 指数, in the instrument-type field that
+	// quoteMarket.kindAt points at. Everything else seen there — "GP" 股票, "GP-A" A股, "ETF" — is
+	// something a person can hold, so it is a stock as far as this contract's two values go.
+	quoteVendorKindIndex = "ZS"
+
+	// quoteUSMaxLetters bounds a US ticker so that an arbitrarily long string cannot reach a vendor
+	// URL. Listed tickers run one to five letters (F, AAPL, GOOGL); six leaves a slot spare without
+	// letting the field become free text.
+	quoteUSMaxLetters = 6
+)
+
+// quoteCodeShape is what a code may look like in one market. It is the whole of the URL-construction
+// boundary for the two markets marketPrefix knows nothing about: an hk or us code never passes
+// through marketPrefix, so THIS is what stands between a browser's input and http.NewRequest for
+// them — the same job, on the same grounds, as the all-digits check in marketPrefix itself.
+type quoteCodeShape uint8
+
+const (
+	quoteCodeDigits6 quoteCodeShape = iota // 601899, 000001, 830799
+	quoteCodeDigits5                       // 00700
+	quoteCodeLetters                       // AAPL
+)
+
+// quoteMarket is everything about one market that the parsers below must not assume from another.
+type quoteMarket struct {
+	id       string // "sh" | "sz" | "bj" | "hk" | "us", the value QuoteResp.Market carries
+	currency string // ISO 4217, so the strip never prints a bare number
+	// zone is an IANA NAME, deliberately not an offset: America/New_York is -04:00 in September and
+	// -05:00 in January, and a fixed offset would be right for half the year.
+	zone string
+	// stamp is the layout qt[30] arrives in for this market.
+	stamp string
+	// session is the prefix of this market's segment inside qt.market, or "" for a market with no
+	// segment of its own. Beijing has none and keeps Shenzhen's hours, so bj follows SZ_.
+	session string
+	// lots is true where 成交量 — qt[6] and a day row's last column — is 手 and needs the x100 that
+	// turns it into 股. It is FALSE for Hong Kong and the US, which count shares already. This is
+	// the flag whose default would report about four billion Apple shares traded in a day.
+	lots bool
+	// amountScale is how many decimal places 成交额 (qt[37]) is read at to become a whole unit of
+	// currency: 4 on the Chinese exchanges, where the vendor quotes 万元, and 0 on Hong Kong and the
+	// US, where it already sends the whole thing.
+	amountScale int
+	// kindAt is the index of the vendor's own instrument-type code — "ZS" 指数, "GP"/"GP-A" 股票,
+	// "ETF". It is NOT qt[0] and it is NOT a list of index codes, and both of those need saying.
+	//
+	// A LIST rots. New indices are published continuously, and the same six digits are an index on
+	// one exchange and a company on the other: 000001 is 上证指数 on Shanghai and 平安银行 on
+	// Shenzhen. A list written today is wrong the first time an index is listed, silently, in the
+	// direction of labelling an index a stock.
+	//
+	// qt[0] cannot answer it either, which is worth recording because it looks like it should.
+	// Measured on the committed fixtures: 上证指数 (sh000001) and 紫金矿业 (sh601899) BOTH send
+	// qt[0] = "1", and 平安银行 (sz000001) sends "51" like 深证成指 does. The field is the EXCHANGE
+	// — 1 Shanghai, 51 Shenzhen, 62 Beijing, 100 Hong Kong — not the instrument. And on the fqkline
+	// body this file actually parses, the US response puts the literal string "delay" there, where
+	// the qt.gtimg.cn snapshot endpoint puts "200".
+	//
+	// The index differs per market because the arrays differ, and all three sit far past
+	// quoteTencentQtFields: a response long enough for the prices but short of this field is read
+	// as a stock rather than refused, because the kind is a label beside a price and never a price.
+	kindAt int
+	// history is whether this market's day array is a series worth drawing. Two markets fail it and
+	// for the same reason — what arrives is not data, it is something that renders like data:
+	// Beijing answers "day":[] (ADR 0028 §7), and the US answers TWO rows fifteen years apart.
+	history bool
+	// sina is whether the fallback's A-share snapshot line covers this market. It does not cover
+	// Hong Kong or the US: those are `rt_hk00700` and `gb_aapl` there, in lines of 19 and 36 fields
+	// whose columns are in a different order entirely. Pointing the A-share parser at either would
+	// not be a second source, it would be a second shape read as the first.
+	sina bool
+	// shape is what a code may look like here; dottedEcho is how the vendor echoes it back.
+	shape      quoteCodeShape
+	dottedEcho bool
+}
+
+// quoteMarkets is the table. Adding a market means measuring every column of a row against a real
+// captured body — not copying the row above and changing the id.
+var quoteMarkets = map[string]*quoteMarket{
+	"sh": {
+		id: "sh", currency: "CNY", zone: "Asia/Shanghai", stamp: quoteStampCN, session: "SH_",
+		lots: true, amountScale: 4, kindAt: 61, history: true, sina: true, shape: quoteCodeDigits6,
+	},
+	"sz": {
+		id: "sz", currency: "CNY", zone: "Asia/Shanghai", stamp: quoteStampCN, session: "SZ_",
+		lots: true, amountScale: 4, kindAt: 61, history: true, sina: true, shape: quoteCodeDigits6,
+	},
+	"bj": {
+		id: "bj", currency: "CNY", zone: "Asia/Shanghai", stamp: quoteStampCN, session: "SZ_",
+		lots: true, amountScale: 4, kindAt: 61, history: false, sina: true, shape: quoteCodeDigits6,
+	},
+	// Hong Kong keeps its own IANA zone rather than borrowing Shanghai's. The two have agreed on
+	// +08:00 since 1979, so every instant this parser produces is identical either way — what
+	// differs is the name QuoteResp.TZ hands the browser, and Asia/Hong_Kong is the zone a Hong
+	// Kong close is actually in.
+	"hk": {
+		id: "hk", currency: "HKD", zone: "Asia/Hong_Kong", stamp: quoteStampHK, session: "HK_",
+		lots: false, amountScale: 0, kindAt: 63, history: true, sina: false, shape: quoteCodeDigits5,
+	},
+	"us": {
+		id: "us", currency: "USD", zone: "America/New_York", stamp: quoteStampUS, session: "US_",
+		lots: false, amountScale: 0, kindAt: 56, history: false, sina: false,
+		shape: quoteCodeLetters, dottedEcho: true,
+	},
+}
+
+// quoteTarget is a symbol that has been resolved: a market, the code in the one form that may reach
+// a vendor URL, and the vendor symbol built from the two.
+//
+// There is deliberately no Kind here. It cannot be known at resolve time — the code's shape does not
+// carry it (000001 again) and neither does the exchange the code belongs to — so the only honest
+// place to decide it is where the vendor's own answer is in hand, in parseTencentQuote.
+type quoteTarget struct {
+	Market *quoteMarket
+	Code   string // 601899, 00700, AAPL — canonical, and what the vendor echoes back
+	Symbol string // sh601899, hk00700, usAAPL — what goes into the URL
+}
+
+// quoteResolve turns what a user typed into a target, and it is the only function that decides a
+// market from a code's shape.
+//
+// The explicit "<market>:<code>" form always wins, and it is not sugar: it is the only way to ask
+// for the codes whose shape lies. 000001 is a Shenzhen company AND a Shanghai index, and the bare
+// six digits have to keep meaning what they have always meant here — marketPrefix's answer, the
+// same one the name fetch and every other vendor call in this tree uses — so 上证指数 is reachable
+// only as "sh:000001".
+//
+// Surrounding whitespace is trimmed and the result is THEN validated, which is the order that
+// matters: a code pasted with a trailing newline resolves, and what leaves here is six digits with
+// no newline in them. Callers must key caches and responses on the Code that comes back rather than
+// on what the user typed, or one stock arrives as several.
+func quoteResolve(input string) (quoteTarget, error) {
+	s := strings.TrimSpace(input)
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		return quoteTargetFor(strings.ToLower(strings.TrimSpace(s[:i])), strings.TrimSpace(s[i+1:]))
+	}
+	switch {
+	case len(s) == 6 && quoteAllDigits(s):
+		market := marketPrefix(s)
+		if market == "" {
+			return quoteTarget{}, fmt.Errorf("quote: %q is not a code on any exchange this portal knows", input)
+		}
+		return quoteTargetFor(market, s)
+	case len(s) == 5 && quoteAllDigits(s):
+		return quoteTargetFor("hk", s)
+	case len(s) > 0 && quoteAllLetters(s):
+		return quoteTargetFor("us", s)
+	}
+	return quoteTarget{}, fmt.Errorf("quote: %q is not a symbol this portal can resolve", input)
+}
+
+// quoteTargetFor resolves an already-split market and code. Whatever survives here is what gets
+// concatenated into a vendor URL, so it validates every byte rather than trusting its caller: this
+// symbol cannot go through url.Values (the param= syntax needs literal commas), and a six-byte
+// symbol with a NUL in it is what once reached http.NewRequest and took the process down on the nil
+// request it returned.
+func quoteTargetFor(market, code string) (quoteTarget, error) {
+	m, ok := quoteMarkets[market]
+	if !ok {
+		return quoteTarget{}, fmt.Errorf("quote: %q is not a market this portal serves", market)
+	}
+	canon, err := m.canonicalCode(code)
+	if err != nil {
+		return quoteTarget{}, err
+	}
+	return quoteTarget{Market: m, Code: canon, Symbol: m.id + canon}, nil
+}
+
+// canonicalCode checks a code against this market's shape and returns the ONE spelling of it that
+// may be used from here on. The single spelling matters beyond tidiness: two spellings of one
+// symbol are two cache keys, two vendor calls and two code-echo comparisons.
+func (m *quoteMarket) canonicalCode(code string) (string, error) {
+	switch m.shape {
+	case quoteCodeDigits6:
+		// Six ASCII digits, and NOT "marketPrefix(code) == m.id". The prefix function stays the
+		// rule for INFERRING a market from bare digits, and stays A-share only — but it maps 000001
+		// to Shenzhen, and sh000001 (上证指数) is a real vendor symbol that the explicit form has to
+		// be able to reach. What must not be relaxed is the byte check, and it is not: six digits or
+		// nothing.
+		if len(code) != 6 || !quoteAllDigits(code) {
+			return "", fmt.Errorf("quote: %q is not the six digits the %q market is keyed by", code, m.id)
+		}
+		return code, nil
+	case quoteCodeDigits5:
+		if len(code) != 5 || !quoteAllDigits(code) {
+			return "", fmt.Errorf("quote: %q is not the five digits the %q market is keyed by", code, m.id)
+		}
+		return code, nil
+	case quoteCodeLetters:
+		if len(code) == 0 || len(code) > quoteUSMaxLetters || !quoteAllLetters(code) {
+			return "", fmt.Errorf("quote: %q is not a 1-%d letter ticker", code, quoteUSMaxLetters)
+		}
+		// Upper case is the vendor's own spelling and the one the URL carries.
+		return strings.ToUpper(code), nil
+	}
+	return "", fmt.Errorf("quote: market %q has no code shape", m.id)
+}
+
+// kindOf asks the VENDOR what this instrument is. A field that is not there is answered "stock"
+// rather than guessed at or turned into a failure — see quoteMarket.kindAt.
+func (m *quoteMarket) kindOf(qt []string) string {
+	if m.kindAt <= 0 || m.kindAt >= len(qt) {
+		return quoteKindStock
+	}
+	if strings.TrimSpace(qt[m.kindAt]) == quoteVendorKindIndex {
+		return quoteKindIndex
+	}
+	return quoteKindStock
+}
+
+// quoteMarketHasDailyHistory reports whether this market's daily series is worth drawing. It is what
+// the handler asks before serving bars at all: the parser reports what the vendor sent, and the
+// promise that an untrustworthy market NEVER carries bars belongs one level up, where it holds
+// whatever a vendor starts returning tomorrow.
+func quoteMarketHasDailyHistory(market string) bool {
+	m, ok := quoteMarkets[market]
+	return ok && m.history
+}
+
+func quoteAllDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// quoteAllLetters is ASCII-only on purpose: the letters go straight into a URL, and a rune-aware
+// check would accept a Cyrillic А that is not the A the vendor knows.
+func quoteAllLetters(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
 
 // ---------- decimal string -> integer, without float64 ----------
 
@@ -216,54 +516,87 @@ func quotePctString(pct int64) string {
 
 // ---------- the vendor's clock ----------
 
-// quoteCST is the zone every one of these timestamps is stamped in. It is a fixed +08:00 rather than
-// time.LoadLocation("Asia/Shanghai") because it has to be right on a machine with no tzdata
-// installed: there LoadLocation returns an error, and the obvious fallback — time.Local — is the
-// server's own zone, which is exactly the substitution AsOf exists to prevent. China has observed no
-// DST since 1991, so the fixed offset and the zoneinfo entry agree on every timestamp a market feed
-// can carry.
-var quoteCST = time.FixedZone("CST", 8*60*60)
+// quoteZones caches the loaded zones. LoadLocation re-reads and re-parses the zone file on every
+// call, and the same three or four names are asked for on every cache miss in the process's life.
+var (
+	quoteZonesMu sync.Mutex
+	quoteZones   = map[string]*time.Location{}
+)
 
-const quoteCSTLayout = "20060102150405"
-
-// quoteVendorTime turns Tencent's "20260904161458" into RFC3339 in +08:00.
-func quoteVendorTime(stamp string) (string, error) {
-	stamp = strings.TrimSpace(stamp)
-	t, err := time.ParseInLocation(quoteCSTLayout, stamp, quoteCST)
+// quoteZone loads one market's IANA zone.
+//
+// The error is RETURNED and never swallowed, which is the whole point of this function existing
+// instead of a time.LoadLocation call at each site. The tempting fallback — time.Local — is the
+// server's own zone, and using it would relabel a vendor's instant with an operator's deployment
+// choice: the same body would produce a different AsOf in Frankfurt than in Singapore, and a US
+// close would be stamped as a Chinese afternoon. A quote whose zone cannot be established is a
+// quote this portal declines to serve, which is the same trade the drift gate takes everywhere.
+func quoteZone(name string) (*time.Location, error) {
+	quoteZonesMu.Lock()
+	defer quoteZonesMu.Unlock()
+	if loc := quoteZones[name]; loc != nil {
+		return loc, nil
+	}
+	loc, err := time.LoadLocation(name)
 	if err != nil {
-		return "", fmt.Errorf("quote: vendor timestamp %q: %w", stamp, err)
+		return nil, fmt.Errorf("quote: market zone %q: %w", name, err)
+	}
+	quoteZones[name] = loc
+	return loc, nil
+}
+
+// quoteVendorTime turns one market's own timestamp — Tencent sends three different layouts in the
+// same array position — into RFC3339 in that market's own zone.
+//
+// The zone is the market's and not a constant, because the difference is half a day rather than a
+// formatting detail. "2026-09-04 16:00:01" from the US feed is a New York close: stamped in
+// America/New_York it is 20:00:01Z, and stamped +08:00 it is 08:00:01Z, twelve hours earlier in
+// September and thirteen in January. The reader sees a quote line that claims to be from the middle
+// of a Chinese working day, and the direction of the error changes twice a year with US daylight
+// saving — which is also why this market cannot be a fixed offset.
+func quoteVendorTime(m *quoteMarket, stamp string) (string, error) {
+	loc, err := quoteZone(m.zone)
+	if err != nil {
+		return "", err
+	}
+	stamp = strings.TrimSpace(stamp)
+	t, err := time.ParseInLocation(m.stamp, stamp, loc)
+	if err != nil {
+		return "", fmt.Errorf("quote: %s vendor timestamp %q: %w", m.id, stamp, err)
 	}
 	return t.Format(time.RFC3339), nil
 }
 
 // quoteSinaTime is quoteVendorTime for Sina, which splits the same instant across two fields
-// ("2026-09-04" and "15:34:59") instead of sending one.
-func quoteSinaTime(date, clock string) (string, error) {
+// ("2026-09-04" and "15:34:59") instead of sending one. It reassembles them into the layout the
+// Chinese exchanges use, which is the only shape it is ever asked for: the fallback serves sh, sz
+// and bj and no other market (quoteMarket.sina).
+func quoteSinaTime(m *quoteMarket, date, clock string) (string, error) {
 	date = strings.ReplaceAll(strings.TrimSpace(date), "-", "")
 	clock = strings.ReplaceAll(strings.TrimSpace(clock), ":", "")
-	return quoteVendorTime(date + clock)
+	return quoteVendorTime(m, date+clock)
 }
 
 // ---------- market session ----------
 
-// quoteMarketSession pulls this market's segment out of Tencent's session string, which looks like
+// quoteMarketSession pulls this market's segment out of Tencent's session string, which carries
+// every board the vendor knows in one pipe-delimited line:
 //
-//	2026-09-07 05:56:37|HK_close_未开盘|SH_close_未开盘|SZ_close_未开盘|…|NEWSH_close_未开盘|…
+//	2026-09-07 14:51:13|HK_open_交易中|SH_open_交易中|SZ_open_交易中|US_close_劳动节休市|…
+//	  …|NEWSH_open_交易中|NEWSZ_open_交易中|NEWHK_open_交易中|NEWUS_close_劳动节休市|USA_close_…|…
 //
-// The segment is matched on its PREFIX, never with strings.Contains: the same string carries
-// NEWSH_, NEWSZ_ and HSZB_ segments, and "SZ_" is a substring of two of them, so a Contains match
-// reports the state of a completely different board. The Beijing exchange has no segment of its own
-// and keeps Shenzhen's hours, so bj follows SZ.
-func quoteMarketSession(market, raw string) string {
-	var want string
-	switch market {
-	case "sh":
-		want = "SH_"
-	case "sz", "bj":
-		want = "SZ_"
-	default:
+// The segment is matched on its PREFIX, never with strings.Contains, and the second line above is
+// why: "SZ_" is a substring of "NEWSZ_" and "HSZB_", and "US_" is a substring of "NEWUS_". A
+// Contains match latches onto whichever of those comes first in the line and then, because the
+// state is sliced off at the prefix's own length, reads it from the wrong offset — so a market that
+// is trading is reported as "unknown", which the cache turns into the five-minute closed-market TTL
+// on a market that is open. The Beijing exchange has no segment of its own and keeps Shenzhen's
+// hours, so bj follows SZ_ (see quoteMarket.session).
+func quoteMarketSession(m *quoteMarket, raw string) string {
+	if m == nil || m.session == "" {
 		return quoteSessionUnknown
 	}
+	want := m.session
 	for _, seg := range strings.Split(raw, "|") {
 		if !strings.HasPrefix(seg, want) {
 			continue
@@ -311,15 +644,21 @@ func quoteMarketSession(market, raw string) string {
 // There is deliberately NO band on the size of the change. A-share daily limits are ±5, ±10, ±20 or
 // ±30 percent depending on the board, and a first-day listing has no limit at all, so any band wide
 // enough not to reject a real limit-up day is too wide to catch anything — and a narrow one reports
-// the most newsworthy days of the year as a source failure. Do not add one.
+// the most newsworthy days of the year as a source failure. The four markets make this worse rather
+// than better: Hong Kong and the US have no daily limit whatsoever, so there is not even a number a
+// band could be argued down to. Do not add one.
 
 const (
-	// Tencent's qt array is 88 fields for sh/sz and 87 for bj — a captured bj830799 response proves
-	// it — so the gate asserts a FLOOR, never a fixed total. An equality against 88 would take the
-	// whole Beijing exchange offline. The floor is 39 rather than 38 (the highest index this parser
-	// reads is 37, 成交额): two spare slots, because the shortest real response seen carries 87 and
-	// a floor that sits exactly on the last field we happen to read today would have to move every
-	// time the parser reads one more.
+	// Tencent's qt array is 88 fields for sh/sz, 87 for bj, 78 for hk and 71 for us — four captured
+	// responses prove it — so the gate asserts a FLOOR, never a fixed total. An equality against 88
+	// would have taken the whole Beijing exchange offline; against anything above 71 it takes the
+	// US offline. ONE floor, not a table: every market reads the same indices for the fields that
+	// matter (3 last, 4 prevClose, 5 open, 6 volume, 30 timestamp, 31 change, 32 percentage,
+	// 33 high, 34 low, 37 amount), and the shortest of the four still carries 71 of them. A
+	// per-market floor would be four numbers to keep true where one is enough, and it would let a
+	// market quietly fall below the indices this parser actually reads. The instrument-type field
+	// at 56/61/63 is the one read that sits past this floor, and it is read defensively for exactly
+	// that reason — see quoteMarket.kindAt.
 	quoteTencentQtFields = 39
 	quoteSinaSnapFields  = 32
 	quoteDayRowFields    = 6
@@ -373,6 +712,35 @@ func quoteCheckFieldCount(what string, got, need int) error {
 // so a strings.Contains over the body is satisfied by the URL we sent and proves nothing at all.
 func quoteCheckCodeEcho(want, got string) error {
 	if got != want {
+		return fmt.Errorf("%w: asked for %q, vendor echoed %q", errQuoteCodeEcho, want, got)
+	}
+	return nil
+}
+
+// quoteCheckQtCodeEcho is check 2 as the four markets actually answer it. Three of them echo the
+// code back exactly; the US echoes a Reuters instrument code — ask for AAPL and qt[2] reads
+// "AAPL.OQ" — so an exact comparison fails every US response there has ever been, which is a whole
+// market permanently dark rather than a drift caught.
+//
+// So for that market, and only that market, the comparison is against the part before the first "."
+// and is case-insensitive. Two things it deliberately is NOT: it is not a prefix match (a request
+// for "AAP" must not be satisfied by "AAPL.OQ"), and it is not a search over the response body — it
+// is still one FIELD compared against one requested code, because param= in the URL we sent carries
+// the code too and a body search would be satisfied by our own request.
+//
+// The known limit, stated rather than papered over: a US INDEX echoes ".IXIC" or ".DJI", whose part
+// before the first "." is empty, so an index ticker fails this check and the request goes dark. That
+// is the correct half of the trade — the alternative is serving a body nothing has verified — and
+// the US form this portal documents is a ticker.
+func quoteCheckQtCodeEcho(m *quoteMarket, want, got string) error {
+	if !m.dottedEcho {
+		return quoteCheckCodeEcho(want, got)
+	}
+	head := got
+	if i := strings.IndexByte(head, '.'); i >= 0 {
+		head = head[:i]
+	}
+	if !strings.EqualFold(head, want) {
 		return fmt.Errorf("%w: asked for %q, vendor echoed %q", errQuoteCodeEcho, want, got)
 	}
 	return nil
@@ -548,15 +916,14 @@ func quoteBarCount(bars int) int {
 	return bars
 }
 
-// quoteSymbol validates market+code and returns the vendor symbol both vendors use. The check is not
-// paranoia about the caller: this symbol is concatenated into a URL whose param= syntax needs literal
-// commas, so it cannot go through url.Values, and a code that is not exactly six digits must not
-// reach that concatenation.
+// quoteSymbol validates market+code and returns the vendor symbol both vendors use. It is the thin
+// wrapper the fetchers want over quoteTargetFor, which is where the byte-level rules live.
 func quoteSymbol(market, code string) (string, error) {
-	if pre := marketPrefix(code); pre == "" || pre != market {
-		return "", fmt.Errorf("quote: %q is not a %q-market symbol", code, market)
+	t, err := quoteTargetFor(market, code)
+	if err != nil {
+		return "", err
 	}
-	return market + code, nil
+	return t.Symbol, nil
 }
 
 type tencentQuoteEnvelope struct {
@@ -598,12 +965,18 @@ func fetchTencentQuote(ctx context.Context, market, code string, bars int) (*Quo
 }
 
 // parseTencentQuote turns one fqkline response into a QuoteResp, running drift-gate checks 1-5 in
-// order as it goes.
+// order as it goes. The same array serves five markets, so every read below that is a UNIT or a
+// FORMAT goes through the market's row in quoteMarkets rather than through a constant.
 func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, error) {
-	sym, err := quoteSymbol(market, code)
+	target, err := quoteTargetFor(market, code)
 	if err != nil {
 		return nil, err
 	}
+	m, sym := target.Market, target.Symbol
+	// The CANONICAL code from here on, not the caller's spelling: it is what the section key was
+	// built from, what the echo check compares against and what the response reports back, and all
+	// three have to be the same string or "aapl" and "AAPL" become two different answers.
+	code = target.Code
 	var env tencentQuoteEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {
 		return nil, fmt.Errorf("quote: decode tencent response: %w", err)
@@ -637,8 +1010,8 @@ func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, 
 			return nil, err
 		}
 	}
-	// (2) code echo.
-	if err := quoteCheckCodeEcho(code, qt[2]); err != nil {
+	// (2) code echo, in the form this market echoes it — exact everywhere but the US.
+	if err := quoteCheckQtCodeEcho(m, code, qt[2]); err != nil {
 		return nil, err
 	}
 
@@ -667,12 +1040,15 @@ func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, 
 	snap.Change = r.fen(31)
 	snap.High = r.fen(33)
 	snap.Low = r.fen(34)
-	// Tencent quotes 成交量 in 手 and 成交额 in 万元, and both conversions below are exact powers of
-	// ten — a UNIT CONVERSION, not a claim that the vendor measured anything more finely than it
-	// did. One 手 is one hundred 股 by definition; one 万元 is ten thousand 元, which is what asking
-	// for four decimal places of a 万元 figure produces directly.
-	snap.Volume = r.lots(6)
-	snap.Amount = r.money(37, 4)
+	// Both of these are UNIT CONVERSIONS by an exact power of ten, not a claim that the vendor
+	// measured anything more finely than it did — one 手 is one hundred 股 by definition, and one
+	// 万元 is ten thousand 元, which is what asking for four decimal places of a 万元 figure
+	// produces directly. Both units are per-market and neither is guessable from the value: qt[6]
+	// reads 39606884 for Apple, which is a day's shares, and 1421604 for 紫金矿业, which is a day's
+	// 手. Multiply the first by a hundred and the portal reports four billion Apple shares traded;
+	// read the second as shares and it reports one percent of the real figure.
+	snap.Volume = r.volume(6, m.lots)
+	snap.Amount = r.money(37, m.amountScale)
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -681,12 +1057,12 @@ func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, 
 	if err := quoteCheckSnapshotPrices(&snap); err != nil {
 		return nil, err
 	}
-	if snap.AsOf, err = quoteVendorTime(qt[30]); err != nil {
+	if snap.AsOf, err = quoteVendorTime(m, qt[30]); err != nil {
 		return nil, err
 	}
 	var market0 []string
 	if err := json.Unmarshal(qb.Qt["market"], &market0); err == nil && len(market0) > 0 {
-		snap.Session = quoteMarketSession(market, market0[0])
+		snap.Session = quoteMarketSession(m, market0[0])
 	}
 
 	rows := qb.Day
@@ -716,7 +1092,7 @@ func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, 
 			Close:  rd.fen(2),
 			High:   rd.fen(3),
 			Low:    rd.fen(4),
-			Volume: rd.lots(5), // 手 -> 股, as above
+			Volume: rd.volume(5, m.lots), // 手 -> 股 where the market counts 手, as above
 		}
 		if rd.err != nil {
 			return nil, fmt.Errorf("quote: tencent day row %d: %w", i, rd.err)
@@ -735,7 +1111,10 @@ func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, 
 	resp := &QuoteResp{
 		Symbol:     code,
 		Name:       strings.TrimSpace(qt[1]),
-		Market:     market,
+		Market:     m.id,
+		Kind:       m.kindOf(qt),
+		Currency:   m.currency,
+		TZ:         m.zone,
 		Source:     quoteSourceTencent,
 		Snapshot:   snap,
 		Bars:       out,
@@ -743,19 +1122,19 @@ func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, 
 	}
 	if len(out) == 0 {
 		resp.BarsSource = ""
-		resp.BarsUnavailable = quoteBarsUnavailableFor(market)
+		resp.BarsUnavailable = quoteBarsUnavailableFor(m.id)
 	}
 	return resp, nil
 }
 
-// quoteBarsUnavailableFor names the reason an empty series is empty. Beijing is a standing gap in
-// both vendors rather than an outage, and the two have to be distinguishable: one is worth retrying
-// and the other never will be.
+// quoteBarsUnavailableFor names the reason an empty series is empty. A market whose daily history is
+// a standing gap in the vendor rather than an outage has to be distinguishable from one that merely
+// failed today: one is worth retrying and the other never will be.
 func quoteBarsUnavailableFor(market string) string {
-	if market == "bj" {
-		return quoteBarsMarketUnsupported
+	if quoteMarketHasDailyHistory(market) {
+		return quoteBarsSourceFailed
 	}
-	return quoteBarsSourceFailed
+	return quoteBarsMarketUnsupported
 }
 
 // quoteFenReader reads numbers out of a positional vendor response, remembering the first field that
@@ -804,6 +1183,17 @@ func (r *quoteFenReader) money(i, scale int) int64 {
 	return v
 }
 
+// volume reads field i as a share count in whatever unit THIS MARKET quotes it in. The flag is a
+// property of the market and never of the value, because the value cannot tell you: a 成交量 of
+// 39606884 is a day of Apple shares and a 成交量 of 1421604 is a day of 紫金矿业 手, and both are
+// ordinary numbers in the same field of the same array.
+func (r *quoteFenReader) volume(i int, lots bool) int64 {
+	if lots {
+		return r.lots(i)
+	}
+	return r.shares(i)
+}
+
 // lots reads field i as Tencent's 手 count and returns 股. The bound is not decoration: this
 // multiply by a hundred sits OUTSIDE quoteScaled's overflow guard, so "9223372036854775799" — a
 // perfectly legal int64 — silently becomes -900 股 without it.
@@ -845,6 +1235,26 @@ const (
 	quoteSinaReferer     = "https://finance.sina.com.cn/"
 )
 
+// quoteSinaTarget resolves a symbol AND refuses the markets Sina's A-share line does not describe.
+//
+// Sina does serve Hong Kong and the US — as `rt_hk00700` and `gb_aapl`, in lines of 19 and 36 fields
+// whose columns are in a completely different order (hk starts with an English name and puts the
+// last price at index 6; the US line starts with the last price and the percentage). This parser is
+// written against the A-share line, whose first six fields are name, open, prevClose, last, high,
+// low. Pointing it at either of those would not be a second source, it would be a second shape read
+// as the first — and the failure would look like a quote rather than like an error. The refusal is
+// here, in words, rather than left to the field-count floor to catch by luck.
+func quoteSinaTarget(market, code string) (quoteTarget, error) {
+	t, err := quoteTargetFor(market, code)
+	if err != nil {
+		return quoteTarget{}, err
+	}
+	if !t.Market.sina {
+		return quoteTarget{}, fmt.Errorf("quote: sina has no A-share-shaped line for the %q market", market)
+	}
+	return t, nil
+}
+
 // fetchSinaQuote is the fallback, and it costs two calls: Sina serves the snapshot as a GBK
 // assignment statement from one host and the history as JSON from another.
 //
@@ -852,10 +1262,11 @@ const (
 // year ago instead of with an error, which is the one failure mode a fallback must not have: an
 // empty answer is visibly empty, while a stale one renders as a chart nobody has reason to distrust.
 func fetchSinaQuote(ctx context.Context, market, code string, bars int) (*QuoteResp, error) {
-	sym, err := quoteSymbol(market, code)
+	t, err := quoteSinaTarget(market, code)
 	if err != nil {
 		return nil, err
 	}
+	sym := t.Symbol
 	ctx, cancel := context.WithTimeout(ctx, quoteFetchTimeout)
 	defer cancel()
 
@@ -870,7 +1281,7 @@ func fetchSinaQuote(ctx context.Context, market, code string, bars int) (*QuoteR
 		vendorLogf(snapURL, "quote snapshot parse failed for %s: %v", sym, err)
 		return nil, err
 	}
-	if market == "bj" {
+	if !quoteMarketHasDailyHistory(market) {
 		resp.BarsUnavailable = quoteBarsMarketUnsupported
 		return resp, nil
 	}
@@ -895,10 +1306,12 @@ func fetchSinaQuote(ctx context.Context, market, code string, bars int) (*QuoteR
 // parseSinaSnapshot turns one `var hq_str_sh601899="…";` line into the snapshot half of a QuoteResp,
 // running drift-gate checks 1, 2 and 5 over it, with quoteCheckSnapshotOrder in place of check 3.
 func parseSinaSnapshot(market, code, raw string) (*QuoteResp, error) {
-	sym, err := quoteSymbol(market, code)
+	t, err := quoteSinaTarget(market, code)
 	if err != nil {
 		return nil, err
 	}
+	m, sym := t.Market, t.Symbol
+	code = t.Code
 	key, payload, err := quoteSinaLine(raw)
 	if err != nil {
 		return nil, err
@@ -953,7 +1366,7 @@ func parseSinaSnapshot(market, code, raw string) (*QuoteResp, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
-	if snap.AsOf, err = quoteSinaTime(fields[30], fields[31]); err != nil {
+	if snap.AsOf, err = quoteSinaTime(m, fields[30], fields[31]); err != nil {
 		return nil, err
 	}
 	// Session stays "unknown": Sina's line carries no market-state field, and deciding it from this
@@ -968,9 +1381,26 @@ func parseSinaSnapshot(market, code, raw string) (*QuoteResp, error) {
 		return nil, err
 	}
 	return &QuoteResp{
-		Symbol:   code,
-		Name:     strings.TrimSpace(fields[0]),
-		Market:   market,
+		Symbol: code,
+		Name:   strings.TrimSpace(fields[0]),
+		Market: m.id,
+		// Kind is left EMPTY here rather than defaulted to "stock", and the difference is not
+		// pedantry. Sina's line for 上证指数 carries 34 comma-separated fields whose first six are
+		// in the same order as a stock's, so it sails through check 1 and this parser cannot tell
+		// the two apart — there is no instrument-type column anywhere in it. Saying "stock" would be
+		// this file asserting something it did not read; saying nothing is the same answer it gives
+		// for Session, on the same path, for the same reason.
+		//
+		// The gap that comes with it, recorded rather than fixed: an index served by this fallback
+		// also gets its 成交量 read as 股, and Sina quotes an index's in 手 on Shanghai (measured
+		// 2026-09-07: 459,293,905 against a 868.8 亿元 turnover) while quoting a stock's in 股. So a
+		// Shanghai index served while Tencent is down is a hundred times short on volume alone.
+		// Detecting it needs a column this line does not have: the only signal that separates an
+		// index from a stock here is an empty order book, which is also exactly what a SUSPENDED
+		// stock looks like, and refusing those is the failure ADR 0028 §7 spends a paragraph on.
+		Kind:     "",
+		Currency: m.currency,
+		TZ:       m.zone,
 		Source:   quoteSourceSina,
 		Snapshot: snap,
 		Bars:     []QuoteBar{},

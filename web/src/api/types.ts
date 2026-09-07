@@ -1064,7 +1064,31 @@ export interface QuoteResp {
   symbol: string
   /** The live name from the quote feed — not the name frozen onto a report at ingest. */
   name: string
-  market: 'sh' | 'sz' | 'bj'
+  /**
+   * Which exchange answered. Quote viewing covers more markets than the portal analyses: reports
+   * are A-share only, so a US or HK instrument has a price here and no reports anywhere.
+   */
+  market: 'sh' | 'sz' | 'bj' | 'hk' | 'us'
+  /**
+   * An index has no turnover worth showing and is never a report subject.
+   *
+   * Empty is a real value, not a gap: the Sina fallback's line carries no instrument-type column at
+   * all -- an index comes down it in the same 34-field shape a stock does -- so that path reports
+   * what it read rather than guessing "stock". Narrow this to two values and the next `kind ===
+   * 'stock' ? … : …` renders every failover response as an index, complete with the 指数 tag on an
+   * ordinary stock, precisely while the portal is already degraded.
+   */
+  kind: 'stock' | 'index' | ''
+  /**
+   * The currency the prices are in. Not cosmetic: a USD price rendered as a bare number beside a
+   * CNY one reads as the same kind of quantity, which is how a reader mis-compares them.
+   */
+  currency: 'CNY' | 'HKD' | 'USD'
+  /**
+   * The IANA zone `asOf` belongs to. A US close stamped +08:00 lands fourteen hours in the future
+   * for a reader in China, which looks like a live quote rather than last night's.
+   */
+  tz: string
   source: 'tencent' | 'sina'
   snapshot: QuoteSnapshot
   /** Oldest first. Always an array, never null. Empty when barsUnavailable is set. */

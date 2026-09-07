@@ -15,6 +15,7 @@ export interface BuiltinApp {
 export const BUILTIN_APPS: BuiltinApp[] = [
   { key: 'batch', perm: 'run_batch', to: '/apps/batch', titleKey: 'nav.batch', descKey: 'apps.batchDesc' },
   { key: 'recurring', perm: 'run_batch', to: '/apps/recurring', titleKey: 'nav.recurring', descKey: 'apps.recurringDesc' },
+  { key: 'quotes', perm: '', to: '/apps/quotes', titleKey: 'nav.quotes', descKey: 'apps.quotesDesc' },
 ]
 
 // An entry-button "apps" shortcut pins to a specific app: a downloadable app by its slug id, or a

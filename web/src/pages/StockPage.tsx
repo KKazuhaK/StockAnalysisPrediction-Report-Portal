@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Button, Card, Empty, Result, Segmented, Space, Spin, Tag, Typography } from 'antd'
-import { ArrowLeftOutlined, ClockCircleOutlined, DiffOutlined } from '@ant-design/icons'
-import { useNavigate, useParams, useSearchParams } from 'react-router'
+import { ArrowLeftOutlined, ClockCircleOutlined, DiffOutlined, DownOutlined, UpOutlined } from '@ant-design/icons'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, qs, ApiError } from '../api/client'
 import type { QuoteResp, StockResp } from '../api/types'
@@ -27,6 +27,38 @@ const READ_WARM_MAX_AGE = 5 * 60_000
 const QUOTE_RANGES = ['1m', '3m', '6m', '1y'] as const
 type QuoteRange = (typeof QUOTE_RANGES)[number]
 
+// The chart's height on this page, in CSS pixels, handed to PriceChart and never derived from the
+// container. The chart used to be a 720x300 viewBox at width:100%/height:auto, so its height was a
+// FUNCTION OF ITS WIDTH (aspect 0.417) — and this card spans the whole content area rather than the
+// capped reading column below it, so a 1900px window drew it 792px tall and the report started
+// under the fold. A price beside a report is useful; a chart that hides the report is not.
+const QUOTE_CHART_H = 260
+
+// Whether this browser wants the chart open on the reading page. Default CLOSED, because the
+// report is the page and the chart is a decoration on it; a reader who wants it every time pays
+// one click, once.
+const CHART_OPEN_KEY = 'rp_read_quote_chart'
+
+// Both accessors swallow everything, and the try has to wrap the PROPERTY ACCESS and not just the
+// call: a private window, cleared site data or a browser configured to block storage can throw on
+// `window.localStorage` itself, and a reading page must never fail to render because a preference
+// could not be read. A blocked browser gets the default and keeps its choice for this page view.
+function readChartOpen(): boolean {
+  try {
+    return window.localStorage.getItem(CHART_OPEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeChartOpen(open: boolean): void {
+  try {
+    window.localStorage.setItem(CHART_OPEN_KEY, open ? '1' : '0')
+  } catch {
+    /* storage blocked — the choice holds until this page is left, and is not remembered */
+  }
+}
+
 export default function StockPage() {
   const { t } = useTranslation()
   const { symbol = '' } = useParams()
@@ -48,9 +80,18 @@ export default function StockPage() {
   const [quoteLoading, setQuoteLoading] = useState(true)
   const [quoteError, setQuoteError] = useState<unknown>(null)
   const [quoteRange, setQuoteRange] = useState<QuoteRange>('3m')
+  const [chartOpen, setChartOpen] = useState(readChartOpen)
   // Bumped by the retry button. The quote is the one thing on this page a reader may want to
   // re-request without navigating, and a nonce is the smallest way to say "run that effect again".
   const [quoteNonce, setQuoteNonce] = useState(0)
+
+  // The write is here rather than inside the setState updater on purpose: an updater must be pure,
+  // and StrictMode calls it twice in development.
+  const toggleChart = () => {
+    const next = !chartOpen
+    setChartOpen(next)
+    writeChartOpen(next)
+  }
 
   const query = { date: sp.get('date') || '', kind: sp.get('kind') || '', r: sp.get('r') || '' }
   // One place builds the URL, so what gets warmed and what gets loaded cannot drift apart — a
@@ -207,21 +248,42 @@ export default function StockPage() {
         {/* Back + stock name/code lead every layout, above the timeline. */}
         <div style={{ marginBottom: 12 }}>{navBar}</div>
 
-        {/* Live quote + daily chart (ADR 0028). It sits under the identity header and above the
-            timeline because it describes the STOCK, not the report being read — the report's own
-            actions live in its card header further down. */}
+        {/* Live quote (ADR 0028), deliberately COMPACT. It sits under the identity header and above
+            the timeline because it describes the STOCK, not the report being read — the report's own
+            actions live in its card header further down.
+
+            What it is not any more: a chart that filled the viewport and pushed the report off the
+            bottom of it. The strip stays, because a price beside a report answers "has this thesis
+            already played out"; the chart is collapsed until asked for, and the full-size one lives
+            in the Quotes app linked below. */}
         <Card
           size="small"
           title={t('quote.title')}
           style={{ marginBottom: 12 }}
           styles={{ body: { paddingTop: 12 } }}
           extra={
-            <Segmented
-              size="small"
-              value={quoteRange}
-              onChange={(v) => setQuoteRange(v as QuoteRange)}
-              options={QUOTE_RANGES.map((r) => ({ label: t(`quote.range.${r}`), value: r, title: NO_ITEM_TOOLTIP }))}
-            />
+            <Space size={4} wrap>
+              {/* The range switcher belongs to the chart, so it appears with the chart. Chrome for
+                  something that is not on screen is not free: each press re-fetches the quote, so a
+                  collapsed panel would spend vendor requests on bars nobody is looking at. */}
+              {chartOpen && (
+                <Segmented
+                  size="small"
+                  value={quoteRange}
+                  onChange={(v) => setQuoteRange(v as QuoteRange)}
+                  options={QUOTE_RANGES.map((r) => ({ label: t(`quote.range.${r}`), value: r, title: NO_ITEM_TOOLTIP }))}
+                />
+              )}
+              <Button
+                type="text"
+                size="small"
+                icon={chartOpen ? <UpOutlined /> : <DownOutlined />}
+                aria-expanded={chartOpen}
+                onClick={toggleChart}
+              >
+                {chartOpen ? t('quote.collapseChart') : t('quote.expandChart')}
+              </Button>
+            </Space>
           }
         >
           <QuoteStrip
@@ -230,11 +292,31 @@ export default function StockPage() {
             error={quoteError}
             onRetry={() => setQuoteNonce((n) => n + 1)}
           />
-          <PriceChart
-            bars={quote?.bars ?? []}
-            loading={quoteLoading}
-            unavailable={quote?.barsUnavailable}
-          />
+          {/* Unmounted while collapsed rather than hidden with CSS. A chart inside a display:none
+              box measures zero width, so it would sit there rendering its own placeholder and
+              observing a box it can never read — the cost of being mounted with none of the
+              drawing. Expanding costs no round trip either way: the bars arrived with the snapshot
+              in the same response (ADR 0028 §2). */}
+          {chartOpen && (
+            <div style={{ marginTop: 12 }}>
+              <PriceChart
+                bars={quote?.bars ?? []}
+                loading={quoteLoading}
+                unavailable={quote?.barsUnavailable}
+                height={QUOTE_CHART_H}
+                // The chart's price axis prints a unit and the strip above it prints the currency;
+                // handing it the same field is what stops one price carrying two answers.
+                currency={quote?.currency}
+              />
+            </div>
+          )}
+          <div style={{ marginTop: 8, textAlign: 'right' }}>
+            {/* What makes keeping this panel small fair: the full-size chart, the other ranges and
+                the other markets are one click away, already pointed at the symbol being read. */}
+            <Link to={`/apps/quotes${qs({ symbol: data.symbol })}`} style={{ fontSize: 12 }}>
+              {t('quote.openInApp')}
+            </Link>
+          </div>
         </Card>
 
         {/* Narrow / wide mode: the timeline is a horizontal strip on top; normal mode on a

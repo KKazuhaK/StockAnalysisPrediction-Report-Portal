@@ -11,6 +11,7 @@ import {
   BranchesOutlined,
   ControlOutlined,
   DatabaseOutlined,
+  LineChartOutlined,
   FileTextOutlined,
   GlobalOutlined,
   KeyOutlined,
@@ -179,6 +180,7 @@ export default function ManageLayout() {
       type: 'group',
       label: t('nav.group.system'),
       children: [
+        { key: 'quotes', label: t('nav.quoteAdmin'), icon: <LineChartOutlined /> },
         { key: 'storage', label: t('nav.storage'), icon: <DatabaseOutlined /> },
         { key: 'audit', label: t('nav.audit'), icon: <AuditOutlined /> },
       ],
