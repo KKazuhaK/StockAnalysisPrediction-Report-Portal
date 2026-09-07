@@ -470,6 +470,12 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/geoip", s.requireAdminJSON(s.apiGeoSave))
 	mux.HandleFunc("POST /api/admin/geoip/update", s.requireAdminJSON(s.apiGeoUpdate))
 	mux.HandleFunc("GET /api/admin/cleanup/history", s.requireAdminJSON(s.apiCleanupHistory))
+	// ---- Market data sources (ADR 0028): per-source health, the failover order and the two TTLs.
+	// The vendor URLs are deliberately NOT editable — a source is a parser, not a host
+	// (quote_admin_api.go).
+	mux.HandleFunc("GET /api/admin/quote", s.requireAdminJSON(s.apiAdminQuotes))
+	mux.HandleFunc("POST /api/admin/quote", s.requireAdminJSON(s.apiAdminQuotesSave))
+	mux.HandleFunc("POST /api/admin/quote/cache/clear", s.requireAdminJSON(s.apiAdminQuotesCacheClear))
 
 	// ---- Interactive chat / assistant (docs/adr/0012-interactive-chat.md) ----
 	// Cookie session, gated by PermRunBatch (a chat turn runs a Dify app). Conversations

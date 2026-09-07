@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"testing"
 	"time"
 )
@@ -72,13 +71,15 @@ func TestQuotePriceCeilingIsBoundedOnBothSides(t *testing.T) {
 	}
 	// Lower: derived from real data rather than asserted. The highest number in any captured
 	// fixture, times a margin, is the floor — so shrinking the ceiling toward realistic prices
-	// fails here instead of silently narrowing what the portal will serve.
+	// fails here instead of silently narrowing what the portal will serve. Every market is in the
+	// loop because the highest number is no longer a share price: 上证指数 quotes near 3,933, which
+	// is a hundred times any A-share in these fixtures, and an index is a first-class symbol now.
 	const margin = 1_000_000
 	var highest int64
-	for _, f := range []string{fixTencentSH, fixTencentSZ, fixTencentBJ} {
-		resp, err := parseTencentQuote(quoteFixtureMarket(f), quoteFixtureCode(f), readQuoteFixture(t, f), 60)
+	for _, f := range quoteTencentFixtures {
+		resp, err := parseTencentQuote(f.market, f.code, readQuoteFixture(t, f.file), 60)
 		if err != nil {
-			t.Fatalf("parse %s: %v", f, err)
+			t.Fatalf("parse %s: %v", f.file, err)
 		}
 		for _, v := range []int64{resp.Snapshot.High, resp.Snapshot.Last, resp.Snapshot.Open} {
 			if v > highest {
@@ -93,26 +94,6 @@ func TestQuotePriceCeilingIsBoundedOnBothSides(t *testing.T) {
 		t.Errorf("ceiling %d is below %d — %d× the highest price in any captured fixture (%d 分)",
 			quotePriceCeiling, floor, margin, highest)
 	}
-}
-
-func quoteFixtureMarket(f string) string {
-	switch {
-	case strings.Contains(f, "sz"):
-		return "sz"
-	case strings.Contains(f, "bj"):
-		return "bj"
-	}
-	return "sh"
-}
-
-func quoteFixtureCode(f string) string {
-	switch {
-	case strings.Contains(f, "sz000001"):
-		return "000001"
-	case strings.Contains(f, "bj830799"):
-		return "830799"
-	}
-	return "601899"
 }
 
 // ---------- 一字板: the boundary the ordering and range checks must NOT reject ----------

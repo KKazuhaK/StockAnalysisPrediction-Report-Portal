@@ -146,15 +146,28 @@ func sinaStub(t *testing.T) *quoteVendorStub {
 	}}
 }
 
+// fetch runs fetchUnder against the SHIPPED configuration. It lives here rather than in
+// quote_cache.go for the reason helpers_test.go gives about the methods a deadcode sweep found:
+// every production caller has a Server to read the operator's choices from and goes through
+// fetchUnder with them (quote_api.go), so a no-config fetch is a thing only the cache's own tests
+// want. What it must keep being is the DEFAULTS an unconfigured portal runs, not a fourth
+// configuration that only exists under test.
+func (c *quoteCache) fetch(ctx context.Context, market, code string, bars int) (*QuoteResp, bool, time.Duration, error) {
+	return c.fetchUnder(ctx, quoteConfigDefault(), market, code, bars)
+}
+
 func failingStub(msg string) *quoteVendorStub {
 	return &quoteVendorStub{err: errors.New(msg)}
 }
 
-// wireQuoteSources installs the two vendors in failover order.
+// wireQuoteSources installs the two vendors in failover order, carrying the same market predicates
+// defaultQuoteSources gives them. Wiring bare stubs instead would quietly hand Sina the two markets
+// its parser refuses, and the tests that turn on which source gets CALLED would then be testing a
+// source table this portal never runs.
 func wireQuoteSources(s *Server, tencent, sina *quoteVendorStub) {
 	s.quotes.sources = []quoteSource{
-		{name: quoteSourceTencent, fetch: tencent.fetch},
-		{name: quoteSourceSina, fetch: sina.fetch},
+		{name: quoteSourceTencent, fetch: tencent.fetch, serves: func(*quoteMarket) bool { return true }},
+		{name: quoteSourceSina, fetch: sina.fetch, serves: func(m *quoteMarket) bool { return m.sina }},
 	}
 }
 
@@ -178,9 +191,15 @@ func TestQuoteAPIRequiresASession(t *testing.T) {
 
 // ---------- symbol validation ----------
 
-// The rule is marketPrefix's, not a second one written here: this endpoint's code is interpolated
-// into a vendor URL by the same function every other vendor call in the tree uses, and two
+// The rule is quoteResolve's, not a second one written here: this endpoint's code is interpolated
+// into a vendor URL through the same resolver every other vendor call in the tree now uses, and two
 // validators that disagree is how the one at the URL boundary gets bypassed.
+//
+// The list below is what the WIDER symbol space still refuses. Three of these used to be refused for
+// a reason that has gone away — "abc" is a US ticker now and "12345" is a Hong Kong code — so what
+// is left is what no market's shape accepts: too many digits, too many letters, a market nobody
+// serves, a code of the wrong shape for the market it was asked for, and any byte that cannot go in
+// a URL.
 //
 // Called directly rather than through the mux because one of these cases cannot reach the mux at
 // all: a ServeMux wildcard does not match an empty path segment, so /api/quote/ is a 404 from the
@@ -190,7 +209,10 @@ func TestQuoteAPIRefusesABadSymbol(t *testing.T) {
 	tencent := tencentStub(readQuoteFixture(t, fixTencentSH))
 	wireQuoteSources(s, tencent, sinaStub(t))
 
-	for _, symbol := range []string{"abc", "12345", "1234567", "60189\x00", "60189\n", "", "60189１", "７０１８９９"} {
+	for _, symbol := range []string{
+		"1234567", "60189\x00", "", "60189１", "７０１８９９", "AAPL.OQ", "AAPLTOOLONG",
+		"nyse:AAPL", "sh:00000", "hk:0070", "us:AAPL1", "us:", "601899sh",
+	} {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/api/quote/x", nil)
 		r.SetPathValue("symbol", symbol)
@@ -541,21 +563,38 @@ func quoteMaxAge(t *testing.T, rec *httptest.ResponseRecorder) int {
 	return n
 }
 
-// The TTL comes from the vendor's own session field, which is why there is no trading calendar in
-// this repo to get the Spring Festival wrong every year.
+// WHICH TTL applies comes from the vendor's own session field, which is why there is no trading
+// calendar in this repo to get the Spring Festival wrong every year. How LONG each one lasts is the
+// admin's, and the shipped configuration is still these two constants.
 func TestQuoteTTLFollowsTheVendorSession(t *testing.T) {
+	def := quoteConfigDefault()
 	open := &QuoteResp{Snapshot: QuoteSnapshot{Session: quoteSessionOpen}}
-	if got := quoteTTLFor(open); got != quoteTTLOpen {
+	if got := def.ttlFor(open); got != quoteTTLOpen {
 		t.Errorf("an open market caches for %v, want %v", got, quoteTTLOpen)
 	}
 	for _, session := range []string{quoteSessionClose, quoteSessionUnknown, ""} {
 		resp := &QuoteResp{Snapshot: QuoteSnapshot{Session: session}}
-		if got := quoteTTLFor(resp); got != quoteTTLClosed {
+		if got := def.ttlFor(resp); got != quoteTTLClosed {
 			t.Errorf("session %q caches for %v, want %v", session, got, quoteTTLClosed)
 		}
 	}
 	if quoteTTLOpen >= quoteTTLClosed {
 		t.Error("a trading market must be refreshed more often than a closed one")
+	}
+
+	// The session decides which of the CONFIGURED two, not which of the constants: an admin who
+	// shortened both must not have the open-market entry silently keep the shipped 30s.
+	tuned := quoteConfig{Order: quoteSourceNames(), TTLOpen: 7 * time.Second, TTLClosed: 90 * time.Second}
+	if got := tuned.ttlFor(open); got != 7*time.Second {
+		t.Errorf("an open market under a tuned config caches for %v, want 7s", got)
+	}
+	if got := tuned.ttlFor(&QuoteResp{Snapshot: QuoteSnapshot{Session: quoteSessionClose}}); got != 90*time.Second {
+		t.Errorf("a closed market under a tuned config caches for %v, want 90s", got)
+	}
+	// A zero config is the SHIPPED behaviour, never a zero TTL: a value struct that reached the
+	// cache unfilled would otherwise expire every entry the moment it was stored.
+	if got := (quoteConfig{}).ttlFor(open); got != quoteTTLOpen {
+		t.Errorf("a zero config caches an open market for %v, want the shipped %v", got, quoteTTLOpen)
 	}
 
 	// And it is read from the response, not decided by the handler: the same fixture with its SH
@@ -569,9 +608,9 @@ func TestQuoteTTLFollowsTheVendorSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse (open): %v", err)
 	}
-	if quoteTTLFor(closed) != quoteTTLClosed || quoteTTLFor(trading) != quoteTTLOpen {
+	if def.ttlFor(closed) != quoteTTLClosed || def.ttlFor(trading) != quoteTTLOpen {
 		t.Errorf("captured session %q → %v, flipped to %q → %v",
-			closed.Snapshot.Session, quoteTTLFor(closed), trading.Snapshot.Session, quoteTTLFor(trading))
+			closed.Snapshot.Session, def.ttlFor(closed), trading.Snapshot.Session, def.ttlFor(trading))
 	}
 }
 
@@ -917,7 +956,7 @@ func TestQuoteLoadDoesNotBlameAVendorForACancelledCaller(t *testing.T) {
 		{name: quoteSourceSina, fetch: sina.fetch},
 	}
 
-	if _, err := c.load(ctx, "sh", "601899", quoteRange3M); !errors.Is(err, context.Canceled) {
+	if _, err := c.load(ctx, quoteConfigDefault(), "sh", "601899", quoteRange3M); !errors.Is(err, context.Canceled) {
 		t.Fatalf("load under a caller that walked away = %v, want context.Canceled", err)
 	}
 	if health := c.snapshotHealth(); len(health) != 0 {
@@ -931,7 +970,7 @@ func TestQuoteLoadDoesNotBlameAVendorForACancelledCaller(t *testing.T) {
 		{name: quoteSourceTencent, fetch: failingStub("tencent is down").fetch},
 		{name: quoteSourceSina, fetch: failingStub("sina is down").fetch},
 	}
-	if _, err := live.load(context.Background(), "sh", "601899", quoteRange3M); err == nil {
+	if _, err := live.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M); err == nil {
 		t.Fatal("two failing vendors returned no error")
 	}
 	for _, h := range live.snapshotHealth() {
@@ -949,7 +988,7 @@ func TestQuoteLoadReportsTheFirstError(t *testing.T) {
 		{name: quoteSourceTencent, fetch: failingStub("tencent is down").fetch},
 		{name: quoteSourceSina, fetch: failingStub("sina is down").fetch},
 	}
-	_, err := c.load(context.Background(), "sh", "601899", quoteRange3M)
+	_, err := c.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M)
 	if err == nil {
 		t.Fatal("two failing vendors returned no error")
 	}
@@ -960,7 +999,7 @@ func TestQuoteLoadReportsTheFirstError(t *testing.T) {
 	// An empty source list is its own answer rather than a nil response escaping as a success.
 	var empty quoteCache
 	empty.sources = []quoteSource{}
-	if _, err := empty.load(context.Background(), "sh", "601899", quoteRange3M); !errors.Is(err, errQuoteNoSources) {
+	if _, err := empty.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M); !errors.Is(err, errQuoteNoSources) {
 		t.Errorf("a cache with no sources returned %v, want %v", err, errQuoteNoSources)
 	}
 }
@@ -1193,5 +1232,115 @@ func TestQuoteBarsForRangeClampsWhateverTheMapHolds(t *testing.T) {
 	}
 	if got := quoteBarsForRange("test-zero"); got != quoteDefaultBars {
 		t.Errorf("a range mapped to zero bars reached the vendor URL as %d, want %d", got, quoteDefaultBars)
+	}
+}
+
+// ---------- the wider symbol space ----------
+
+// The four fields the strip cannot render without: which market answered, whether the thing is an
+// instrument or an index, what currency the number is in, and which zone the instant belongs to.
+// They are asserted THROUGH the endpoint rather than off the parser (quote_test.go already pins the
+// parser) because the handler is what serves them, and a handler that dropped Currency would leave
+// 319.97 next to a Chinese report reading as yuan to every reader.
+func TestQuoteAPIServesEveryMarketsOwnLabels(t *testing.T) {
+	for _, c := range []struct {
+		path                             string
+		fixture                          string
+		market, kind, currency, tz, name string
+		last                             int64
+	}{
+		{"/api/quote/601899", fixTencentSH, "sh", quoteKindStock, "CNY", "Asia/Shanghai", "紫金矿业", 3335},
+		{"/api/quote/000001", fixTencentSZ, "sz", quoteKindStock, "CNY", "Asia/Shanghai", "平安银行", 1189},
+		{"/api/quote/00700", fixTencentHK, "hk", quoteKindStock, "HKD", "Asia/Hong_Kong", "腾讯控股", 44020},
+		{"/api/quote/AAPL", fixTencentUS, "us", quoteKindStock, "USD", "America/New_York", "苹果", 31997},
+		// The explicit form is the only way to reach 上证指数: the bare six digits keep meaning what
+		// marketPrefix has always said they mean, and marketPrefix maps 000001 to Shenzhen — which
+		// is the row above, from the same six digits, answering with a different company.
+		{"/api/quote/sh:000001", fixTencentIndex, "sh", quoteKindIndex, "CNY", "Asia/Shanghai", "上证指数", 393299},
+	} {
+		t.Run(c.path, func(t *testing.T) {
+			s := quoteServer(t)
+			wireQuoteSources(s, tencentStub(readQuoteFixture(t, c.fixture)), sinaStub(t))
+			rec := quoteGET(t, s, c.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s → %d (%s)", c.path, rec.Code, rec.Body.String())
+			}
+			got := quoteBody(t, rec)
+			quoteEqStr(t, "market", got.Market, c.market)
+			quoteEqStr(t, "kind", got.Kind, c.kind)
+			quoteEqStr(t, "currency", got.Currency, c.currency)
+			quoteEqStr(t, "tz", got.TZ, c.tz)
+			quoteEqStr(t, "name", got.Name, c.name)
+			quoteEqInt(t, "last", got.Snapshot.Last, c.last)
+		})
+	}
+}
+
+// A US ticker is case-insensitive on the way in and canonical from there on. The assertion that
+// matters is the CALL COUNT: two spellings that each got their own cache key would be two vendor
+// calls for one stock, and the second reader would be told they had paid for a fresh fetch.
+func TestQuoteAPICanonicalisesAUSTicker(t *testing.T) {
+	s := quoteServer(t)
+	tencent := tencentStub(readQuoteFixture(t, fixTencentUS))
+	wireQuoteSources(s, tencent, sinaStub(t))
+
+	lower := quoteGET(t, s, "/api/quote/aapl")
+	upper := quoteGET(t, s, "/api/quote/AAPL")
+	explicit := quoteGET(t, s, "/api/quote/us:AaPl")
+	for _, rec := range []*httptest.ResponseRecorder{lower, upper, explicit} {
+		if rec.Code != http.StatusOK {
+			t.Fatalf("→ %d (%s)", rec.Code, rec.Body.String())
+		}
+		quoteEqStr(t, "symbol", quoteBody(t, rec).Symbol, "AAPL")
+	}
+	if tencent.n() != 1 {
+		t.Errorf("three spellings of one ticker cost %d upstream calls, want 1", tencent.n())
+	}
+	if quoteBody(t, lower).Cached {
+		t.Error("the first spelling paid for the fetch and must not report itself as cached")
+	}
+	if !quoteBody(t, upper).Cached || !quoteBody(t, explicit).Cached {
+		t.Error("a second spelling of the same ticker was served as a fresh fetch")
+	}
+}
+
+// The US series is two rows fifteen years apart — real candles that pass every check in the gate and
+// draw as a straight line labelled 3个月. The parser reports what the vendor sent; taking them away
+// is the handler's job, and this is the market where that is observable, because the captured body
+// really does carry bars (unlike bj, whose fixture is already empty).
+func TestQuoteAPIStripsTheTwoBarsTheVendorSendsForTheUS(t *testing.T) {
+	s := quoteServer(t)
+	tencent := tencentStub(readQuoteFixture(t, fixTencentUS))
+	sina := sinaStub(t)
+	wireQuoteSources(s, tencent, sina)
+
+	// The stub hands the handler real bars, so the handler is the only thing that can remove them.
+	parsed, err := parseTencentQuote("us", "AAPL", readQuoteFixture(t, fixTencentUS), quoteRange3M)
+	if err != nil {
+		t.Fatalf("parse the captured US body: %v", err)
+	}
+	if len(parsed.Bars) != 2 || parsed.BarsSource != quoteSourceTencent {
+		t.Fatalf("the stub must hand the handler bars: %d bar(s) from %q", len(parsed.Bars), parsed.BarsSource)
+	}
+
+	for _, pass := range []string{"fresh", "from the cache"} {
+		rec := quoteGET(t, s, "/api/quote/AAPL?range=3m")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("us quote (%s) → %d (%s)", pass, rec.Code, rec.Body.String())
+		}
+		got := quoteBody(t, rec)
+		if len(got.Bars) != 0 {
+			t.Errorf("a us response (%s) carried %d bars; the vendor's series is two rows fifteen years apart", pass, len(got.Bars))
+		}
+		quoteEqStr(t, "barsUnavailable ("+pass+")", got.BarsUnavailable, quoteBarsMarketUnsupported)
+		quoteEqStr(t, "barsSource ("+pass+")", got.BarsSource, "")
+		if !strings.Contains(rec.Body.String(), `"bars":[]`) {
+			t.Errorf("bars must serialize as [] (%s), got %s", pass, rec.Body.String())
+		}
+		// The snapshot half is still served: the US quote is real, only its history is not.
+		quoteEqInt(t, "last ("+pass+")", got.Snapshot.Last, 31997)
+	}
+	if sina.n() != 0 {
+		t.Errorf("a us symbol reached the A-share fallback %d time(s)", sina.n())
 	}
 }

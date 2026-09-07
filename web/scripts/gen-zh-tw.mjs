@@ -20,10 +20,21 @@ const cn = JSON.parse(readFileSync(join(dir, 'zh-CN.json'), 'utf8'))
 const twPath = join(dir, 'zh-TW.json')
 const tw = JSON.parse(readFileSync(twPath, 'utf8'))
 const all = process.argv.includes('--all')
+const force = process.argv.includes('--force')
 
 // The interpolation placeholders a string uses, as a stable set. Traditional conversion never
 // touches them — they are ASCII — so zh-TW must always carry exactly zh-CN's.
 const slots = (s) => [...String(s).matchAll(/\{\{\s*([\w.]+)/g)].map((m) => m[1]).sort().join(',')
+
+// Substitutions applied AFTER conversion, for the handful of words where s2twp picks the Taiwanese
+// term for the wrong sense. These are corrections to the converter, not translations, so they belong
+// here rather than as hand-edits in the bundle: a hand-edit survives the default run but is silently
+// undone by --all, which is how a wrong word comes back months later with nobody watching.
+//
+// 代码 is the standing case. In Taiwanese computing 代码 is usually 程式碼 -- source code -- and s2twp
+// converts it that way, which is right for an API and wrong for a stock code. A 股票代码 is 股票代碼.
+const AFTER_CONVERSION = [[/程式碼/g, '代碼']]
+const fix = (s) => AFTER_CONVERSION.reduce((acc, [re, to]) => acc.replace(re, to), s)
 
 const out = {}
 let changed = 0
@@ -43,7 +54,7 @@ for (const [k, v] of Object.entries(cn)) {
     continue
   }
   const drift = k in tw
-  const conv = convert(v)
+  const conv = fix(convert(v))
   if (conv !== tw[k]) changed += 1
   if (drift) restated += 1
   out[k] = conv
@@ -54,6 +65,20 @@ for (const [k, v] of Object.entries(cn)) {
 // that points at zh-TW instead of at the removal that caused it. Not silent, though: they are
 // listed, which is what the "never silently drop" rule was actually protecting.
 const dropped = Object.keys(tw).filter((k) => !(k in out))
+
+// --all reconverts every key, which means it DISCARDS every hand correction in the bundle. That is
+// not hypothetical: this file has ~180 keys where somebody replaced s2twp's output with the term
+// Taiwanese usage actually wants -- 權限 not 許可權, 優先級 not 優先順序, 存取 not 訪問, 唯讀 not
+// 只讀 -- and a bare --all silently puts every one of them back. The flag stays, because
+// reconverting is occasionally the right thing after a converter upgrade; it now has to be asked
+// for twice, and it says what it is about to throw away first.
+const reworded = Object.keys(out).filter((k) => k in tw && out[k] !== tw[k])
+if (all && !force && reworded.length) {
+  console.error(`--all would reword ${reworded.length} existing key(s), discarding any hand correction in them. For example:`)
+  for (const k of reworded.slice(0, 5)) console.error(`  ${k}\n    have: ${tw[k]}\n    want: ${out[k]}`)
+  console.error('Nothing written. Re-run with --all --force if that is genuinely what you want.')
+  process.exit(1)
+}
 
 writeFileSync(twPath, JSON.stringify(out, null, 2) + '\n')
 console.log(`zh-TW: ${changed} key(s) ${all ? 'reconverted' : 'filled'} from zh-CN via OpenCC s2twp`)

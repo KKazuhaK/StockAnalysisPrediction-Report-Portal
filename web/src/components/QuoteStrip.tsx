@@ -3,19 +3,21 @@ import { ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { ApiError } from '../api/client'
 import type { QuoteResp, QuoteSnapshot } from '../api/types'
-// The chart drawn directly below this strip prints the same 分 amounts. Two local formatters would
+// The chart that renders with this strip prints the same 分 amounts. Two local formatters would
 // agree on 33.35 and disagree on every seven-figure 成交额, so both components call one.
 import { fenToYuan, groupDigits, signedFenToYuan } from '../lib/money'
 
-// The price strip above a stock report (ADR 0028).
+// The price strip above a stock report (ADR 0028), and the same strip at the top of the Quotes app.
 //
 // It renders and nothing else: the page owns the request, the polling and the retry, because the
-// same answer also feeds the candlestick chart below and two components fetching the same quote
-// would double the load on a vendor endpoint that is neither ours nor rate-limit-generous.
+// same answer also feeds the candlestick chart and two components fetching the same quote would
+// double the load on a vendor endpoint that is neither ours nor rate-limit-generous.
 //
 // Everything here is a DECORATION on a reading page. The report is what the reader came for, so no
 // state of this component — not loading, not a dead vendor — is allowed to occupy the viewport, to
-// push the report down by more than its own line height, or to render a blocking overlay.
+// push the report down by more than its own line height, or to render a blocking overlay. On that
+// page the chart is now collapsed by default and this strip is the whole of the quote panel, which
+// is the other reason it stays short.
 
 interface Props {
   data: QuoteResp | null
@@ -35,6 +37,29 @@ interface Props {
 // one of the two a retry can do anything about.
 const BAD_SYMBOL = 'quote_bad_symbol'
 const UNAVAILABLE = 'quote_unavailable'
+
+// The markets and the currencies the frozen quote contract defines, as an allowlist rather than a
+// straight interpolation into t(). Both are rendered as `quote.market.<m>` / `quote.currency.<c>`,
+// and i18next ECHOES a key it has no string for — so a market or a currency this build has never
+// heard of would print the literal text `quote.market.xx` beside somebody's research. No badge is
+// the honest answer there; the same rule PriceChart applies to its axis unit.
+const MARKET_KEYS = new Set(['sh', 'sz', 'bj', 'hk', 'us'])
+const CURRENCY_KEYS = new Set(['CNY', 'HKD', 'USD'])
+
+// The zones the frozen contract can send (the quoteMarkets table in internal/app/quote.go), each
+// mapped to a label a person reads. "America/New_York" is a database key, not a label: printed
+// beside a timestamp it is noise, and noise beside a time is skipped.
+//
+// The labels are deliberately NOT all the same shape, because a label that is wrong half the year
+// is worse than none. China and Hong Kong have kept a fixed +08:00 since 1991 and 1979, so an
+// offset is true for them in every month. New York moves between UTC-5 and UTC-4 twice a year, so
+// a baked-in offset would be a false statement for one of the two halves; ET is the label the US
+// exchanges themselves print on a close, and it is true all year.
+const ZONE_LABELS: Record<string, string> = {
+  'Asia/Shanghai': 'UTC+8',
+  'Asia/Hong_Kong': 'UTC+8',
+  'America/New_York': 'ET',
+}
 
 /**
  * The contract's error code carried by a thrown ApiError, or '' for anything else.
@@ -67,14 +92,40 @@ export function isSuspended(s: QuoteSnapshot): boolean {
 /**
  * The vendor's timestamp shown on the vendor's own clock.
  *
- * asOf arrives as RFC3339 with a +08:00 offset because it is the exchange's wall clock, and the
+ * asOf arrives as RFC3339 carrying the EXCHANGE's own offset — +08:00 for Shanghai, Shenzhen,
+ * Beijing and Hong Kong, US/Eastern for a US listing (QuoteResp.tz names the zone) — because the
  * exchange is the only clock a session time means anything on. Handing it to dayjs or toLocale*
- * would re-express it in the reader's timezone, so a European reader would be told the market
- * closed at 09:00 — a true instant, and a false statement about the trading day.
+ * would re-express it in the reader's timezone, so a European reader would be told the Shanghai
+ * market closed at 09:00 — a true instant, and a false statement about the trading day. Slicing
+ * the literal digits keeps whatever wall clock the vendor stamped, whatever its offset — and
+ * zoneLabel below is what says whose clock that is, since the digits alone cannot.
  */
 function vendorClock(asOf: string): string {
   const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}(?::\d{2})?)/.exec(asOf)
   return m ? `${m[1]} ${m[2]}` : asOf
+}
+
+/**
+ * The label for the clock vendorClock's digits belong to, or the raw zone when this build has no
+ * label for it.
+ *
+ * Keeping the exchange's wall clock is only half the job: 2026-09-04 16:00:01 and
+ * 2026-09-04 16:14:58 are the same string to a reader, and one of them is a New York close from
+ * last night while the other is this afternoon in Shanghai. Rendered in the same furniture with no
+ * zone anywhere, a reader in China reads that New York close as twelve hours fresher than it is —
+ * thirteen in January, when New York has moved off summer time and Shanghai, which keeps none, has
+ * not. The zone is what makes the digits mean something, which is what QuoteResp.tz was added to
+ * carry.
+ *
+ * An unmapped zone falls back to the RAW string, unlike the market and currency badges above, which
+ * render nothing. The asymmetry is the cost of being wrong: an unrecognised market costs the reader
+ * a badge, while a timestamp with no zone at all is the exact failure this function exists to
+ * prevent — read as local, silently, and half a day out. "Australia/Sydney" is ugly; unlabelled is
+ * dangerous.
+ */
+function zoneLabel(tz: string): string {
+  if (!tz) return ''
+  return ZONE_LABELS[tz] ?? tz
 }
 
 export default function QuoteStrip({ data, loading, error, onRetry }: Props) {
@@ -150,17 +201,36 @@ export default function QuoteStrip({ data, loading, error, onRetry }: Props) {
   const sessionLabel =
     s.session === 'open' ? t('quote.session.open') : s.session === 'close' ? t('quote.session.close') : ''
 
+  // WHICH EXCHANGE AND WHICH MONEY. Neither is decoration now that one endpoint answers for
+  // Shanghai, Shenzhen, Beijing, Hong Kong and US listings: 00700 and 000700 are one keystroke
+  // apart and both parse, and a 231.40 USD price shown as a bare number beside a 33.35 CNY one
+  // reads as the same kind of quantity — which is exactly how a reader mis-compares them. An index
+  // is called out because it is not a company: no report in this portal is about one.
+  const marketLabel = MARKET_KEYS.has(data.market) ? t(`quote.market.${data.market}`) : ''
+  const currencyLabel = CURRENCY_KEYS.has(data.currency) ? t(`quote.currency.${data.currency}`) : ''
+  // WHICH CLOCK. The other half of the same sentence: the strip may not print a bare number, and it
+  // may not print a bare instant either.
+  const zone = zoneLabel(data.tz)
+
   const stats = [
     { key: 'open', label: t('quote.open'), value: fenToYuan(s.open) },
     { key: 'prevClose', label: t('quote.prevClose'), value: fenToYuan(s.prevClose) },
     { key: 'high', label: t('quote.high'), value: fenToYuan(s.high) },
     { key: 'low', label: t('quote.low'), value: fenToYuan(s.low) },
-    // Volume is a share count and turnover is already whole 元 — neither is 分, so neither goes
-    // through fenToYuan. The unit words come from the bundle because this component is rendered
-    // under three languages and a hardcoded 股 is wrong in two of them. There is deliberately no
-    // 万/亿 folding: the bundles carry no scale words, and English has no unit at 10^4 to fold to.
+    // Volume is a share count and turnover is already whole currency units — neither is 分, so
+    // neither goes through fenToYuan. The unit words come from the bundle because this component is
+    // rendered under three languages and a hardcoded 股 is wrong in two of them. There is
+    // deliberately no 万/亿 folding: the bundles carry no scale words, and English has no unit at
+    // 10^4 to fold to.
     { key: 'volume', label: t('quote.volume'), value: `${groupDigits(s.volume)} ${t('quote.shares')}` },
-    { key: 'amount', label: t('quote.amount'), value: `${groupDigits(s.amount)} ${t('quote.yuan')}` },
+    // The turnover's unit follows the payload's currency: labelling a US turnover 元 is the same
+    // false statement as printing the price bare. quote.yuan is the fallback for a body carrying no
+    // currency at all, which is the pre-multi-market shape of this response, and that one was 元.
+    {
+      key: 'amount',
+      label: t('quote.amount'),
+      value: `${groupDigits(s.amount)} ${currencyLabel || t('quote.yuan')}`,
+    },
   ]
 
   return (
@@ -168,8 +238,13 @@ export default function QuoteStrip({ data, loading, error, onRetry }: Props) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
         <Typography.Text strong>{data.name}</Typography.Text>
         <Typography.Text type="secondary">{data.symbol}</Typography.Text>
-        {/* The session and cache tags stay colourless on purpose. Two lines below, green is a
-            FALLING price; a green "交易中" pill beside a red number would be read as part of the
+        {/* Strip-scoped test ids: a page embedding this strip may badge the market in its own
+            header too, and two elements answering one data-testid make every getByTestId in a test
+            that mounts both ambiguous. */}
+        {marketLabel && <Tag data-testid="quote-strip-market">{marketLabel}</Tag>}
+        {data.kind === 'index' && <Tag data-testid="quote-strip-index">{t('quote.kind.index')}</Tag>}
+        {/* The market, session and cache tags stay colourless on purpose. Two lines below, green is
+            a FALLING price; a green "交易中" pill beside a red number would be read as part of the
             same colour language and contradict it. */}
         {sessionLabel && <Tag data-testid="quote-session">{sessionLabel}</Tag>}
         {data.cached && <Tag data-testid="quote-cached">{t('quote.cached')}</Tag>}
@@ -191,6 +266,13 @@ export default function QuoteStrip({ data, loading, error, onRetry }: Props) {
         >
           {fenToYuan(s.last)}
         </span>
+        {/* Beside the number, not up in the tag row: the unit belongs to the price the way the
+            decimals do, and a reader comparing two quotes reads the number first. */}
+        {currencyLabel && (
+          <span data-testid="quote-strip-currency" style={{ color: token.colorTextSecondary, fontSize: 13 }}>
+            {currencyLabel}
+          </span>
+        )}
         {suspended ? (
           <Tag data-testid="quote-suspended" color="default">
             {t('quote.suspended')}
@@ -225,6 +307,15 @@ export default function QuoteStrip({ data, loading, error, onRetry }: Props) {
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 2 }}>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {t('quote.asOf')} {vendorClock(s.asOf)}
+          {/* Beside the digits, never instead of them, and never applied TO them: converting the
+              instant into the reader's own zone is the thing vendorClock refuses to do, because a
+              European reader would then be told the Shanghai market closed at 09:00. The label
+              names whose clock the digits are on and changes nothing about them. */}
+          {zone ? (
+            <span data-testid="quote-strip-tz" style={{ marginLeft: 4 }}>
+              {zone}
+            </span>
+          ) : null}
         </Typography.Text>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {t('quote.source')} {t(`quote.source.${data.source}`)}

@@ -18,6 +18,9 @@ const SH: QuoteResp = {
   symbol: '601899',
   name: '紫金矿业',
   market: 'sh',
+  kind: 'stock',
+  currency: 'CNY',
+  tz: 'Asia/Shanghai',
   source: 'tencent',
   snapshot: {
     last: 3335,
@@ -60,6 +63,40 @@ const BJ: QuoteResp = {
     session: 'close',
   },
   barsUnavailable: 'market_unsupported',
+}
+
+// AAPL as the same endpoint serves it (frozen quote v2 contract): a US listing, priced in USD,
+// stamped on US/Eastern rather than +08:00, and with a volume the vendor already reports in shares
+// — no 手 lot conversion anywhere on this path.
+const US: QuoteResp = {
+  ...SH,
+  symbol: 'AAPL',
+  name: 'Apple Inc',
+  market: 'us',
+  currency: 'USD',
+  tz: 'America/New_York',
+  snapshot: {
+    last: 23140,
+    prevClose: 22990,
+    open: 23005,
+    high: 23188,
+    low: 22960,
+    change: 150,
+    changePct: '0.65',
+    volume: 41273900,
+    amount: 9552000000,
+    asOf: '2026-09-04T16:00:01-04:00',
+    session: 'close',
+  },
+}
+
+// 上证指数 (sh000001): an A-share exchange, an A-share currency, and NOT a company — nothing in
+// this portal writes a report about it, so the strip has to say what it is.
+const IDX: QuoteResp = {
+  ...SH,
+  symbol: '000001',
+  name: '上证指数',
+  kind: 'index',
 }
 
 function withSnapshot(base: QuoteResp, over: Partial<QuoteSnapshot>): QuoteResp {
@@ -155,7 +192,7 @@ describe('QuoteStrip', () => {
   it('groups the share count and the turnover and labels them from the bundle', () => {
     render(<QuoteStrip data={SH} loading={false} />)
     expect(screen.getByTestId('quote-stat-volume').textContent).toBe('quote.volume 176,934,100 quote.shares')
-    expect(screen.getByTestId('quote-stat-amount').textContent).toBe('quote.amount 5,939,060,000 quote.yuan')
+    expect(screen.getByTestId('quote-stat-amount').textContent).toBe('quote.amount 5,939,060,000 quote.currency.CNY')
   })
 
   it('shows a suspended stock as suspended instead of as a flat quote', () => {
@@ -192,6 +229,42 @@ describe('QuoteStrip', () => {
     expect(screen.getByText(/2026-09-04 16:14:58/)).toBeTruthy()
     expect(screen.getByTestId('quote-session').textContent).toBe('quote.session.close')
     expect(screen.getByText(/quote\.source\.tencent/)).toBeTruthy()
+  })
+
+  it('names the clock the vendor timestamp is on, and does not convert the instant onto another', () => {
+    // THE half-day failure. A Shanghai close and a New York close arrive as the same shape of
+    // string in the same row of the same strip, so without a zone beside them the US one reads as
+    // this afternoon to a reader in China — twelve hours fresher than it is, thirteen in January.
+    const { unmount } = render(<QuoteStrip data={SH} loading={false} />)
+    expect(screen.getByTestId('quote-strip-tz').textContent).toBe('UTC+8')
+    unmount()
+
+    render(<QuoteStrip data={US} loading={false} />)
+    // The digits are the EXCHANGE's, unconverted: 16:00:01 is what New York stamped. This test runs
+    // in whatever zone the machine is in, so a conversion into "the browser's zone" would move
+    // these digits here and be caught here.
+    expect(screen.getByText(/2026-09-04 16:00:01/)).toBeTruthy()
+    // ...and the label says whose 16:00 that is, which is the whole of the fix.
+    expect(screen.getByTestId('quote-strip-tz').textContent).toBe('ET')
+    // Not the IANA key: "America/New_York" beside a time is a database row, not a label.
+    expect(screen.queryByText(/America\/New_York/)).toBeNull()
+  })
+
+  it('falls back to the raw zone rather than to no zone at all', () => {
+    // The opposite trade-off from the market and currency badges below, and deliberately so: an
+    // unrecognised market costs a reader a badge, while an instant with NO zone is the failure the
+    // field exists to prevent. Ugly beats absent here.
+    const sydney = { ...SH, tz: 'Australia/Sydney' } as QuoteResp
+    const { unmount } = render(<QuoteStrip data={sydney} loading={false} />)
+    expect(screen.getByTestId('quote-strip-tz').textContent).toBe('Australia/Sydney')
+    unmount()
+
+    // A body from before the field existed carries no tz. Nothing to say, so nothing is said —
+    // an empty label would be furniture claiming a fact it does not have.
+    const legacy = { ...SH, tz: '' } as QuoteResp
+    render(<QuoteStrip data={legacy} loading={false} />)
+    expect(screen.queryByTestId('quote-strip-tz')).toBeNull()
+    expect(screen.getByText(/2026-09-04 16:14:58/)).toBeTruthy()
   })
 
   it('marks the numbers as unadjusted', () => {
@@ -245,6 +318,28 @@ describe('QuoteStrip', () => {
     expect(onRetry).toHaveBeenCalledTimes(1)
   })
 
+  it('prints the generic line, not the server code, for a code outside the two the contract froze', async () => {
+    // t() echoes a key it has no string for, exactly as i18next does in the browser, so an
+    // unguarded pass-through renders the literal `err.rate_limited` beside somebody's research. The
+    // contract defines two codes for this endpoint; a third is a code this build cannot describe,
+    // and "temporarily unavailable" is the honest thing to say about one.
+    const onRetry = vi.fn()
+    render(
+      <QuoteStrip
+        data={null}
+        loading={false}
+        error={new ApiError(429, 'slow down', 'rate_limited')}
+        onRetry={onRetry}
+      />,
+    )
+    expect(screen.getByText('quote.unavailable')).toBeTruthy()
+    expect(screen.queryByText(/^err\./)).toBeNull()
+    // Still retryable: only quote_bad_symbol is the refusal that cannot change, and an unrecognised
+    // code is not evidence of one. Withholding the button here would sell a bad minute as permanent.
+    await userEvent.click(screen.getByRole('button', { name: /quote\.retry/ }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
   it('renders a compact skeleton while loading', () => {
     const { container } = render(<QuoteStrip data={null} loading={true} />)
     expect(screen.getByTestId('quote-strip-loading')).toBeTruthy()
@@ -262,6 +357,51 @@ describe('QuoteStrip', () => {
     render(<QuoteStrip data={SH} loading={true} />)
     expect(screen.getByTestId('quote-last').textContent).toBe('33.35')
     expect(screen.queryByTestId('quote-strip-loading')).toBeNull()
+  })
+
+  it('names the exchange and the currency the price is in', () => {
+    const { unmount } = render(<QuoteStrip data={SH} loading={false} />)
+    expect(screen.getByTestId('quote-strip-market').textContent).toBe('quote.market.sh')
+    expect(screen.getByTestId('quote-strip-currency').textContent).toBe('quote.currency.CNY')
+    unmount()
+
+    // The whole reason the currency is on screen: 231.40 and 33.35 are the same kind of number to
+    // anyone who cannot see which money each is in, and this endpoint now answers for both.
+    render(<QuoteStrip data={US} loading={false} />)
+    expect(screen.getByTestId('quote-strip-market').textContent).toBe('quote.market.us')
+    expect(screen.getByTestId('quote-strip-currency').textContent).toBe('quote.currency.USD')
+    // The unit is beside the price, not inside it: the number itself stays a number.
+    expect(screen.getByTestId('quote-last').textContent).toBe('231.40')
+  })
+
+  it('labels an index as an index and a company as neither', () => {
+    const { unmount } = render(<QuoteStrip data={IDX} loading={false} />)
+    expect(screen.getByTestId('quote-strip-index').textContent).toBe('quote.kind.index')
+    unmount()
+
+    render(<QuoteStrip data={SH} loading={false} />)
+    expect(screen.queryByTestId('quote-strip-index')).toBeNull()
+  })
+
+  it('labels the turnover in the money it was traded in', () => {
+    // 元 under a USD price is the same false statement as no unit at all, and it is the one a
+    // reader is least likely to question.
+    render(<QuoteStrip data={US} loading={false} />)
+    expect(screen.getByTestId('quote-stat-amount').textContent).toBe('quote.amount 9,552,000,000 quote.currency.USD')
+    expect(screen.queryByText(/quote\.yuan/)).toBeNull()
+  })
+
+  it('prints no badge at all for a market or a currency this build has never heard of', () => {
+    // t() echoes an unknown key, so an unguarded interpolation renders the literal string
+    // `quote.market.xx` next to somebody's research. i18next does exactly this in the browser.
+    const alien = { ...SH, market: 'xx', currency: 'XYZ' } as unknown as QuoteResp
+    render(<QuoteStrip data={alien} loading={false} />)
+    expect(screen.queryByTestId('quote-strip-market')).toBeNull()
+    expect(screen.queryByTestId('quote-strip-currency')).toBeNull()
+    expect(screen.queryByText(/quote\.market\./)).toBeNull()
+    expect(screen.queryByText(/quote\.currency\./)).toBeNull()
+    // The price is still there: an unrecognised label is not a reason to withhold the quote.
+    expect(screen.getByTestId('quote-last').textContent).toBe('33.35')
   })
 
   // The strip decorates the reading page; it must never be the reason the page is blank. A body the
