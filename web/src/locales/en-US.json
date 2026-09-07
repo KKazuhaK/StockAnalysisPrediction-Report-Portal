@@ -866,6 +866,7 @@
   "quote.market.sz": "Shenzhen",
   "quote.market.us": "US",
   "quote.noHistory": "This market has no usable daily history",
+  "quote.noInterval": "No enabled source provides this window. Turn one on under Manage → Quote sources",
   "quote.noHistorySrc": "Could not load daily history",
   "quote.noSymbol": "Enter a code to start",
   "quote.open": "Open",

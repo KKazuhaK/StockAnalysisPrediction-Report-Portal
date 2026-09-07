@@ -1095,11 +1095,20 @@ export interface QuoteResp {
   bars: QuoteBar[]
   barsSource: string
   /**
-   * Why there is no history, when there is none. 'market_unsupported' is the Beijing exchange,
-   * whose daily series neither vendor serves usably; the UI must say so rather than draw an
-   * empty chart that reads as a flat one.
+   * Why there is no history, when there is none. Three answers, and the UI must say which rather
+   * than draw an empty chart that reads as a flat one:
+   *
+   * - 'market_unsupported' — a DAILY range on a market whose daily series is not worth drawing
+   *   (Beijing, and the US with nothing but the shipped sources). A standing gap: nothing an
+   *   operator enables changes it.
+   * - 'interval_unsupported' — a window no ENABLED source declares. The market has the data and
+   *   this deployment has no source for it, so the fix is an operator's, in 管理 → 行情源. These
+   *   two were one code, which is how enabling a source for a window left the same "this market
+   *   has no data" sentence on screen and looked like it had done nothing.
+   * - 'source_failed' — every source that could have answered did not. Worth retrying; the other
+   *   two are not.
    */
-  barsUnavailable: '' | 'market_unsupported' | 'source_failed'
+  barsUnavailable: '' | 'market_unsupported' | 'interval_unsupported' | 'source_failed'
   /** Always false: we serve 不复权 (bfq) prices, whose value for a past date never changes. */
   adjusted: boolean
   cached: boolean

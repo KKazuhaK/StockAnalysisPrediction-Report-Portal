@@ -50,6 +50,7 @@ const state = {
       markets: ['sh', 'sz', 'hk', 'us'],
       daily: ['us'],
       intraday: ['sh', 'sz', 'hk', 'us'],
+      intraday5d: ['sh', 'sz', 'hk', 'us'],
       lastSuccess: '0001-01-01T00:00:00Z',
       lastError: '',
       lastErrorAt: '0001-01-01T00:00:00Z',
@@ -64,6 +65,7 @@ const state = {
       // A source that declares no intraday at all: the case the capability column has to render as
       // a stated "none" rather than as an empty cell that could equally be a missing field.
       intraday: [],
+      intraday5d: [],
       // Go's zero time.Time, which is what a source that has never answered actually sends.
       lastSuccess: '0001-01-01T00:00:00Z',
       lastError: 'sina: snapshot column order check failed',
@@ -79,7 +81,15 @@ const state = {
       // that disagreement is the reason both columns exist.
       markets: ['sh', 'sz', 'bj', 'hk', 'us'],
       daily: ['sh', 'sz', 'hk'],
-      intraday: [],
+      // DELIBERATELY ASYMMETRIC, and the only row here that is not what the live server sends: the
+      // real Tencent declares both windows for the same three markets, and so does Yahoo for the
+      // same four, so a page that rendered `intraday` under BOTH headings would agree with every
+      // truthful fixture. That is exactly the state the server was in — one union under a 分时
+      // heading — when the panel advertised 5日 in three markets nothing served. A vendor whose
+      // five-day endpoint covers fewer markets than its one-day one is a legitimate wire shape, and
+      // it is the only one that can prove this page reads two fields rather than one twice.
+      intraday: ['sh', 'sz', 'hk'],
+      intraday5d: ['sh', 'sz'],
       lastSuccess: '2026-09-07T06:41:36Z',
       lastError: '',
       lastErrorAt: '0001-01-01T00:00:00Z',
@@ -197,15 +207,37 @@ describe('QuoteSourcesPage', () => {
       'quote.market.us',
     ])
 
-    // A source that declares no intraday says so. An empty cell would be indistinguishable from a
-    // build whose server never sent the field.
+    // A source that declares no intraday says so, for BOTH windows. An empty cell would be
+    // indistinguishable from a build whose server never sent the field.
     expect(tagsIn(sourceRow('sina'), 'quote-source-intraday')).toEqual([])
     expect(within(sourceRow('sina')).getByTestId('quote-source-intraday').textContent).toContain('—')
+    expect(tagsIn(sourceRow('sina'), 'quote-source-intraday5d')).toEqual([])
+    expect(within(sourceRow('sina')).getByTestId('quote-source-intraday5d').textContent).toContain('—')
     expect(tagsIn(sourceRow('sina'), 'quote-source-daily')).toEqual(['quote.market.sh', 'quote.market.sz'])
 
-    // Both intervals are named on every row, so a reader knows which list they are looking at.
+    // The two intraday windows are two rows reading two fields, and tencent's fixture is the one
+    // that can tell them apart. A page that rendered `intraday` under both headings — which is what
+    // the SERVER used to send, one union under a 分时 label — would print sh, sz and hk twice here.
+    expect(tagsIn(sourceRow('tencent'), 'quote-source-intraday')).toEqual([
+      'quote.market.sh',
+      'quote.market.sz',
+      'quote.market.hk',
+    ])
+    expect(tagsIn(sourceRow('tencent'), 'quote-source-intraday5d')).toEqual([
+      'quote.market.sh',
+      'quote.market.sz',
+    ])
+    expect(tagsIn(sourceRow('yahoo'), 'quote-source-intraday5d')).toEqual([
+      'quote.market.sh',
+      'quote.market.sz',
+      'quote.market.hk',
+      'quote.market.us',
+    ])
+
+    // All three intervals are named on every row, so a reader knows which list they are looking at.
     expect(screen.getAllByText('quoteAdmin.daily')).toHaveLength(3)
     expect(screen.getAllByText('quoteAdmin.intraday')).toHaveLength(3)
+    expect(screen.getAllByText('quote.range.5d')).toHaveLength(3)
     expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toContain('quoteAdmin.capabilities')
   })
 
@@ -229,12 +261,22 @@ describe('QuoteSourcesPage', () => {
     expect(within(rows[3]).queryByText('quoteAdmin.primary')).toBeNull()
     expect(within(rows[3]).queryByText('quoteAdmin.fallback')).toBeNull()
 
-    // The notice is IN the row and rendered, not behind a hover: it is what the operator is
-    // deciding with — undocumented endpoint, unlicensed use, their call, and the thing enabling it
-    // buys. Asserted on the text, so hiding it in a tooltip's title attribute would fail here.
-    expect(within(sourceRow('yahoo')).getByText('quoteAdmin.yahooNotice')).toBeTruthy()
-    // And only there: it is a fact about this vendor, not a banner every disabled row inherits.
-    expect(screen.getAllByTestId('quote-source-notice')).toHaveLength(1)
+    // The notice is RENDERED and not behind a hover: it is what the operator is deciding with —
+    // undocumented endpoint, unlicensed use, their call, and the thing enabling it buys. Asserted on
+    // the text, so hiding it in a tooltip's title attribute would fail here.
+    //
+    // It sits ABOVE the table rather than inside the row it is about, and that is deliberate: three
+    // sentences under the source column's width wrapped to five lines and set the height of every
+    // other row. So it carries the vendor's name instead of relying on adjacency, which is what the
+    // assertion below checks — an unnamed banner at the card's width would not say WHICH source it
+    // is about.
+    const notices = screen.getAllByTestId('quote-source-notice')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].textContent).toContain('quoteAdmin.yahooNotice')
+    expect(notices[0].textContent).toContain('yahoo')
+    // Still one per vendor that has something to declare, and not a banner every disabled row
+    // inherits: tencent and sina are both in this fixture and neither adds one.
+    expect(within(sourceRow('yahoo')).queryByTestId('quote-source-notice')).toBeNull()
     expect(within(sourceRow('tencent')).queryByTestId('quote-source-notice')).toBeNull()
 
     await user.click(yahoo)

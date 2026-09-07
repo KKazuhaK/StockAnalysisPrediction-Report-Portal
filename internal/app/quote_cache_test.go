@@ -169,13 +169,17 @@ func TestQuoteResolverAnswersThePairAndNotJustTheMarket(t *testing.T) {
 		{"bj", quoteIntervalIntraday, ""},
 		{"us", quoteIntervalIntraday, ""},
 
-		// 5日 — five sessions at five minutes. NOTHING shipped serves it, and that is the line worth
-		// reading twice: Tencent's endpoint answers today and carries no window parameter, so it
-		// declares the interval above and not this one. A source that folded the two together would
-		// answer a 5日 request with a single day under the wrong label.
-		{"sh", quoteIntervalIntraday5D, ""},
-		{"hk", quoteIntervalIntraday5D, ""},
+		// 5日 — five sessions at five minutes, from Tencent's SECOND endpoint on the same host. The
+		// two windows are separate declarations and not one, and the reason is still worth reading
+		// twice: minute/query answers today and has no window parameter, so folding them together
+		// would answer a 5日 request with a single day under the wrong label. What changed is that
+		// day/query was measured and now backs the second declaration; the mechanism did not.
+		{"sh", quoteIntervalIntraday5D, "tencent"},
+		{"hk", quoteIntervalIntraday5D, "tencent"},
+		// Neither of these, and for two different measured reasons — day/query refuses the US market
+		// outright, and answers the one Beijing code with a week from April 2025.
 		{"us", quoteIntervalIntraday5D, ""},
+		{"bj", quoteIntervalIntraday5D, ""},
 	} {
 		got := quoteSourceNamesOf(c.sourcesFor(cfg, quoteAsk(t, tc.market), tc.iv))
 		if got != tc.want {
@@ -256,10 +260,16 @@ func TestQuoteResolverFallsThroughASourceThatCannotServeThePair(t *testing.T) {
 	if got := quoteSourceNamesOf(withNew.sourcesFor(last, quoteAsk(t, "us"), quoteIntervalDaily)); got != "newcomer" {
 		t.Errorf("us daily resolved to [%s], want [newcomer] — the only source that declared the pair", got)
 	}
-	// The 5日 window, for the same reason: Tencent's minute endpoint answers one session and does
-	// not declare this interval, so a source that does gets it from last place in the order.
-	if got := quoteSourceNamesOf(withNew.sourcesFor(last, quoteAsk(t, "sh"), quoteIntervalIntraday5D)); got != "newcomer" {
-		t.Errorf("sh 5d intraday resolved to [%s], want [newcomer]", got)
+	// The 5日 window on a market Tencent does NOT declare it for: the newcomer's grant is every
+	// market, so it picks up the US from last place in the order while Tencent, which refuses that
+	// market at this endpoint, is skipped rather than tried and failed.
+	if got := quoteSourceNamesOf(withNew.sourcesFor(last, quoteAsk(t, "us"), quoteIntervalIntraday5D)); got != "newcomer" {
+		t.Errorf("us 5d intraday resolved to [%s], want [newcomer]", got)
+	}
+	// And where Tencent DOES declare it, the order is a preference among the capable: Tencent is
+	// first and the newcomer follows, exactly as for the one-session window below.
+	if got := quoteSourceNamesOf(withNew.sourcesFor(last, quoteAsk(t, "sh"), quoteIntervalIntraday5D)); got != "tencent,newcomer" {
+		t.Errorf("sh 5d intraday resolved to [%s], want [tencent,newcomer]", got)
 	}
 	// And it does NOT displace the source that already serves the one-session window: the order is
 	// a preference among the capable, so Tencent stays first for 分时 and the newcomer follows it.
@@ -437,30 +447,32 @@ func TestQuotePanelAdvertisesNothingTheResolverCannotBeAskedFor(t *testing.T) {
 		asked[spec.interval] = key
 	}
 	for _, src := range c.describeSources() {
+		// ONE interval per column, which is the half of this test that was missing. The 分时 column
+		// used to accept EITHER intraday interval, so a source declaring only the one-session window
+		// satisfied the check for a column an operator reads as covering both — and that is exactly
+		// how the panel came to advertise 5日 in three markets while every 5日 request degraded to a
+		// snapshot. A column that can be satisfied by a different interval than the one it names
+		// cannot catch an over-claim, which is the only thing this test is for.
 		for _, column := range []struct {
 			name string
 			ids  []string
-			ivs  []quoteInterval
+			iv   quoteInterval
 		}{
-			{"日线", src.Daily, []quoteInterval{quoteIntervalDaily}},
-			{"分时", src.Intraday, []quoteInterval{quoteIntervalIntraday, quoteIntervalIntraday5D}},
+			{"日线", src.Daily, quoteIntervalDaily},
+			{"分时", src.Intraday, quoteIntervalIntraday},
+			{"5日", src.Intraday5D, quoteIntervalIntraday5D},
 		} {
 			for _, id := range column.ids {
 				reached := false
-				for _, iv := range column.ivs {
-					key, askable := asked[iv]
-					if !askable {
-						continue
-					}
+				if key, askable := asked[column.iv]; askable {
 					// The whole path a reader takes: the range's interval, narrowed by what is
 					// enabled, then resolved. A column entry is honest when this ends at that source.
 					target := quoteAsk(t, id)
 					served := c.servableInterval(all, target, quoteRangeFor(key).interval)
-					if served != iv {
-						continue
-					}
-					for _, got := range c.sourcesFor(all, target, served) {
-						reached = reached || got.name == src.Name
+					if served == column.iv {
+						for _, got := range c.sourcesFor(all, target, served) {
+							reached = reached || got.name == src.Name
+						}
 					}
 				}
 				if !reached {
@@ -469,6 +481,57 @@ func TestQuotePanelAdvertisesNothingTheResolverCannotBeAskedFor(t *testing.T) {
 						"must be reachable or it must not be printed", src.Name, column.name, id)
 				}
 			}
+		}
+	}
+}
+
+// The panel's two intraday columns must be able to DISAGREE, and with the shipped sources they
+// cannot be observed to: Tencent declares both windows on the same three markets and Yahoo both on
+// the same four, so a server that unioned them back into one column would print exactly what the
+// split prints and every assertion above would still pass.
+//
+// That is the state the panel was in when it advertised 5日 in three markets nothing served. So the
+// asymmetry is supplied here rather than waited for: one source, one window, and a check that the
+// column for the OTHER window does not borrow it.
+func TestPanelKeepsTheTwoIntradayWindowsApartWhenASourceServesOnlyOne(t *testing.T) {
+	oneDayOnly := quoteSource{
+		name:  "sessiononly",
+		fetch: func(context.Context, string, string, int) (*QuoteResp, error) { return nil, nil },
+		caps: []quoteCapability{{
+			markets:   func(m *quoteMarket) bool { return m.id == "sh" },
+			intervals: []quoteInterval{quoteIntervalIntraday},
+		}},
+	}
+	fiveDayOnly := quoteSource{
+		name:  "weekonly",
+		fetch: func(context.Context, string, string, int) (*QuoteResp, error) { return nil, nil },
+		caps: []quoteCapability{{
+			markets:   func(m *quoteMarket) bool { return m.id == "hk" },
+			intervals: []quoteInterval{quoteIntervalIntraday5D},
+		}},
+	}
+	c := &quoteCache{sources: []quoteSource{oneDayOnly, fiveDayOnly}}
+	c.init()
+	byName := map[string]quoteSourceInfo{}
+	for _, info := range c.describeSources() {
+		byName[info.Name] = info
+	}
+	for _, tc := range []struct {
+		source, intraday, intraday5d string
+	}{
+		{"sessiononly", "sh", ""},
+		{"weekonly", "", "hk"},
+	} {
+		info := byName[tc.source]
+		if got := strings.Join(info.Intraday, ","); got != tc.intraday {
+			t.Errorf("%s 分时 = %q, want %q — a 5日 grant must not fill the 分时 column", tc.source, got, tc.intraday)
+		}
+		if got := strings.Join(info.Intraday5D, ","); got != tc.intraday5d {
+			t.Errorf("%s 5日 = %q, want %q — a 分时 grant must not fill the 5日 column", tc.source, got, tc.intraday5d)
+		}
+		// The union column is a WIDER claim on purpose and still names both.
+		if got := strings.Join(info.Markets, ","); got != tc.intraday+tc.intraday5d {
+			t.Errorf("%s markets = %q, want the union %q", tc.source, got, tc.intraday+tc.intraday5d)
 		}
 	}
 }

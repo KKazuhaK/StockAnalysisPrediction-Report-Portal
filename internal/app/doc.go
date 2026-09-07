@@ -55,7 +55,9 @@
 //   - quote.go        the Tencent and Sina parsers, the five-check drift gate, and the market
 //     and interval model. Positional index reads over bodies with no schema, so the gate —
 //     not the parse — is the load-bearing part; see ADR 0028 on why a range check alone is
-//     not one.
+//     not one. Tencent is THREE endpoints on two hosts: fqkline for a daily series and every
+//     snapshot, minute/query for one session of minutes, day/query for five of them. Which
+//     one an interval reaches is fetchTencentAt, and its default is a refusal.
 //   - quote_yahoo.go  the third source: compiled in, listed in the panel, and OFF until an
 //     operator adds it to the order (ADR 0031 §4). Its response is not positional, so it
 //     carries its OWN gate — parallel arrays that can disagree in length, a previous close
