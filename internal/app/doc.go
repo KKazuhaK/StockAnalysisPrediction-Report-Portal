@@ -58,6 +58,10 @@
 //   - quote_cache.go  bounded in-memory LRU, TTL taken from the vendor's own session
 //     field, single-flight, and a semaphore on upstream calls
 //   - quote_api.go    GET /api/quote/{symbol} (cookie session, same gate as /api/stock)
+//   - quote_admin_api.go  /api/admin/quote — per-source health, the cache occupancy, and the two
+//     TTLs. The source URLs are deliberately NOT settings: a source here is a parser reading the
+//     vendor by fixed field positions, so an admin-typed host produces a drift refusal rather than
+//     another source. Choosing among the compiled-in ones is what the panel offers.
 //
 // Batch / run queue (ADR 0001/0004/0006/0008/0011/0014)
 //   - batch_api.go     admin HTTP surface (/api/admin/batch/*) + run-queue config

@@ -1,5 +1,11 @@
 # ADR 0028 — Live A-share quotes on the reading page (shown, never stored)
 
+> **Amended by [ADR 0030](0030-quotes-app-and-multi-market.md).** The title above is no longer
+> accurate on either count: quotes now cover Hong Kong, the US and indices as well, and the
+> full-size chart lives in its own app rather than on the reading page. Everything below about
+> HOW a quote is fetched, gated and rendered still holds — the drift gate, integer 分, the
+> unadjusted basis, the vendor percentage, and the absence of a poller.
+
 ## Context
 
 A report is read on `web/src/pages/StockPage.tsx`, which knows a six-digit code, a date and a body of

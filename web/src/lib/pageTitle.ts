@@ -43,6 +43,7 @@ const EXACT: Record<string, string> = {
   '/apps': 'nav.apps',
   '/apps/batch': 'nav.batch',
   '/apps/recurring': 'nav.recurring',
+  '/apps/quotes': 'nav.quotes',
   '/queue': 'nav.queue',
   '/chat': 'nav.chat',
   '/report/new': 'reportEditor.titleNew',
