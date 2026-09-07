@@ -212,3 +212,53 @@ the fixtures pin its layout on the day they were captured and nothing after.
 source declarations and the chart's props.** Adding a fifth is five edits, and the type is exhaustive
 in none of them — that is the honest cost of having made the interval a first-class thing rather than
 an inference, and it is cheaper than the class of bug §3 lists.
+
+---
+
+## Amendment (v0.4.48) — the 5日 window had no shipped source, and the panel did not say so
+
+§3 above declares the four intervals and §4 makes Yahoo the only source for `intraday5D`. What that
+combination meant in a shipped build was not written down anywhere and was not true of any
+deployment: **Yahoo ships off, so 5日 degraded to a snapshot in every market**, and the button drew
+nothing for anybody who had not enabled an undocumented third-party endpoint.
+
+Three things follow, and only the first is a feature.
+
+**1. Tencent has a five-session endpoint, on the host already in use.**
+`web.ifzq.gtimg.cn/appstock/app/day/query?code=<sym>` answers the same minute rows as
+`minute/query`, for five sessions, each with its own trading date. Measured 2026-09-07: Shanghai and
+Shenzhen 5 × 267 rows, Hong Kong 5 × 332, and the fixtures are committed. Those three markets now
+serve 5日 out of the box, with no new destination and no operator action.
+
+The rows are **bucketed to five minutes**, which is the resolution Yahoo answers the same label
+with. This is not a size optimisation: without it, 5日 would mean one-minute detail from one vendor
+and five-minute from another under one button, and §3's rule that a range is what the *reader* asked
+for cannot survive the same range meaning two things. A bucket's open, high, low and close are the
+extremes of prices actually printed and its volume is the sum of its minutes; nothing is
+interpolated, and a bucket holding one minute is that minute.
+
+Two markets stay out for reasons that are **not the same sentence**, which is why they are separate
+lines in the declaration: `day/query` answers `usAAPL` with `{"code":-1,"msg":"param error"}` — it
+does not serve the market — and answers `bj830799` with five *full* sessions dated April 2025, the
+suspended stock every Beijing fixture here comes from. The first is a fact about the market; the
+second is a fact about the only code we have a body for.
+
+**2. `describeSources` unioned the two intraday intervals, and that is how §7's honesty test passed
+while the panel lied.** One 分时 column fed by `marketIDsFor(intraday, intraday5D)` printed Tencent's
+three markets, and an operator read "5日 works here". The test in §7 walks the columns and requires a
+reachable range — but it accepted *either* interval as proof of the merged column, so the claim it
+could not check was exactly the claim that was false. The columns are separate now, each satisfiable
+only by the interval it names, and because no shipped source's two windows differ, a stub whose do is
+what actually exercises the guard.
+
+**3. `market_unsupported` was answering for two different questions.** A degraded request reported
+"this market has no historical data" whether the market genuinely had no daily series (Beijing; the
+US on the shipped sources) or whether no *enabled* source declared the window. The second is a
+configuration fact — the market has the data — so it is the sentence an operator reads **after**
+enabling a source for that window, and it did not change when they did. `interval_unsupported` is
+the third reason code, and it names the panel to go to.
+
+One defect found while testing the above rather than by using the portal: once both intraday windows
+were wired, the `iv.intraday()` guard in front of `fetchTencentAt`'s fall-through became dead code,
+so an interval with no endpoint went silently to the daily fetcher — a series of days under whatever
+label the reader picked. The switch is exhaustive now and its default refuses.

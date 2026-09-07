@@ -98,7 +98,19 @@ const DEFAULT_HEIGHT = 260
 // Below this a chart cannot hold two panels, five gridlines and a date axis without the labels
 // landing on each other, so a caller asking for 40 gets a short chart rather than a broken one.
 const MIN_HEIGHT = 140
-const PAD_T = 16
+// Top padding, and it is sized by the two things drawn INSIDE it rather than picked round.
+//
+// The currency label and the topmost gridline's price label are both anchored to the right edge of
+// the price gutter, so they share an x and can only be separated vertically. At 16 they were not:
+// the top gridline sits at PAD_T, its label's ascender reaches about PAD_T - 5, and a currency
+// baseline that must itself stay below the viewBox top had nowhere left to go — 元 printed through
+// the first digits of 8.95. Reserving CURRENCY_BAND keeps a real gap between them at any height,
+// and costs the plot eight pixels it does not miss.
+const PAD_T = 24
+// Where the currency label's baseline sits inside that band, and the one number the inequality
+// above is written against: the label occupies roughly [CURRENCY_BASELINE - AXIS_FONT,
+// CURRENCY_BASELINE] and the top price label starts at PAD_T - 5.
+const CURRENCY_BASELINE = 12
 const PAD_B = 26
 // Half a date label plus a little, so the newest bar's tick can be centred under it without being
 // clipped by the right edge. Every tick can then use the same text-anchor, which is what keeps the
@@ -448,10 +460,18 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
   }
 
   if (unavailable) {
-    // Any reason other than the contract's 'market_unsupported' is a failure to fetch, and saying
-    // so is better than falling through to a bare Empty, which a reader takes to mean the stock
-    // has no history rather than that we could not get it.
-    const why = unavailable === 'market_unsupported' ? t('quote.noHistory') : t('quote.noHistorySrc')
+    // THREE reasons, three sentences, and the difference is what a reader can do about it: a
+    // standing gap in the market, a window this deployment has no source for (an operator can fix
+    // that, and the message says where), or a fetch that failed (worth retrying). Anything the
+    // server invents beyond the contract falls to the fetch-failure sentence rather than to a bare
+    // Empty, which a reader takes to mean the stock has no history rather than that we could not
+    // get it.
+    const why =
+      unavailable === 'market_unsupported'
+        ? t('quote.noHistory')
+        : unavailable === 'interval_unsupported'
+          ? t('quote.noInterval')
+          : t('quote.noHistorySrc')
     return (
       <div data-testid="price-chart-unavailable" style={{ minHeight: h, display: 'grid', placeItems: 'center' }}>
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={why} />
@@ -727,12 +747,14 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
         ))}
 
         {/* The unit the price axis is denominated in. A US instrument's 190.00 beside a 元 label is
-            wrong by a factor of seven, and the strip above the chart is not always on screen. */}
+            wrong by a factor of seven, and the strip above the chart is not always on screen.
+            Its baseline is CURRENCY_BASELINE and not PAD_T - 5: see the note there for the two
+            labels that share this gutter's right edge and the gap that keeps them apart. */}
         {unit !== '' && (
           <text
             data-testid="price-currency"
             x={scale.padL - 6}
-            y={PAD_T - 5}
+            y={CURRENCY_BASELINE}
             textAnchor="end"
             fontSize={AXIS_FONT}
             fill={token.colorTextTertiary}

@@ -128,6 +128,17 @@ const (
 	// has to say so out loud — an empty chart rendered as a flat one is a lie.
 	quoteBarsMarketUnsupported = "market_unsupported"
 	quoteBarsSourceFailed      = "source_failed"
+	// quoteBarsIntervalUnsupported is the third answer, and it exists because the first one was
+	// being given for it. A reader who picks a WINDOW no enabled source declares — 分时 or 5日 on a
+	// market none of them measured, or any range on the US with nothing but the shipped sources —
+	// used to be told "this market has no historical data", which is not the reason and points at
+	// nothing they can do. The market usually has the data; this deployment has no source for that
+	// window, and the fix is an operator's, in 管理 → 行情源.
+	//
+	// It is a CONFIGURATION fact, unlike market_unsupported, which is a standing gap true whatever
+	// is enabled. Keeping them one code is how enabling Yahoo for a US chart looked like it had
+	// done nothing: the message before and after said the same thing about the market.
+	quoteBarsIntervalUnsupported = "interval_unsupported"
 
 	quoteSessionOpen    = "open"
 	quoteSessionClose   = "close"
@@ -1046,13 +1057,23 @@ func fetchTencentQuote(ctx context.Context, market, code string, bars int) (*Quo
 // from the one-day endpoint under a 5日 label. The resolver never routes it here (the declaration in
 // quote_cache.go does not claim it), so this is the guard for a caller that skipped the resolver.
 func fetchTencentAt(ctx context.Context, market, code string, bars int, iv quoteInterval) (*QuoteResp, error) {
-	switch {
-	case iv == quoteIntervalIntraday:
+	switch iv {
+	case quoteIntervalIntraday:
+		// One session of minutes.
 		return fetchTencentIntraday(ctx, market, code, bars)
-	case iv.intraday():
-		return nil, fmt.Errorf("quote: tencent's minute endpoint answers one session, not %s", iv)
+	case quoteIntervalIntraday5D:
+		// Five sessions of the same rows, from the second endpoint on the same host.
+		return fetchTencentDays(ctx, market, code, bars)
+	case quoteIntervalDaily, quoteIntervalSnapshot:
+		return fetchTencentQuote(ctx, market, code, bars)
 	}
-	return fetchTencentQuote(ctx, market, code, bars)
+	// EXHAUSTIVE, and the default is a refusal rather than the daily fetcher. It used to be the
+	// other way round — an `iv.intraday()` guard in front of a bare fall-through — and that guard
+	// stopped meaning anything the moment both intraday windows were served above it: an interval
+	// this build has no endpoint for would have gone quietly to fqkline and drawn a series of DAYS
+	// under whatever label the reader picked, with no error anywhere. A fifth interval is a compile
+	// -time addition and this is the line that makes forgetting to wire it a visible failure.
+	return nil, fmt.Errorf("quote: tencent has no endpoint for %s", iv)
 }
 
 // parseTencentQuote turns one fqkline response into a QuoteResp, running drift-gate checks 1-5 in
@@ -1365,6 +1386,27 @@ const (
 	// to difference.
 	quoteMinuteRowFields = 3
 
+	// FIVE sessions of the same minute rows, from the SAME HOST the one-session endpoint uses — no
+	// new destination, which is the whole reason this is the 5日 source rather than a second vendor.
+	//
+	// Measured 2026-09-07, and the fixtures beside this file are those responses:
+	//   sh600519  5 days x 267 rows      sz000001  5 days x 267
+	//   hk00700   5 days x 332 rows      bj830799  5 days x 242, DATED 2025-04-30 (a suspended
+	//                                              stock, so what is measured is "no series for
+	//                                              this code" — the same reason bj has no one-day
+	//                                              grant either)
+	//   usAAPL    {"code":-1,"msg":"param error"} — the US is not served here at all.
+	//
+	// `web3.ifzq.gtimg.cn/appstock/app/kline/mkline?param=<sym>,m5,,320` answers the same window as
+	// real 5-minute k-line and would need no bucketing. It is NOT used: the 301 from web. to web3.
+	// is a second host, and this endpoint answers on the one already in the allowlist.
+	quoteTencentDaysURL = "https://web.ifzq.gtimg.cn/appstock/app/day/query?code=%s"
+
+	// The bucket the 5日 window is drawn at. Yahoo answers the same label with 5-minute points
+	// (331 for a Shanghai week), so Tencent's 1335 one-minute rows are rolled to the same width
+	// rather than left to make 5日 mean two different resolutions depending on who answered.
+	quoteIntraday5DBucketMins = 5
+
 	// The layout the trading date and a row's clock reassemble into. It is NOT quoteMarket.stamp:
 	// that is qt[30]'s layout and it differs per market (Hong Kong's is "2026/09/07 16:08:17"),
 	// while THIS payload sends "20260907" and "0930" in every market it answers for.
@@ -1383,6 +1425,38 @@ type tencentMinuteBody struct {
 		Date string `json:"date"`
 	} `json:"data"`
 	Qt map[string]json.RawMessage `json:"qt"`
+}
+
+// tencentDaysBody is the MANY-SESSION shape of the same payload. The difference from
+// tencentMinuteBody is one level: `data` is a LIST of days rather than one day, each carrying its
+// own trading date and its own rows, and `qt` is the identical snapshot map (88 fields on Shanghai,
+// 78 on Hong Kong — the same arrays fqkline and minute/query send, checked by the same gate).
+//
+// Days arrive NEWEST FIRST. Nothing downstream sorts them, so this parser reverses; a chart drawn
+// from the vendor's order would run backwards through the week with a monotonically rising x axis.
+type tencentDaysBody struct {
+	Data []struct {
+		Date string   `json:"date"`
+		Data []string `json:"data"`
+	} `json:"data"`
+	Qt map[string]json.RawMessage `json:"qt"`
+}
+
+// fetchTencentDays fetches five sessions of minute points plus the snapshot that came with them.
+func fetchTencentDays(ctx context.Context, market, code string, bars int) (*QuoteResp, error) {
+	sym, err := quoteSymbol(market, code)
+	if err != nil {
+		return nil, err
+	}
+	rawURL := fmt.Sprintf(quoteTencentDaysURL, sym)
+	ctx, cancel := context.WithTimeout(ctx, quoteFetchTimeout)
+	defer cancel()
+	body, err := vendorGet(ctx, rawURL, quoteTencentReferer, quoteBodyLimit)
+	if err != nil {
+		vendorLogf(rawURL, "quote 5-day fetch failed for %s: %v", sym, err)
+		return nil, err
+	}
+	return parseTencentDays(market, code, body, bars)
 }
 
 // fetchTencentIntraday fetches one session of minute points plus the snapshot that came with them.
@@ -1470,7 +1544,8 @@ func parseTencentMinute(market, code string, body []byte, bars int) (*QuoteResp,
 		snap.Session = quoteMarketSession(m, market0[0])
 	}
 
-	out, err := quoteTencentMinuteBars(m, mb.Data.Date, mb.Data.Data)
+	// One session, minute by minute: bucket size 1, so every row Tencent sent is a bar.
+	out, err := quoteTencentMinuteBars(m, mb.Data.Date, mb.Data.Data, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -1505,13 +1580,108 @@ func parseTencentMinute(market, code string, body []byte, bars int) (*QuoteResp,
 	return resp, nil
 }
 
+// parseTencentDays turns one day/query response into a QuoteResp carrying FIVE sessions of intraday
+// bars. The snapshot half is byte-identical work to parseTencentMinute's — same `qt` map, same
+// gate — and only the series half differs, so the two are deliberately parallel rather than merged:
+// what separates them is the one level of nesting in `data`, and a single function switching on the
+// shape of that field is how a response for one session would be accepted as a response for five.
+func parseTencentDays(market, code string, body []byte, bars int) (*QuoteResp, error) {
+	target, err := quoteTargetFor(market, code)
+	if err != nil {
+		return nil, err
+	}
+	m, sym := target.Market, target.Symbol
+	code = target.Code
+
+	var env tencentQuoteEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("quote: decode tencent 5-day response: %w", err)
+	}
+	if env.Code != 0 {
+		// This is the US answer verbatim: {"code":-1,"msg":"param error"}. It arrives as an error
+		// rather than as an empty series, which is what keeps a market Tencent does not serve here
+		// from looking like a market with a quiet week.
+		return nil, fmt.Errorf("quote: tencent returned code %d (%s)", env.Code, env.Msg)
+	}
+	raw, ok := env.Data[sym]
+	if !ok {
+		return nil, fmt.Errorf("quote: tencent 5-day response has no %q section", sym)
+	}
+	var db tencentDaysBody
+	if err := json.Unmarshal(raw, &db); err != nil {
+		return nil, fmt.Errorf("quote: decode tencent 5-day %s: %w", sym, err)
+	}
+	rawQt, ok := db.Qt[sym]
+	if !ok {
+		return nil, fmt.Errorf("quote: tencent 5-day response has no %q snapshot", sym)
+	}
+	var qt []string
+	if err := json.Unmarshal(rawQt, &qt); err != nil {
+		return nil, fmt.Errorf("quote: decode tencent 5-day %s snapshot: %w", sym, err)
+	}
+	snap, err := parseTencentQt(m, code, qt)
+	if err != nil {
+		return nil, err
+	}
+	var market0 []string
+	if err := json.Unmarshal(db.Qt["market"], &market0); err == nil && len(market0) > 0 {
+		snap.Session = quoteMarketSession(m, market0[0])
+	}
+
+	// Oldest day first, and the dates STRICTLY INCREASING across the window. The per-day parser
+	// checks the clock ordering inside a session and can say nothing about the sessions themselves,
+	// so a repeated or out-of-order day — the shape a vendor produces when a cache serves the same
+	// session twice — would otherwise become a chart that walks back through the week mid-line.
+	out := make([]QuoteBar, 0, len(db.Data)*400)
+	prevDate := ""
+	for i := len(db.Data) - 1; i >= 0; i-- {
+		day := db.Data[i]
+		date := strings.TrimSpace(day.Date)
+		if date <= prevDate {
+			return nil, fmt.Errorf("%w: 5-day session %d is dated %q, which is not later than %q",
+				errQuoteFieldCount, len(db.Data)-1-i, date, prevDate)
+		}
+		prevDate = date
+		got, err := quoteTencentMinuteBars(m, date, day.Data, quoteIntraday5DBucketMins)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, got...)
+	}
+	if err := quoteCheckRange(&snap); err != nil {
+		return nil, err
+	}
+	if bars > 0 && len(out) > bars {
+		out = out[len(out)-bars:] // oldest first, so a surplus is trimmed from the front
+	}
+	resp := &QuoteResp{
+		Symbol:     code,
+		Name:       strings.TrimSpace(qt[1]),
+		Market:     m.id,
+		Kind:       m.kindOf(qt),
+		Currency:   m.currency,
+		TZ:         m.zone,
+		Source:     quoteSourceTencent,
+		Snapshot:   snap,
+		Bars:       out,
+		BarsSource: quoteSourceTencent,
+	}
+	if len(out) == 0 {
+		// Same rule as the one-session parser: the resolver only sends a 5日 request to a source
+		// that declared the pair, so nothing here is a standing gap in the market.
+		resp.BarsSource = ""
+		resp.BarsUnavailable = quoteBarsSourceFailed
+	}
+	return resp, nil
+}
+
 // quoteTencentMinuteBars turns the row strings into per-minute bars, oldest first.
 //
 // The volume is the DIFFERENCE between consecutive running totals, which is the one arithmetic in
 // this file that a reader is likely to get wrong by copying the daily path: the column is the day's
 // cumulative 成交量, not the minute's. Rendered as-is, a 分时 chart's volume panel would be a
 // staircase climbing all day instead of a bar per minute.
-func quoteTencentMinuteBars(m *quoteMarket, date string, rows []string) ([]QuoteBar, error) {
+func quoteTencentMinuteBars(m *quoteMarket, date string, rows []string, bucketMins int) ([]QuoteBar, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -1524,6 +1694,7 @@ func quoteTencentMinuteBars(m *quoteMarket, date string, rows []string) ([]Quote
 	}
 	out := make([]QuoteBar, 0, len(rows))
 	prevClock, prevCum := "", int64(0)
+	prevBucket := -1
 	for i, row := range rows {
 		f := strings.Fields(row)
 		if err := quoteCheckFieldCount(fmt.Sprintf("tencent minute row %d", i), len(f), quoteMinuteRowFields); err != nil {
@@ -1562,9 +1733,32 @@ func quoteTencentMinuteBars(m *quoteMarket, date string, rows []string) ([]Quote
 		// One price per minute, so the four candle prices are one number. The chart draws an intraday
 		// series as a LINE for exactly this reason; four equal prices satisfy quoteCheckBars's
 		// ordering questions trivially, which is why the checks above are the ones that matter here.
-		out = append(out, QuoteBar{Date: stamp, Open: price, High: price, Low: price, Close: price,
-			Volume: cum - prevCum})
+		bar := QuoteBar{Date: stamp, Open: price, High: price, Low: price, Close: price,
+			Volume: cum - prevCum}
 		prevClock, prevCum = clock, cum
+		// One minute per row, or several rolled into one bucket. The 5日 window is 1335 rows on
+		// Shanghai and 1660 on Hong Kong, and both of those are the SAME LABEL Yahoo answers with
+		// 5-minute points — so the two sources are bucketed to the same resolution here rather than
+		// left to disagree about what 5日 means depending on which vendor happened to answer.
+		//
+		// Every number in a bucket is observed: open is its first minute's price, close its last,
+		// high and low the extremes of the prices actually printed, and volume the SUM of the
+		// per-minute differences. Nothing is interpolated, and a bucket with one minute in it is
+		// that minute. The bar is labelled with its FIRST minute, which is what a k-line bar means.
+		if b := quoteMinuteBucket(clock, bucketMins); b >= 0 && len(out) > 0 && b == prevBucket {
+			last := &out[len(out)-1]
+			last.Close = bar.Close
+			if bar.High > last.High {
+				last.High = bar.High
+			}
+			if bar.Low < last.Low {
+				last.Low = bar.Low
+			}
+			last.Volume += bar.Volume
+			continue
+		}
+		prevBucket = quoteMinuteBucket(clock, bucketMins)
+		out = append(out, bar)
 	}
 	// quote.go's check 4, unchanged: it still refuses a non-positive or over-ceiling price, which is
 	// the half of it that has something to say about a one-price row.
@@ -1572,6 +1766,22 @@ func quoteTencentMinuteBars(m *quoteMarket, date string, rows []string) ([]Quote
 		return nil, err
 	}
 	return out, nil
+}
+
+// quoteMinuteBucket maps a HHMM clock onto the index of the `mins`-wide bucket it falls in, or -1
+// when there is no bucketing to do. Minutes since midnight, so a bucket never straddles the hour the
+// way a naive read of the MM digits alone would: 0958, 0959 and 1000 are three different buckets at
+// width 5, and 0955..0959 are one.
+//
+// The clock is four digits by the time this is called — the row loop refuses anything else before
+// the value is used, for the reason written there.
+func quoteMinuteBucket(clock string, mins int) int {
+	if mins <= 1 || len(clock) != 4 {
+		return -1
+	}
+	h := int(clock[0]-'0')*10 + int(clock[1]-'0')
+	m := int(clock[2]-'0')*10 + int(clock[3]-'0')
+	return (h*60 + m) / mins
 }
 
 // quoteMinuteTime stamps one row in the MARKET's own zone, so a bar reads as the exchange's wall

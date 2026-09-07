@@ -401,14 +401,26 @@ func defaultQuoteSources() []quoteSource {
 				// symbol map — an undeclared market is a request that resolves to nobody, while a
 				// wrongly declared one is a chart drawn from a single point.
 				//
-				// quoteIntervalIntraday5D is deliberately absent: minute/query answers TODAY and
-				// says so in the payload, and there is no window parameter to ask it for five days.
-				// Yahoo is the only source that declares that pair.
+				// The SAME three markets for the FIVE-session window, from a second endpoint on the
+				// same host — day/query, measured 2026-09-07 at 5 sessions each: 267 rows a day on
+				// Shanghai and Shenzhen, 332 on Hong Kong.
+				//
+				// It is one grant and not two because the answer is the same shape at two widths,
+				// and it is written out rather than folded into the row above so the two intervals
+				// keep separate evidence: each names the endpoint it was measured against, and a
+				// vendor that breaks one window does not silently take the other's claim with it.
+				//
+				// The US and Beijing are out of BOTH for reasons that are not the same sentence.
+				// day/query answers usAAPL with {"code":-1,"msg":"param error"} — it does not serve
+				// the market. It answers bj830799 with five full sessions dated APRIL 2025: the
+				// suspended stock every Beijing fixture in this repo is captured from, so what is
+				// measured is "no series for this code" and not "none for the market". Declaring
+				// Beijing on that evidence would draw a chart of a year-old week under a 5日 label.
 				{
 					markets: func(m *quoteMarket) bool {
 						return m.id == "sh" || m.id == "sz" || m.id == "hk"
 					},
-					intervals: []quoteInterval{quoteIntervalIntraday},
+					intervals: []quoteInterval{quoteIntervalIntraday, quoteIntervalIntraday5D},
 				},
 			},
 		},
@@ -1402,8 +1414,14 @@ type quoteSourceInfo struct {
 	// choosing among these rather than among names. An EMPTY list is a real answer here ("serves no
 	// intraday"), and the panel renders it as a dash rather than as a blank cell, so that it cannot
 	// be confused with a field the server did not send.
-	Daily    []string
-	Intraday []string
+	Daily []string
+	// The TWO intraday windows, separately. They used to be one union under a 分时 heading, and that
+	// union is what let the panel advertise a window nothing served: Tencent declared the one-session
+	// interval only, the column named its three markets, and an operator read that as "5日 works
+	// here" while every 5日 request in every market degraded to a snapshot. A column whose two halves
+	// can differ has to be able to say so.
+	Intraday   []string
+	Intraday5D []string
 }
 
 // describeSources reports the sources this cache actually holds, not the shipped list: a build whose
@@ -1414,10 +1432,11 @@ func (c *quoteCache) describeSources() []quoteSourceInfo {
 	out := make([]quoteSourceInfo, 0, len(c.sources))
 	for _, src := range c.sources {
 		out = append(out, quoteSourceInfo{
-			Name:     src.name,
-			Markets:  src.marketIDs(),
-			Daily:    src.marketIDsFor(quoteIntervalDaily),
-			Intraday: src.marketIDsFor(quoteIntervalIntraday, quoteIntervalIntraday5D),
+			Name:       src.name,
+			Markets:    src.marketIDs(),
+			Daily:      src.marketIDsFor(quoteIntervalDaily),
+			Intraday:   src.marketIDsFor(quoteIntervalIntraday),
+			Intraday5D: src.marketIDsFor(quoteIntervalIntraday5D),
 		})
 	}
 	return out
