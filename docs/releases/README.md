@@ -4,16 +4,21 @@ One file per release, the same text as the annotated git tag (`git tag -n99 <tag
 still where a release is cut; these exist so the notes are readable in the repo and in a diff,
 which a tag message is not.
 
-Cutting one:
+Cutting one — the commit argument is optional and defaults to HEAD:
 
 ```sh
-scripts/tag-release.sh v0.4.42 <commit>   # annotated, message = this note; commit defaults to HEAD
-git push origin v0.4.42                    # separate and deliberate: it is the irreversible step
+scripts/tag-release.sh v0.4.42
+git push origin v0.4.42
 ```
 
-The script refuses a version with no note, a tag that already exists, and — the mistake worth
+The push is a separate, deliberate command because it is the irreversible step; the script never
+pushes. It refuses a version with no note, a tag that already exists, and — the mistake worth
 catching — a commit that does not contain its own release note, which is how a tag ends up
-describing a release the commit predates. It does not push.
+describing a release the commit predates.
+
+No trailing `#` comments in that block, on purpose. zsh does not treat `#` as a comment in an
+interactive shell unless `INTERACTIVE_COMMENTS` is set, so a copied line with an explanation after it
+passes the `#` as the commit argument and the script dies on `fatal: Needed a single revision`.
 
 The 0.4 line is where external users, SSO and report versions landed. Read the upgrade section of
 whichever release you are moving TO — the portal is pre-1.0, so per semver each `0.y` bump is a

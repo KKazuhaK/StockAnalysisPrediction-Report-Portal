@@ -9,8 +9,12 @@
 # Until now that lived in whoever cut the last one's memory, which is why v0.4.42 and v0.4.43 sat on
 # main untagged.
 #
-#   scripts/tag-release.sh v0.4.42 dacc4328    # tag that commit
-#   scripts/tag-release.sh v0.4.42             # tag HEAD
+#   scripts/tag-release.sh v0.4.42 dacc4328     tags that commit
+#   scripts/tag-release.sh v0.4.42              tags HEAD
+#
+# The examples carry no trailing '#' comment on purpose: zsh does not enable INTERACTIVE_COMMENTS,
+# so a line copied out of documentation with an explanation after it hands the '#' to this script as
+# the commit argument. The guard below turns that into a sentence instead of a git error.
 #
 # It does not push. Pushing a tag is the one irreversible step here, so it stays a separate,
 # deliberate command — which the script prints for you.
@@ -25,6 +29,18 @@ usage() {
 [ $# -ge 1 ] || usage
 version=$1
 commit=${2:-HEAD}
+
+# See the note above: '#' reaching here means a copied comment, not a revision. Without this the
+# failure is `git rev-parse` saying "Needed a single revision", which names neither the argument
+# that was wrong nor the reason it arrived.
+case "$commit" in
+    '#'*)
+        echo "error: '$commit' is not a commit — it looks like a trailing # comment that your shell" >&2
+        echo "       passed as an argument (zsh does not treat # as a comment interactively)." >&2
+        echo "       Re-run without the comment: $0 $version" >&2
+        exit 1
+        ;;
+esac
 
 case "$version" in
     v*.*.*) ;;
