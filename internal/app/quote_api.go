@@ -50,21 +50,31 @@ func quoteBarsForRange(rangeKey string) int {
 }
 
 // apiQuote answers one stock's live quote plus its daily history. GET /api/quote/{symbol}?range=3m
+//
+// The symbol may be six digits (A-share or index, prefix inferred as it always has been), five
+// digits (Hong Kong), one to six letters (US), or an explicit "<market>:<code>" — which is the only
+// way to reach the codes whose shape lies, 000001 being 上证指数 on Shanghai and 平安银行 on
+// Shenzhen. REPORTS remain A-share only; what widened here is quote VIEWING.
 func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
-	code := r.PathValue("symbol")
-	market := marketPrefix(code)
-	if market == "" {
-		// The SAME rule as every other vendor call in this tree — six ASCII digits and a prefix we
-		// know — and it is enforced here rather than left to the fetcher because this is the edge
-		// where a browser's input becomes a URL. quote_bad_symbol, not a bare 400: the SPA renders
-		// err.quote_bad_symbol through t(), and a server-side Chinese message would be the wrong
-		// language for two of the three locales this portal ships.
+	target, err := quoteResolve(r.PathValue("symbol"))
+	if err != nil {
+		// quoteResolve is the URL-construction boundary — it is what refuses a code with a NUL in it
+		// before anything concatenates it into a vendor URL — so the browser's 400 is that same
+		// judgement rather than a second rule written here that could drift from it. quote_bad_symbol
+		// and not a bare 400: the SPA renders err.quote_bad_symbol through t(), and a server-side
+		// Chinese message would be the wrong language for two of the three locales this portal ships.
 		jsonErrorCode(w, http.StatusBadRequest, "quote_bad_symbol", "股票代码无效")
 		return
 	}
+	// The CANONICAL code from here on, never what the user typed: it is the cache key, the string the
+	// vendor echoes back and what the response reports, and "aapl" and "AAPL" have to be one answer
+	// rather than two cache entries and two upstream calls.
+	market, code := target.Market.id, target.Code
 	bars := quoteBarsForRange(r.URL.Query().Get("range"))
 
-	resp, cached, ttl, err := s.quotes.fetch(r.Context(), market, code, bars)
+	// The operator's source order and TTLs, read per request so a save on the 行情 panel takes
+	// effect on the next page view rather than at the next restart.
+	resp, cached, ttl, err := s.quotes.fetchUnder(r.Context(), s.quoteConfigLoad(), market, code, bars)
 	if err != nil {
 		// Every source failed — transport, a non-2xx, or the drift gate, which counts as a failure
 		// and not a warning. 503 rather than 502 or 500: nothing is wrong with the request and
@@ -81,12 +91,14 @@ func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
 	out := *resp
 	out.Cached = cached
 	out.Bars = quoteVisibleBars(market, resp.Bars)
-	if market == "bj" {
-		// The Beijing exchange has no usable daily history on either vendor: Tencent answers with an
-		// empty day array and Sina answers with a series that stopped over a year ago, which is the
-		// worse of the two failures because a stale chart looks exactly like a current one. The
-		// promise this endpoint makes is that a bj response NEVER carries bars, whatever a vendor
-		// decides to start returning, and that the UI is told why in a form it can translate.
+	if !quoteMarketHasDailyHistory(market) {
+		// Two markets have no daily series worth drawing, and what arrives from them is worse than
+		// nothing because it renders like data: Beijing answers "day":[] on Tencent and a
+		// sixteen-month-stale series on Sina, and the US answers a sixty-bar request with two rows
+		// fifteen years apart. The promise this endpoint makes is that such a response NEVER carries
+		// bars, whatever a vendor decides to start returning, and that the UI is told why in a form
+		// it can translate. Asked of the market table rather than of "bj", so the promise covers
+		// both markets and any third one measured into the table later.
 		out.BarsSource = ""
 		out.BarsUnavailable = quoteBarsMarketUnsupported
 	}
@@ -100,9 +112,10 @@ func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
 }
 
 // quoteVisibleBars is the never-null guarantee the TypeScript contract depends on: bars is
-// QuoteBar[], and a JSON null there is a runtime error in the chart rather than an empty chart.
+// QuoteBar[], and a JSON null there is a runtime error in the chart rather than an empty chart. It
+// is also where a market with no trustworthy history loses the bars a vendor sent anyway.
 func quoteVisibleBars(market string, bars []QuoteBar) []QuoteBar {
-	if market == "bj" || bars == nil {
+	if bars == nil || !quoteMarketHasDailyHistory(market) {
 		return []QuoteBar{}
 	}
 	return bars

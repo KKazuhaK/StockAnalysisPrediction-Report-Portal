@@ -43,6 +43,8 @@ const ChatAdminPage = lazyRetry(() => import('./pages/manage/ChatAdminPage'))
 const WebhooksPage = lazyRetry(() => import('./pages/manage/WebhooksPage'))
 const StoragePage = lazyRetry(() => import('./pages/manage/StoragePage'))
 const AuditPage = lazyRetry(() => import('./pages/manage/AuditPage'))
+const QuoteSourcesPage = lazyRetry(() => import('./pages/manage/QuoteSourcesPage'))
+const QuotesApp = lazyRetry(() => import('./pages/QuotesApp'))
 const AppsHub = lazyRetry(() => import('./pages/AppsHub'))
 const AppView = lazyRetry(() => import('./pages/AppView'))
 const AppsAdminPage = lazyRetry(() => import('./pages/manage/AppsAdminPage'))
@@ -129,6 +131,10 @@ function AppRoutes() {
             the built-in batch console stays permission-gated. */}
         <Route path="/apps" element={<AppsHub />} />
         <Route path="/apps/x/:id" element={<AppView />} />
+        {/* Quotes is ungated on purpose: it reads market data and nothing about this portal, and
+            every signed-in user can already see a price on a reading page. Its `perm` in
+            lib/builtinApps.ts is '' to match — that file's own note asks for the two to agree. */}
+        <Route path="/apps/quotes" element={<QuotesApp />} />
         <Route
           path="/apps/batch"
           element={
@@ -186,6 +192,7 @@ function AppRoutes() {
           <Route path="assistant" element={<ChatAdminPage />} />
           <Route path="apps" element={<AppsAdminPage />} />
           <Route path="webhooks" element={<WebhooksPage />} />
+          <Route path="quotes" element={<QuoteSourcesPage />} />
           <Route path="storage" element={<StoragePage />} />
           <Route path="audit" element={<AuditPage />} />
           <Route path="apidoc" element={<ApiDocPage />} />
