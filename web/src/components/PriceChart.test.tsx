@@ -25,6 +25,42 @@ const BARS: QuoteBar[] = [
 const UP_INDEX = 4
 const DOWN_INDEX = 5
 
+/**
+ * A synthetic intraday series: one session per entry in `days`, each with that many samples
+ * `stepMin` minutes apart from 09:30, stamped the way an intraday bar is — a full timestamp rather
+ * than a date.
+ *
+ * The COUNTS are the contract's measured ones (about 400 points for a one-day 1-minute request,
+ * 331 for a five-day 5-minute one) and they are the point of the fixture rather than an incidental
+ * detail: at that density a candle is two pixels wide and a naive axis prints four hundred labels
+ * on top of each other. A tidy twenty-point series would prove neither thing.
+ */
+function intradayBars(days: string[], perDay: number[], stepMin: number): QuoteBar[] {
+  const out: QuoteBar[] = []
+  days.forEach((day, di) => {
+    for (let k = 0; k < perDay[di]; k += 1) {
+      const mins = 9 * 60 + 30 + k * stepMin
+      const hh = String(Math.floor(mins / 60)).padStart(2, '0')
+      const mm = String(mins % 60).padStart(2, '0')
+      // Integer 分 wandering around 34 元, never two adjacent samples alike, so a line drawn
+      // through the closes has a shape and the volume panel has a tick direction to colour by.
+      const c = 3400 + ((di * 7 + k * 13) % 61) - 30
+      out.push({ d: `${day} ${hh}:${mm}`, o: c - 1, c, h: c + 2, l: c - 3, v: 100_000 + k * 100 })
+    }
+  })
+  return out
+}
+
+// One day of one-minute samples: 400 points, the figure measured for 0700.HK?range=1d&interval=1m.
+const INTRADAY_1D = intradayBars(['2026-09-04'], [400], 1)
+// Five sessions of five-minute samples: 331 points, the figure measured for
+// 600519.SS?range=5d&interval=5m. The five dates are what the axis has to distinguish.
+const INTRADAY_5D = intradayBars(
+  ['2026-08-31', '2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04'],
+  [67, 66, 66, 66, 66],
+  5,
+)
+
 // The chart's geometry is now a function of a MEASURED width, and jsdom performs no layout: every
 // box is 0x0 and the ResizeObserver the setup file installs is inert. Without a controllable
 // observer every test below would assert against the skeleton. This fake is the only input the
@@ -99,6 +135,18 @@ function nanAttributes(container: HTMLElement): string[] {
 function crosshairX(): number {
   const line = screen.getByTestId('price-crosshair').querySelector('line')
   return Number(line?.getAttribute('x1'))
+}
+
+// query, not get: a skeleton has no axis at all, and "there are no ticks" is a legitimate answer
+// these two have to be able to give rather than throw over.
+/** The text under each x-axis tick, left to right. */
+function tickLabels(): string[] {
+  return screen.queryAllByTestId('price-xtick').map((el) => el.textContent ?? '')
+}
+
+/** The centre of each x-axis tick, in CSS pixels, left to right. */
+function tickXs(): number[] {
+  return screen.queryAllByTestId('price-xtick').map((el) => Number(el.getAttribute('x')))
 }
 
 function tooltipLeft(): number {
@@ -621,5 +669,264 @@ describe('PriceChart', () => {
     expect(vols[1].getAttribute('height')).toBe('0')
     expect(Number(vols[0].getAttribute('height'))).toBeGreaterThan(0)
     expect(nanAttributes(container)).toEqual([])
+  })
+
+  it('labels an intraday axis with times and a daily one with dates', () => {
+    const { rerender } = renderChart(<PriceChart bars={INTRADAY_1D} interval="intraday" />, 900)
+    const times = tickLabels()
+    // Thinned, not truncated — a single surviving label would satisfy "they are all times".
+    expect(times.length).toBeGreaterThan(2)
+    for (const label of times) expect(label).toMatch(/^\d{2}:\d{2}$/)
+    // The right-hand edge is what a reader looks at first, so the newest sample keeps its label
+    // whatever the thinning factor works out to.
+    expect(times[times.length - 1]).toBe('16:09')
+
+    rerender(<PriceChart bars={BARS} interval="daily" />)
+    const dates = tickLabels()
+    expect(dates.length).toBeGreaterThan(2)
+    for (const label of dates) expect(label).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(dates[dates.length - 1]).toBe('2026-09-04')
+  })
+
+  it('takes the interval from the prop, never from the shape of the bars', () => {
+    // TIMESTAMP-SHAPED BARS DECLARED DAILY. Sniffing bars[0].d — the shortcut this prop exists to
+    // refuse — would draw these as a line with a time axis. The caller said daily, so it is a daily
+    // chart: candles, and the vendor's own stamp under each of them, whatever that string looks
+    // like. A chart that silently decides for itself what it is showing is the failure here.
+    const stamped = INTRADAY_5D.slice(0, 6)
+    const { rerender } = renderChart(<PriceChart bars={stamped} interval="daily" />, 900)
+    expect(screen.queryByTestId('price-line')).toBeNull()
+    expect(screen.getAllByTestId('price-candle')).toHaveLength(6)
+    expect(screen.getByRole('img', { name: 'quote.chartLabel' })).toBeTruthy()
+    for (const label of tickLabels()) expect(label).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+    fireEvent.pointerMove(screen.getAllByTestId('price-hit')[1])
+    expect(within(screen.getByTestId('price-tooltip')).getByTestId('tt-date').textContent).toBe('2026-08-31 09:35')
+
+    // And the mirror, so neither direction can be inferred: DATE-SHAPED BARS DECLARED INTRADAY are
+    // a line, and the chart stops calling itself a 日 K 线图 while drawing one.
+    rerender(<PriceChart bars={BARS} interval="intraday" />)
+    expect(screen.queryAllByTestId('price-candle')).toHaveLength(0)
+    expect(screen.getByTestId('price-line')).toBeTruthy()
+    expect(screen.queryByRole('img', { name: 'quote.chartLabel' })).toBeNull()
+    expect(screen.getByRole('img', { name: 'quote.intraday quote.chart' })).toBeTruthy()
+  })
+
+  it('draws an intraday series as one line and a daily one as candles, keeping volume in both', () => {
+    // 400 candles in a 900 px column get two pixels each: the body is narrower than its own wick
+    // and the panel is a grey smear. The line is the shape every market app switches to at this
+    // density, and the volume panel is the half of the picture the line cannot carry.
+    const { rerender, container } = renderChart(<PriceChart bars={INTRADAY_1D} interval="intraday" />, 900)
+    expect(screen.queryAllByTestId('price-candle')).toHaveLength(0)
+    expect(screen.getAllByTestId('price-volume')).toHaveLength(INTRADAY_1D.length)
+
+    const points = (screen.getByTestId('price-line').getAttribute('points') ?? '').trim().split(/\s+/)
+    expect(points).toHaveLength(INTRADAY_1D.length)
+    const xs = points.map((p) => Number(p.split(',')[0]))
+    const ys = points.map((p) => Number(p.split(',')[1]))
+    expect(xs.every(Number.isFinite) && ys.every(Number.isFinite)).toBe(true)
+    // Left to right in series order…
+    expect(xs).toEqual([...xs].sort((a, b) => a - b))
+    // …and through the CLOSES, not along a constant: the highest close sits above the lowest one.
+    // A polyline of the right length is not yet a chart of anything.
+    const closes = INTRADAY_1D.map((b) => b.c)
+    expect(ys[closes.indexOf(Math.max(...closes))]).toBeLessThan(ys[closes.indexOf(Math.min(...closes))])
+    expect(nanAttributes(container)).toEqual([])
+
+    rerender(<PriceChart bars={BARS} interval="daily" />)
+    expect(screen.queryByTestId('price-line')).toBeNull()
+    expect(screen.getAllByTestId('price-candle')).toHaveLength(BARS.length)
+    expect(screen.getAllByTestId('price-volume')).toHaveLength(BARS.length)
+  })
+
+  it('thins 400 intraday labels so they cannot overlap, at any measured width', () => {
+    // The no-overlap promise is one inequality in REAL PIXELS — centres at least a label's width
+    // apart — and an intraday label is "09:31", five glyphs at 11px, which is 42px of budget. The
+    // narrow widths are where 400 points make this bite: a slot is well under one pixel there.
+    renderChart(<PriceChart bars={INTRADAY_1D} interval="intraday" />, 900)
+    for (const width of [320, 640, 900, 1900]) {
+      setWidth(width)
+      const xs = tickXs()
+      expect(xs.every(Number.isFinite), `width ${width}`).toBe(true)
+      for (let i = 1; i < xs.length; i += 1) {
+        expect(xs[i] - xs[i - 1], `width ${width}`).toBeGreaterThanOrEqual(42)
+        // And the budget spent is a TIME's, not a date's. 400 points is always more than the axis
+        // can label, so the spacing is decided by the label width and nothing else: budgeting
+        // "2026-09-04" for a label that reads "09:31" throws away a third of the axis.
+        expect(xs[i] - xs[i - 1], `width ${width}`).toBeLessThan(76)
+      }
+      expect(xs[xs.length - 1], `width ${width}`).toBeLessThanOrEqual(width)
+      // Still a legible axis rather than one surviving label, and a wider box carries more of them.
+      expect(xs.length, `width ${width}`).toBeGreaterThan(2)
+    }
+    setWidth(1900)
+    const wide = tickXs().length
+    setWidth(320)
+    expect(wide).toBeGreaterThan(tickXs().length)
+  })
+
+  it('marks each session boundary of a five-day chart with a date, and a one-day chart with none', () => {
+    const five = renderChart(<PriceChart bars={INTRADAY_5D} interval="intraday" />, 1200)
+    const labels = tickLabels()
+    // 09:35 appears five times on this axis. Without a date where one session ends and the next
+    // begins there is nothing on the chart that says which of the five days any label belongs to.
+    expect(labels.filter((l) => /^\d{2}-\d{2}$/.test(l))).toEqual(['08-31', '09-01', '09-02', '09-03', '09-04'])
+    // The boundaries take the tick budget first, but they do not take all of it.
+    expect(labels.filter((l) => /^\d{2}:\d{2}$/.test(l)).length).toBeGreaterThan(4)
+    // Every label is one shape or the other — no half-parsed stamp gets through.
+    expect(labels.every((l) => /^\d{2}-\d{2}$/.test(l) || /^\d{2}:\d{2}$/.test(l))).toBe(true)
+    // The date sits at the boundary bar, not at some rounded-off neighbour: the first sample of
+    // 2026-09-01 is index 67, and its tick is where the '09-01' is.
+    const dateTick = screen.getAllByTestId('price-xtick').find((el) => el.textContent === '09-01')
+    const hitX = Number(screen.getAllByTestId('price-hit')[67].getAttribute('x'))
+    const slot = Number(screen.getAllByTestId('price-hit')[0].getAttribute('width'))
+    expect(Math.abs(Number(dateTick?.getAttribute('x')) - (hitX + slot / 2))).toBeLessThan(0.01)
+
+    // A ONE-day chart spans no boundary, so it is all times: a date under the leftmost bar of a
+    // single session says nothing the page does not already say, and it costs the 09:30 label.
+    five.unmount()
+    renderChart(<PriceChart bars={INTRADAY_1D} interval="intraday" />, 1200)
+    const oneDay = tickLabels()
+    expect(oneDay.length).toBeGreaterThan(2)
+    expect(oneDay.every((l) => /^\d{2}:\d{2}$/.test(l))).toBe(true)
+  })
+
+  it('names the time in the card, the chip and the readout of an intraday chart', () => {
+    const five = renderChart(<PriceChart bars={INTRADAY_5D} interval="intraday" />, 900)
+    fireEvent.pointerMove(screen.getAllByTestId('price-hit')[70])
+
+    // The card has room for the whole stamp, and on a five-day chart it is the only thing on screen
+    // that says which session the hovered minute belongs to.
+    const tip = screen.getByTestId('price-tooltip')
+    expect(within(tip).getByTestId('tt-date').textContent).toBe('2026-09-01 09:45')
+    // The chip labels the time axis, and the time axis is printing times — including the block it
+    // is drawn on, which is sized for a time. A chip sized for a date would sit on top of the two
+    // labels either side of the crosshair.
+    expect(screen.getByTestId('price-xchip').textContent).toBe('09:45')
+    const chipW = Number(screen.getByTestId('price-xchip').querySelector('rect')?.getAttribute('width'))
+    expect(chipW).toBeGreaterThan(20)
+    expect(chipW).toBeLessThan(50)
+    // The live region gets the unambiguous form: a reader stepping through five days of minutes
+    // with the arrow keys has nothing else telling them which day they have walked into.
+    expect(screen.getByTestId('price-readout').textContent).toContain('2026-09-01 09:45')
+
+    // A daily chart still says a date and only a date, in all three places — so none of the above
+    // can be satisfied by a component that simply prints `d` verbatim everywhere.
+    five.unmount()
+    renderChart(<PriceChart bars={BARS} interval="daily" />, 900)
+    fireEvent.pointerMove(screen.getAllByTestId('price-hit')[1])
+    expect(within(screen.getByTestId('price-tooltip')).getByTestId('tt-date').textContent).toBe('2026-08-31')
+    expect(screen.getByTestId('price-xchip').textContent).toBe('2026-08-31')
+    expect(screen.getByTestId('price-readout').textContent).toContain('2026-08-31')
+    // …on a chip wide enough for the date it is carrying.
+    expect(
+      Number(screen.getByTestId('price-xchip').querySelector('rect')?.getAttribute('width')),
+    ).toBeGreaterThan(70)
+  })
+
+  it('reads either stamp spelling, and prints one it can read neither way verbatim', () => {
+    // Both separators are on the wire — ADR 0030 §4 measured Hong Kong stamping 2026/09/07
+    // 14:41:33 where the mainland stamps 20260907144136 — and seconds are dropped, because a
+    // minute bar's label is a minute.
+    const mixed: QuoteBar[] = [
+      { d: '2026-09-04T09:30:00', o: 3400, c: 3410, h: 3415, l: 3395, v: 1000 },
+      { d: '2026/09/04 09:31:00', o: 3410, c: 3405, h: 3412, l: 3400, v: 1200 },
+    ]
+    const first = renderChart(<PriceChart bars={mixed} interval="intraday" />, 900)
+    expect(tickLabels()).toEqual(['09:30', '09:31'])
+    // The card gets one spelling whichever the vendor sent, so a reader hovering two sources'
+    // charts in the same session is not shown 2026-09-04T09:30:00 on one and 2026/09/04 09:31 on
+    // the other. Seconds go: a minute bar's stamp is a minute.
+    fireEvent.pointerMove(screen.getAllByTestId('price-hit')[0])
+    expect(within(screen.getByTestId('price-tooltip')).getByTestId('tt-date').textContent).toBe('2026-09-04 09:30')
+    fireEvent.pointerMove(screen.getAllByTestId('price-hit')[1])
+    expect(within(screen.getByTestId('price-tooltip')).getByTestId('tt-date').textContent).toBe('2026-09-04 09:31')
+    expect(screen.getByTestId('price-readout').textContent).toContain('2026-09-04 09:31')
+    expect(nanAttributes(first.container)).toEqual([])
+    first.unmount()
+
+    // A shape neither pattern matches is printed exactly as it arrived. Parsing it with `new Date`
+    // and hoping is how an axis ends up reading "Invalid Date", or "NaN:NaN", under every bar —
+    // and it is also how a New York 09:31 becomes 21:31 for a reader in Shanghai.
+    const opaque: QuoteBar[] = [
+      { d: '20260904093000', o: 3400, c: 3410, h: 3415, l: 3395, v: 1000 },
+      { d: '20260904093100', o: 3410, c: 3405, h: 3412, l: 3400, v: 1200 },
+    ]
+    const { container } = renderChart(<PriceChart bars={opaque} interval="intraday" />, 900)
+    expect(tickLabels()).toEqual(['20260904093000', '20260904093100'])
+    fireEvent.pointerMove(screen.getAllByTestId('price-hit')[1])
+    expect(within(screen.getByTestId('price-tooltip')).getByTestId('tt-date').textContent).toBe('20260904093100')
+    expect(nanAttributes(container)).toEqual([])
+    expect(container.textContent).not.toContain('NaN')
+    expect(container.textContent).not.toContain('Invalid')
+  })
+
+  it('colours an intraday volume bar against the previous sample, not against its own open', () => {
+    // A minute of a thin book is ONE price, so open equals close sample after sample. Under the
+    // daily 阳/阴 rule every one of those is `c >= o` and the whole panel comes out red — a session
+    // that only ever went up, which is not a session. Against the previous sample's close it is the
+    // tick direction a 分时 panel is supposed to show.
+    const flatMinutes: QuoteBar[] = [
+      { d: '2026-09-04 09:30', o: 3400, c: 3400, h: 3400, l: 3400, v: 100 },
+      { d: '2026-09-04 09:31', o: 3390, c: 3390, h: 3390, l: 3390, v: 100 },
+      { d: '2026-09-04 09:32', o: 3395, c: 3395, h: 3395, l: 3395, v: 100 },
+    ]
+    const { rerender } = renderChart(<PriceChart bars={flatMinutes} interval="intraday" />, 900)
+    const fills = screen.getAllByTestId('price-volume').map((el) => channels(el.getAttribute('fill') ?? ''))
+    // 33.90 under the 34.00 before it: green. 33.95 over that 33.90: red. 红涨绿跌, unchanged.
+    expect(fills[1][1]).toBeGreaterThan(fills[1][0])
+    expect(fills[2][0]).toBeGreaterThan(fills[2][1])
+    // The first sample has no previous one IN THIS WINDOW and falls back to its own open rather
+    // than inventing a reference price.
+    expect(fills[0][0]).toBeGreaterThan(fills[0][1])
+
+    // The same three bars declared daily are three 十字星 — close equal to open — and all three
+    // paint the same way, which is what makes the rule above a real switch and not a no-op.
+    rerender(<PriceChart bars={flatMinutes} interval="daily" />)
+    const daily = screen.getAllByTestId('price-volume').map((el) => el.getAttribute('fill'))
+    expect(new Set(daily).size).toBe(1)
+  })
+
+  it('emits no NaN on an intraday chart at a zero measurement, a flat window or a single sample', () => {
+    const flat: QuoteBar[] = INTRADAY_1D.slice(0, 30).map((b) => ({ ...b, o: 1000, c: 1000, h: 1000, l: 1000, v: 0 }))
+    const cases: Array<[string, QuoteBar[], number]> = [
+      ['unmeasured', INTRADAY_1D, 0],
+      ['flat window', flat, 900],
+      ['single sample', [INTRADAY_1D[0]], 900],
+      // 90 px is narrower than one label: every session boundary loses to the no-overlap rule,
+      // which is the branch where a forced tick would have divided by a slot of nearly nothing.
+      ['five days, 90 px', INTRADAY_5D, 90],
+    ]
+    for (const [name, bars, width] of cases) {
+      const { container, unmount } = render(<PriceChart bars={bars} interval="intraday" />)
+      if (width > 0) setWidth(width)
+      const hits = screen.queryAllByTestId('price-hit')
+      if (hits.length > 0) fireEvent.pointerMove(hits[hits.length - 1])
+      expect(nanAttributes(container), name).toEqual([])
+      expect(container.textContent, name).not.toContain('NaN')
+      expect(container.textContent, name).not.toContain('Infinity')
+      const xs = tickXs()
+      for (let i = 1; i < xs.length; i += 1) expect(xs[i] - xs[i - 1], name).toBeGreaterThanOrEqual(42)
+      unmount()
+    }
+  })
+
+  it('keeps the height, the flip and the keyboard on an intraday chart', () => {
+    // Everything the daily chart promised is a promise the line makes too — the interval changes
+    // the shape of the drawing and nothing else about the component.
+    renderChart(<PriceChart bars={INTRADAY_5D} interval="intraday" height={520} />, 1900)
+    const svg = screen.getByTestId('price-chart')
+    expect(svg.getAttribute('viewBox')).toBe('0 0 1900 520')
+    expect(svg.style.height).toBe('520px')
+
+    const chart = screen.getByRole('img', { name: 'quote.intraday quote.chart' })
+    fireEvent.keyDown(chart, { key: 'End' })
+    expect(screen.getByTestId('price-readout').textContent).toContain('2026-09-04 14:55')
+    // At the newest sample there is no room to the right, so the card changes sides.
+    expect(screen.getByTestId('price-tooltip').getAttribute('data-flip')).toBe('left')
+    expect(tooltipLeft() + 184).toBeLessThanOrEqual(crosshairX())
+
+    fireEvent.keyDown(chart, { key: 'Home' })
+    expect(screen.getByTestId('price-readout').textContent).toContain('2026-08-31 09:30')
+    expect(screen.getByTestId('price-tooltip').getAttribute('data-flip')).toBe('right')
   })
 })

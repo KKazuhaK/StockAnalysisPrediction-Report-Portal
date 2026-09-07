@@ -1,15 +1,50 @@
-import { Card, Space, Tag, Typography } from 'antd'
+import { Card, Space, Tag, Typography, theme } from 'antd'
 import { CalendarOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { Group } from '../api/types'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
 import { clickable } from '../lib/clickable'
+import type { CardQuote } from '../lib/useHomeQuotes'
+// The same formatter the price strip and the candlestick chart use. A local `(fen / 100).toFixed(2)`
+// here would be a second money format in the portal, agreeing with the strip on 33.35 and disagreeing
+// with it on every seven-figure amount.
+import { fenToYuan, signedFenToYuan } from '../lib/money'
 
-export default function ReportCard({ g, kindColors }: { g: Group; kindColors?: Record<string, string> }) {
+// How tall the price line is, in CSS pixels, whether or not there is a price in it.
+//
+// The point of the constant is the EMPTY case. A card that grows when its quote lands moves every
+// card below it, and antd stretches the cards in a row to the tallest one — so one late answer would
+// re-flow the whole grid a second or two after the reader started reading it. The line is therefore
+// reserved at render time, from the report list alone, and the quote drops into a hole that is
+// already the right size. Every span in it carries an explicit line-height for the same reason the
+// height is a constant: antd's body line-height of 1.5714 makes a 16px number a 25px line box, which
+// a 22px hole would clip — so the numbers are set at 1.2 and the hole is sized for that, rather than
+// the hole being sized for whatever line-height the theme happens to ship.
+const QUOTE_LINE_H = 22
+
+export default function ReportCard({
+  g,
+  kindColors,
+  quote,
+}: {
+  g: Group
+  kindColors?: Record<string, string>
+  /** Absent until the page's batch lands, and absent forever when it fails — see useHomeQuotes. */
+  quote?: CardQuote
+}) {
   const { t } = useTranslation()
+  const { token } = theme.useToken()
   const navigate = useNavigate()
   const isNew = g.src === 'new'
+
+  // A-SHARE COLOUR CONVENTION: 红涨绿跌 — RED is up, GREEN is down, the reverse of every US and
+  // European chart. Identical to QuoteStrip's, deliberately, because the same reader crosses from
+  // this grid to that strip in one click and a colour that changed meaning on the way would be read
+  // as a price that changed direction. The sign comes from `change`, an integer, and never from
+  // changePct: that is a vendor string which may carry a '+', a '-', a full-width sign or none.
+  const direction = quote ? Math.sign(Math.trunc(quote.change)) : 0
+  const moveColour = direction > 0 ? token.colorError : direction < 0 ? token.colorSuccess : token.colorText
 
   const open = () => {
     if (isNew && g.symbol) navigate(`/stock/${encodeURIComponent(g.symbol)}?date=${encodeURIComponent(g.date)}`)
@@ -46,6 +81,43 @@ export default function ReportCard({ g, kindColors }: { g: Group; kindColors?: R
             </Typography.Text>
           )}
         </Space>
+
+        {/* The live price, and the hole it lands in.
+            Reserved for every card that names a code and for no other: a thematic report has no
+            symbol, can never be quoted, and would only be paying 22 blank pixels for a line it will
+            never fill. No currency label, unlike the strip: reports are A-share only (ADR 0030 §4),
+            so every price that can reach this grid is CNY and there is no second kind of money here
+            to mis-compare it against. A halted stock is shown as whatever the vendor published for
+            it — this line has no room for the 停牌 tag the strip carries, and inventing one from a
+            price alone is not something a card can honestly do. */}
+        {!!g.symbol && (
+          <div
+            data-testid="card-quote-line"
+            style={{ height: QUOTE_LINE_H, display: 'flex', alignItems: 'baseline', gap: 8, overflow: 'hidden' }}
+          >
+            {quote && (
+              <>
+                <span
+                  data-testid="card-quote"
+                  style={{ color: moveColour, fontSize: 16, fontWeight: 600, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {fenToYuan(quote.last)}
+                </span>
+                <span style={{ color: moveColour, fontSize: 13, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}>
+                  {signedFenToYuan(quote.change)}
+                </span>
+                {/* Verbatim, with a '%' and nothing else — not parsed, not reformatted, not derived
+                    from last and prevClose (which is not even carried this far). ADR 0028 §4: on an
+                    ex-rights morning the exchange restates the previous close and the vendor's
+                    percentage is computed against that, so our own arithmetic would print a
+                    double-digit crash on a stock that opened flat. */}
+                <span style={{ color: moveColour, fontSize: 13, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}>
+                  {quote.changePct}%
+                </span>
+              </>
+            )}
+          </div>
+        )}
 
         <Space size={[6, 6]} wrap>
           {(g.kinds?.length ? g.kinds : [g.kind]).filter(Boolean).map((k) => (

@@ -48,20 +48,30 @@
 //   - day_export.go "all of a stock's reports on one date" bundle export
 //   - names.go      A-share company-name fetch + ingest-time snapshot
 //
-// Live market data (ADR 0028) — read-through only; nothing here writes to the database
+// Live market data (ADR 0028/0030/0031) — read-through only; nothing here writes to the database
 //   - vendorfetch.go  the one bounded, status-checked HTTP path to a market-data vendor,
-//     shared by the name fetch and the quote fetch. Everything outbound to Tencent, Sina
-//     and eastmoney goes through it; nothing else in the package builds its own client.
-//   - quote.go        the two vendor parsers and the five-check drift gate. Positional
-//     index reads over bodies with no schema, so the gate — not the parse — is the
-//     load-bearing part; see ADR 0028 on why a range check alone is not one.
-//   - quote_cache.go  bounded in-memory LRU, TTL taken from the vendor's own session
-//     field, single-flight, and a semaphore on upstream calls
-//   - quote_api.go    GET /api/quote/{symbol} (cookie session, same gate as /api/stock)
-//   - quote_admin_api.go  /api/admin/quote — per-source health, the cache occupancy, and the two
-//     TTLs. The source URLs are deliberately NOT settings: a source here is a parser reading the
-//     vendor by fixed field positions, so an admin-typed host produces a drift refusal rather than
-//     another source. Choosing among the compiled-in ones is what the panel offers.
+//     shared by the name fetch and the quote fetch. Everything outbound to Tencent, Sina,
+//     Yahoo and eastmoney goes through it; nothing else in the package builds its own client.
+//   - quote.go        the Tencent and Sina parsers, the five-check drift gate, and the market
+//     and interval model. Positional index reads over bodies with no schema, so the gate —
+//     not the parse — is the load-bearing part; see ADR 0028 on why a range check alone is
+//     not one.
+//   - quote_yahoo.go  the third source: compiled in, listed in the panel, and OFF until an
+//     operator adds it to the order (ADR 0031 §4). Its response is not positional, so it
+//     carries its OWN gate — parallel arrays that can disagree in length, a previous close
+//     that lies about which range it belongs to, and prices spelled as JSON floats.
+//   - quote_cache.go  bounded in-memory LRU, single-flight, a semaphore on upstream calls,
+//     and the source table: each source DECLARES which markets it serves at which intervals
+//     (ADR 0031 §1), which is what the resolver walks. TTL is per interval first and the
+//     vendor's own session field second.
+//   - quote_api.go    GET /api/quote/{symbol} and GET /api/quotes?symbols= (cookie session,
+//     same gate as /api/stock). The batch one is what the home cards use: one upstream call
+//     for a page, capped and refused rather than truncated.
+//   - quote_admin_api.go  /api/admin/quote — per-source health and capabilities, the cache
+//     occupancy, the three TTLs and the home-card switch. The source URLs are deliberately
+//     NOT settings: a source here is a parser reading the vendor by fixed field positions, so
+//     an admin-typed host produces a drift refusal rather than another source. Choosing among
+//     the compiled-in ones is what the panel offers.
 //
 // Batch / run queue (ADR 0001/0004/0006/0008/0011/0014)
 //   - batch_api.go     admin HTTP surface (/api/admin/batch/*) + run-queue config
