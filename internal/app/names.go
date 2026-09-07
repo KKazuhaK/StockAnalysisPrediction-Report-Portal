@@ -1,20 +1,16 @@
 package app
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
 )
 
 //go:embed names.json
@@ -129,12 +125,26 @@ func FetchNamesToFile(dir string) (int, error) {
 	return len(m), nil
 }
 
+const (
+	// One page of the eastmoney table (pz=100, two fields per row) measures a few KB, so this
+	// ceiling is some two hundred times the real thing and can only ever truncate a response that
+	// is not the API's. It is here because this loop runs up to 80 times inside a small-memory
+	// container and used to io.ReadAll whatever arrived, with no ceiling anywhere.
+	maxNamePageBytes = 1 << 20
+	// nameTablePageTimeout is the per-page budget the dedicated client this replaced carried as
+	// its client timeout; the whole table is ~40 pages of a paced loop, so it is generous on purpose.
+	nameTablePageTimeout = 25 * time.Second
+)
+
 // FetchAShareNames fetches all A-share code->name pairs from eastmoney via pagination.
 // Note: uses push2.eastmoney.com (the 82.push2 subdomain is blocked on some networks); diff supports both object and array formats; retries on per-page failure and rotates hosts.
+// A non-2xx page now counts as a failed attempt (retry, then rotate host) rather than being handed
+// to the parser: mergeDiff over an error page returns 0, and the loop below reads a 0 as "we are
+// past the last page" and stops fetching the table at all — so one 403 used to silently truncate
+// the whole name table down to whatever had arrived so far.
 func FetchAShareNames() (map[string]string, error) {
 	const fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
 	hosts := []string{"push2.eastmoney.com", "push2delay.eastmoney.com", "82.push2.eastmoney.com"}
-	hc := &http.Client{Timeout: 25 * time.Second}
 	m := map[string]string{}
 	for pn := 1; pn <= 80; pn++ {
 		ok, got := false, 0
@@ -142,16 +152,14 @@ func FetchAShareNames() (map[string]string, error) {
 			host := hosts[attempt%len(hosts)]
 			u := fmt.Sprintf("https://%s/api/qt/clist/get?pn=%d&pz=100&po=1&np=1"+
 				"&fltt=2&invt=2&fid=f12&fs=%s&fields=f12,f14", host, pn, fs)
-			req, _ := http.NewRequest("GET", u, nil)
-			req.Header.Set("User-Agent", "Mozilla/5.0")
-			req.Header.Set("Referer", "https://quote.eastmoney.com/")
-			resp, err := hc.Do(req)
+			ctx, cancel := context.WithTimeout(context.Background(), nameTablePageTimeout)
+			body, err := vendorGet(ctx, u, "https://quote.eastmoney.com/", maxNamePageBytes)
+			cancel()
 			if err != nil {
+				vendorLogf(u, "stock-name table page %d failed: %v", pn, err)
 				time.Sleep(time.Duration(attempt+1) * 800 * time.Millisecond)
 				continue
 			}
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
 			ok, got = true, mergeDiff(body, m)
 			break
 		}
@@ -204,10 +212,23 @@ func mergeDiff(body []byte, m map[string]string) int {
 	return n
 }
 
-// marketPrefix infers the Tencent/Sina quote prefix (6->Shanghai, 0/2/3->Shenzhen, 4/8/9->Beijing).
+// marketPrefix infers the Tencent/Sina quote prefix (6->Shanghai, 0/2/3->Shenzhen, 4/8/9->Beijing),
+// and returns "" for anything that is not exactly six ASCII digits.
+//
+// The all-digits check belongs HERE, and not at the API edge, because this function is the
+// URL-construction boundary: everything downstream interpolates the code straight into a vendor URL,
+// and a URL containing a control character is one http.NewRequest refuses — a six-byte symbol with
+// a NUL in it is what used to reach that call and crash the process on the nil request it returned.
+// Rejecting non-digits in apiv1.go instead would be wrong on its own terms: openapi.json documents
+// symbol as free text, and a thematic report legitimately posts an empty one.
 func marketPrefix(code string) string {
-	if len(code) != 6 {
+	if len(code) != 6 { // bytes, not runes: a six-character Chinese string is 18 bytes and fails here
 		return ""
+	}
+	for i := 0; i < len(code); i++ {
+		if code[i] < '0' || code[i] > '9' {
+			return ""
+		}
 	}
 	switch code[0] {
 	case '6':
@@ -220,18 +241,28 @@ func marketPrefix(code string) string {
 	return ""
 }
 
-// httpGetGBK fetches a GBK-encoded quote endpoint and returns UTF-8 text.
+const (
+	// A realtime quote line is a few hundred bytes; anything approaching this ceiling is an
+	// interstitial or a redirect page, not a quote.
+	maxNameBodyBytes = 64 << 10
+	// nameSourceTimeout is the per-request budget the inline client this replaced carried.
+	nameSourceTimeout = 8 * time.Second
+)
+
+// httpGetGBK fetches a GBK-encoded quote endpoint and returns UTF-8 text, or "" on any failure.
+// The signature stays string-only because the empty string IS this path's contract — fetchNameWithRetry
+// reads it as "this source had nothing, try the next" — but the error is no longer thrown away
+// silently: it goes to the rate-limited vendor log, so a vendor that has started refusing us leaves
+// a trace instead of looking indistinguishable from a stock that has no name.
 func httpGetGBK(url, referer string) string {
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.Header.Set("Referer", referer)
-	resp, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
+	ctx, cancel := context.WithTimeout(context.Background(), nameSourceTimeout)
+	defer cancel()
+	body, err := vendorGetGBK(ctx, url, referer, maxNameBodyBytes)
 	if err != nil {
+		vendorLogf(url, "stock-name fetch failed: %v", err)
 		return ""
 	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(transform.NewReader(resp.Body, simplifiedchinese.GBK.NewDecoder()))
-	return string(b)
+	return body
 }
 
 // Per-source retry policy for the single-name live fetch. Each source is tried up to
