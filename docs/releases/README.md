@@ -21,14 +21,8 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
-| [v0.4.51](v0.4.51.md) | 2026-09-04 | Ten more controls that needed a mouse |
-| [v0.4.50](v0.4.50.md) | 2026-09-04 | A failing request stops being invisible |
-| [v0.4.49](v0.4.49.md) | 2026-09-04 | The portal without a mouse |
-| [v0.4.48](v0.4.48.md) | 2026-09-04 | A restart stops cutting requests in half, and cleanup gives the disk back |
-| [v0.4.47](v0.4.47.md) | 2026-09-04 | The hand-written reports stop being invisible |
-| [v0.4.46](v0.4.46.md) | 2026-09-04 | A way to copy the database, and a way back from a rotated key |
-| [v0.4.45](v0.4.45.md) | 2026-09-04 | Settings that were read and never written |
-| [v0.4.44](v0.4.44.md) | 2026-09-03 | A corrected report says so, and a drag stops losing things |
+| [v0.4.45](v0.4.45.md) | 2026-09-07 | Live quotes, a database you can copy, and a portal you can use without a mouse |
+| [v0.4.44](v0.4.44.md) | 2026-09-04 | A workflow's cache is not a report |
 | [v0.4.43](v0.4.43.md) | 2026-09-02 | A report remembers what it used to say |
 | [v0.4.42](v0.4.42.md) | 2026-09-02 | Reports you write yourself |
 | [v0.4.41](v0.4.41.md) | 2026-09-02 | Dragging works, and works without a mouse |

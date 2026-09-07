@@ -114,7 +114,7 @@ func TestOpenAPILocalizedEndpoint(t *testing.T) {
 // the router actually serves — and a route that exists but is undocumented is invisible to anyone
 // generating a client from it, while one that is documented and gone is a promise the portal breaks.
 //
-// This has already happened once: v0.4.46 fixed a field the v1 read had always returned and the spec
+// This has already happened once: v0.4.45 fixed a field the v1 read had always returned and the spec
 // had never listed.
 func TestOpenAPIDocumentsEveryV1Route(t *testing.T) {
 	var spec struct {
@@ -158,7 +158,7 @@ func TestOpenAPIDocumentsEveryV1Route(t *testing.T) {
 }
 
 // TestHealthzSpecMatchesTheHandler pins the one documented endpoint outside /api/v1. It gained a
-// database check and a 503 in v0.4.49, and a spec that still described the old two-field answer
+// database check and a 503 in v0.4.45, and a spec that still described the old two-field answer
 // would tell an orchestrator to treat an unreachable database as healthy.
 func TestHealthzSpecMatchesTheHandler(t *testing.T) {
 	var spec struct {

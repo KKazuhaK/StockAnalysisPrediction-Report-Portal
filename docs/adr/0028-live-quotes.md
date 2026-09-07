@@ -380,10 +380,10 @@ fetch, which is the cost of the fetch that was going to happen anyway.
 No admin toggle and no configurable source URLs.
 
 **No toggle**, because a setting needs a reader *and* a writer, and half of one is a defect this repo
-has already paid for: the sibling gap-fix line spent a whole
-release, v0.4.46 — "settings that were read and never written" — reconnecting six settings that had a
-reader, a default and a comment describing a choice an operator could make, with nothing anywhere able
-to make it. Its `internal/app/wired_settings_test.go` exists to stop it recurring. Adding a
+has already paid for: v0.4.45 spent a section on it
+— "settings that were read and never written" — reconnecting six settings that had a reader, a
+default and a comment describing a choice an operator could make, with nothing anywhere able to make
+it. Its `internal/app/wired_settings_test.go` exists to stop it recurring. Adding a
 `quotes_enabled` key read by the handler and written by no form would be that same defect,
 committed knowingly. If quotes
 should be switchable, they get a real switch on a real page with a real audit entry; until somebody
