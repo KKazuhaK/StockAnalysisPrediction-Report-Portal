@@ -212,9 +212,9 @@ export default function RunPresetsEditor() {
                   {presetSummary(p, t)}
                 </Typography.Text>
                 {p.invert ? <Tag color="orange">{t('preset.invertTag')}</Tag> : <Tag>{t('preset.overrun.' + p.on_overrun)}</Tag>}
-                <Button size="small" icon={<EditOutlined />} onClick={() => edit(p)} />
+                <Button size="small" icon={<EditOutlined />} onClick={() => edit(p)} aria-label={t('common.edit')} />
                 <Popconfirm title={t('preset.deleteConfirm')} onConfirm={() => remove(p.id)} okText={t('common.ok')} cancelText={t('common.cancel')}>
-                  <Button size="small" danger icon={<DeleteOutlined />} />
+                  <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
                 </Popconfirm>
               </div>
             </SortableItem>
@@ -337,7 +337,7 @@ function PresetForm({
                     <HourPicker value={r.stop} onChange={(v) => setRow(i, { ...r, stop: v })} />
                   </Space>
                   {rows.length > 1 && (
-                    <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => putRows(rows.filter((_, j) => j !== i))} />
+                    <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => putRows(rows.filter((_, j) => j !== i))} aria-label={t('preset.removeRow')} />
                   )}
                 </Space>
               ))
@@ -347,7 +347,7 @@ function PresetForm({
                   <span>–</span>
                   <AnchorFields freq={draft.freq} anchor={ivl.stop} onChange={(a) => setIv(i, { ...ivl, stop: a })} />
                   {draft.intervals.length > 1 && (
-                    <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => rmIv(i)} />
+                    <Button size="small" type="text" danger icon={<MinusCircleOutlined />} onClick={() => rmIv(i)} aria-label={t('preset.removeRow')} />
                   )}
                 </Space>
               ))}

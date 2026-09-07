@@ -144,7 +144,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
                       {statusTag(t, j.status)}
                       {!isTerminal(j.status) && (
                         <Popconfirm title={t('queue.cancelConfirm')} onConfirm={() => cancel(j.id)}>
-                          <Button size="small" danger type="text" icon={<StopOutlined />} />
+                          <Button size="small" danger type="text" icon={<StopOutlined />} aria-label={t('queue.cancelConfirm')} />
                         </Popconfirm>
                       )}
                     </Space>

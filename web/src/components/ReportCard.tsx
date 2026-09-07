@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { Group } from '../api/types'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
+import { clickable } from '../lib/clickable'
 
 export default function ReportCard({ g, kindColors }: { g: Group; kindColors?: Record<string, string> }) {
   const { t } = useTranslation()
@@ -20,7 +21,7 @@ export default function ReportCard({ g, kindColors }: { g: Group; kindColors?: R
   const displayName = g.name || g.symbol || g.title || t('home.reports')
 
   return (
-    <Card hoverable size="small" onClick={open} styles={{ body: { padding: 16 } }} style={{ height: '100%' }}>
+    <Card hoverable size="small" {...clickable(open, displayName)} styles={{ body: { padding: 16 } }} style={{ height: '100%' }}>
       <Space direction="vertical" size={10} style={{ width: '100%' }}>
         <Space style={{ justifyContent: 'space-between', width: '100%' }} align="start">
           <div style={{ minWidth: 0, flex: 1 }}>

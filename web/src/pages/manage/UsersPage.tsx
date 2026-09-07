@@ -331,10 +331,10 @@ export default function UsersPage() {
       align: 'right',
       render: (_, u) => (
         <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(u)} />
-          <Button size="small" icon={<KeyOutlined />} onClick={() => setPwUser(u.username)} />
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(u)} aria-label={t('common.edit')} />
+          <Button size="small" icon={<KeyOutlined />} onClick={() => setPwUser(u.username)} aria-label={t('users.newPassword')} />
           <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => remove(u.username)} disabled={u.username === data?.me}>
-            <Button size="small" danger icon={<DeleteOutlined />} disabled={u.username === data?.me} />
+            <Button size="small" danger icon={<DeleteOutlined />} disabled={u.username === data?.me} aria-label={t('common.delete')} />
           </Popconfirm>
         </Space>
       ),

@@ -286,7 +286,7 @@ func TestTheStoreRefusesToUpdateANonManualRow(t *testing.T) {
 	machineID, _, _ := s.st.UpsertReport(Rep{
 		Symbol: "600519", Date: "2026-09-02", RType: "深度分析", Title: "t", MD: "机器正文"})
 	rep, _ := s.st.GetNew(machineID, nil)
-	if _, err := s.st.UpdateManualReport(machineID, Rep{
+	if _, _, err := s.st.UpdateManualReport(machineID, Rep{
 		Symbol: "600519", Date: "2026-09-02", RType: "深度分析", Title: "t", MD: "改写"}, rep.Time, 0); err != ErrReportStale {
 		t.Fatalf("UpdateManualReport on a machine row: err=%v, want ErrReportStale", err)
 	}

@@ -140,7 +140,11 @@ func (s *Server) apiRecurringList(w http.ResponseWriter, r *http.Request, user s
 		}
 		out = append(out, s.recurringJSON(t, names[t.TargetID]))
 	}
-	writeJSON(w, map[string]any{"tasks": out})
+	// The ceiling a task's concurrency will actually be clamped to (ADR 0001). It rides this list
+	// because the form that edits these tasks is the only one that offers a concurrency picker, and
+	// that picker used to cap at a hard-coded 20 while the server honoured 10 — so the console
+	// promised twice what it could deliver, and said nothing when it silently clamped.
+	writeJSON(w, map[string]any{"tasks": out, "maxConcurrency": s.batchMaxConcurrency()})
 }
 
 func (s *Server) apiRecurringCreate(w http.ResponseWriter, r *http.Request, user string) {

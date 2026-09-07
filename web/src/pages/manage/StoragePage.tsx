@@ -176,6 +176,13 @@ export default function StoragePage() {
       batch: r.batch, reports: r.reports, tokens: r.tokens, audit: r.audit ?? 0,
       revisions: r.revisions ?? 0,
     }))
+    // The rows are what was deleted; this is what the disk got back, which is the number the pass
+    // was run for. Postgres always answers 0 and says why, rather than leaving it looking broken.
+    if (r.driver === 'postgres') {
+      message.info(t('storage.reclaimPostgres'))
+    } else if ((r.reclaimed ?? 0) > 0) {
+      message.success(t('storage.reclaimed', { size: fmtBytes(r.reclaimed) }))
+    }
     loadUsage().catch(() => {})
     loadHistory().catch(() => {})
     loadConfig()
@@ -308,7 +315,7 @@ export default function StoragePage() {
           reports: r.reports_deleted,
           audit: r.audit_deleted ?? 0,
           revisions: r.revisions_deleted ?? 0,
-        }),
+        }) + ((r.bytes_reclaimed ?? 0) > 0 ? ` · ${t('storage.reclaimedShort', { size: fmtBytes(r.bytes_reclaimed) })}` : ''),
     },
     {
       title: t('storage.histStatus'),

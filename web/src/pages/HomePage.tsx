@@ -32,6 +32,7 @@ import ReportCard from '../components/ReportCard'
 import { linkIconComponent } from '../components/linkIcons'
 import { shortcutOfUrl, shortcutPerm, triggerShortcut } from '../lib/shortcuts'
 import { startVisiblePoll } from '../lib/visiblePoll'
+import { versionLabel } from '../lib/versionLabel'
 
 const { RangePicker } = DatePicker
 
@@ -53,6 +54,7 @@ export default function HomePage() {
       q: sp.get('q') || '',
       kind: sp.get('kind') || '',
       rtype: sp.get('rtype') || '',
+      version: sp.get('version') || '',
       date_from: sp.get('date_from') || '',
       date_to: sp.get('date_to') || '',
       sort: sp.get('sort') || 'date_desc',
@@ -108,6 +110,7 @@ export default function HomePage() {
       q: params.q,
       kind: params.kind || undefined,
       rtype: params.rtype || undefined,
+      version: params.version || undefined,
       range: params.date_from && params.date_to ? [dayjs(params.date_from), dayjs(params.date_to)] : undefined,
       sort: params.sort,
     })
@@ -119,6 +122,7 @@ export default function HomePage() {
     if (v.q) next.q = v.q
     if (v.kind) next.kind = v.kind
     if (v.rtype) next.rtype = v.rtype
+    if (v.version) next.version = v.version
     if (v.range?.[0]) next.date_from = v.range[0].format('YYYY-MM-DD')
     if (v.range?.[1]) next.date_to = v.range[1].format('YYYY-MM-DD')
     if (v.sort && v.sort !== 'date_desc') next.sort = v.sort
@@ -136,6 +140,10 @@ export default function HomePage() {
 
   const kindOptions = (data?.kinds || []).map((x) => ({ value: x, label: x }))
   const typeOptions = (data?.types || []).map((x) => ({ value: x, label: x }))
+  // The server sends nothing here until a second written form exists, so the filter appears the day
+  // one does and never before. It is also how the reports people wrote by hand become a set you can
+  // ask for, rather than something you find one at a time.
+  const versionOptions = (data?.versions || []).map((v) => ({ value: v.name, label: versionLabel(v.name, v.label, t) }))
 
   // Render one entry button. A shortcut link (url = "rp:<action>[:<target>]") triggers an
   // internal action, optionally pre-selected on a specific target; a shortcut whose target the
@@ -313,6 +321,13 @@ export default function HomePage() {
                       <Select allowClear showSearch loading={!data} options={typeOptions} placeholder={t('home.type')} />
                     </Form.Item>
                   </Col>
+                  {versionOptions.length > 0 && (
+                    <Col xs={24} md={8}>
+                      <Form.Item name="version" label={t('home.version')}>
+                        <Select allowClear showSearch loading={!data} options={versionOptions} placeholder={t('home.version')} />
+                      </Form.Item>
+                    </Col>
+                  )}
                   <Col xs={24} md={8}>
                     <Form.Item name="range" label={t('home.dateRange')}>
                       <RangePicker style={{ width: '100%' }} />

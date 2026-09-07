@@ -4,12 +4,31 @@ One file per release, the same text as the annotated git tag (`git tag -n99 <tag
 still where a release is cut; these exist so the notes are readable in the repo and in a diff,
 which a tag message is not.
 
+Cutting one:
+
+```sh
+scripts/tag-release.sh v0.4.42 <commit>   # annotated, message = this note; commit defaults to HEAD
+git push origin v0.4.42                    # separate and deliberate: it is the irreversible step
+```
+
+The script refuses a version with no note, a tag that already exists, and — the mistake worth
+catching — a commit that does not contain its own release note, which is how a tag ends up
+describing a release the commit predates. It does not push.
+
 The 0.4 line is where external users, SSO and report versions landed. Read the upgrade section of
 whichever release you are moving TO — the portal is pre-1.0, so per semver each `0.y` bump is a
 major boundary, and a database has to reach the last release of a line before crossing one.
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.51](v0.4.51.md) | 2026-09-04 | Ten more controls that needed a mouse |
+| [v0.4.50](v0.4.50.md) | 2026-09-04 | A failing request stops being invisible |
+| [v0.4.49](v0.4.49.md) | 2026-09-04 | The portal without a mouse |
+| [v0.4.48](v0.4.48.md) | 2026-09-04 | A restart stops cutting requests in half, and cleanup gives the disk back |
+| [v0.4.47](v0.4.47.md) | 2026-09-04 | The hand-written reports stop being invisible |
+| [v0.4.46](v0.4.46.md) | 2026-09-04 | A way to copy the database, and a way back from a rotated key |
+| [v0.4.45](v0.4.45.md) | 2026-09-04 | Settings that were read and never written |
+| [v0.4.44](v0.4.44.md) | 2026-09-03 | A corrected report says so, and a drag stops losing things |
 | [v0.4.43](v0.4.43.md) | 2026-09-02 | A report remembers what it used to say |
 | [v0.4.42](v0.4.42.md) | 2026-09-02 | Reports you write yourself |
 | [v0.4.41](v0.4.41.md) | 2026-09-02 | Dragging works, and works without a mouse |

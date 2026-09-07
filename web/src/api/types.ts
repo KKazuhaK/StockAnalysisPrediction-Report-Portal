@@ -272,6 +272,9 @@ export interface HomeResp {
   size: number
   types: string[]
   kinds: string[] // 大类 (top-level categories) for the home filter
+  // Written forms present in what this reader can see (ADR 0024), for the version filter. Empty
+  // when there is only one — a filter whose every setting means the same thing is not a filter.
+  versions: { name: string; label: string }[]
   links: LinkItem[]
   linkGroups: LinkGroup[] // named, foldable groups of entry buttons
   kindColors: Record<string, string> // 大类 → antd Tag preset color, admin-configured
@@ -467,6 +470,11 @@ export interface CleanupResult {
   reports: number
   audit: number
   revisions: number
+  /** Bytes handed back to the filesystem — the number an admin runs a pass to change. Always 0 on
+   *  Postgres, where autovacuum reclaims for reuse and VACUUM FULL would be a full outage. */
+  reclaimed: number
+  /** "sqlite" | "postgres", so a zero above can be explained rather than guessed at. */
+  driver: string
   duration_ms: number
 }
 
@@ -497,11 +505,14 @@ export interface CleanupRun {
   reports_deleted: number
   audit_deleted: number
   revisions_deleted: number
+  bytes_reclaimed: number
   duration_ms: number
 }
 
 export interface BatchConfig {
   max_jobs: number
+  /** The per-job worker ceiling every requested concurrency is clamped to (ADR 0001). */
+  max_concurrency?: number
   reserved_slots: number
   ticket_period_days: number
   default_priority: number
@@ -770,6 +781,12 @@ export interface RecurringDetail extends RecurringTask {
 
 export interface RecurringTasksResp {
   tasks: RecurringTask[]
+  /**
+   * The per-job worker ceiling the server clamps every task's concurrency to (ADR 0001). It rides
+   * this list because the recurring form is the only one offering a concurrency picker, and that
+   * picker must not offer more than the server will honour.
+   */
+  maxConcurrency?: number
 }
 
 // A login-page SSO button (ADR 0023). Deliberately minimal — the public endpoint exposes no
@@ -829,6 +846,12 @@ export interface SSOProvidersResp {
    * the public URL and the default slug, and the setup guide needs them before anything is stored.
    */
   sp_defaults?: Record<string, { sp_entity_id?: string; sp_acs_url?: string; redirect_url?: string }>
+  /**
+   * Whether an SSO flow may reach an RFC1918 address. Off by default: an IdP URL is admin-supplied
+   * and points wherever it says, so the portal refuses private targets rather than become a way to
+   * probe the host's own network. On for the portal whose IdP genuinely is on the intranet.
+   */
+  allow_private?: boolean
 }
 
 // One group rule. Order in the array is the contract — first match wins — so `ord` and `id` are

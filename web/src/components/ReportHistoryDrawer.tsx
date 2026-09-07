@@ -21,6 +21,7 @@ import type { SectionDiff } from '../api/types'
 import { formatReportDateTime } from '../lib/datetime'
 import Markdown from './Markdown'
 import { SectionBlock } from './DiffSections'
+import { clickable } from '../lib/clickable'
 
 // The edit history of a hand-written report (ADR 0026).
 //
@@ -175,8 +176,11 @@ export default function ReportHistoryDrawer({
               bordered
               dataSource={list ?? []}
               renderItem={(v) => (
+                // antd gives List.Item tabIndex=-1, so a clickable row was unreachable without a
+                // mouse. role="button" costs the listitem semantics and buys operability, which is
+                // the better trade for a row whose whole purpose is to be picked.
                 <List.Item
-                  onClick={() => pick(v.id)}
+                  {...clickable(() => pick(v.id))}
                   style={{
                     cursor: 'pointer',
                     background: v.id === picked ? theme_.controlItemBgActive : undefined,

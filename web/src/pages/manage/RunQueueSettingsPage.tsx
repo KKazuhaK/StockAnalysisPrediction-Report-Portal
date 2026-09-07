@@ -20,6 +20,9 @@ export default function RunQueueSettingsPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [maxJobs, setMaxJobs] = useState(1)
+  // The per-job worker ceiling (ADR 0001). It has always been read and clamped against; until now
+  // nothing could write it, so it sat at its compiled-in default while the run forms offered double.
+  const [maxConcurrency, setMaxConcurrency] = useState(10)
   const [difyEndUser, setDifyEndUser] = useState('')
   const [difyPollSeconds, setDifyPollSeconds] = useState(0)
   const [difyRunTimeout, setDifyRunTimeout] = useState(180)
@@ -43,6 +46,7 @@ export default function RunQueueSettingsPage() {
       .get<BatchConfig>('/api/admin/batch/config')
       .then((r) => {
         setMaxJobs(r.max_jobs)
+        if (r.max_concurrency) setMaxConcurrency(r.max_concurrency)
         setDifyEndUser(r.dify_end_user ?? '')
         setDifyPollSeconds(r.dify_poll_seconds ?? 0)
         setDifyRunTimeout(r.dify_run_timeout_minutes ?? 180)
@@ -64,6 +68,7 @@ export default function RunQueueSettingsPage() {
   const save = async () => {
     await api.post('/api/admin/batch/config', {
       max_jobs: maxJobs,
+      max_concurrency: maxConcurrency,
       dify_end_user: difyEndUser,
       dify_poll_seconds: difyPollSeconds,
       dify_run_timeout_minutes: difyRunTimeout,
@@ -97,6 +102,11 @@ export default function RunQueueSettingsPage() {
           t('batch.admin.maxJobs'),
           t('batch.admin.maxJobsHint'),
           <InputNumber min={1} max={50} value={maxJobs} onChange={(v) => setMaxJobs(v || 1)} />,
+        )}
+        {row(
+          t('batch.admin.maxConcurrency'),
+          t('batch.admin.maxConcurrencyHint'),
+          <InputNumber min={1} max={100} value={maxConcurrency} onChange={(v) => setMaxConcurrency(v || 1)} />,
         )}
         {row(
           t('batch.admin.defaultPriority'),

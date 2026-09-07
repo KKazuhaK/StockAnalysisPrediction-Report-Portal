@@ -135,6 +135,37 @@ permission makes that distinction unexpressible. `admin` holds it too.
 Deleting is scoped to hand-written reports for the same reason editing is: removing the record of a
 run is a storage decision, and it already has a console and a retention policy.
 
+### The set of hand-written reports is a version filter, not a list of its own
+
+"Show me the ones a person wrote" is answered by the browse page's existing filter bar gaining a
+**version** control, because the hand-written reports *are* a version (above) and nothing else is
+needed to name them. It generalizes for free to the internal/external/client forms ADR 0024 already
+allows, where a dedicated "manual reports" page would have to be joined by one more page per form.
+
+The options come from the data rather than the registry, and through the caller's own read scope: a
+version nobody has written in is not offered, and a reader is never shown the name of a version they
+cannot read — otherwise the filter becomes a directory of what exists. The control is withheld
+entirely while only one written form is visible, since every setting of it would then mean the same
+thing. The predicate is ANDed with that scope, so naming a version can only ever narrow what a
+reader could already see.
+
+### The editor asks before it loses a draft
+
+A draft exists nowhere but the textarea until a save, which makes this the one page in the portal
+where a wrong click destroys work that has no other copy. Two exits are guarded: `beforeunload` for
+the tab and the reload, and the page's own back button.
+
+Navigating away from elsewhere in the shell — a sidebar link — is **not** guarded. `useBlocker`
+needs a data router and the app mounts a plain `BrowserRouter`, so the choice was between this and a
+router migration touching every route in the product for one page's benefit. The two exits an author
+actually takes mid-draft are covered; the remaining one is named here rather than left to be
+discovered.
+
+"Unsaved" is decided by comparing against a snapshot of exactly the fields a save sends, taken when
+the form loads and refreshed after every successful save. Reusing the payload's own shape is what
+stops the two from drifting: a field added to one and missing from the other is a guard that has
+silently stopped noticing it.
+
 ## Consequences
 
 **A workflow that deliberately names the manual version now fails.** No shipped producer does — the
@@ -201,6 +232,9 @@ that answer lives. This settles, narrowly, the question left open below: the aut
 shown in the editor's history, and still does not appear on the reading page.
 
 ## Not decided here
+
+**Whether the shell should guard in-app navigation away from an unsaved draft.** It would take a
+data-router migration; see the editor section above for why that was not paid for here.
 
 **Whether a hand-written report can carry tracking items.** The table supports it (`SetTracking` is
 keyed by report id) and the review queue would pick them up. Left out because nobody has asked for

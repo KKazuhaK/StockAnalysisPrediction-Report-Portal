@@ -3,6 +3,7 @@ import { Button, Input, Space, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
+import { clickable } from '../lib/clickable'
 
 // The captcha field on a public form.
 //
@@ -85,7 +86,7 @@ export default function CaptchaField({
         <img
           src={state.image}
           alt={t('captcha.alt')}
-          onClick={load}
+          {...clickable(load, t('captcha.refresh'))}
           style={{ height: 32, cursor: 'pointer', borderRadius: 6 }}
           title={t('captcha.refresh')}
         />

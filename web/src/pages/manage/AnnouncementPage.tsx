@@ -349,9 +349,9 @@ export default function AnnouncementPage() {
             onChange={(v) => toggle(a, 'enabled', v)}
           />
         </Tooltip>
-        <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(a)} />
+        <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(a)} aria-label={t('common.edit')} />
         <Popconfirm title={t('announcementAdmin.deleteConfirm')} onConfirm={() => remove(a.id)}>
-          <Button size="small" danger icon={<DeleteOutlined />} />
+          <Button size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
         </Popconfirm>
       </div>
     )

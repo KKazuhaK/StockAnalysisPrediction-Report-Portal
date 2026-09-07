@@ -50,7 +50,7 @@ const openEditor = async () => {
     </App>,
   )
   await screen.findByText('Off-peak')
-  await user.click(screen.getByRole('button', { name: 'edit' }))
+  await user.click(screen.getByRole('button', { name: 'common.edit' }))
   await screen.findByText('preset.edit')
   return user
 }

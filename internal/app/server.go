@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -15,11 +17,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -64,6 +68,7 @@ type Server struct {
 	ssoInsecureForTest bool                                                                       // test-only: permit a plain-http loopback IdP (ADR 0023)
 	dekOnce            dekCache                                                                   // lazily unwrapped data key for stored auth secrets (ADR 0023)
 	captchaSvc         *captcha.Service                                                           // public-form captcha (login / forgot password / registration)
+	health             healthCache                                                                // memoized /healthz database verdict, so a public probe cannot be a query amplifier
 }
 
 // statusRecorder records the response status code for use in request logging.
@@ -74,22 +79,62 @@ type statusRecorder struct {
 
 func (w *statusRecorder) WriteHeader(code int) { w.status = code; w.ResponseWriter.WriteHeader(code) }
 
-// logMiddleware logs every request: method, status, latency, and path (static assets are excluded to avoid noise).
-func logMiddleware(next http.Handler) http.Handler {
+// slowRequest is the latency at which a successful API read becomes worth a log line on its own.
+// A page that takes a second is a complaint waiting to happen, and it is the one class of problem
+// that leaves no other trace: no error, no audit entry, nothing.
+const slowRequest = time.Second
+
+// logMiddleware logs requests: method, status, latency, client address, path.
+//
+// It used to skip /api/ entirely, with a comment claiming those endpoints "have their own concise
+// logs". They do not — a handful of handlers log an event apiece (an ingest, an app install) and the
+// rest log nothing at all. So a 500 on an unaudited endpoint left NO trace anywhere: the audit log
+// covers mutations it was told about, and reads and failures were invisible.
+//
+// The reason /api/ was skipped is real though: the SPA polls (home feed, announcements, queue badge)
+// on a timer, per open tab, so logging every API request would bury everything else. The rule that
+// keeps both properties is to log every API request EXCEPT a fast, successful read — which is
+// exactly the polling traffic and nothing else. Errors, every mutation, and anything slow are
+// always logged, and nothing that was logged before has stopped being logged.
+//
+// Static assets and the health probe stay silent: they are high-volume and say nothing.
+func (s *Server) logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if strings.HasPrefix(p, "/assets/") || strings.HasPrefix(p, "/app-assets/") || strings.HasPrefix(p, "/site-assets/") || strings.HasPrefix(p, "/api/") ||
+		if strings.HasPrefix(p, "/assets/") || strings.HasPrefix(p, "/app-assets/") || strings.HasPrefix(p, "/site-assets/") ||
 			p == "/healthz" || p == "/favicon.svg" || p == "/favicon.ico" || p == "/manifest.webmanifest" ||
 			p == "/pwa-icon" || p == "/sw.js" {
-			next.ServeHTTP(w, r) // SPA static assets / health checks / API (which have their own concise logs) are skipped here to avoid noise
+			next.ServeHTTP(w, r)
 			return
 		}
 		start := time.Now()
 		sw := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(sw, r)
+		took := time.Since(start)
+		if !worthLogging(p, r.Method, sw.status, took) {
+			return
+		}
 		path, _ := url.QueryUnescape(r.URL.RequestURI())
-		log.Printf("%-4s %3d %7s  %s", r.Method, sw.status, time.Since(start).Round(time.Millisecond).String(), path)
+		// The client address, resolved through the same trusted-proxy rules the rate limiter and the
+		// audit log use — so a reverse-proxied deployment logs the visitor rather than the gateway,
+		// and an untrusted upstream cannot claim to be someone else.
+		log.Printf("%-4s %3d %7s  %-15s %s", r.Method, sw.status, took.Round(time.Millisecond).String(),
+			clientIP(r, s.trustedNets), path)
 	})
+}
+
+// worthLogging decides whether one finished request earns a line. Split out because it is the whole
+// policy, and a policy buried in an if-chain inside a middleware is one nobody can test.
+func worthLogging(path, method string, status int, took time.Duration) bool {
+	if status >= 400 || took >= slowRequest {
+		return true // a failure or a slow request is always worth a line, whatever it was
+	}
+	if !strings.HasPrefix(path, "/api/") {
+		return true // page loads are low-volume; they were logged before and still are
+	}
+	// A fast, successful API read is the SPA's own polling. Everything else on /api/ — every
+	// mutation included — is a thing somebody did.
+	return method != http.MethodGet && method != http.MethodHead
 }
 
 // RunServer loads config, opens the store, bootstraps first-run state, wires the
@@ -114,6 +159,11 @@ func RunServer(cfgPath string) {
 			"Any caller can then claim any address via X-Forwarded-For, which spoofs the rate " +
 			"limiter and the audit log. Only safe when the listen port is unreachable except " +
 			"through your proxy.")
+	}
+	// Said before anything else touches the database, because it is about the file the operator is
+	// most likely to have copied into place by hand.
+	if msg := config.WarnIfWorldReadable(cfgPath); msg != "" {
+		log.Print(msg)
 	}
 	if err := os.MkdirAll(config.DirOf(cfg.DBPath), 0o755); err != nil {
 		log.Fatal(err)
@@ -332,6 +382,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("DELETE /api/admin/sso/providers/{id}", s.requireAdminJSON(s.apiAdminSSODelete))
 	mux.HandleFunc("POST /api/admin/sso/providers/{slug}/metadata", s.requireAdminJSON(s.apiAdminSSOFetchMetadata))
 	mux.HandleFunc("GET /api/admin/sso/providers/{slug}/last-seen", s.requireAdminJSON(s.apiAdminSSOLastSeen))
+	mux.HandleFunc("POST /api/admin/sso/allow-private", s.requireAdminJSON(s.apiAdminSSOAllowPrivate))
 	mux.HandleFunc("GET /api/admin/sso/rules", s.requireAdminJSON(s.apiAdminSSORules))
 	mux.HandleFunc("PUT /api/admin/sso/rules", s.requireAdminJSON(s.apiAdminSSORulesSave))
 	mux.HandleFunc("GET /api/admin/groups/{id}/targets", s.requireAdminJSON(s.apiGroupTargets))
@@ -449,6 +500,7 @@ func RunServer(cfgPath string) {
 	mux.HandleFunc("POST /api/admin/apps/install", s.requireAdminJSON(s.apiAppInstall))
 	mux.HandleFunc("GET /api/admin/apps/market", s.requireAdminJSON(s.apiAppMarket))
 	mux.HandleFunc("POST /api/admin/apps/market/install", s.requireAdminJSON(s.apiAppMarketInstall))
+	mux.HandleFunc("POST /api/admin/apps/market/index", s.requireAdminJSON(s.apiAppMarketIndexSave))
 	mux.HandleFunc("DELETE /api/admin/apps/{id}", s.requireAdminJSON(s.apiAppDelete))
 	mux.HandleFunc("GET /app-assets/{id}/{path...}", s.appAssets)
 	mux.HandleFunc("GET /site-assets/{name}", s.siteAsset)
@@ -475,13 +527,71 @@ func RunServer(cfgPath string) {
 	// bounded by its own MaxBytesReader / context deadline instead.
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           logMiddleware(gzipMiddleware(securityHeadersMiddleware(mux))),
+		Handler:           s.logMiddleware(gzipMiddleware(securityHeadersMiddleware(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	serve(srv, st)
+}
+
+// shutdownGrace bounds how long a stop waits for requests already in flight. Deliberately shorter
+// than the compose file's stop_grace_period, so the portal's own ending is the one that happens
+// rather than a SIGKILL arriving in the middle of it.
+//
+// Long enough for a PDF export or a report upsert to finish; not long enough to wait out an SSE
+// stream, which by construction never ends on its own. Those are closed at the deadline.
+const shutdownGrace = 10 * time.Second
+
+// serve runs the HTTP server until SIGINT or SIGTERM, then stops taking new connections and lets the
+// requests already in flight finish.
+//
+// Without this, `docker compose restart`, a rolling update and Ctrl-C all cut every open response
+// mid-body: a report upsert answered with a truncated JSON body the caller has to guess about, an
+// export half-written, an audit entry that may or may not have been recorded.
+//
+// The background loops (scheduling, cleanup, recurring tasks, the auth sweep) are NOT drained. They
+// are tickers doing whole units of work, and a batch run interrupted by a restart is already the
+// case ADR 0015 exists for — the next boot reconciles it from the queue rather than trusting that
+// the previous process finished anything. Waiting on them would trade that guarantee for a slower
+// stop and no more safety.
+func serve(srv *http.Server, st *Store) {
+	// Registered BEFORE the listener starts. The other order has a window — short, but real — in
+	// which the process is already serving and a SIGTERM still has its default disposition, which is
+	// to die on the spot: the exact ungraceful stop this function exists to prevent.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
+
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+
+	select {
+	case err := <-errc:
+		// The listener failed to start (a port already taken is the usual one), which is fatal and
+		// has nothing to do with shutting down.
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+		return
+	case sig := <-stop:
+		log.Printf("shutting down on %v; finishing in-flight requests (up to %s)", sig, shutdownGrace)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		// The deadline passed with connections still open — an SSE stream, or a client that stopped
+		// reading. Close them: the alternative is hanging until the orchestrator's own patience runs
+		// out and it sends SIGKILL, which is the ungraceful stop this exists to avoid.
+		log.Printf("shutdown: %v; closing remaining connections", err)
+		srv.Close()
+	}
+	// Last, and after the handlers are done: closing it earlier would fail the very requests the
+	// grace period was granted for.
+	if err := st.Close(); err != nil {
+		log.Printf("closing the database: %v", err)
+	}
+	log.Printf("stopped")
 }
 
 // securityHeadersMiddleware supplies browser defenses consistently for JSON, downloads,
@@ -527,10 +637,6 @@ func validateSessionSecret(secret string) error {
 // no data counts (business volume) and no build identity (version/commit), both of which would
 // help an anonymous scanner fingerprint the instance. Ops read the build from /api/version (which
 // requires a session) or the server logs.
-func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"ok": true})
-}
-
 // handleVersion returns build identity for the signed-in app footer. It is session-gated
 // (registered behind requireUserJSON) precisely so version/commit are NOT exposed to anonymous
 // callers: commit especially pins the exact public source, making CVE fingerprinting trivial.
@@ -845,7 +951,8 @@ func (s *Server) filtersFrom(r *http.Request) (Filters, string, int, int) {
 	q := r.URL.Query()
 	f := Filters{
 		Q: strings.TrimSpace(q.Get("q")), Scope: q.Get("scope"), Symbol: q.Get("symbol"),
-		RType: q.Get("rtype"), Kind: q.Get("kind"), DateFrom: q.Get("date_from"), DateTo: q.Get("date_to"),
+		RType: q.Get("rtype"), Kind: q.Get("kind"), Version: strings.TrimSpace(q.Get("version")),
+		DateFrom: q.Get("date_from"), DateTo: q.Get("date_to"),
 		Sort: q.Get("sort"),
 	}
 	src := q.Get("src")
@@ -1024,12 +1131,61 @@ func (s *Server) orderAndDefault(members []Rep) ([]Rep, int64) {
 		}
 		return out[i].Time < out[j].Time
 	})
-	// append an index to same-named tabs so multiple "重组交易分析" entries can be told apart
-	seen := map[string]int{}
+	// Two tabs can share a label for two different reasons, and they need different answers.
+	//
+	// Several DIFFERENT reports of one type — title is part of a report's identity, so one
+	// code+date+subtype legitimately carries more than one — are told apart by a number, as they
+	// always have been.
+	//
+	// Two WRITTEN FORMS of one analysis (ADR 0024) are told apart by naming the form. A number says
+	// nothing about which one a reader is looking at, and until v0.4.42 that barely mattered because
+	// no workflow sent a version: the case was rare. A single hand-written correction (ADR 0026) now
+	// produces it every time, so a corrected report showed up as "深度分析 2" with no way to tell it
+	// from the workflow's own.
+	//
+	// The default version keeps the bare label, so a portal that has never used versions reads
+	// exactly as before.
+	versioned := map[string]map[string]bool{} // label -> the set of versions carrying it
 	for i := range out {
-		seen[out[i].Label]++
-		if n := seen[out[i].Label]; n > 1 {
+		v := out[i].Version
+		if v == "" {
+			v = defaultVersionName
+		}
+		if versioned[out[i].Label] == nil {
+			versioned[out[i].Label] = map[string]bool{}
+		}
+		versioned[out[i].Label][v] = true
+	}
+	verLabel := map[string]string{}
+	for _, v := range s.st.Versions() {
+		verLabel[v.Name] = firstNonEmpty(v.Label, v.Name)
+	}
+	// The number counts DISTINCT REPORTS sharing a label, not rows, so every written form of one
+	// report carries the same number: "重组交易分析 2" and "重组交易分析 2 · 人工" are the two forms of the
+	// same thing, and the number is what says which thing.
+	//
+	// Reports are told apart by title here, because that is what makes them different reports. A
+	// hand-written form that has since been retitled therefore gets a number of its own — the portal
+	// genuinely cannot know which report it was written from once the title stops matching, and
+	// guessing would put a reader on the wrong document. The form suffix still names it.
+	num := map[string]int{}
+	next := map[string]int{}
+	for i := range out {
+		v := out[i].Version
+		if v == "" {
+			v = defaultVersionName
+		}
+		base := out[i].Label
+		key := base + "\x00" + out[i].Title
+		if _, ok := num[key]; !ok {
+			next[base]++
+			num[key] = next[base]
+		}
+		if n := num[key]; n > 1 {
 			out[i].Label = out[i].Label + " " + strconv.Itoa(n)
+		}
+		if len(versioned[base]) > 1 && v != defaultVersionName {
+			out[i].Label = out[i].Label + " · " + firstNonEmpty(verLabel[v], v)
 		}
 	}
 	var def int64

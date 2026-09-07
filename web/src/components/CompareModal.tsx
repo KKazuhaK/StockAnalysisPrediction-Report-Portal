@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api, errText } from '../api/client'
 import type { ComparableReport, ReportDiff } from '../api/types'
 import { SectionBlock } from './DiffSections'
+import { clickable } from '../lib/clickable'
 
 // Comparing this report with another edition of the same analysis.
 //
@@ -92,7 +93,7 @@ export default function CompareModal({
                 label: `${c.date}${c.version ? ` · ${c.version}` : ''} · ${c.title}`,
               }))}
             />
-            <a onClick={() => setShowSame((v) => !v)}>
+            <a {...clickable(() => setShowSame((v) => !v))}>
               {showSame ? t('compare.hideUnchanged') : t('compare.showUnchanged')}
             </a>
           </Space>

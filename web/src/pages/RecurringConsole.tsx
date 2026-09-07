@@ -52,6 +52,7 @@ export default function RecurringConsole() {
 
   const [history, setHistory] = useState<{ task: RecurringTask; runs: RecurringRun[] } | null>(null)
 
+  const [maxConcurrency, setMaxConcurrency] = useState(10)
   const loadTargets = () =>
     api
       .get<{ targets: BatchTarget[] }>('/api/admin/batch/targets')
@@ -65,6 +66,9 @@ export default function RecurringConsole() {
       .get<RecurringTasksResp>('/api/admin/batch/recurring')
       .then((r) => {
         setTasks(r.tasks || [])
+        // Falls back to the server's own shipped default rather than to the old hard-coded 20: a
+        // server that has not answered yet must not be assumed more permissive than it is.
+        if (r.maxConcurrency) setMaxConcurrency(r.maxConcurrency)
         setLoaded(true)
       })
       .finally(() => setLoading(false))
@@ -455,7 +459,9 @@ export default function RecurringConsole() {
                 <Typography.Text type="secondary">{t('batch.rowConcurrency')}</Typography.Text>
                 <InputNumber
                   min={1}
-                  max={20}
+                  // The server's own ceiling, not a number written here: a picker that offers more
+                  // than the server will honour clamps silently at run time and tells nobody.
+                  max={maxConcurrency}
                   value={draft.concurrency}
                   onChange={(v) => set('concurrency', v ?? 1)}
                   aria-label={t('batch.rowConcurrency')}

@@ -28,10 +28,21 @@ const (
 	oidcMaxSkew      = 2 * time.Minute
 )
 
+// setSSOAllowPrivate lets an SSO flow reach an RFC1918 address. Off by default — the guard exists
+// because an IdP URL is admin-supplied and points wherever it says — and on for the portal whose
+// IdP is genuinely on the intranet, which safefetch's own comment calls the common case.
+const setSSOAllowPrivate = "sso_allow_private"
+
+// ssoAllowPrivate reads that switch. Anything but an explicit "1" is off, so a hand-edited or
+// half-written value fails closed.
+func (s *Server) ssoAllowPrivate() bool {
+	return s.st.GetSetting(setSSOAllowPrivate, "") == "1"
+}
+
 // ssoClient builds the SSRF-guarded HTTP client used for every outbound call in a flow, including
 // the ones go-oidc makes for us (discovery, JWKS, token) via oidc.ClientContext.
 func (s *Server) ssoClient() *safeClient {
-	c := newSafeClient(s.st.GetSetting("sso_allow_private", "") == "1")
+	c := newSafeClient(s.ssoAllowPrivate())
 	c.allowInsecureForTest = s.ssoInsecureForTest
 	return c
 }

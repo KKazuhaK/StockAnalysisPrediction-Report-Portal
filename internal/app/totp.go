@@ -31,8 +31,15 @@ const (
 )
 
 // totpIssuer labels the entry in the user's authenticator app.
+//
+// site_title, which is the key the branding form actually writes — every other reader of the
+// portal's name uses it (the shell, the PWA manifest, the email sender, the login page). This asked
+// for `site_name`, a key nothing in the repository has ever written, so the branding an operator
+// set was silently ignored and every enrolment landed under "Report Portal". Authenticator entries
+// are effectively permanent: a user who enrolled before this keeps the old label until they
+// re-enrol, which is worth knowing but not worth forcing.
 func (s *Server) totpIssuer() string {
-	if n := strings.TrimSpace(s.st.GetSetting("site_name", "")); n != "" {
+	if n := strings.TrimSpace(s.st.GetSetting("site_title", "")); n != "" {
 		return n
 	}
 	return "Report Portal"

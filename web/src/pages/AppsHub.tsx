@@ -7,6 +7,7 @@ import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { BUILTIN_APPS } from '../lib/builtinApps'
 import type { AppsResp, AppSummary } from '../api/types'
+import { clickable } from '../lib/clickable'
 
 // The apps hub: a grid of user-facing apps. Built-in apps are compiled-in cards (each gated by a
 // permission; the registry lives in lib/builtinApps so the entry-button picker and shortcut router
@@ -21,7 +22,7 @@ function AppCard({ icon, title, desc, tag, onClick }: { icon: ReactNode; title: 
   const { token } = theme.useToken()
   return (
     <Col xs={24} sm={12} lg={8}>
-      <Card hoverable onClick={onClick} style={{ height: '100%' }}>
+      <Card hoverable {...clickable(onClick, title)} style={{ height: '100%' }}>
         <Space align="start" size={16}>
           <span style={{ fontSize: 28, color: token.colorPrimary, lineHeight: 1 }}>{icon}</span>
           <div>

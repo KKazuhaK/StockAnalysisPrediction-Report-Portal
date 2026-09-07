@@ -159,7 +159,7 @@ func (s *Server) apiReportRevisionRestore(w http.ResponseWriter, r *http.Request
 		next.Kind = runKind([]string{next.RType})
 	}
 	s.st.RegisterType(next.RType, next.Kind)
-	written, err := s.st.UpdateManualReport(rep.ID, next, in.UpdatedAt, s.reportRevisionsKeep())
+	written, changed, err := s.st.UpdateManualReport(rep.ID, next, in.UpdatedAt, s.reportRevisionsKeep())
 	if err != nil {
 		var exists ErrReportExists
 		switch {
@@ -177,5 +177,10 @@ func (s *Server) apiReportRevisionRestore(w http.ResponseWriter, r *http.Request
 	s.recordChange(r, user, AuditReportRestore, "report", strconv.FormatInt(rep.ID, 10), map[string]any{
 		"revision": rev.ID, "saved_at": rev.SavedAt, "author": rev.Author, "title": rev.Title,
 	})
+	if changed {
+		// Restoring an old revision rewrites what the report says, so it is an edit like any other
+		// as far as a subscriber is concerned. Restoring the revision that is already current is not.
+		s.announceReport(rep.ID, next, rep.Version, false)
+	}
 	writeJSON(w, map[string]any{"ok": true, "id": rep.ID, "updated_at": written})
 }
