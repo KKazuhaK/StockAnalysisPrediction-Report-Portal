@@ -216,9 +216,19 @@ type quoteMarket struct {
 	// quoteTencentQtFields: a response long enough for the prices but short of this field is read
 	// as a stock rather than refused, because the kind is a label beside a price and never a price.
 	kindAt int
-	// history is whether this market's day array is a series worth drawing. Two markets fail it and
-	// for the same reason — what arrives is not data, it is something that renders like data:
-	// Beijing answers "day":[] (ADR 0028 §7), and the US answers TWO rows fifteen years apart.
+	// history is whether the TWO VENDORS THAT READ THIS COLUMN — Tencent's fqkline and Sina's kline —
+	// answer this market's day array with a series worth drawing. Two markets fail it and for the same
+	// reason: what arrives is not data, it is something that renders like data. Beijing answers
+	// "day":[] on fqkline (ADR 0028 §7) and a sixteen-month-stale series on Sina, and the US answers a
+	// sixty-bar fqkline request with TWO rows fifteen years apart.
+	//
+	// It is NOT "this market has no daily series", and the gap between those two sentences is a bug
+	// that shipped. While Tencent was the only source they had the same truth value, so the INTERVAL a
+	// US request asked for was read off this column — and the US went on asking for a snapshot after a
+	// source that really does serve US dailies was compiled in, which made enabling Yahoo change
+	// nothing at all. What a source can serve is declared by that source (quoteSource.caps) and what
+	// this deployment can serve is the resolver's answer (quoteCache.servableInterval). This column
+	// stays what it has always been — a fact about two vendors' endpoints — and only those two read it.
 	history bool
 	// sina is whether the fallback's A-share snapshot line covers this market. It does not cover
 	// Hong Kong or the US: those are `rt_hk00700` and `gb_aapl` there, in lines of 19 and 36 fields
@@ -364,13 +374,75 @@ func (m *quoteMarket) kindOf(qt []string) string {
 	return quoteKindStock
 }
 
-// quoteMarketHasDailyHistory reports whether this market's daily series is worth drawing. It is what
-// the handler asks before serving bars at all: the parser reports what the vendor sent, and the
-// promise that an untrustworthy market NEVER carries bars belongs one level up, where it holds
-// whatever a vendor starts returning tomorrow.
+// quoteMarketHasDailyHistory reports quoteMarket.history for a market: what Tencent's fqkline and
+// Sina's kline answer here, and nothing wider. Both of its callers are one of those two vendors —
+// fetchSinaQuote, which will not ask Sina for a series it answers sixteen months stale, and
+// quoteBarsUnavailableFor, which names an empty fqkline series a standing gap rather than an outage.
+//
+// It does NOT decide what a request asks for. That is the range's interval narrowed by the sources an
+// operator has enabled (quoteRangeSpec.interval, quoteCache.servableInterval), so that a market whose
+// series only a newly enabled source can draw starts being asked for it the moment it is enabled.
 func quoteMarketHasDailyHistory(market string) bool {
 	m, ok := quoteMarkets[market]
 	return ok && m.history
+}
+
+// ---------- what a request asks for, beside the symbol ----------
+
+// quoteInterval is the second half of the question "can this source answer this request", and the US
+// is why one half was never enough: Tencent answers usAAPL's SNAPSHOT correctly — the price on the
+// reading page today comes from there — and answers the same symbol's sixty-bar daily request with
+// two rows fifteen years apart (ADR 0030 §4). A source table keyed on markets alone can say either
+// that Tencent serves the US or that it does not, and both are wrong.
+//
+// A string rather than an iota so that a test failure, an error, and the wire if 管理 → 行情源 ever
+// shows capabilities beside the markets it already lists, all name the interval instead of printing
+// 0 and 1.
+type quoteInterval string
+
+const (
+	// quoteIntervalSnapshot is a price with no series behind it. It is what a request DEGRADES to when
+	// no enabled source declares the series it asked for — Beijing whatever the order says, and the US
+	// until an operator enables a source that serves US dailies (servableInterval) — which is the same
+	// answer ADR 0030 §4 settled on for the two markets whose day array renders like data without
+	// being data (Beijing sends "day":[], the US sends the two rows above). It is a capability of its
+	// own rather than "daily, and ignore the bars" because a source that must not be asked for the US
+	// SERIES is still the source of the US PRICE, and that difference is something the resolver acts
+	// on rather than something the handler cleans up afterwards.
+	quoteIntervalSnapshot quoteInterval = "snapshot"
+	// quoteIntervalDaily is the series the four ranges in quote_api.go draw.
+	quoteIntervalDaily quoteInterval = "daily"
+	// quoteIntervalIntraday is ONE session at one-minute resolution — the 分时 range. It is the
+	// case a market-only source table cannot express at all: a vendor that serves minute bars for a
+	// market whose dailies come from somewhere else.
+	quoteIntervalIntraday quoteInterval = "intraday"
+	// quoteIntervalIntraday5D is FIVE sessions at five-minute resolution — the 5日 range, and a
+	// separate interval from the one above rather than the same one at a longer window.
+	//
+	// It has to be separate because the two are not the same capability, and the difference is
+	// measured rather than stylistic: Tencent's minute endpoint answers ONE trading day and carries
+	// that day in the payload (267 points for sh600519 on 2026-09-07), while Yahoo's chart endpoint
+	// takes range=5d&interval=5m and answers 331. Folding both into one interval would let the
+	// resolver hand a five-day request to a source that can only answer about today — and what comes
+	// back would be a well-formed series of the wrong span under a 5日 label, which is the failure
+	// mode the whole declaration mechanism exists to prevent. One interval per thing a source can
+	// actually promise.
+	quoteIntervalIntraday5D quoteInterval = "intraday5d"
+)
+
+// quoteAllIntervals is every interval a request can be for, written once so that a declaration, a
+// capability check and the admin panel's market list cannot disagree about how many there are.
+var quoteAllIntervals = []quoteInterval{
+	quoteIntervalSnapshot, quoteIntervalDaily, quoteIntervalIntraday, quoteIntervalIntraday5D,
+}
+
+// intraday reports whether this interval's bars are MINUTES rather than days. Two things turn on it
+// and both would be wrong in the same invisible way if they went on comparing against a single
+// constant: which TTL a response is cached under (a five-minute cache on a one-minute chart shows a
+// frozen line), and whether a bar's Date carries a time at all. Asked as one question here so that
+// adding a third intraday window is one line rather than a hunt for `== quoteIntervalIntraday`.
+func (iv quoteInterval) intraday() bool {
+	return iv == quoteIntervalIntraday || iv == quoteIntervalIntraday5D
 }
 
 func quoteAllDigits(s string) bool {
@@ -964,6 +1036,25 @@ func fetchTencentQuote(ctx context.Context, market, code string, bars int) (*Quo
 	return resp, nil
 }
 
+// fetchTencentAt is the source's fetcher and the ONE place that turns an interval into an endpoint.
+// Tencent has two of them and they are not interchangeable: fqkline answers a daily series and the
+// 分时 endpoint answers one session of minutes, and each would answer the other's request with a
+// well-formed series of the wrong resolution rather than with an error.
+//
+// The middle case is the one worth writing out. quoteIntervalIntraday5D — five sessions at five
+// minutes — is a window this vendor has no endpoint for, so it is REFUSED here rather than served
+// from the one-day endpoint under a 5日 label. The resolver never routes it here (the declaration in
+// quote_cache.go does not claim it), so this is the guard for a caller that skipped the resolver.
+func fetchTencentAt(ctx context.Context, market, code string, bars int, iv quoteInterval) (*QuoteResp, error) {
+	switch {
+	case iv == quoteIntervalIntraday:
+		return fetchTencentIntraday(ctx, market, code, bars)
+	case iv.intraday():
+		return nil, fmt.Errorf("quote: tencent's minute endpoint answers one session, not %s", iv)
+	}
+	return fetchTencentQuote(ctx, market, code, bars)
+}
+
 // parseTencentQuote turns one fqkline response into a QuoteResp, running drift-gate checks 1-5 in
 // order as it goes. The same array serves five markets, so every read below that is a UNIT or a
 // FORMAT goes through the market's row in quoteMarkets rather than through a constant.
@@ -1001,63 +1092,20 @@ func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, 
 		return nil, fmt.Errorf("quote: decode tencent %s snapshot: %w", sym, err)
 	}
 
-	// (1) field count, snapshot first and then every day row, before anything is read by index.
-	if err := quoteCheckFieldCount("tencent qt", len(qt), quoteTencentQtFields); err != nil {
-		return nil, err
-	}
+	// (1) field count for every day row. The snapshot's own floor is checked inside parseTencentQt
+	// below, before it reads a single index.
 	for i, row := range qb.Day {
 		if err := quoteCheckFieldCount(fmt.Sprintf("tencent day row %d", i), len(row), quoteDayRowFields); err != nil {
 			return nil, err
 		}
 	}
-	// (2) code echo, in the form this market echoes it — exact everywhere but the US.
-	if err := quoteCheckQtCodeEcho(m, code, qt[2]); err != nil {
-		return nil, err
-	}
 
-	r := &quoteFenReader{fields: qt}
-	snap := QuoteSnapshot{Session: quoteSessionUnknown}
-	// The two prices check 3 needs are read FIRST, so that the identity runs before any field a
-	// shifted response would have turned into garbage. Ordering matters here for a reason that is
-	// easy to state wrongly: it is NOT that the parse would otherwise die on the timestamp. Measured
-	// on the captured fixture, an inserted column is caught three lines earlier than that, by the
-	// price bound on `change` — the slide moves the vendor's own "20260904161458" into the 涨跌 slot,
-	// where it reads as 2.03e15 分 and blows past quotePriceCeiling. Either way the request fails;
-	// the point of reading the identity's two inputs first is that the reader learns the response
-	// SHAPE moved, instead of a downstream field being reported as an unremarkable parse error.
-	snap.Last = r.fen(3)
-	snap.PrevClose = r.fen(4)
-	snap.ChangePct = strings.TrimSpace(qt[32])
-	if r.err != nil {
-		return nil, r.err
-	}
-	// (3) arithmetic identity.
-	if err := quoteCheckIdentity(&snap); err != nil {
-		return nil, err
-	}
-
-	snap.Open = r.fen(5)
-	snap.Change = r.fen(31)
-	snap.High = r.fen(33)
-	snap.Low = r.fen(34)
-	// Both of these are UNIT CONVERSIONS by an exact power of ten, not a claim that the vendor
-	// measured anything more finely than it did — one 手 is one hundred 股 by definition, and one
-	// 万元 is ten thousand 元, which is what asking for four decimal places of a 万元 figure
-	// produces directly. Both units are per-market and neither is guessable from the value: qt[6]
-	// reads 39606884 for Apple, which is a day's shares, and 1421604 for 紫金矿业, which is a day's
-	// 手. Multiply the first by a hundred and the portal reports four billion Apple shares traded;
-	// read the second as shares and it reports one percent of the real figure.
-	snap.Volume = r.volume(6, m.lots)
-	snap.Amount = r.money(37, m.amountScale)
-	if r.err != nil {
-		return nil, r.err
-	}
-	// Last and prevClose were bounded by check 3 before it multiplied them; the four prices read
-	// since have not been, and this is where they are.
-	if err := quoteCheckSnapshotPrices(&snap); err != nil {
-		return nil, err
-	}
-	if snap.AsOf, err = quoteVendorTime(m, qt[30]); err != nil {
+	// (1, 2, 3) and the price ceiling: the snapshot half, shared with the two endpoints below it. The
+	// minute series and the batch line carry this SAME array, so the gate over it is one function and
+	// not three. Check 5, the day range, is NOT in there — it is run at the end of each of the three
+	// parsers, after the bars, because two of them have a series to check first.
+	snap, err := parseTencentQt(m, code, qt)
+	if err != nil {
 		return nil, err
 	}
 	var market0 []string
@@ -1125,6 +1173,76 @@ func parseTencentQuote(market, code string, body []byte, bars int) (*QuoteResp, 
 		resp.BarsUnavailable = quoteBarsUnavailableFor(m.id)
 	}
 	return resp, nil
+}
+
+// parseTencentQt reads the snapshot half of a Tencent response and runs drift-gate checks 1, 2, 3
+// and the price bound over it. Session is left "unknown": only ONE of the three endpoints that carry
+// this array also carries the market-state line, so the caller that has it sets it.
+//
+// It is one function because it is one array. The SAME positional layout — 88 fields on sh/sz, 87 on
+// bj, 78 on hk, 71 on us, with last at 3, prevClose at 4, open at 5, volume at 6, the timestamp at
+// 30, 涨跌 at 31, the percentage at 32, high at 33, low at 34 and 成交额 at 37 — arrives inside
+// fqkline's `qt`, inside the minute endpoint's `qt`, and as the `~`-delimited payload of a
+// `v_<code>="…"` line from the batch endpoint. All three were captured on 2026-09-07 and all three
+// are in testdata/quote/. Writing the gate three times would mean three places for it to drift, and
+// the two later ones would be the ones nobody re-reads.
+func parseTencentQt(m *quoteMarket, code string, qt []string) (QuoteSnapshot, error) {
+	snap := QuoteSnapshot{Session: quoteSessionUnknown}
+	// (1) field count, before anything is read by index.
+	if err := quoteCheckFieldCount("tencent qt", len(qt), quoteTencentQtFields); err != nil {
+		return snap, err
+	}
+	// (2) code echo, in the form this market echoes it — exact everywhere but the US.
+	if err := quoteCheckQtCodeEcho(m, code, qt[2]); err != nil {
+		return snap, err
+	}
+
+	r := &quoteFenReader{fields: qt}
+	// The two prices check 3 needs are read FIRST, so that the identity runs before any field a
+	// shifted response would have turned into garbage. Ordering matters here for a reason that is
+	// easy to state wrongly: it is NOT that the parse would otherwise die on the timestamp. Measured
+	// on the captured fixture, an inserted column is caught three lines earlier than that, by the
+	// price bound on `change` — the slide moves the vendor's own "20260904161458" into the 涨跌 slot,
+	// where it reads as 2.03e15 分 and blows past quotePriceCeiling. Either way the request fails;
+	// the point of reading the identity's two inputs first is that the reader learns the response
+	// SHAPE moved, instead of a downstream field being reported as an unremarkable parse error.
+	snap.Last = r.fen(3)
+	snap.PrevClose = r.fen(4)
+	snap.ChangePct = strings.TrimSpace(qt[32])
+	if r.err != nil {
+		return snap, r.err
+	}
+	// (3) arithmetic identity.
+	if err := quoteCheckIdentity(&snap); err != nil {
+		return snap, err
+	}
+
+	snap.Open = r.fen(5)
+	snap.Change = r.fen(31)
+	snap.High = r.fen(33)
+	snap.Low = r.fen(34)
+	// Both of these are UNIT CONVERSIONS by an exact power of ten, not a claim that the vendor
+	// measured anything more finely than it did — one 手 is one hundred 股 by definition, and one
+	// 万元 is ten thousand 元, which is what asking for four decimal places of a 万元 figure
+	// produces directly. Both units are per-market and neither is guessable from the value: qt[6]
+	// reads 39606884 for Apple, which is a day's shares, and 1421604 for 紫金矿业, which is a day's
+	// 手. Multiply the first by a hundred and the portal reports four billion Apple shares traded;
+	// read the second as shares and it reports one percent of the real figure.
+	snap.Volume = r.volume(6, m.lots)
+	snap.Amount = r.money(37, m.amountScale)
+	if r.err != nil {
+		return snap, r.err
+	}
+	// Last and prevClose were bounded by check 3 before it multiplied them; the four prices read
+	// since have not been, and this is where they are.
+	if err := quoteCheckSnapshotPrices(&snap); err != nil {
+		return snap, err
+	}
+	var err error
+	if snap.AsOf, err = quoteVendorTime(m, qt[30]); err != nil {
+		return snap, err
+	}
+	return snap, nil
 }
 
 // quoteBarsUnavailableFor names the reason an empty series is empty. A market whose daily history is
@@ -1225,6 +1343,397 @@ func (r *quoteFenReader) scaled(i, scale int) int64 {
 		return 0
 	}
 	return v
+}
+
+// ---------- Tencent, intraday: one session of minutes ----------
+
+const (
+	// The 分时 endpoint. It answers ONE trading day and says which one in the payload, which is the
+	// whole reason quoteIntervalIntraday and quoteIntervalIntraday5D are two capabilities: this
+	// source can promise the first and cannot promise the second, and a declaration that folded them
+	// together would hand a 5日 request a single day's line under a five-day label.
+	//
+	// Measured 2026-09-07, and the four fixtures beside this file are those four responses:
+	// sh600519 267 points, hk00700 332, bj830799 ONE, usAAPL ONE with an EMPTY date.
+	quoteTencentMinuteURL = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=%s"
+
+	// A minute row is "0930 1324.00 227 30054800.00": the time, the price, the DAY'S CUMULATIVE
+	// volume and the day's cumulative 成交额. The floor is THREE and not four because the fourth is
+	// genuinely absent on two of the four captured bodies — bj830799 sends "0930 34.28 0" and usAAPL
+	// sends "1600 319.97 39606884" — and nothing here reads it: 成交额 comes from the snapshot's own
+	// qt[37], where it is one number for the day rather than a running total this parser would have
+	// to difference.
+	quoteMinuteRowFields = 3
+
+	// The layout the trading date and a row's clock reassemble into. It is NOT quoteMarket.stamp:
+	// that is qt[30]'s layout and it differs per market (Hong Kong's is "2026/09/07 16:08:17"),
+	// while THIS payload sends "20260907" and "0930" in every market it answers for.
+	quoteMinuteStamp = "200601021504"
+)
+
+// tencentMinuteBody is one symbol's section of the 分时 response. `qt` is the same snapshot map
+// fqkline sends, market line included, so both halves of a 分时 answer come out of one call and
+// cannot describe two different instants.
+type tencentMinuteBody struct {
+	Data struct {
+		Data []string `json:"data"`
+		// Date is the trading day the rows belong to, "20260907". A row carries a clock and nothing
+		// else, so without this there is no instant to stamp a bar with — and it is EMPTY on the
+		// captured US body, which is why the US has no intraday grant here.
+		Date string `json:"date"`
+	} `json:"data"`
+	Qt map[string]json.RawMessage `json:"qt"`
+}
+
+// fetchTencentIntraday fetches one session of minute points plus the snapshot that came with them.
+func fetchTencentIntraday(ctx context.Context, market, code string, bars int) (*QuoteResp, error) {
+	sym, err := quoteSymbol(market, code)
+	if err != nil {
+		return nil, err
+	}
+	rawURL := fmt.Sprintf(quoteTencentMinuteURL, sym)
+	ctx, cancel := context.WithTimeout(ctx, quoteFetchTimeout)
+	defer cancel()
+	body, err := vendorGet(ctx, rawURL, quoteTencentReferer, quoteBodyLimit)
+	if err != nil {
+		vendorLogf(rawURL, "quote intraday fetch failed for %s: %v", sym, err)
+		return nil, err
+	}
+	resp, err := parseTencentMinute(market, code, body, bars)
+	if err != nil {
+		vendorLogf(rawURL, "quote intraday parse failed for %s: %v", sym, err)
+		return nil, err
+	}
+	return resp, nil
+}
+
+// parseTencentMinute turns one 分时 response into a QuoteResp whose bars are minutes.
+//
+// The snapshot half is parseTencentQt's, unchanged and un-duplicated. What is new is the gate over
+// the ROWS, and it is not the daily one, because a minute row is not a candle — there is one price
+// per minute, so o=h=l=c and quoteCheckBars's ordering questions are all trivially true. What
+// replaces them is a question the daily gate cannot ask and this shape can:
+//
+//   - the clock column is EXACTLY four digits and STRICTLY INCREASING. A column inserted at the
+//     front slides a price into it, and "1324.00" is not a clock; a column inserted anywhere else
+//     leaves the clock alone and is caught below.
+//   - the volume column is the day's RUNNING TOTAL and must never go backwards. That is the check
+//     that survives an inserted column in the middle: prices bounce around by nature and a
+//     cumulative total does not, so a slide that lands a price where the running total belongs
+//     breaks monotonicity almost immediately. Measured on all three multi-point fixtures: strictly
+//     increasing clocks, non-decreasing totals, on every one of 267, 332 and 242 rows.
+//
+// What is deliberately NOT checked is the last minute's price against the snapshot's own last price.
+// They agree exactly on all four captured bodies — and all four were captured after the close, when
+// a price cannot move. The same responses already disagree about VOLUME (sh600519's qt[6] says 25250
+// 手 beside a final running total of 25254), so the two halves are not one instant even in the same
+// body, and a price equality between them would be a check that fires on a moving market. A gate
+// that goes off during trading hours takes the feature down precisely when it is worth having.
+func parseTencentMinute(market, code string, body []byte, bars int) (*QuoteResp, error) {
+	target, err := quoteTargetFor(market, code)
+	if err != nil {
+		return nil, err
+	}
+	m, sym := target.Market, target.Symbol
+	// The CANONICAL code from here on, never the caller's spelling — see parseTencentQuote.
+	code = target.Code
+
+	var env tencentQuoteEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("quote: decode tencent minute response: %w", err)
+	}
+	if env.Code != 0 {
+		return nil, fmt.Errorf("quote: tencent returned code %d (%s)", env.Code, env.Msg)
+	}
+	raw, ok := env.Data[sym]
+	if !ok {
+		return nil, fmt.Errorf("quote: tencent minute response has no %q section", sym)
+	}
+	var mb tencentMinuteBody
+	if err := json.Unmarshal(raw, &mb); err != nil {
+		return nil, fmt.Errorf("quote: decode tencent minute %s: %w", sym, err)
+	}
+	rawQt, ok := mb.Qt[sym]
+	if !ok {
+		return nil, fmt.Errorf("quote: tencent minute response has no %q snapshot", sym)
+	}
+	var qt []string
+	if err := json.Unmarshal(rawQt, &qt); err != nil {
+		return nil, fmt.Errorf("quote: decode tencent minute %s snapshot: %w", sym, err)
+	}
+	snap, err := parseTencentQt(m, code, qt)
+	if err != nil {
+		return nil, err
+	}
+	var market0 []string
+	if err := json.Unmarshal(mb.Qt["market"], &market0); err == nil && len(market0) > 0 {
+		snap.Session = quoteMarketSession(m, market0[0])
+	}
+
+	out, err := quoteTencentMinuteBars(m, mb.Data.Date, mb.Data.Data)
+	if err != nil {
+		return nil, err
+	}
+	if err := quoteCheckRange(&snap); err != nil {
+		return nil, err
+	}
+	if bars > 0 && len(out) > bars {
+		out = out[len(out)-bars:] // oldest first, so a surplus is trimmed from the front
+	}
+	resp := &QuoteResp{
+		Symbol:     code,
+		Name:       strings.TrimSpace(qt[1]),
+		Market:     m.id,
+		Kind:       m.kindOf(qt),
+		Currency:   m.currency,
+		TZ:         m.zone,
+		Source:     quoteSourceTencent,
+		Snapshot:   snap,
+		Bars:       out,
+		BarsSource: quoteSourceTencent,
+	}
+	if len(out) == 0 {
+		// An intraday series that came back empty is a source failure and never
+		// quoteBarsMarketUnsupported: the resolver only routes an intraday request to a source that
+		// DECLARED the pair, so an empty answer here is this vendor having a bad day rather than a
+		// standing gap in the market. quoteBarsUnavailableFor answers about the DAILY series and
+		// would say "this market has no history" about Beijing, which is a true sentence about the
+		// wrong series.
+		resp.BarsSource = ""
+		resp.BarsUnavailable = quoteBarsSourceFailed
+	}
+	return resp, nil
+}
+
+// quoteTencentMinuteBars turns the row strings into per-minute bars, oldest first.
+//
+// The volume is the DIFFERENCE between consecutive running totals, which is the one arithmetic in
+// this file that a reader is likely to get wrong by copying the daily path: the column is the day's
+// cumulative 成交量, not the minute's. Rendered as-is, a 分时 chart's volume panel would be a
+// staircase climbing all day instead of a bar per minute.
+func quoteTencentMinuteBars(m *quoteMarket, date string, rows []string) ([]QuoteBar, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	date = strings.TrimSpace(date)
+	if len(date) != 8 || !quoteAllDigits(date) {
+		// The US body is exactly this: one row, and no date at all. A bar with no day is an instant
+		// this parser would have to invent, and inventing it means stamping today's date on a row
+		// that may be from last Friday.
+		return nil, fmt.Errorf("quote: tencent minute payload has no trading date (%q) for %s", date, m.id)
+	}
+	out := make([]QuoteBar, 0, len(rows))
+	prevClock, prevCum := "", int64(0)
+	for i, row := range rows {
+		f := strings.Fields(row)
+		if err := quoteCheckFieldCount(fmt.Sprintf("tencent minute row %d", i), len(f), quoteMinuteRowFields); err != nil {
+			return nil, err
+		}
+		clock := f[0]
+		// Four ASCII digits, checked BEFORE the comparison below and not left to the timestamp parse
+		// further down to catch. Two reasons, and the second is the load-bearing one: the reader of a
+		// failure learns that the response SHAPE moved rather than that a date would not parse, and —
+		// because the ordering test is a STRING comparison — a clock of some other length would make
+		// that comparison meaningless rather than false ("930" sorts after "1000").
+		if len(clock) != 4 || !quoteAllDigits(clock) {
+			return nil, fmt.Errorf("%w: minute row %d starts with %q, which is not a HHMM clock",
+				errQuoteFieldCount, i, clock)
+		}
+		if clock <= prevClock {
+			// Four digits either way, so a string comparison IS the numeric one, and a repeated or
+			// out-of-order minute is a series this portal cannot draw in the order it arrived.
+			return nil, fmt.Errorf("%w: minute row %d has clock %q, which is not later than %q",
+				errQuoteFieldCount, i, clock, prevClock)
+		}
+		r := &quoteFenReader{fields: f}
+		price := r.fen(1)
+		cum := r.volume(2, m.lots) // 手 → 股 on the Chinese exchanges, already 股 on Hong Kong
+		if r.err != nil {
+			return nil, fmt.Errorf("quote: tencent minute row %d: %w", i, r.err)
+		}
+		if cum < prevCum {
+			return nil, fmt.Errorf("%w: minute row %d has a running total of %d 股 after %d",
+				errQuoteVolume, i, cum, prevCum)
+		}
+		stamp, err := quoteMinuteTime(m, date, clock)
+		if err != nil {
+			return nil, err
+		}
+		// One price per minute, so the four candle prices are one number. The chart draws an intraday
+		// series as a LINE for exactly this reason; four equal prices satisfy quoteCheckBars's
+		// ordering questions trivially, which is why the checks above are the ones that matter here.
+		out = append(out, QuoteBar{Date: stamp, Open: price, High: price, Low: price, Close: price,
+			Volume: cum - prevCum})
+		prevClock, prevCum = clock, cum
+	}
+	// quote.go's check 4, unchanged: it still refuses a non-positive or over-ceiling price, which is
+	// the half of it that has something to say about a one-price row.
+	if err := quoteCheckBars(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// quoteMinuteTime stamps one row in the MARKET's own zone, so a bar reads as the exchange's wall
+// clock (09:31 in Shanghai) rather than as the 01:31Z the instant would be in UTC. Same rule as
+// quoteVendorTime and for the same reason: the alternative is a time that depends on where the
+// server is.
+func quoteMinuteTime(m *quoteMarket, date, clock string) (string, error) {
+	loc, err := quoteZone(m.zone)
+	if err != nil {
+		return "", err
+	}
+	t, err := time.ParseInLocation(quoteMinuteStamp, date+clock, loc)
+	if err != nil {
+		return "", fmt.Errorf("quote: %s minute stamp %q: %w", m.id, date+clock, err)
+	}
+	// RFC3339 rather than a bare date: an intraday bar's whole point is the time of day, and the
+	// offset is what stops a browser rendering a Hong Kong close in its own zone. The daily path
+	// carries a date and this one carries an instant — the chart is TOLD which it is handed
+	// (PriceChart's `interval` prop) rather than sniffing the string.
+	return t.Format(time.RFC3339), nil
+}
+
+// ---------- Tencent, batched: many symbols, one call ----------
+
+const (
+	// The realtime endpoint the name fetch already uses (names.go), asked for many codes at once:
+	// `q=sh601899,sz000001,…` answers one `v_<symbol>="…"` line per code in a SINGLE request, which
+	// is what makes a page of home cards one upstream call rather than one per card. Measured
+	// 2026-09-07 over six symbols spanning all five markets; the reply is GBK, hence vendorGetGBK.
+	// Split into a host and a template because the per-symbol refusal below has no request URL in
+	// hand and vendorLogf blames a HOST — handed the template it would file every batch refusal in
+	// the whole deployment under "(unparseable url)".
+	quoteTencentBatchHost = "https://qt.gtimg.cn/"
+	quoteTencentBatchURL  = quoteTencentBatchHost + "q=%s"
+
+	// The `~`-delimited payload of one of those lines is the SAME positional array as fqkline's qt —
+	// 88 fields on sh/sz, 87 on bj, 78 on hk, 71 on us, same indices — so it goes through
+	// parseTencentQt and inherits checks 1, 2, 3 and the price ceiling rather than getting a second,
+	// weaker gate. Check 5 is the one parseTencentQt does not carry, and parseTencentBatch runs it on
+	// its own line below, so a card is held to the same standard as the reading page's snapshot.
+	quoteTencentBatchSep = "~"
+)
+
+// fetchTencentBatch asks for every target in one request and returns what came back, keyed by vendor
+// symbol.
+//
+// A symbol whose own line is missing or fails the gate is simply ABSENT from the map, and the whole
+// call is not failed for it. That is the batch's central promise: fifty cards must not go blank
+// because one code was delisted this morning. A transport failure, a non-2xx, an unreadable body, or
+// a body carrying no line for ANY symbol asked about is a different thing and IS returned as an
+// error — the vendor answered about none of it, and the caller needs to be able to tell "this vendor
+// is down" from "this vendor does not know that code".
+func fetchTencentBatch(ctx context.Context, targets []quoteTarget) (map[string]*QuoteResp, error) {
+	if len(targets) == 0 {
+		return map[string]*QuoteResp{}, nil
+	}
+	syms := make([]string, 0, len(targets))
+	for _, t := range targets {
+		// Every symbol here came out of quoteTargetFor, which is the URL-construction boundary: six
+		// digits, five digits or one-to-six letters and nothing else, so a comma-joined list of them
+		// cannot carry a separator or a control byte into the query string.
+		syms = append(syms, t.Symbol)
+	}
+	rawURL := fmt.Sprintf(quoteTencentBatchURL, strings.Join(syms, ","))
+	ctx, cancel := context.WithTimeout(ctx, quoteFetchTimeout)
+	defer cancel()
+	body, err := vendorGetGBK(ctx, rawURL, quoteTencentReferer, quoteBodyLimit)
+	if err != nil {
+		vendorLogf(rawURL, "quote batch fetch failed for %d symbols: %v", len(syms), err)
+		return nil, err
+	}
+	out, err := parseTencentBatch(targets, body)
+	if err != nil {
+		vendorLogf(rawURL, "quote batch parse failed for %d symbols: %v", len(syms), err)
+		return nil, err
+	}
+	return out, nil
+}
+
+// parseTencentBatch splits the response into `v_<symbol>="…"` lines and runs the shared snapshot gate
+// over each one.
+//
+// Bars are EMPTY here and that is the shape, not an omission: this endpoint carries no series at all
+// and a card does not draw one. BarsUnavailable is likewise left empty rather than filled with
+// quoteBarsSourceFailed — nothing failed, nothing was asked for — and the batch handler answers with
+// a compact per-symbol object that has no bars field to be misread.
+//
+// Session stays "unknown", which means a card caches under the CLOSED-market TTL even while the
+// market is open. Measured: this response carries no market-state line anywhere (`q=sh601899,market`
+// answers one line, for 601899), so the alternative is deciding the session from this server's own
+// clock — the one substitution ADR 0028 rules out everywhere else. A card is a decoration that
+// refreshes a little slower than the reading page's own quote, which reads the session from fqkline
+// and gets the thirty-second TTL.
+func parseTencentBatch(targets []quoteTarget, body string) (map[string]*QuoteResp, error) {
+	if strings.TrimSpace(body) == "" {
+		return nil, fmt.Errorf("quote: tencent batch response is empty")
+	}
+	want := make(map[string]quoteTarget, len(targets))
+	for _, t := range targets {
+		want["v_"+t.Symbol] = t
+	}
+	out := make(map[string]*QuoteResp, len(targets))
+	// matched counts the lines that were ABOUT something we asked for, whether or not the gate then
+	// kept them, and it is what separates "this vendor answered and we refused the lines" from "this
+	// vendor did not answer about any of it". Only the second is the vendor's failure, and
+	// loadBatchUncached leans on the difference: without it, one suspended code on a one-card page
+	// records a vendor outage on every page view.
+	matched := 0
+	for _, line := range strings.Split(body, "\n") {
+		key, payload, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		t, ok := want[strings.TrimSpace(key)]
+		if !ok {
+			// A line for something nobody asked about. Skipped rather than refused: the request's own
+			// symbol list is what this answer is read against, and a vendor that starts appending a
+			// housekeeping line must not take a page of cards down with it.
+			continue
+		}
+		matched++
+		payload = strings.TrimSpace(payload)
+		payload = strings.TrimSuffix(payload, ";")
+		payload = strings.Trim(strings.TrimSpace(payload), `"`)
+		fields := strings.Split(payload, quoteTencentBatchSep)
+		snap, err := parseTencentQt(t.Market, t.Code, fields)
+		if err == nil {
+			// (5) the day range, which parseTencentQt does not run: check 3, the identity, returns
+			// early whenever prevClose is 0 — a never-traded or newly listed code — and then nothing
+			// else in the shared half notices a last price outside the day's own high..low. On the
+			// single-quote path check 5 runs twenty lines after parseTencentQt; a card would have been
+			// the one reader of this array that never got it.
+			err = quoteCheckRange(&snap)
+		}
+		if err != nil {
+			// Per symbol, and only this symbol. The gate refused ONE line; the other forty-nine are
+			// still perfectly good answers, and failing them all would turn one delisted code into a
+			// home page with no prices on it.
+			vendorLogf(quoteTencentBatchHost, "quote batch gate refused %s: %v", t.Symbol, err)
+			continue
+		}
+		out[t.Symbol] = &QuoteResp{
+			Symbol:   t.Code,
+			Name:     strings.TrimSpace(fields[1]),
+			Market:   t.Market.id,
+			Kind:     t.Market.kindOf(fields),
+			Currency: t.Market.currency,
+			TZ:       t.Market.zone,
+			Source:   quoteSourceTencent,
+			Snapshot: snap,
+			Bars:     []QuoteBar{},
+		}
+	}
+	if matched == 0 {
+		// Not one line was about anything we asked for. That is the vendor answering something else
+		// entirely — an interstitial, a body for a different request, a shape this parser no longer
+		// recognises — and it is an ERROR rather than an empty map, because the empty map means
+		// something else here: it means every line was seen and refused per symbol, which is not the
+		// vendor's failure and must not be counted as one (loadBatchUncached).
+		return nil, fmt.Errorf("quote: tencent batch answered none of the %d symbols asked", len(targets))
+	}
+	return out, nil
 }
 
 // ---------- Sina (fallback) ----------

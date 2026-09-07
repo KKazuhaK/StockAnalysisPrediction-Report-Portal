@@ -17,7 +17,8 @@ import type { QuoteBar } from '../api/types'
 // strip's 1,234,567.89 — the same money, on the same screen, under two rules.
 import { fenToYuan, groupDigits, signedFenToYuan } from '../lib/money'
 
-// A daily candlestick chart, drawn by hand into one SVG element.
+// A price chart, drawn by hand into one SVG element: candlesticks for a daily series, a line for an
+// intraday one.
 //
 // Hand-drawn rather than delegated to a charting library because the build already ships around
 // 6 MB across ~236 chunks and vite's chunkSizeWarningLimit is set to 1600 kB, so a new charting
@@ -39,10 +40,39 @@ import { fenToYuan, groupDigits, signedFenToYuan } from '../lib/money'
 // so it never sits under the pointer, clamp it inside the container with a min/max pair, flip it to
 // the other side when there is no room, and set pointer-events: none so the card cannot steal the
 // hover that produced it. What is NOT copied is the colour convention: 红涨绿跌, see below.
+//
+// WHY AN INTRADAY SERIES IS DRAWN AS A LINE AND NOT AS CANDLES. A single day of one-minute bars is
+// about 400 points and five days of five-minute bars is 331 — both measured against the vendor,
+// against the 20-odd to 244 a daily range carries. At 400 points in a 900 px column a candle gets
+// about two pixels of slot: the body is narrower than the wick it is supposed to sit on, the two
+// merge into one grey column, and a single minute's open-to-close range is mostly noise to begin
+// with. The result is a smear that says less than a line through the closes does. This is why every
+// market app draws this window as a 分时 line with the volume panel kept underneath — 东方财富,
+// 富途, 雪球 and TradingView all switch shape rather than shrink the candle — and it is what the
+// `interval` prop below selects. Candles are still the right picture for a daily range and stay.
+
+/**
+ * Which kind of series `bars` is — a daily one (`1m`/`3m`/`6m`/`1y`) or an intraday one (`1d` at
+ * one minute, `5d` at five), per the quote contract's interval split.
+ */
+export type ChartInterval = 'daily' | 'intraday'
 
 interface Props {
   bars: QuoteBar[]
   loading?: boolean
+  /**
+   * WHAT THE BARS ARE, DECLARED BY THE CALLER — never sniffed from `bars[0].d`.
+   *
+   * The temptation is obvious: an intraday bar's `d` is a full timestamp and a daily bar's is a
+   * date, so a regex on the first bar would appear to answer this for free. It answers it WRONGLY
+   * and SILENTLY in both directions. A daily series whose vendor happens to stamp midnight onto its
+   * dates would be drawn as a line with time labels — five months of "00:00" down the axis. An
+   * intraday series delivered by a source that dates its bars would be drawn as 400 candles two
+   * pixels wide. Neither raises anything; both are a chart that quietly mislabels what it is
+   * showing, which is the one failure a price chart must not have. The caller asked for a range and
+   * therefore already knows the answer; it passes it.
+   */
+  interval?: ChartInterval
   /** Why there is no history. '' / undefined means there simply is none yet. */
   unavailable?: string
   /**
@@ -72,7 +102,8 @@ const PAD_T = 16
 const PAD_B = 26
 // Half a date label plus a little, so the newest bar's tick can be centred under it without being
 // clipped by the right edge. Every tick can then use the same text-anchor, which is what keeps the
-// no-overlap argument to a single inequality.
+// no-overlap argument to a single inequality. An intraday label is narrower still, so the same
+// gutter clears it with room to spare.
 const PAD_R = 42
 const PANEL_GAP = 10
 // The volume panel's share of the plot area. Kept as a FRACTION, not a constant number of pixels,
@@ -85,6 +116,11 @@ const AXIS_FONT = 11
 const GLYPH_W = AXIS_FONT * 0.62
 // "2026-09-04" is ten glyphs. Ticks are thinned until one step of the x scale clears this.
 const DATE_LABEL_W = 10 * GLYPH_W + 8
+// An intraday axis prints "09:31", and "09-04" at a session boundary — five glyphs either way, so
+// one width covers both kinds of label and the thinning stays the single inequality it is for the
+// daily axis. That the boundary label is exactly as wide as a time is why it can be dropped into
+// the middle of a row of times without a second measurement.
+const TIME_LABEL_W = 5 * GLYPH_W + 8
 const MAX_BODY_W = 13
 const MIN_PAD_L = 38
 
@@ -99,6 +135,56 @@ const TIP_W = 184
 const TIP_H = 22 + 8 * 18 + 7 + 16 + 2
 const TIP_GAP = 16
 const EDGE = 4
+
+/**
+ * A bar's stamp split into its date and its clock time, or null when it carries no time at all.
+ *
+ * TEXTUAL, AND NEVER `new Date(d)`. The wire carries the EXCHANGE's own wall clock and no offset —
+ * ADR 0030 §4 is explicit that converting it is what destroys the information, because a New York
+ * 09:31 read as local time and re-rendered for a reader in Shanghai becomes 21:31, a time at which
+ * that market has been shut for eight hours. Splitting the string cannot introduce a zone, so the
+ * label under a bar is the time the exchange itself printed on it. (`new Date('2026-09-07 09:31')`
+ * is additionally implementation-defined — the space form is not an ISO 8601 date-time.)
+ *
+ * Both separators are accepted because this vendor uses both: ADR 0030 §4 measured Hong Kong
+ * stamping `2026/09/07 14:41:33` where the mainland stamps `20260907144136`. Seconds, if present,
+ * are dropped: a minute bar's label is a minute.
+ */
+function splitStamp(d: string): { date: string; time: string } | null {
+  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})[T ](\d{2}):(\d{2})/.exec(d)
+  return m === null ? null : { date: `${m[1]}-${m[2]}-${m[3]}`, time: `${m[4]}:${m[5]}` }
+}
+
+/** The date half of a stamp, or the whole string when there is no time in it to split off. */
+function dayOf(d: string): string {
+  return splitStamp(d)?.date ?? d
+}
+
+/**
+ * The indices at which a new trading day starts, for an intraday series that spans more than one.
+ *
+ * A five-day 分时 chart is five sessions of identical-looking clock times laid end to end: without
+ * something on the axis marking where one ends and the next begins, 09:35 appears five times and
+ * nothing says which day any of them belongs to. These indices are what earn a DATE label instead
+ * of a time, and they get first refusal on the tick budget below.
+ *
+ * The first bar counts as a session start only when the window actually spans two dates. On a
+ * single-day chart every label is a time — putting the date under the leftmost bar of a one-day
+ * chart says nothing the header does not already say, and it costs the 09:30 label that does.
+ */
+function sessionStarts(bars: QuoteBar[]): Set<number> {
+  const out = new Set<number>()
+  let prev = dayOf(bars[0].d)
+  for (let i = 1; i < bars.length; i += 1) {
+    const day = dayOf(bars[i].d)
+    if (day !== prev) {
+      out.add(i)
+      prev = day
+    }
+  }
+  if (out.size > 0) out.add(0)
+  return out
+}
 
 interface Scale {
   /** Left gutter, sized to the widest price label this window actually prints. */
@@ -116,8 +202,12 @@ interface Scale {
   yToFen: (y: number) => number
   /** Height of a volume bar, in viewBox units. */
   vh: (shares: number) => number
-  /** Indices of the bars that get a date label. */
+  /** Indices of the bars that get an x-axis label. */
   ticks: number[]
+  /** Width one x-axis label is allowed, in CSS pixels — a date's or a time's. */
+  labelW: number
+  /** Indices that begin a trading day; empty for a daily series and for a one-day intraday one. */
+  starts: Set<number>
   /** Gridline prices, in 分. */
   levels: number[]
 }
@@ -128,10 +218,10 @@ interface Scale {
  * a scale and the unmeasured case renders a skeleton instead.
  *
  * One viewBox unit is one CSS pixel here, which is the whole point of measuring: label widths and
- * bar spacing are compared in the units they are actually painted in, so "date ticks never overlap"
- * is decided against the real width instead of against a constant that only matched one column.
+ * bar spacing are compared in the units they are actually painted in, so "the x labels never
+ * overlap" is decided against the real width instead of against a constant that matched one column.
  */
-function buildScale(bars: QuoteBar[], w: number, h: number): Scale {
+function buildScale(bars: QuoteBar[], w: number, h: number, intraday: boolean): Scale {
   const n = bars.length
 
   let lo = bars[0].l
@@ -194,12 +284,43 @@ function buildScale(bars: QuoteBar[], w: number, h: number): Scale {
   // that; what matters is that the division is never reached.
   const vh = (shares: number) => (vMax > 0 ? Math.max(0, (shares / vMax) * volH) : 0)
 
-  // Walk BACK from the newest bar, so the right-hand edge — the date a reader looks for first —
-  // always carries a label whatever thinning factor the width works out to.
-  const step = Math.max(1, Math.ceil(DATE_LABEL_W / slot))
+  // X-AXIS TICKS. Two rules, and the first one is absolute: NO TWO LABELS MAY TOUCH. That is one
+  // inequality — the centres of any two labels are at least a label's width apart — and it is
+  // stated in REAL PIXELS, which is the whole reason this function takes a measured width. A
+  // constant thinning factor was correct only for the one column it was tuned against.
+  //
+  // The second rule is that ticks are not equally worth keeping, so they are OFFERED in order of
+  // worth and the sweep keeps whatever still fits: the newest bar first (the right-hand edge is
+  // where a reader looks before anywhere else), then each session boundary on a multi-day intraday
+  // chart, then an evenly spaced grid walking back from the right to fill what is left. The
+  // boundaries are offered before the grid rather than added to it because a 5-day 分时 with four
+  // of its five dates missing is the chart this ordering exists to prevent — but they are offered,
+  // not forced: at a width where a whole session is narrower than one label even the dates have to
+  // thin out, and a legible axis missing a date beats five labels printed on top of each other.
+  //
+  // The grid's spacing is not what keeps the labels apart — the sweep would produce the same axis
+  // from every index — it is what keeps the sweep cheap and the surviving labels evenly spaced.
+  // The inequality is the guarantee, and it is the only thing that has to be right.
+  const labelW = intraday ? TIME_LABEL_W : DATE_LABEL_W
+  const starts = intraday ? sessionStarts(bars) : new Set<number>()
+  const step = Math.max(1, Math.ceil(labelW / slot))
+  const offered: number[] = [n - 1]
+  // Ascending, so that when two boundaries are closer together than one label — a width at which a
+  // whole session is narrower than "09-04" — it is deterministically the earlier session that keeps
+  // its date rather than whichever the Set happened to be built in.
+  for (const i of [...starts].sort((a, b) => a - b)) offered.push(i)
+  for (let i = n - 1; i >= 0; i -= step) offered.push(i)
+
   const ticks: number[] = []
-  for (let i = n - 1; i >= 0; i -= step) ticks.push(i)
-  ticks.reverse()
+  for (const i of offered) {
+    const x = cx(i)
+    // Against EVERY label already kept, not merely the last one: the offers do not arrive in x
+    // order — a boundary can land between two grid ticks — so a running "previous x" would let one
+    // slip in beside a label already placed to its right. This also dedupes for free, since an
+    // index offered twice is zero pixels from itself.
+    if (ticks.every((k) => Math.abs(cx(k) - x) >= labelW)) ticks.push(i)
+  }
+  ticks.sort((a, b) => a - b)
 
   return {
     padL,
@@ -213,6 +334,8 @@ function buildScale(bars: QuoteBar[], w: number, h: number): Scale {
     yToFen,
     vh,
     ticks,
+    labelW,
+    starts,
     levels,
   }
 }
@@ -235,7 +358,7 @@ const SR_ONLY: CSSProperties = {
   border: 0,
 }
 
-export default function PriceChart({ bars, loading, unavailable, height, currency }: Props) {
+export default function PriceChart({ bars, loading, unavailable, height, currency, interval }: Props) {
   const { t } = useTranslation()
   const { token } = theme.useToken()
   const readoutID = useId()
@@ -277,7 +400,31 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
   }, [box])
 
   const n = bars.length
-  const scale = useMemo(() => (n > 0 && width > 0 ? buildScale(bars, width, h) : null), [bars, n, width, h])
+  // The default is `daily`, so a caller written before intervals existed keeps the chart it had.
+  const intraday = interval === 'intraday'
+  const scale = useMemo(
+    () => (n > 0 && width > 0 ? buildScale(bars, width, h, intraday) : null),
+    [bars, n, width, h, intraday],
+  )
+
+  /**
+   * A bar's stamp as it is written out in full — in the card and in the live region, where there is
+   * room and where a reader may be several sessions from where they started.
+   *
+   * The axis and the crosshair chip cannot afford this: five glyphs is what the thinning budget is
+   * built on, and "2026-09-07 09:31" is sixteen. They print the time alone and let this say which
+   * day it was.
+   */
+  const stamp = (d: string): string => {
+    if (!intraday) return d
+    const s = splitStamp(d)
+    // A stamp this cannot parse is printed exactly as it arrived. Guessing at one is how a chart
+    // ends up labelling a bar "Invalid Date" or "NaN:NaN" — the wire's own string is at least true.
+    return s === null ? d : `${s.date} ${s.time}`
+  }
+
+  /** The clock time alone, for the axis and the chip. Falls back to the whole stamp, as above. */
+  const clock = (d: string): string => splitStamp(d)?.time ?? d
 
   // A-SHARE COLOUR CONVENTION: 红涨绿跌 — RED is UP and GREEN is DOWN, the OPPOSITE of US and
   // European markets. Swapping these does not make the chart merely unfamiliar to a Chinese
@@ -413,7 +560,10 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
 
   const readout = (
     <div id={readoutID} data-testid="price-readout" aria-live="polite" style={SR_ONLY}>
-      <span>{shown.d}</span>{' '}
+      {/* The full stamp, never the bare time the axis prints: a reader stepping through five days
+          of minutes with the arrow keys has nothing else on the page telling them which day they
+          have walked into. */}
+      <span>{stamp(shown.d)}</span>{' '}
       <span>{fenToYuan(shown.c)}</span>{' '}
       <span>
         {t('quote.open')} {fenToYuan(shown.o)}
@@ -499,8 +649,27 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
   // white-on-light-grey in the dark theme.
   const chipText = token.colorTextLightSolid
   const chipFill = token.colorBgSpotlight
-  const dateChipW = DATE_LABEL_W
-  const dateChipX = sel === null ? 0 : clamp(scale.cx(sel.i) - dateChipW / 2, 0, Math.max(0, width - dateChipW))
+  // The chip labels the time axis, so it is exactly as wide as the labels on that axis — a chip
+  // sized for a date over a row of times would cover the two labels either side of the crosshair.
+  const xChipW = scale.labelW
+  const xChipX = sel === null ? 0 : clamp(scale.cx(sel.i) - xChipW / 2, 0, Math.max(0, width - xChipW))
+
+  /**
+   * What goes under bar i on the x axis.
+   *
+   * A daily axis prints the vendor's date exactly as it dated the bar. An intraday one prints the
+   * clock time, except at a session boundary, which prints that session's 月-日 — the one place on
+   * a five-day 分时 where the axis can say that the 09:35 to its right is not the same 09:35 as the
+   * one to its left. A stamp that parses as neither is printed whole: slicing a string that is not
+   * a date produces a label that looks like one and is not.
+   */
+  const tickText = (i: number): string => {
+    const d = bars[i].d
+    if (!intraday) return d
+    const s = splitStamp(d)
+    if (s === null) return d
+    return scale.starts.has(i) ? s.date.slice(5) : s.time
+  }
 
   return (
     // position:relative is what lets the tooltip be positioned in the same pixels the drawing is
@@ -510,7 +679,11 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
         ref={svgRef}
         data-testid="price-chart"
         role="img"
-        aria-label={t('quote.chartLabel')}
+        // `quote.chartLabel` is "日 K 线图" / "Daily candlestick chart", which on a minute-by-minute
+        // line is simply false, and a false accessible name is worse than a terse one. The key list
+        // for this feature is frozen, so the intraday name is composed from two keys that exist
+        // rather than by inventing a third.
+        aria-label={intraday ? `${t('quote.intraday')} ${t('quote.chart')}` : t('quote.chartLabel')}
         aria-describedby={readoutID}
         tabIndex={0}
         viewBox={`0 0 ${width} ${h}`}
@@ -577,26 +750,54 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
           strokeWidth={1}
         />
 
-        {bars.map((b, i) => {
-          // 阳线 / 阴线: the body's colour is the close against the OPEN of the same session, which
-          // is what 阳/阴 means. The change against 昨收 belongs to the quote bar above the chart,
-          // not to the candle.
-          const colour = b.c >= b.o ? upColour : downColour
-          const x = scale.cx(i)
-          const bodyTop = scale.py(Math.max(b.o, b.c))
-          // A 十字星 — open exactly equal to close — has a body of zero height and would draw
-          // nothing at all. One unit of height keeps it on the chart as the line it should be.
-          const bodyH = Math.max(1, scale.py(Math.min(b.o, b.c)) - bodyTop)
-          return (
-            <g key={b.d} data-testid="price-candle" data-date={b.d} data-dir={b.c >= b.o ? 'up' : 'down'}>
-              <line x1={x} x2={x} y1={scale.py(b.h)} y2={scale.py(b.l)} stroke={colour} strokeWidth={1} />
-              <rect x={x - scale.bodyW / 2} y={bodyTop} width={scale.bodyW} height={bodyH} fill={colour} />
-            </g>
-          )
-        })}
+        {intraday ? (
+          // ONE polyline through the closes — see the note at the top of the file for why 400
+          // two-pixel candles are not a chart. It is drawn in ONE neutral colour, and that is a
+          // decision rather than an omission: 红涨绿跌 is a statement about a move, and the only
+          // move a whole line could claim is last close against first close, which on this chart is
+          // the first MINUTE's close and not 昨收. A stock that gapped up three percent at the open
+          // and drifted half a percent down since would be painted green — the exact opposite of
+          // the day it had. This component is not given 昨收 (the strip above it owns that number),
+          // so the line states no direction and the volume panel below, which can, states one.
+          <polyline
+            data-testid="price-line"
+            points={bars.map((b, i) => `${scale.cx(i)},${scale.py(b.c)}`).join(' ')}
+            fill="none"
+            stroke={token.colorPrimary}
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+          />
+        ) : (
+          bars.map((b, i) => {
+            // 阳线 / 阴线: the body's colour is the close against the OPEN of the same session,
+            // which is what 阳/阴 means. The change against 昨收 belongs to the quote bar above the
+            // chart, not to the candle.
+            const colour = b.c >= b.o ? upColour : downColour
+            const x = scale.cx(i)
+            const bodyTop = scale.py(Math.max(b.o, b.c))
+            // A 十字星 — open exactly equal to close — has a body of zero height and would draw
+            // nothing at all. One unit of height keeps it on the chart as the line it should be.
+            const bodyH = Math.max(1, scale.py(Math.min(b.o, b.c)) - bodyTop)
+            return (
+              <g key={b.d} data-testid="price-candle" data-date={b.d} data-dir={b.c >= b.o ? 'up' : 'down'}>
+                <line x1={x} x2={x} y1={scale.py(b.h)} y2={scale.py(b.l)} stroke={colour} strokeWidth={1} />
+                <rect x={x - scale.bodyW / 2} y={bodyTop} width={scale.bodyW} height={bodyH} fill={colour} />
+              </g>
+            )
+          })
+        )}
 
         {bars.map((b, i) => {
           const vhh = scale.vh(b.v)
+          // The volume panel survives the switch to a line — a 分时 without it is half a chart —
+          // but its colour rule changes with the shape above it. A DAILY bar is coloured 阳/阴, the
+          // close against its own open. An INTRADAY sample very often has open exactly equal to
+          // close, because a minute of a thin book is one price: under the daily rule every one of
+          // those is `c >= o` and the whole panel comes out red, which reads as a session that only
+          // ever went up. Against the PREVIOUS sample's close it is the tick direction a 分时 panel
+          // is supposed to show. The first bar has no previous one in this window and falls back to
+          // its own open rather than inventing a reference price.
+          const ref = intraday && i > 0 ? bars[i - 1].c : b.o
           return (
             <rect
               key={b.d}
@@ -605,7 +806,7 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
               y={scale.volTop + scale.volH - vhh}
               width={scale.bodyW}
               height={vhh}
-              fill={b.c >= b.o ? upColour : downColour}
+              fill={b.c >= ref ? upColour : downColour}
               opacity={0.5}
             />
           )
@@ -621,7 +822,7 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
             fontSize={AXIS_FONT}
             fill={token.colorTextTertiary}
           >
-            {bars[i].d}
+            {tickText(i)}
           </text>
         ))}
 
@@ -655,15 +856,15 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
               </text>
             </g>
             <g data-testid="price-xchip">
-              <rect x={dateChipX} y={h - PAD_B + 2} width={dateChipW} height={CHIP_H} rx={2} fill={chipFill} />
+              <rect x={xChipX} y={h - PAD_B + 2} width={xChipW} height={CHIP_H} rx={2} fill={chipFill} />
               <text
-                x={dateChipX + dateChipW / 2}
+                x={xChipX + xChipW / 2}
                 y={h - PAD_B + 2 + CHIP_H - 4}
                 textAnchor="middle"
                 fontSize={AXIS_FONT}
                 fill={chipText}
               >
-                {sel.bar.d}
+                {intraday ? clock(sel.bar.d) : sel.bar.d}
               </text>
             </g>
           </g>
@@ -716,7 +917,7 @@ export default function PriceChart({ bars, loading, unavailable, height, currenc
           }}
         >
           <div data-testid="tt-date" style={{ color: token.colorText, fontWeight: 600, marginBottom: 4 }}>
-            {sel.bar.d}
+            {stamp(sel.bar.d)}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 10, rowGap: 1 }}>
             <span>{t('quote.open')}</span>

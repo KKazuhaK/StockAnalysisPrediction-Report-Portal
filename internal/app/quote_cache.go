@@ -3,18 +3,23 @@ package app
 // quote_cache.go —— what stands between a page view and the vendors.
 //
 // A quote is the one thing in this portal that a browser asks for on every visit to every stock
-// page, and it is served by two free endpoints that owe us nothing. Three separate failure modes
-// follow from that, and this file is one answer to each:
+// page — and, since the home feed grew cards, on every visit to the front door too — and it is
+// served by free endpoints that owe us nothing. Three separate failure modes follow from that, and
+// this file is one answer to each:
 //
 //   - repetition — ten people opening the same stock in the same minute is ten identical calls, so
-//     there is an LRU in front of them, expiring on a TTL the VENDOR's own session field selects
-//     between (open or closed) and an operator sets the length of (quote_admin_api.go);
+//     there is an LRU in front of them, expiring on one of THREE TTLs: the interval decides first (a
+//     one-minute chart may not be served out of a five-minute cache), and for everything else the
+//     VENDOR's own session field selects between open and closed. An operator sets the length of all
+//     three (quote_admin_api.go);
 //   - the thundering herd — those ten arriving in the same MILLISECOND all miss the LRU together,
 //     so a hand-rolled single-flight collapses them into one upstream call and hands the one answer
-//     to all ten;
+//     to all ten. The home feed's batch is single-flighted too, keyed by the SET of symbols it asks
+//     about rather than by one;
 //   - amplification — one caller walking five thousand codes would otherwise become five thousand
 //     concurrent requests aimed at Tencent from this server's address, so a buffered channel caps
-//     how many can be in flight at once no matter how many browsers are waiting.
+//     how many can be in flight at once no matter how many browsers are waiting. A page of home
+//     cards avoids the fan-out entirely: fetchBatchUnder asks for the whole page in one request.
 //
 // The single-flight is a mutex, a map and a done channel — the same hand-rolled shape as the LRU
 // in mermaid_pdf.go. golang.org/x/sync IS resolvable (go.mod carries v0.22.0 as an indirect
@@ -26,6 +31,7 @@ import (
 	"container/list"
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,8 +55,9 @@ const (
 	quoteCacheMaxEntries = 256
 	quoteCacheMaxBytes   = 4 << 20
 
-	// WHICH of the two TTLs applies is chosen from the vendor's own market-session field rather than
-	// from a trading calendar of our own, and that part is not configurable. A hand-written calendar
+	// WHICH of the two SESSION TTLs applies is chosen from the vendor's own market-session field
+	// rather than from a trading calendar of our own, and that part is not configurable. (The
+	// interval is asked first and can take the choice away from both — see quoteTTLIntraday.) A hand-written calendar
 	// is wrong on exactly the days it matters: the Spring Festival and National Day weeks move every
 	// year, half-day sessions exist, an unscheduled closure is not on anybody's calendar in advance,
 	// and the exchange keeps publishing its own late-afternoon batch (settlement figures, 龙虎榜)
@@ -70,21 +77,35 @@ const (
 	// substitution the whole feature avoids, because a server whose zone has drifted would
 	// confidently poll a closed market every thirty seconds forever.
 	quoteTTLClosed = 5 * time.Minute
+	// And the third, which is not chosen by the market's session at all but by the INTERVAL the
+	// request asked for. A 分时 chart is a line of one-minute points, and serving it out of a
+	// five-minute cache draws a chart whose last five bars are missing and whose last price is five
+	// minutes old — on the one view in this portal whose entire subject is the last few minutes. The
+	// session TTLs stay what they are for the snapshot and the daily series; this one applies
+	// wherever quoteInterval.intraday() is true, on an open market and a closed one alike, because
+	// what makes it right is the RESOLUTION of the answer and not the state of the exchange.
+	quoteTTLIntraday = 60 * time.Second
 
-	// The floors under those two, and they are Go consts rather than two more settings for the
-	// reason ADR 0017 gives about the retention floors: a floor that is itself configurable is not a
-	// floor. Both are applied on SAVE and again on READ, so a value written by an older build, by a
-	// restored backup or by hand into meta cannot take the portal below them — the same discipline
+	// The floors under those TTLs, and they are Go consts rather than more settings for the reason
+	// ADR 0017 gives about the retention floors: a floor that is itself configurable is not a floor.
+	// Each is applied on SAVE and again on READ, so a value written by an older build, by a restored
+	// backup or by hand into meta cannot take the portal below them — the same discipline
 	// cleanupConfigLoad applies to the retention days.
 	//
 	// The number they protect is not this portal's, it is the vendors'. Five seconds of open-market
-	// TTL is already one call per symbol per five seconds per portal against two free endpoints that
-	// owe us nothing, and the address that gets rate-limited for it is ours.
+	// TTL is already one call per symbol per five seconds per portal against free endpoints that owe
+	// us nothing, and the address that gets rate-limited for it is ours.
 	quoteTTLOpenFloor   = 5 * time.Second
 	quoteTTLClosedFloor = 30 * time.Second
+	// The intraday floor is fifteen seconds rather than the open market's five. The number it
+	// protects is the same vendors', and a 分时 view is the one a reader leaves open: a chart that
+	// re-fetches four times a minute per viewer per symbol is the traffic pattern that gets this
+	// portal's address blocked, and no reader can see the difference between a fifteen-second-old
+	// minute bar and a five-second-old one, because the bar itself only changes once a minute.
+	quoteTTLIntradayFloor = 15 * time.Second
 
-	// And the ceiling over both, applied at the same two sites. It is ONE number where the floors
-	// are two because the reason does not vary with the market state: a cached price that outlives
+	// And the ceiling over all three, applied at the same two sites. It is ONE number where the
+	// floors are three because the reason does not vary with the market state or the resolution: a cached price that outlives
 	// the session it was fetched in is indistinguishable from a broken feed. The reading page shows
 	// a number that will never change again, with only the 缓存 chip as a hint, and the only way out
 	// is the clear-cache button or noticing the value in the form.
@@ -120,67 +141,337 @@ const (
 )
 
 // errQuoteNoSources is what load returns when it called nobody at all — an empty source list, an
-// order that names none of this build's sources, or a market none of the enabled ones covers. It
-// exists so the handler's 503 path is reached rather than a nil response escaping as a success.
+// order that names none of this build's sources, or a (market, interval) pair none of the enabled
+// ones has declared. It exists so the handler's 503 path is reached rather than a nil response
+// escaping as a success.
 var errQuoteNoSources = errors.New("quote: no vendor sources configured")
 
 // quoteFetchFunc is the shape both vendor fetchers in quote.go already have.
 type quoteFetchFunc func(ctx context.Context, market, code string, bars int) (*QuoteResp, error)
+
+// quoteIntervalFetchFunc is the same fetch WITH the interval in hand, for a source whose answer
+// depends on it. Both shapes exist because both facts are true: Tencent's and Sina's endpoints take
+// a bar count and nothing else, so handing their fetchers an interval would be a parameter they
+// could only ignore — while Yahoo's takes range and interval as two query parameters, and asking it
+// for a daily window when the caller wanted minutes returns a well-formed WRONG answer rather than
+// an error. A source sets one field or the other; quoteSource.call is the single place that picks.
+type quoteIntervalFetchFunc func(ctx context.Context, market, code string, bars int, iv quoteInterval) (*QuoteResp, error)
+
+// quoteBatchFetchFunc is MANY symbols in ONE upstream call, and it exists because one vendor can
+// genuinely do that: `qt.gtimg.cn/q=sh601899,sz000001,…` answers a line per code in a single
+// request, so a home page of fifty cards costs one conversation with Tencent rather than fifty.
+//
+// It answers snapshots only — that endpoint carries no series — and it is keyed by VENDOR SYMBOL
+// rather than by code, because 000001 is a Shenzhen company and a Shanghai index and a map keyed by
+// six digits would silently keep one of them.
+//
+// A source without one is not asked in bulk. There is no per-symbol emulation loop hidden behind
+// this type: a fallback that answered a batch by making fifty calls would be indistinguishable from
+// the amplification the whole cache exists to prevent, and it would arrive on exactly the day the
+// primary is down.
+type quoteBatchFetchFunc func(ctx context.Context, targets []quoteTarget) (map[string]*QuoteResp, error)
+
+// quoteCapability is one GRANT in a source's declaration: the markets this clause names, at the
+// intervals it names. A source declares a LIST of them and can serve a request when any single grant
+// covers it, because the declarations that matter are not rectangles. Tencent's is "every market's
+// price, and every market's daily series except two" — no one (markets × intervals) product says
+// that, and flattening it into one would either hand Tencent a US series it answers with two rows
+// fifteen years apart or take away the US price it answers correctly.
+type quoteCapability struct {
+	// markets is a PREDICATE over the market table rather than a list of ids wherever the fact it
+	// answers already lives there: Sina's grant is the `sina` column quoteSinaTarget itself refuses
+	// hk and us on, so the declaration cannot come to disagree with the parser that actually
+	// decides. Where the fact is about the SOURCE and not about the market it is named here as ids
+	// instead — see Tencent's daily grant below, which is the one case and carries the reason.
+	//
+	// nil means every market.
+	markets func(*quoteMarket) bool
+	// intervals is what this grant covers. Empty grants nothing, which is why a source declares
+	// grants rather than two independent sets: a market list with no intervals beside it would be a
+	// declaration that reads as "everything" and means "nothing".
+	intervals []quoteInterval
+}
+
+// covers reports whether this one grant reaches a request.
+func (g quoteCapability) covers(m *quoteMarket, iv quoteInterval) bool {
+	// A market this build has no row for is not something a declaration can answer about, so the
+	// interval decides alone — the same tolerance the market predicate had before capabilities
+	// existed, and only reachable from a caller that skipped quoteResolve.
+	if g.markets != nil && m != nil && !g.markets(m) {
+		return false
+	}
+	for _, ok := range g.intervals {
+		if ok == iv {
+			return true
+		}
+	}
+	return false
+}
 
 // quoteSource is one vendor, named so the health counters and QuoteResp.Source agree without a
 // second table mapping one to the other.
 type quoteSource struct {
 	name  string
 	fetch quoteFetchFunc
-	// serves reports whether this source's parser covers a market. It is a PREDICATE over the
-	// market table rather than a list of ids, because the fact it answers already lives in
-	// quoteMarkets — quoteSinaTarget refuses hk and us on the `sina` column — and a second list
-	// here would be free to disagree with the one that actually decides. The admin panel prints
-	// what this predicate says, so a source cannot advertise a market its fetcher then refuses.
+	// fetchAt is fetch for a source that needs the interval to answer at all — see
+	// quoteIntervalFetchFunc. Exactly one of the two is set; call prefers this one.
+	fetchAt quoteIntervalFetchFunc
+	// fetchBatch is the many-symbols-one-call fetcher, or nil for a source that has no such
+	// endpoint. It is a SEPARATE field rather than something derived from the two above because
+	// batching is a property of the vendor's URL, not of its parser: Tencent has an endpoint that
+	// takes a comma list and Sina and Yahoo do not, and no amount of looping here would change that.
+	fetchBatch quoteBatchFetchFunc
+	// optIn keeps a compiled-in source OUT of the shipped order (quoteShippedOrder) while leaving it
+	// in every other respect: the panel lists it, quote_source_order accepts its name, and adding it
+	// there is the whole of turning it on. It is not a second enable flag — the order remains the
+	// only one, and this decides nothing except what an UNCONFIGURED portal starts with.
 	//
-	// nil means "no restriction recorded", which is what a test that wires a bare stub gets.
-	serves func(*quoteMarket) bool
+	// Yahoo is why it exists. Its endpoint is undocumented and unlicensed, so whether a deployment
+	// depends on it is the operator's decision rather than the build's, which is the same trade ADR
+	// 0017's cleanup targets and the GeoIP refresh loop already ship on.
+	optIn bool
+	// caps is what this source DECLARES it can serve. It replaces a bare market predicate because
+	// the resolver's question grew a second half (quoteInterval): a source that serves a market's
+	// price and not its history is the ordinary case here, not an exception. The admin panel prints
+	// what this declaration says, so a source cannot advertise a market its fetcher then refuses.
+	//
+	// An EMPTY declaration means "no restriction recorded", which is what a test wiring a bare stub
+	// gets and what every such test relies on.
+	caps []quoteCapability
+	// knows answers the half of "may this source be asked" that caps cannot: whether this source has
+	// a spelling for THIS CODE. nil means every code in the markets above.
+	//
+	// A grant is a predicate over the market table, and Yahoo's Hong Kong problem is not about the
+	// market: canonicalCode accepts any five digits there, and only the ones that begin with the zero
+	// Yahoo drops have a measured symbol (quoteYahooSymbol). Without this, hk 80737 resolved to a
+	// source whose fetcher refused it before any HTTP request — and load then recorded that refusal,
+	// a fact about OUR OWN code, against the vendor's health, and answered 503 for a gap no retry
+	// closes. sourcesFor exists precisely so that a skip cannot reach the counters, and a skip it
+	// cannot see is a skip it cannot keep out of them.
+	//
+	// It is the FETCHER'S OWN symbol function that answers, never a second rule written beside it:
+	// two statements of "which codes can this vendor be asked about" is one way for the resolver and
+	// the parser to come to disagree, which is the same argument the market predicates carry.
+	knows func(quoteTarget) bool
 }
 
-// covers is serves with the nil case spelled out: an unrestricted source is asked for every market.
-func (src quoteSource) covers(m *quoteMarket) bool {
-	return src.serves == nil || m == nil || src.serves(m)
+// serves is the whole of "may this source be asked for this request": the declaration over the
+// (market, interval) pair, and then the code. It is what the RESOLVER asks, because the resolver has
+// a target in hand; the panel has only a market and asks covers below.
+func (src quoteSource) serves(t quoteTarget, iv quoteInterval) bool {
+	if !src.covers(t.Market, iv) {
+		return false
+	}
+	// A target with no market row cannot be asked about by code either — only a caller that skipped
+	// quoteResolve produces one, and covers has already decided that case on the interval alone.
+	return src.knows == nil || src.knows(t)
+}
+
+// covers is "may this source be asked about this MARKET at this interval", which is the declaration
+// alone, with the empty case spelled out: an undeclared source is asked for everything. It is the
+// panel's question (marketIDsFor) and half of the resolver's.
+func (src quoteSource) covers(m *quoteMarket, iv quoteInterval) bool {
+	if len(src.caps) == 0 {
+		return true
+	}
+	for _, g := range src.caps {
+		if g.covers(m, iv) {
+			return true
+		}
+	}
+	return false
+}
+
+// call runs this source's fetcher for one request. It is the only place that knows a source may
+// carry either shape of fetcher, so load stays one loop over one call — and a source that declared
+// an interval-dependent capability cannot be invoked through the fetcher that would ignore it.
+//
+// A source with NEITHER fetcher set is an error rather than a nil dereference: the empty
+// declaration that lets a test wire a bare stub means "no restriction recorded", and this is what
+// keeps that convenience from reaching the failover loop as a panic in a handler goroutine.
+func (src quoteSource) call(ctx context.Context, market, code string, bars int, iv quoteInterval) (*QuoteResp, error) {
+	switch {
+	case src.fetchAt != nil:
+		return src.fetchAt(ctx, market, code, bars, iv)
+	case src.fetch != nil:
+		return src.fetch(ctx, market, code, bars)
+	}
+	return nil, fmt.Errorf("quote: source %q has no fetcher", src.name)
+}
+
+// callBatch runs this source's batch fetcher. A source without one answers with the sentinel rather
+// than with a loop over call: see quoteBatchFetchFunc for why emulating a batch is worse than not
+// having one.
+func (src quoteSource) callBatch(ctx context.Context, targets []quoteTarget) (map[string]*QuoteResp, error) {
+	if src.fetchBatch == nil {
+		return nil, fmt.Errorf("%w: %s has no batch endpoint", errQuoteNoSources, src.name)
+	}
+	return src.fetchBatch(ctx, targets)
 }
 
 // marketIDs is the answer to "which markets can this source serve", asked of every row in the market
 // table so that adding a market cannot leave a stale answer behind here.
-func (src quoteSource) marketIDs() []string {
+//
+// It is the UNION over the intervals, and it has to be: the panel has one markets column while a
+// source's grants differ per interval, so the only honest reading of a single list is "at some
+// interval". Tencent's row therefore still names the US, which is what it said before capabilities
+// existed and is true of the price it serves there; that the US has no chart is stated where it
+// always was, by the market table and by the handler that blanks the bars.
+func (src quoteSource) marketIDs() []string { return src.marketIDsFor(quoteAllIntervals...) }
+
+// marketIDsFor is the same question asked of a NAMED set of intervals, which is what the panel's
+// capability column needs: "which markets does this source draw a chart for" is a different and
+// narrower answer than "which markets can it say anything about", and the US is the case that proves
+// it — Tencent appears in the markets column for a price it serves correctly and must not appear in
+// the daily one for a series it answers with two rows fifteen years apart.
+//
+// Asked of every row in the market table rather than read off a list, so that adding a market cannot
+// leave a stale answer behind here. A source is named for an interval set if ANY interval in it is
+// covered, which is why the intraday column can be one column while two intraday intervals exist.
+func (src quoteSource) marketIDsFor(ivs ...quoteInterval) []string {
 	out := make([]string, 0, len(quoteMarkets))
 	for id, m := range quoteMarkets {
-		if src.covers(m) {
-			out = append(out, id)
+		for _, iv := range ivs {
+			if src.covers(m, iv) {
+				out = append(out, id)
+				break
+			}
 		}
 	}
 	sort.Strings(out)
 	return out
 }
 
-// defaultQuoteSources is the shipped failover order. Tencent first because one call returns history,
-// snapshot and session state together and therefore cannot contradict itself about which instant it
-// is describing; Sina second because it costs two calls and publishes no percentage of its own.
+// defaultQuoteSources is the shipped failover order and the shipped capability declaration. Tencent
+// first because one call returns history, snapshot and session state together and therefore cannot
+// contradict itself about which instant it is describing; Sina second because it costs two calls and
+// publishes no percentage of its own.
+//
+// What the declarations buy is not documentation. The resolver skips a source that has not declared
+// the (market, interval) pair in hand, so "the US daily series comes from somewhere other than
+// Tencent" is true BY CONSTRUCTION rather than by an order an admin has to get right: a source added
+// here that declares us-daily is the only one that CAN be asked for it, wherever the operator puts
+// it in quote_source_order. That is also why there is no per-market source setting and must not be
+// one — it would be a second, editable statement of the same fact, free to disagree with this one.
 //
 // It is also the list quote_source_order is validated against: a name no source here answers to is
 // refused at the save rather than stored and silently skipped.
 func defaultQuoteSources() []quoteSource {
 	return []quoteSource{
-		// fqkline answers all five markets — every fixture in testdata/quote/ came out of it.
-		{name: quoteSourceTencent, fetch: fetchTencentQuote, serves: func(*quoteMarket) bool { return true }},
-		{name: quoteSourceSina, fetch: fetchSinaQuote, serves: func(m *quoteMarket) bool { return m.sina }},
+		{
+			name: quoteSourceTencent,
+			// fetchAt rather than fetch, because this vendor now has TWO endpoints and only the
+			// interval says which one a request means: fqkline for the daily series, minute/query
+			// for 分时. Wiring it through the interval-blind fetcher would answer a minute request
+			// with a daily series and no error — the exact failure the note below used to describe
+			// as the reason the intraday grant did not yet exist.
+			fetchAt: fetchTencentAt,
+			// And a third endpoint, which is not an interval but a SHAPE: q= answers many symbols in
+			// one request. It is what makes a page of home cards one upstream call.
+			fetchBatch: fetchTencentBatch,
+			caps: []quoteCapability{
+				// The price, in every market: fqkline answers all five — every fixture in
+				// testdata/quote/ came out of it — and its snapshot half is trusted in all five.
+				{intervals: []quoteInterval{quoteIntervalSnapshot}},
+				// The SERIES, in every market except the two where what comes back is not one:
+				// Beijing answers "day":[] and the US answers a sixty-bar request with two rows
+				// fifteen years apart. Both were measured against committed fixtures (ADR 0030 §4).
+				//
+				// Named as ids rather than read off quoteMarket.history, which happens to hold the
+				// same two markets today. `history` is a statement about the MARKET as this portal
+				// currently sources it, and it is the flag the handler blanks bars on; this is a
+				// statement about TENCENT. The day the two diverge is the day a source that really
+				// does serve US dailies is enabled — and reading the column here would silently hand
+				// the US series back to Tencent at exactly that moment, which is the failure this
+				// whole declaration exists to make impossible.
+				{
+					markets:   func(m *quoteMarket) bool { return m.id != "us" && m.id != "bj" },
+					intervals: []quoteInterval{quoteIntervalDaily},
+				},
+				// ONE SESSION of minutes, in the three markets where a real one was measured. The
+				// endpoint answers all five and two of the answers are not a series: bj830799 comes
+				// back with ONE point (0930, volume 0 — the suspended stock the daily fixtures are
+				// also captured from) and usAAPL with ONE point and an EMPTY trading date, which is
+				// not a bar this parser can stamp at all. Both are in testdata/quote/ as the
+				// measurement rather than as a claim.
+				//
+				// Beijing is the row to be honest about: the only bj body captured is a suspended
+				// stock, so what is measured is "no series for THIS code", not "no series for the
+				// market". It is left out on the same principle that keeps `.BJ` out of the Yahoo
+				// symbol map — an undeclared market is a request that resolves to nobody, while a
+				// wrongly declared one is a chart drawn from a single point.
+				//
+				// quoteIntervalIntraday5D is deliberately absent: minute/query answers TODAY and
+				// says so in the payload, and there is no window parameter to ask it for five days.
+				// Yahoo is the only source that declares that pair.
+				{
+					markets: func(m *quoteMarket) bool {
+						return m.id == "sh" || m.id == "sz" || m.id == "hk"
+					},
+					intervals: []quoteInterval{quoteIntervalIntraday},
+				},
+			},
+		},
+		{
+			name:  quoteSourceSina,
+			fetch: fetchSinaQuote,
+			// A-shares only. Sina's Hong Kong and US lines are `rt_hk00700` and `gb_aapl` — 19 and 36
+			// fields in a different order — so pointing the A-share parser at either would not be a
+			// second source, it would be a second shape read as the first. The predicate is the same
+			// `sina` column quoteSinaTarget refuses those two markets on.
+			caps: []quoteCapability{
+				{
+					markets:   func(m *quoteMarket) bool { return m.sina },
+					intervals: []quoteInterval{quoteIntervalSnapshot},
+				},
+				// The series, only where fetchSinaQuote will actually go and fetch one: it asks
+				// quoteMarketHasDailyHistory before touching the kline endpoint, because Sina
+				// answers a Beijing code with a series that stops over a year ago instead of with an
+				// error. Reading the same column here is what keeps the declaration and the fetcher
+				// from drifting apart — the opposite call from Tencent's above, and for the opposite
+				// reason: this fetcher consults the column at request time, that one never does.
+				{
+					markets:   func(m *quoteMarket) bool { return m.sina && m.history },
+					intervals: []quoteInterval{quoteIntervalDaily},
+				},
+			},
+		},
+		// Yahoo: compiled in, listed in the panel, and NOT in quoteShippedOrder — see optIn, and see
+		// quote_yahoo.go for what it declares and why the operator rather than the build decides
+		// whether to depend on it. It is the only source that declares a US daily series.
+		quoteYahooSource(),
 	}
 }
 
-// quoteSourceNames is every source compiled into this build, in the shipped order. Derived from
+// quoteSourceNames is every source compiled into this build, in table order, INCLUDING the ones that
+// ship disabled — it is the list a save is validated against, and refusing to name a source an
+// operator is allowed to enable is how a compiled-in source becomes unreachable. What an unconfigured
+// portal actually runs is quoteShippedOrder, which is a shorter list. Derived from
 // defaultQuoteSources rather than written out again, so a source added there cannot be one the
 // order setting refuses to name.
 func quoteSourceNames() []string {
 	srcs := defaultQuoteSources()
 	out := make([]string, 0, len(srcs))
 	for _, src := range srcs {
+		out = append(out, src.name)
+	}
+	return out
+}
+
+// quoteShippedOrder is the failover order an UNCONFIGURED portal runs: every compiled-in source
+// except the opt-in ones. It is not the same list as quoteSourceNames and the difference is the
+// point — a source that ships disabled is still a source the order setting may name, the panel must
+// list and the resolver will use the moment an operator adds it.
+//
+// Derived from the same table for the same reason quoteSourceNames is: a source added there is off
+// or on by its own declaration, not by a second list here that somebody has to remember to edit.
+func quoteShippedOrder() []string {
+	srcs := defaultQuoteSources()
+	out := make([]string, 0, len(srcs))
+	for _, src := range srcs {
+		if src.optIn {
+			continue
+		}
 		out = append(out, src.name)
 	}
 	return out
@@ -196,22 +487,36 @@ const (
 	// quoteTTLCeiling].
 	setQuoteTTLOpenSecs   = "quote_ttl_open_secs"
 	setQuoteTTLClosedSecs = "quote_ttl_closed_secs"
+	// The third TTL, for a minute-resolution answer, clamped into
+	// [quoteTTLIntradayFloor, quoteTTLCeiling].
+	setQuoteTTLIntradaySecs = "quote_ttl_intraday_secs"
+
+	// Whether the home feed asks for prices at all. Default ON, and it exists for one reason that
+	// has nothing to do with load: turning it on sends the list of codes currently on a reader's
+	// screen to a third-party vendor on EVERY home page view. The data is public and read-only and
+	// the request is small, but it is an outward disclosure of what this portal is showing, and an
+	// operator running an internal deployment may not want to make it. Everything else about quotes
+	// happens when somebody opens a stock; this is the one that happens when somebody opens the
+	// front door.
+	setQuoteHomeCards = "home_quotes"
 )
 
 // quoteConfig is what an admin can change about the fetch path. Every field's zero value is refused
 // by orDefaults below rather than obeyed: an empty order would mean "every source off" and a zero
 // TTL would mean "expire on arrival", and neither is a thing anybody configured.
 type quoteConfig struct {
-	Order     []string // source names, in the order to try
-	TTLOpen   time.Duration
-	TTLClosed time.Duration
+	Order       []string // source names, in the order to try
+	TTLOpen     time.Duration
+	TTLClosed   time.Duration
+	TTLIntraday time.Duration
 }
 
 // quoteConfigDefault is what the portal did before any of this was configurable, and it is what an
 // unconfigured portal still does. The whole point of the three settings is that this function is
 // the answer until somebody saves something else.
 func quoteConfigDefault() quoteConfig {
-	return quoteConfig{Order: quoteSourceNames(), TTLOpen: quoteTTLOpen, TTLClosed: quoteTTLClosed}
+	return quoteConfig{Order: quoteShippedOrder(), TTLOpen: quoteTTLOpen, TTLClosed: quoteTTLClosed,
+		TTLIntraday: quoteTTLIntraday}
 }
 
 // orDefaults fills in whatever a caller left unset. It exists because quoteConfig travels as a
@@ -228,13 +533,26 @@ func (cfg quoteConfig) orDefaults() quoteConfig {
 	if cfg.TTLClosed <= 0 {
 		cfg.TTLClosed = def.TTLClosed
 	}
+	if cfg.TTLIntraday <= 0 {
+		cfg.TTLIntraday = def.TTLIntraday
+	}
 	return cfg
 }
 
-// ttlFor picks which of the two TTLs this response gets. See quoteTTLOpen for why the choice is the
-// vendor's session field and not a calendar.
-func (cfg quoteConfig) ttlFor(resp *QuoteResp) time.Duration {
+// ttlFor picks which of the THREE TTLs this response gets, and the interval is asked FIRST.
+//
+// The order matters and is not arbitrary. A 分时 response for an open market would otherwise take
+// the thirty-second open-market TTL — which is nearly right — and one for a CLOSED market would take
+// the five-minute one, which is exactly wrong for the reader who opens the chart at 09:31 while the
+// vendor still reports the previous session as closed. The interval is a property of what was ASKED
+// FOR and the session is a property of what came back; a one-minute series wants a one-minute cache
+// either way. See quoteTTLOpen for why the session choice, where it still applies, is the vendor's
+// field and never a calendar.
+func (cfg quoteConfig) ttlFor(resp *QuoteResp, iv quoteInterval) time.Duration {
 	cfg = cfg.orDefaults()
+	if iv.intraday() {
+		return cfg.TTLIntraday
+	}
 	if resp != nil && resp.Snapshot.Session == quoteSessionOpen {
 		return cfg.TTLOpen
 	}
@@ -296,7 +614,21 @@ func (s *Server) quoteConfigLoad() quoteConfig {
 	// serving the old one, and every test still passed.
 	cfg.TTLOpen = quoteTTLSetting(s.st, setQuoteTTLOpenSecs, cfg.TTLOpen, quoteTTLOpenFloor)
 	cfg.TTLClosed = quoteTTLSetting(s.st, setQuoteTTLClosedSecs, cfg.TTLClosed, quoteTTLClosedFloor)
+	cfg.TTLIntraday = quoteTTLSetting(s.st, setQuoteTTLIntradaySecs, cfg.TTLIntraday, quoteTTLIntradayFloor)
 	return cfg
+}
+
+// quoteHomeCards is the reader for setQuoteHomeCards. Default ON, per the ask — and read here rather
+// than in the handler so that the batch endpoint and the admin panel are looking at one function
+// instead of two copies of a default.
+//
+// It fails OPEN (to the shipped default) when there is no store to ask, exactly as quoteConfigLoad
+// does: a Server with no store is a test fixture, not an operator who has switched something off.
+func (s *Server) quoteHomeCards() bool {
+	if s.st == nil {
+		return true
+	}
+	return settingBool(s.st.GetSetting(setQuoteHomeCards, ""), true)
 }
 
 // quoteTTLSetting reads one TTL in seconds. A value outside the range is CLAMPED to the nearer end,
@@ -358,6 +690,12 @@ type quoteFlight struct {
 	done chan struct{}
 	resp *QuoteResp
 	err  error
+	// many is the batch leader's result — the same collapse, for a flight whose key is a SET of
+	// symbols rather than one. It shares the struct and the map because it shares endFlight and the
+	// publish-then-close ordering that makes a late arrival start a new flight instead of joining an
+	// answered one; a batch flight sets this and a single-symbol flight sets resp, and neither ever
+	// reads the other's field because the key spaces cannot collide ("batch:" prefix).
+	many map[string]*QuoteResp
 }
 
 type quoteCache struct {
@@ -403,8 +741,26 @@ func (c *quoteCache) init() {
 // quoteCacheKey identifies one cached answer. The bar count is part of it because it is part of the
 // answer: the 1y response is not the 3m response with more rows appended, it is a different vendor
 // call, and keying on the symbol alone would serve whichever range happened to be fetched first.
-func quoteCacheKey(market, code string, bars int) string {
-	return market + code + ":" + strconv.Itoa(bars)
+//
+// So is the INTERVAL, and it had to become part of it in the same change that let a request choose
+// one: 400 one-minute points and 400 daily bars are the same market, the same code and the same bar
+// count, and without this they would share a slot — so whichever of 分时 and 1年 was asked for first
+// would be drawn under both labels for the rest of the TTL.
+//
+// The bar count is dropped for a SNAPSHOT answer, and that is not a shortcut: a snapshot has no
+// series, so the number of bars that were asked for is not part of what came back. Keeping it would
+// give the same price as many cache entries as there are ranges.
+//
+// It is NOT what lets a home card reuse a reading page's fetch — an earlier version of this comment
+// claimed that and was wrong. Card-to-page warming is snapshotFor's prefix scan, which never looks
+// at the key's components. What this line actually buys is narrower and still worth having: for a
+// market whose reading page can only ever get a snapshot (us and bj, whose daily ranges degrade),
+// the card's key and the page's key become the SAME key rather than two entries holding one price.
+func quoteCacheKey(market, code string, bars int, iv quoteInterval) string {
+	if iv == quoteIntervalSnapshot {
+		bars = 0
+	}
+	return market + code + ":" + strconv.Itoa(bars) + ":" + string(iv)
 }
 
 // quoteEntrySize estimates one entry's footprint. See quoteBarBytes for why an estimate is enough.
@@ -542,25 +898,69 @@ func (c *quoteCache) snapshotHealth() []QuoteSourceHealth {
 	return out
 }
 
-// ordered is the source list the operator asked for: the sources this build has, in cfg's order,
-// and only those cfg names. A source absent from the order is off — that is the whole of the
-// enable/disable mechanism, and it is why there is no second flag to contradict it.
+// sourcesFor is the resolver: the sources this build has, in cfg's order, that have DECLARED they
+// can serve this request — the (market, interval) pair, and the code. A source absent from the order is off — that is the whole
+// of the enable/disable mechanism, and it is why there is no second flag to contradict it — and a
+// source present in the order but silent about the pair is skipped, which is how the order comes to
+// mean "in what order among the sources that CAN" rather than "which one, right or wrong".
 //
-// A name in the order that this build has no source for is skipped rather than treated as a failure.
-// The save refuses such a name and the read drops it (quoteParseOrder), so reaching here means the
-// setting outlived the source it named, and a missing vendor is not a vendor that answered badly.
-func (c *quoteCache) ordered(cfg quoteConfig) []quoteSource {
+// Both kinds of skip are absences, not failures, and neither may reach the health counters:
+//
+//   - a name in the order this build has no source for. The save refuses such a name and the read
+//     drops it (quoteParseOrder), so reaching here means the setting outlived the source it named,
+//     and a missing vendor is not a vendor that answered badly;
+//   - a source that never claimed the pair. Asking Sina for usAAPL returns "sina has no
+//     A-share-shaped line for the us market" — a fact about our own code — and counting that as a
+//     vendor failure would paint a permanent red streak on the fallback in the admin panel for
+//     every US symbol somebody looks up while Tencent is having a bad afternoon;
+//   - a source with no SPELLING for the code (quoteSource.knows). The same kind of fact and the same
+//     reason it may not be counted: "this portal has no measured yahoo symbol for hk 80737" is a
+//     sentence about our own table, and a vendor that was never asked cannot have failed.
+//
+// It takes a TARGET rather than a market because the last of those is about the code. Deciding all
+// three HERE rather than inside the failover loop is what makes the guarantee structural: a source
+// this function did not return is one load never has an error from — and one servableInterval counts
+// as absent, so a request only that source could have served degrades to the price and an empty chart
+// instead of a 503 that no retry can close.
+func (c *quoteCache) sourcesFor(cfg quoteConfig, t quoteTarget, iv quoteInterval) []quoteSource {
 	byName := make(map[string]quoteSource, len(c.sources))
 	for _, src := range c.sources {
 		byName[src.name] = src
 	}
 	out := make([]quoteSource, 0, len(cfg.Order))
 	for _, name := range cfg.Order {
-		if src, ok := byName[name]; ok {
-			out = append(out, src)
+		src, ok := byName[name]
+		if !ok || !src.serves(t, iv) {
+			continue
 		}
+		out = append(out, src)
 	}
 	return out
+}
+
+// servableInterval degrades a request that no ENABLED source can answer to a snapshot, rather than
+// letting it become a 503.
+//
+// The difference matters on one screen: 分时 on a market this deployment has no minute source for.
+// Without this the reader loses the whole panel — the price, the name, the market badge — behind
+// "the quote sources are unreachable, please try again", which is false (they are answering fine)
+// and invites a retry that will never work. With it they get the price and a chart that says there
+// is no series, which is what a Beijing or US chart has said since ADR 0028 §7 and is the shape the
+// handler already knows how to render.
+//
+// It degrades to the SNAPSHOT and never to another series. Serving a daily chart to a 分时 request
+// because that is what happens to be available would answer a different question under the label
+// the reader picked, which is the one thing this feature is not allowed to do.
+//
+// Since the four daily ranges started asking for what they mean, this is also what answers the DAILY
+// question for the two markets ADR 0030 §4 called chart-less: Beijing degrades because no source
+// declares (bj, daily), and the US degrades until an operator enables one that does. That is the same
+// sentence the market table used to hard-code, checked against the sources actually running.
+func (c *quoteCache) servableInterval(cfg quoteConfig, t quoteTarget, iv quoteInterval) quoteInterval {
+	if iv == quoteIntervalSnapshot || len(c.sourcesFor(cfg, t, iv)) > 0 {
+		return iv
+	}
+	return quoteIntervalSnapshot
 }
 
 // load runs the failover, holding one slot on the upstream ceiling for the WHOLE sequence rather
@@ -571,25 +971,31 @@ func (c *quoteCache) ordered(cfg quoteConfig) []quoteSource {
 // A drift-gate failure arrives here as an ordinary error from the fetcher, which is the point: the
 // gate is not advisory, and a source that answered with a shape we cannot trust has failed as
 // completely as one that did not answer at all.
-func (c *quoteCache) load(ctx context.Context, cfg quoteConfig, market, code string, bars int) (*QuoteResp, error) {
+//
+// The interval is a parameter rather than something worked out from the market here, because it is
+// half of what sourcesFor answers on and only the caller knows which half it is asking for: a US
+// price and a US daily series are two different chains through the same source table.
+func (c *quoteCache) load(ctx context.Context, cfg quoteConfig, market, code string, bars int, iv quoteInterval) (*QuoteResp, error) {
+	// Re-resolved rather than passed in, because what the resolver needs is the whole target: the
+	// market row AND the code, the second of which decides whether a source has a symbol for this
+	// request at all. Every caller has one already — this is the same quoteTargetFor the handler ran
+	// over the same canonical code — so a failure here means a caller skipped quoteResolve, and it is
+	// an error rather than an empty chain so that it cannot read as "every vendor is down".
+	target, err := quoteTargetFor(market, code)
+	if err != nil {
+		return nil, err
+	}
 	release, err := c.acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
 
-	m := quoteMarkets[market]
 	var firstErr error
-	for _, src := range c.ordered(cfg) {
-		// A source whose parser does not cover this market is not called, and above all is not
-		// blamed. Asking Sina for usAAPL returns "sina has no A-share-shaped line for the us
-		// market" — a fact about our own code — and counting that as a vendor failure puts a
-		// permanent red streak on the fallback in the admin panel for every US symbol somebody
-		// looks up while Tencent is having a bad afternoon.
-		if !src.covers(m) {
-			continue
-		}
-		resp, err := src.fetch(ctx, market, code, bars)
+	// Every source below has declared this pair and has a spelling for this code; one that has not is
+	// not called and above all is not blamed (sourcesFor).
+	for _, src := range c.sourcesFor(cfg, target, iv) {
+		resp, err := src.call(ctx, market, code, bars, iv)
 		if err != nil {
 			// A failure that arrives because THIS side stopped waiting is not the vendor's, and it
 			// must not land in the health counters: those are what an operator reads to decide
@@ -630,10 +1036,10 @@ func (c *quoteCache) load(ctx context.Context, cfg quoteConfig, market, code str
 //
 // The returned *QuoteResp is SHARED with every other caller holding the same cache entry. Nothing
 // downstream may mutate it; the handler copies the struct before stamping Cached on it.
-func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, code string, bars int) (*QuoteResp, bool, time.Duration, error) {
+func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, code string, bars int, iv quoteInterval) (*QuoteResp, bool, time.Duration, error) {
 	c.init()
 	cfg = cfg.orDefaults()
-	key := quoteCacheKey(market, code, bars)
+	key := quoteCacheKey(market, code, bars, iv)
 	if resp, left, ok := c.get(key); ok {
 		return resp, true, left, nil
 	}
@@ -654,7 +1060,7 @@ func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, co
 		// A follower is served the leader's answer, which is in the LRU by now, and reports it as
 		// cached. The flag answers "did this response cost an upstream call", which is the question
 		// both the 缓存 chip and Cache-Control actually need answered — a follower made none.
-		return fl.resp, true, cfg.ttlFor(fl.resp), nil
+		return fl.resp, true, cfg.ttlFor(fl.resp, iv), nil
 	}
 	fl := &quoteFlight{done: make(chan struct{})}
 	c.flights[key] = fl
@@ -682,9 +1088,12 @@ func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, co
 	defer cancelLoad()
 
 	ttl := time.Duration(0)
-	fl.resp, fl.err = c.load(loadCtx, cfg, market, code, bars)
+	// The interval is the CALLER's now rather than something worked out from the market here: the 1d
+	// and 5d ranges let a request choose one, so the same market and the same code can be two
+	// different questions. It travels into quoteCacheKey above for the same reason.
+	fl.resp, fl.err = c.load(loadCtx, cfg, market, code, bars, iv)
 	if fl.err == nil {
-		ttl = cfg.ttlFor(fl.resp)
+		ttl = cfg.ttlFor(fl.resp, iv)
 		c.put(key, fl.resp, ttl)
 	}
 	resp, err := fl.resp, fl.err
@@ -693,6 +1102,233 @@ func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, co
 		return nil, false, 0, err
 	}
 	return resp, false, ttl, nil
+}
+
+// ---------- many symbols, one call ----------
+
+// quoteBatchEntry is one symbol's answer out of a batch: the SHARED response — nothing downstream
+// may mutate it, exactly as with fetchUnder's — and whether it cost an upstream call.
+type quoteBatchEntry struct {
+	resp   *QuoteResp
+	cached bool
+}
+
+// fetchBatchUnder answers many symbols at once, keyed by vendor symbol, and is the whole of what
+// GET /api/quotes does with the vendors.
+//
+// Three properties, and each one is why a batch is not a loop over fetchUnder:
+//
+//   - ONE upstream call for N symbols. The loop would be N, aimed at one vendor from one address,
+//     on the busiest page in the portal.
+//   - the SAME cache. A card is served by any live entry for that symbol, whatever range or interval
+//     put it there (snapshotFor), so a reader who has just had a stock page open costs nothing when
+//     the home feed asks about the same code. The reverse — a card warming a reading page — cannot
+//     work and is worth being precise about rather than claiming: a card's answer carries no series,
+//     so it cannot answer a request for 66 daily bars, and pretending otherwise would serve a chart
+//     with nothing in it.
+//   - PER-SYMBOL failure. A symbol missing from the answer is missing from the map; it does not
+//     take the other forty-nine with it. The vendor half of that promise is in parseTencentBatch,
+//     which drops a line that fails the gate and keeps the rest.
+//
+// A total failure — no batching source enabled, transport down, an unreadable body — returns what
+// the cache had and nothing else. There is no error out-parameter because there is nothing the home
+// feed could do with one: the cards render without prices, which is exactly how they render today.
+func (c *quoteCache) fetchBatchUnder(ctx context.Context, cfg quoteConfig, targets []quoteTarget) map[string]quoteBatchEntry {
+	c.init()
+	cfg = cfg.orDefaults()
+	out := make(map[string]quoteBatchEntry, len(targets))
+	misses := make([]quoteTarget, 0, len(targets))
+	// Deduplicated HERE as well as by the caller, and the two are not the same guard wearing two
+	// hats. The handler's shapes its `missing` list, which is built by walking the targets it
+	// assembled and never reaches this far. This one is the VENDOR's: it keeps a repeat out of the
+	// vendor's URL no matter who assembled the list, which is a promise about every caller this
+	// method will ever have rather than about the one it has today.
+	seen := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		if seen[t.Symbol] {
+			continue
+		}
+		seen[t.Symbol] = true
+		if resp, ok := c.snapshotFor(t.Market.id, t.Code); ok {
+			out[t.Symbol] = quoteBatchEntry{resp: resp, cached: true}
+			continue
+		}
+		misses = append(misses, t)
+	}
+	if len(misses) == 0 {
+		return out
+	}
+	for sym, resp := range c.loadBatch(ctx, cfg, misses) {
+		out[sym] = quoteBatchEntry{resp: resp, cached: false}
+	}
+	return out
+}
+
+// loadBatch is the single-flighted upstream half. The flight key is the SET of symbols being asked
+// for, so ten browsers opening the same home page in the same millisecond make one call between them
+// — the same collapse fetchUnder does per symbol, keyed by the thing a batch actually is.
+//
+// Different pages produce different sets and therefore different flights, which is the honest limit
+// of this: two overlapping-but-unequal sets are two calls. Making them one would need a scheduler
+// that holds requests back to coalesce them, and a home page that waits on a queue is worse than a
+// second request the vendor will not notice.
+func (c *quoteCache) loadBatch(ctx context.Context, cfg quoteConfig, targets []quoteTarget) map[string]*QuoteResp {
+	syms := make([]string, 0, len(targets))
+	for _, t := range targets {
+		syms = append(syms, t.Symbol)
+	}
+	sort.Strings(syms)
+	key := "batch:" + strings.Join(syms, ",")
+
+	c.flightMu.Lock()
+	if fl := c.flights[key]; fl != nil {
+		c.flightMu.Unlock()
+		select {
+		case <-fl.done:
+			return fl.many
+		case <-ctx.Done():
+			return nil
+		}
+	}
+	fl := &quoteFlight{done: make(chan struct{})}
+	c.flights[key] = fl
+	c.flightMu.Unlock()
+	// Detached for the same reason fetchUnder's load is: the leader is whichever tab arrived first,
+	// and its context dies the moment that tab navigates away — which would cancel the call every
+	// other waiter is still holding out for, and record a client disconnect against the vendor's
+	// health as though the vendor had gone down.
+	loadCtx, cancelLoad := context.WithTimeout(context.WithoutCancel(ctx), quoteUpstreamTimeout)
+	defer cancelLoad()
+	fl.many = c.loadBatchUncached(loadCtx, cfg, targets)
+	many := fl.many
+	c.endFlight(key, fl)
+	return many
+}
+
+// loadBatchUncached walks the enabled sources for one that can answer in bulk, and stores what comes
+// back under the same keys fetchUnder uses for a snapshot.
+//
+// A source is asked only about the symbols it has DECLARED it can serve a snapshot for — and only
+// about codes it has a spelling for — so a batch spanning four markets cannot blame a vendor for the
+// one market it never claimed. The same rule sourcesFor applies per request, applied here per symbol.
+func (c *quoteCache) loadBatchUncached(ctx context.Context, cfg quoteConfig, targets []quoteTarget) map[string]*QuoteResp {
+	byName := make(map[string]quoteSource, len(c.sources))
+	for _, src := range c.sources {
+		byName[src.name] = src
+	}
+	out := map[string]*QuoteResp{}
+	left := targets
+	for _, name := range cfg.Order {
+		if len(left) == 0 {
+			return out
+		}
+		src, ok := byName[name]
+		if !ok || src.fetchBatch == nil {
+			// Not a failure and not recorded as one: a source with no batch endpoint has not been
+			// asked anything. See quoteBatchFetchFunc for why it is not emulated with a loop.
+			continue
+		}
+		mine := make([]quoteTarget, 0, len(left))
+		rest := make([]quoteTarget, 0, len(left))
+		for _, t := range left {
+			if src.serves(t, quoteIntervalSnapshot) {
+				mine = append(mine, t)
+			} else {
+				rest = append(rest, t)
+			}
+		}
+		if len(mine) == 0 {
+			continue
+		}
+		// One slot on the upstream ceiling for the whole batch — it is one conversation, however many
+		// symbols it names.
+		release, err := c.acquire(ctx)
+		if err != nil {
+			return out
+		}
+		got, err := src.callBatch(ctx, mine)
+		release()
+		switch {
+		case err != nil:
+			// A cancelled context is this side giving up, not the vendor failing — the same rule
+			// load applies, and for the same reason: these counters are what an operator reads to
+			// decide whether a source is down.
+			if ctx.Err() == nil {
+				c.noteFailure(src.name, err)
+			}
+		case len(got) == 0:
+			// The source ANSWERED and our own gate dropped every line it sent. That is neither of the
+			// other two outcomes and it is recorded as neither.
+			//
+			// It is not a failure. A page whose only card is a suspended or delisted code is a batch
+			// of one refused line, and marking the vendor failed for it made the consecutive-failure
+			// streak an operator reads climb on every single page view while Tencent answered
+			// perfectly — the exact opposite of what those counters are for, and a direct
+			// contradiction of this endpoint's promise that a per-symbol failure costs only that
+			// symbol. The vendor half of "it answered" is enforced where it can be: a body that
+			// carried no line for ANY symbol asked about is an error from the parser (fetchTencentBatch),
+			// so it arrives above as a failure and a source answering rubbish all day cannot look
+			// healthy by falling in here.
+			//
+			// It is not a success either. Every line failing the gate is what a vendor whose array
+			// shape has drifted looks like, and resetting the streak to zero on that would erase the
+			// evidence of a real outage that was in progress. The refusals are named per symbol in the
+			// log by the parser; the counters keep whatever the last real outcome was.
+		default:
+			c.noteSuccess(src.name)
+		}
+		for _, t := range mine {
+			resp, ok := got[t.Symbol]
+			if !ok || resp == nil {
+				// This symbol alone; it falls through to the next batching source, and if there is
+				// none it is simply absent from the answer.
+				rest = append(rest, t)
+				continue
+			}
+			out[t.Symbol] = resp
+			// Stored under the SNAPSHOT key, which quoteCacheKey normalises the bar count out of —
+			// so the next card, and the next reading page for a market with no series, are hits.
+			c.put(quoteCacheKey(t.Market.id, t.Code, 0, quoteIntervalSnapshot), resp,
+				cfg.ttlFor(resp, quoteIntervalSnapshot))
+		}
+		left = rest
+	}
+	return out
+}
+
+// snapshotFor returns a live cached answer for one symbol whatever it was fetched for — a card asks
+// for a price and a price is in every response this cache holds, so a 3个月 chart fetched a moment
+// ago for the same code answers a card without a second call.
+//
+// The FRESHEST is returned rather than whichever the map iteration reached first: entries for one
+// symbol differ only in when they expire, Go randomises map order, and a batch that answered from a
+// different entry on every request would make the 缓存 chip and the TTL beside it meaningless.
+//
+// It does not promote what it finds to the front of the LRU. A card is a decoration and should not
+// be able to keep a reading page's chart alive at the expense of another reader's.
+func (c *quoteCache) snapshotFor(market, code string) (*QuoteResp, bool) {
+	c.init()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prefix := market + code + ":"
+	now := c.now()
+	var best *quoteCacheEntry
+	for key, element := range c.entries {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		entry := element.Value.(*quoteCacheEntry)
+		if !entry.expires.After(now) {
+			continue
+		}
+		if best == nil || entry.expires.After(best.expires) {
+			best = entry
+		}
+	}
+	if best == nil {
+		return nil, false
+	}
+	return best.resp, true
 }
 
 // endFlight publishes the leader's result to its waiters. The map entry goes first and the channel
@@ -758,8 +1394,16 @@ func (c *quoteCache) clear() quoteCacheStats {
 // quoteSourceInfo is one compiled-in source as the panel sees it, before the operator's order and
 // the health counters are laid over it.
 type quoteSourceInfo struct {
-	Name    string
+	Name string
+	// Markets is the UNION over the intervals — every market this source can say anything about.
 	Markets []string
+	// Daily and Intraday are the same claim split by what it is a claim ABOUT, because the union
+	// above is a wider statement than either and an operator moving a source up the order is
+	// choosing among these rather than among names. An EMPTY list is a real answer here ("serves no
+	// intraday"), and the panel renders it as a dash rather than as a blank cell, so that it cannot
+	// be confused with a field the server did not send.
+	Daily    []string
+	Intraday []string
 }
 
 // describeSources reports the sources this cache actually holds, not the shipped list: a build whose
@@ -769,7 +1413,12 @@ func (c *quoteCache) describeSources() []quoteSourceInfo {
 	c.init()
 	out := make([]quoteSourceInfo, 0, len(c.sources))
 	for _, src := range c.sources {
-		out = append(out, quoteSourceInfo{Name: src.name, Markets: src.marketIDs()})
+		out = append(out, quoteSourceInfo{
+			Name:     src.name,
+			Markets:  src.marketIDs(),
+			Daily:    src.marketIDsFor(quoteIntervalDaily),
+			Intraday: src.marketIDsFor(quoteIntervalIntraday, quoteIntervalIntraday5D),
+		})
 	}
 	return out
 }

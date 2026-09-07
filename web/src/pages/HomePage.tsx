@@ -32,6 +32,7 @@ import ReportCard from '../components/ReportCard'
 import { linkIconComponent } from '../components/linkIcons'
 import { shortcutOfUrl, shortcutPerm, triggerShortcut } from '../lib/shortcuts'
 import { startVisiblePoll } from '../lib/visiblePoll'
+import { useHomeQuotes } from '../lib/useHomeQuotes'
 import { versionLabel } from '../lib/versionLabel'
 
 const { RangePicker } = DatePicker
@@ -137,6 +138,22 @@ export default function HomePage() {
   const changePage = (page: number, size: number) => {
     setSp({ ...Object.fromEntries(sp), page: String(page), size: String(size) })
   }
+
+  // The codes on THIS page of cards, not the whole feed: the feed is paginated and a filter change
+  // replaces it, so asking about anything but what is rendered would send a third-party vendor a
+  // list of symbols nobody is looking at. Memo-free, like the group buttons above — a fresh array
+  // per render is cheap, and it is not what keeps the request from repeating: the silent 60s
+  // refetch replaces `data` even when the cards are identical, so the hook keys its request on the
+  // SYMBOLS rather than on the identity of whatever array it was handed.
+  //
+  // Nothing below waits on the result. `quotes` starts empty and the cards render from `data`
+  // alone, so a vendor outage or a switched-off feature costs the grid a price and nothing else:
+  // every card that names a code holds an EMPTY reserved line, 22px of it, forever. That is not
+  // free and it is the better trade — the line is reserved from the report list alone precisely so
+  // a late answer drops into a hole that is already the right size instead of re-flowing the whole
+  // grid under somebody who has started reading (ReportCard's QUOTE_LINE_H says the rest). Paying
+  // it while the feature is off is the price of never paying it while the feature works.
+  const quotes = useHomeQuotes((data?.groups || []).map((g) => g.symbol).filter(Boolean))
 
   const kindOptions = (data?.kinds || []).map((x) => ({ value: x, label: x }))
   const typeOptions = (data?.types || []).map((x) => ({ value: x, label: x }))
@@ -385,7 +402,7 @@ export default function HomePage() {
           <Row gutter={[16, 16]}>
             {data?.groups.map((g) => (
               <Col key={g.key} xs={24} sm={12} lg={8} xl={6}>
-                <ReportCard g={g} kindColors={data.kindColors} />
+                <ReportCard g={g} kindColors={data.kindColors} quote={quotes.get(g.symbol)} />
               </Col>
             ))}
           </Row>
