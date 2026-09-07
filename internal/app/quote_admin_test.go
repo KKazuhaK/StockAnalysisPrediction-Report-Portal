@@ -55,13 +55,16 @@ func quoteAdminDo(t *testing.T, s *Server, method, path, user, body string) *htt
 // quoteAdminView is the panel payload. Decoded into a struct rather than a map so that a key this
 // change renames is a compile-time-shaped failure here rather than a silently absent assertion.
 type quoteAdminView struct {
-	Sources        []quoteSourceStatus `json:"sources"`
-	CacheEntries   int                 `json:"cacheEntries"`
-	CacheBytes     int                 `json:"cacheBytes"`
-	TTLOpen        int                 `json:"ttlOpenSecs"`
-	TTLClosed      int                 `json:"ttlClosedSecs"`
-	TTLOpenFloor   int                 `json:"ttlOpenFloor"`
-	TTLClosedFloor int                 `json:"ttlClosedFloor"`
+	Sources          []quoteSourceStatus `json:"sources"`
+	CacheEntries     int                 `json:"cacheEntries"`
+	CacheBytes       int                 `json:"cacheBytes"`
+	TTLOpen          int                 `json:"ttlOpenSecs"`
+	TTLClosed        int                 `json:"ttlClosedSecs"`
+	TTLIntraday      int                 `json:"ttlIntradaySecs"`
+	TTLOpenFloor     int                 `json:"ttlOpenFloor"`
+	TTLClosedFloor   int                 `json:"ttlClosedFloor"`
+	TTLIntradayFloor int                 `json:"ttlIntradayFloor"`
+	HomeCards        bool                `json:"homeCards"`
 }
 
 func quoteAdminGet(t *testing.T, s *Server) quoteAdminView {
@@ -177,8 +180,8 @@ func TestQuoteAdminDefaultsReproduceTodaysBehaviour(t *testing.T) {
 
 	// The sources here are the COMPILED-IN ones — no stub is wired in this test — so the markets
 	// column is the real predicate's answer.
-	if len(view.Sources) != 2 {
-		t.Fatalf("panel lists %d sources, want both compiled-in ones: %+v", len(view.Sources), view.Sources)
+	if len(view.Sources) != 3 {
+		t.Fatalf("panel lists %d sources, want all three compiled-in ones: %+v", len(view.Sources), view.Sources)
 	}
 	tencent := quoteAdminRow(t, view, quoteSourceTencent)
 	if !tencent.Enabled || tencent.Position != 1 {
@@ -195,6 +198,54 @@ func TestQuoteAdminDefaultsReproduceTodaysBehaviour(t *testing.T) {
 	// quoteSinaTarget refuses on, so the panel cannot advertise a market the fetcher then rejects.
 	if got := strings.Join(sina.Markets, ","); got != "bj,sh,sz" {
 		t.Errorf("sina serves %q, want bj,sh,sz", got)
+	}
+	// Yahoo ships DISABLED, and the panel is where that has to be visible: it is compiled in, it is
+	// listed, and it is not in the order — so an operator can see it exists and switch it on, and an
+	// unconfigured portal never calls it. A row that arrived enabled here would mean the default
+	// order had quietly grown a third vendor, which is the one thing this source must not do.
+	yahoo := quoteAdminRow(t, view, quoteSourceYahoo)
+	if yahoo.Enabled || yahoo.Position != 0 {
+		t.Errorf("yahoo row = %+v, want listed but disabled at position 0", yahoo)
+	}
+	// Its markets column is the union over its grants, and Beijing is absent from it because
+	// quoteYahooSymbol has no measured symbol for that exchange — the panel may not advertise a
+	// market the fetcher would then refuse.
+	if got := strings.Join(yahoo.Markets, ","); got != "hk,sh,sz,us" {
+		t.Errorf("yahoo serves %q, want hk,sh,sz,us", got)
+	}
+
+	// The CAPABILITY columns, which are the reason the markets column above is not enough. Written
+	// out per source rather than derived from the declarations, because deriving them would make
+	// this test agree with whatever the declarations happen to say — including on the day one of
+	// them is wrong.
+	for _, tc := range []struct{ row, daily, intraday string }{
+		// Tencent: every market's daily series except the two whose answer is not one, and one
+		// session of minutes in the three markets where a real minute series was measured. The US
+		// appears in the markets column above and in NEITHER of these, which is the whole point of
+		// the split — it serves the price and no chart of any resolution.
+		{quoteSourceTencent, "hk,sh,sz", "hk,sh,sz"},
+		{quoteSourceSina, "sh,sz", ""},
+		// Yahoo's daily line names the market the others' do not, which is the entire argument for
+		// enabling it; its intraday grant is every market it has a measured symbol for.
+		//
+		// That "us" is also a claim an operator ACTS on — it is what makes them add yahoo to the
+		// order — so it is pinned twice: as the string here, and as something a request can actually
+		// reach, by TestQuotePanelAdvertisesNothingTheResolverCannotBeAskedFor. This row alone was
+		// what the panel said while no request ever asked for (us, daily).
+		{quoteSourceYahoo, "us", "hk,sh,sz,us"},
+	} {
+		row := quoteAdminRow(t, view, tc.row)
+		if got := strings.Join(row.Daily, ","); got != tc.daily {
+			t.Errorf("%s daily = %q, want %q", tc.row, got, tc.daily)
+		}
+		if got := strings.Join(row.Intraday, ","); got != tc.intraday {
+			t.Errorf("%s intraday = %q, want %q", tc.row, got, tc.intraday)
+		}
+		// Never null on the wire: the panel renders an empty list as a dash and a missing field as a
+		// blank cell, and those two mean opposite things.
+		if row.Daily == nil || row.Intraday == nil {
+			t.Errorf("%s sent a null capability list: %+v", tc.row, row)
+		}
 	}
 	// A source that has never been called reports no history rather than the year 1.
 	if tencent.LastSuccess != "" || tencent.LastError != "" || tencent.LastErrorAt != "" || tencent.Failures != 0 {
@@ -694,5 +745,119 @@ func TestQuoteAdminSaveIsRecordedInTheAuditLog(t *testing.T) {
 	}
 	if rows, _ := s.st.ListAudit(AuditFilter{TargetType: "quote_config"}); len(rows) != 1 {
 		t.Errorf("a refused save added an audit row: %d rows", len(rows))
+	}
+}
+
+// ---------- stage 2 and 3 on the panel ----------
+
+// The third TTL, clamped at BOTH sites like the other two — and it needed its own floor rather than
+// borrowing one: a 分时 chart re-fetched every five seconds is four requests a minute per viewer per
+// symbol against a free endpoint, and no reader can see the difference, because the bar itself only
+// changes once a minute.
+func TestQuoteAdminClampsTheIntradayTTLOnSaveAndOnRead(t *testing.T) {
+	s := quoteAdminServer(t)
+
+	// The shipped default, written out rather than derived from the constant it mirrors.
+	if cfg := s.quoteConfigLoad(); cfg.TTLIntraday != 60*time.Second {
+		t.Errorf("default intraday TTL = %v, want 60s", cfg.TTLIntraday)
+	}
+	view := quoteAdminGet(t, s)
+	if view.TTLIntraday != 60 || view.TTLIntradayFloor != 15 {
+		t.Errorf("panel reports intraday=%d floor=%d, want 60 / 15", view.TTLIntraday, view.TTLIntradayFloor)
+	}
+
+	// Below the floor: clamped and SAVED clamped, so what sits in meta is the value the portal
+	// honours rather than one only the read path corrects.
+	rec := quoteAdminSave(t, s, `{"ttlIntradaySecs":3}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a below-floor save → %d (%s)", rec.Code, rec.Body.String())
+	}
+	var saved quoteAdminView
+	json.Unmarshal(rec.Body.Bytes(), &saved)
+	if saved.TTLIntraday != 15 {
+		t.Errorf("the save answered %d, want the floor 15 — the form must see what it got", saved.TTLIntraday)
+	}
+	if got := s.st.GetSetting(setQuoteTTLIntradaySecs, ""); got != "15" {
+		t.Errorf("meta holds %q; a stored below-floor value would rest on the read clamp alone", got)
+	}
+	if cfg := s.quoteConfigLoad(); cfg.TTLIntraday != quoteTTLIntradayFloor {
+		t.Errorf("effective intraday TTL = %v, want the floor %v", cfg.TTLIntraday, quoteTTLIntradayFloor)
+	}
+
+	// In range is kept exactly, or "clamped" would mean "always the floor" and the setting would be a
+	// constant with a form in front of it.
+	if rec := quoteAdminSave(t, s, `{"ttlIntradaySecs":90}`); rec.Code != http.StatusOK {
+		t.Fatalf("an in-range save → %d", rec.Code)
+	}
+	if cfg := s.quoteConfigLoad(); cfg.TTLIntraday != 90*time.Second {
+		t.Errorf("in-range intraday TTL came back as %v, want 90s", cfg.TTLIntraday)
+	}
+
+	// A value that reached meta some other way — an older build, a restore, a hand edit — is clamped
+	// on READ, at both ends.
+	s.st.SetSetting(setQuoteTTLIntradaySecs, "1")
+	if cfg := s.quoteConfigLoad(); cfg.TTLIntraday != quoteTTLIntradayFloor {
+		t.Errorf("a hand-written 1 read back as %v, want the floor", cfg.TTLIntraday)
+	}
+	s.st.SetSetting(setQuoteTTLIntradaySecs, "2000000000")
+	if cfg := s.quoteConfigLoad(); cfg.TTLIntraday != quoteTTLCeiling {
+		t.Errorf("a hand-written 2000000000 read back as %v, want the ceiling %v", cfg.TTLIntraday, quoteTTLCeiling)
+	}
+	// And an unreadable value is the shipped default rather than the floor: a blank is not a request
+	// for the shortest TTL allowed, it is no request at all.
+	s.st.SetSetting(setQuoteTTLIntradaySecs, "")
+	if cfg := s.quoteConfigLoad(); cfg.TTLIntraday != quoteTTLIntraday {
+		t.Errorf("an unparseable intraday TTL read back as %v, want the shipped default", cfg.TTLIntraday)
+	}
+}
+
+// home_quotes has a READER and a WRITER in the same change, which is the rule wired_settings_test.go
+// exists to enforce — and the writer is the panel, so the round trip is asserted through it rather
+// than through SetSetting. A test that wrote the row directly would still pass with the handler's
+// branch deleted.
+func TestQuoteAdminHomeCardsSwitchIsWiredBothWays(t *testing.T) {
+	s := quoteAdminServer(t)
+
+	// ON by default, and the panel says so: the ask was for it to ship on, and a page that read
+	// "off" on a fresh portal would have an operator turning on something already running.
+	if !s.quoteHomeCards() {
+		t.Fatal("home cards are off on a fresh portal")
+	}
+	if view := quoteAdminGet(t, s); !view.HomeCards {
+		t.Error("the panel reports the home cards off on a fresh portal")
+	}
+
+	rec := quoteAdminSave(t, s, `{"homeCards":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save → %d (%s)", rec.Code, rec.Body.String())
+	}
+	if s.quoteHomeCards() {
+		t.Fatal("the switch did not take: the reader still says on")
+	}
+	var saved quoteAdminView
+	json.Unmarshal(rec.Body.Bytes(), &saved)
+	if saved.HomeCards {
+		t.Error("the save answered with the value that was replaced, not the one that was kept")
+	}
+	if view := quoteAdminGet(t, s); view.HomeCards {
+		t.Error("a fresh GET still reports the home cards on")
+	}
+
+	// And back on, so the switch is a switch rather than a one-way door.
+	if rec := quoteAdminSave(t, s, `{"homeCards":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("save → %d", rec.Code)
+	}
+	if !s.quoteHomeCards() {
+		t.Error("could not turn the home cards back on")
+	}
+
+	// A save that does not mention the field leaves it alone — the panel posts every field it edits,
+	// and a missing one must not read as false.
+	s.st.SetSetting(setQuoteHomeCards, "false")
+	if rec := quoteAdminSave(t, s, `{"ttlOpenSecs":45}`); rec.Code != http.StatusOK {
+		t.Fatalf("save → %d", rec.Code)
+	}
+	if s.quoteHomeCards() {
+		t.Error("a save that never mentioned home_quotes switched it back on")
 	}
 }

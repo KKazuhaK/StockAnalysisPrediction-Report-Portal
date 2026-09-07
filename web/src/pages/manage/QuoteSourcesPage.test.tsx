@@ -34,13 +34,36 @@ vi.mock('react-i18next', () => ({
 // sina FIRST and failing, tencent second and healthy — an admin who has reordered them. The reversed
 // order is deliberate: a save payload reading "tencent,sina" would be the compiled-in default rather
 // than anything this page read off the screen.
+//
+// Yahoo is the third, and it is the one that ships OFF, so its position is 0 — and it is placed at
+// the HEAD of the array on purpose. 0 sorts before 1, so a page that seats rows by position alone
+// puts a source that is not in the failover chain at the top of it, and then writes that seat back
+// as the order the moment somebody enables it.
 const state = {
   sources: [
+    {
+      source: 'yahoo',
+      enabled: false,
+      position: 0,
+      // Everything except Beijing, and — the point of the column beside it — only the US DAILY.
+      // Yahoo is where a US chart comes from; it is not where an A-share daily comes from.
+      markets: ['sh', 'sz', 'hk', 'us'],
+      daily: ['us'],
+      intraday: ['sh', 'sz', 'hk', 'us'],
+      lastSuccess: '0001-01-01T00:00:00Z',
+      lastError: '',
+      lastErrorAt: '0001-01-01T00:00:00Z',
+      consecutiveFailures: 0,
+    },
     {
       source: 'sina',
       enabled: true,
       position: 1,
       markets: ['sh', 'sz', 'bj'],
+      daily: ['sh', 'sz'],
+      // A source that declares no intraday at all: the case the capability column has to render as
+      // a stated "none" rather than as an empty cell that could equally be a missing field.
+      intraday: [],
       // Go's zero time.Time, which is what a source that has never answered actually sends.
       lastSuccess: '0001-01-01T00:00:00Z',
       lastError: 'sina: snapshot column order check failed',
@@ -51,7 +74,12 @@ const state = {
       source: 'tencent',
       enabled: true,
       position: 2,
+      // Prices five markets, draws three: Beijing answers "day":[] and a sixty-bar US request comes
+      // back with two rows fifteen years apart (ADR 0030 §4). markets and daily DISAGREE here, and
+      // that disagreement is the reason both columns exist.
       markets: ['sh', 'sz', 'bj', 'hk', 'us'],
+      daily: ['sh', 'sz', 'hk'],
+      intraday: [],
       lastSuccess: '2026-09-07T06:41:36Z',
       lastError: '',
       lastErrorAt: '0001-01-01T00:00:00Z',
@@ -62,8 +90,27 @@ const state = {
   cacheBytes: 34567,
   ttlOpenSecs: 30,
   ttlClosedSecs: 300,
+  ttlIntradaySecs: 60,
   ttlOpenFloor: 5,
   ttlClosedFloor: 30,
+  ttlIntradayFloor: 15,
+  homeCards: true,
+}
+
+// The row a source's name appears in. Every capability assertion below is scoped through this: the
+// page now prints market tags in two columns for three sources, so a bare getAllByText('quote.
+// market.us') counts six things and pins none of them to the source that claims it.
+function sourceRow(name: string): HTMLElement {
+  const row = screen.getAllByRole('row').find((r) => within(r).queryByText(name))
+  if (!row) throw new Error(`no row for source ${name}`)
+  return row
+}
+
+// The market ids a given cell of that row lists, in order.
+function tagsIn(row: HTMLElement, testid: string): string[] {
+  return within(within(row).getByTestId(testid))
+    .queryAllByText(/^quote\.market\./)
+    .map((el) => el.textContent ?? '')
 }
 
 function renderPage() {
@@ -95,10 +142,10 @@ describe('QuoteSourcesPage', () => {
     expect(screen.getByText('quoteAdmin.primary')).toBeTruthy()
     expect(screen.getByText('quoteAdmin.fallback')).toBeTruthy()
 
-    // Markets are per source: only tencent serves HK and US.
-    expect(screen.getByText('quote.market.hk')).toBeTruthy()
-    expect(screen.getByText('quote.market.us')).toBeTruthy()
-    expect(screen.getAllByText('quote.market.sh').length).toBe(2)
+    // Markets are per source, and read off that source's own row: sina serves Beijing and neither
+    // Hong Kong nor the US, tencent serves all five.
+    expect(tagsIn(sourceRow('sina'), 'quote-source-markets')).toEqual(['quote.market.sh', 'quote.market.sz', 'quote.market.bj'])
+    expect(tagsIn(sourceRow('tencent'), 'quote-source-markets')).toContain('quote.market.us')
 
     // The failing source: its consecutive-failure count (nothing else on this page renders a 4) and
     // the vendor's own error sentence, verbatim.
@@ -106,8 +153,10 @@ describe('QuoteSourcesPage', () => {
     expect(screen.getByText('sina: snapshot column order check failed')).toBeTruthy()
 
     // Never succeeded: the zero instant is "never", not the year 1 — and no green OK beside it,
-    // since zero failures on a source nobody has called is not evidence of health.
-    expect(screen.getByText('quoteAdmin.never')).toBeTruthy()
+    // since zero failures on a source nobody has called is not evidence of health. Two of them
+    // here: sina has only ever failed, and yahoo has never been switched on.
+    expect(within(sourceRow('sina')).getByText('quoteAdmin.never')).toBeTruthy()
+    expect(within(sourceRow('yahoo')).getByText('quoteAdmin.never')).toBeTruthy()
     expect(screen.queryByText(/0001-01-01/)).toBeNull()
     expect(screen.getAllByText('quoteAdmin.ok').length).toBe(1) // tencent only
 
@@ -123,6 +172,84 @@ describe('QuoteSourcesPage', () => {
     expect(screen.getByText('33.8 KB')).toBeTruthy()
   })
 
+  it('prints what each source can serve, per interval, and not only which markets it knows', async () => {
+    renderPage()
+    await screen.findByText('sina')
+
+    // The load-bearing pair. Tencent's markets column names the US — it does serve the US PRICE —
+    // and its daily column does not, because a sixty-bar request for usAAPL answers with two rows
+    // fifteen years apart. An operator reading the markets column alone would conclude that leaving
+    // tencent on top is enough for a US chart; it is the reason yahoo exists in this build.
+    expect(tagsIn(sourceRow('tencent'), 'quote-source-markets')).toContain('quote.market.us')
+    expect(tagsIn(sourceRow('tencent'), 'quote-source-daily')).toEqual([
+      'quote.market.sh',
+      'quote.market.sz',
+      'quote.market.hk',
+    ])
+
+    // And the mirror of it: yahoo's daily grant is the US ALONE, which is what makes dragging it
+    // above tencent a decision about US charts rather than about every quote in the portal.
+    expect(tagsIn(sourceRow('yahoo'), 'quote-source-daily')).toEqual(['quote.market.us'])
+    expect(tagsIn(sourceRow('yahoo'), 'quote-source-intraday')).toEqual([
+      'quote.market.sh',
+      'quote.market.sz',
+      'quote.market.hk',
+      'quote.market.us',
+    ])
+
+    // A source that declares no intraday says so. An empty cell would be indistinguishable from a
+    // build whose server never sent the field.
+    expect(tagsIn(sourceRow('sina'), 'quote-source-intraday')).toEqual([])
+    expect(within(sourceRow('sina')).getByTestId('quote-source-intraday').textContent).toContain('—')
+    expect(tagsIn(sourceRow('sina'), 'quote-source-daily')).toEqual(['quote.market.sh', 'quote.market.sz'])
+
+    // Both intervals are named on every row, so a reader knows which list they are looking at.
+    expect(screen.getAllByText('quoteAdmin.daily')).toHaveLength(3)
+    expect(screen.getAllByText('quoteAdmin.intraday')).toHaveLength(3)
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toContain('quoteAdmin.capabilities')
+  })
+
+  it('shows a source that ships disabled, with its notice, and lets it be switched on — at the END of the chain', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('sina')
+
+    // Visible at all: a panel that listed only the enabled sources would give an operator no way to
+    // turn on the one thing this release added.
+    const yahoo = screen.getByRole('switch', { name: 'yahoo quoteAdmin.enabled' })
+    expect(yahoo.getAttribute('aria-checked')).toBe('false')
+
+    // Seated LAST despite arriving first in the array with position 0. Sorting by position alone
+    // puts every disabled source above the primary — and since the order written back is the row
+    // order, enabling it there would hand an undocumented endpoint every A-share request.
+    const rows = screen.getAllByRole('row')
+    expect(within(rows[1]).getByText('sina')).toBeTruthy()
+    expect(within(rows[3]).getByText('yahoo')).toBeTruthy()
+    // Off, so no place in the chain at all: 主源 and 备源 describe the enabled sources only.
+    expect(within(rows[3]).queryByText('quoteAdmin.primary')).toBeNull()
+    expect(within(rows[3]).queryByText('quoteAdmin.fallback')).toBeNull()
+
+    // The notice is IN the row and rendered, not behind a hover: it is what the operator is
+    // deciding with — undocumented endpoint, unlicensed use, their call, and the thing enabling it
+    // buys. Asserted on the text, so hiding it in a tooltip's title attribute would fail here.
+    expect(within(sourceRow('yahoo')).getByText('quoteAdmin.yahooNotice')).toBeTruthy()
+    // And only there: it is a fact about this vendor, not a banner every disabled row inherits.
+    expect(screen.getAllByTestId('quote-source-notice')).toHaveLength(1)
+    expect(within(sourceRow('tencent')).queryByTestId('quote-source-notice')).toBeNull()
+
+    await user.click(yahoo)
+    expect(screen.getByRole('switch', { name: 'yahoo quoteAdmin.enabled' }).getAttribute('aria-checked')).toBe('true')
+    await waitFor(() => expect(within(sourceRow('yahoo')).getByText('quoteAdmin.fallback')).toBeTruthy())
+
+    await user.click(screen.getByRole('button', { name: 'common.save' }))
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/api/admin/quote',
+        expect.objectContaining({ order: 'sina,tencent,yahoo' }),
+      ),
+    )
+  })
+
   it('says WHEN the last error happened, not only what it said', async () => {
     renderPage()
     await screen.findByText('sina: snapshot column order check failed')
@@ -136,9 +263,9 @@ describe('QuoteSourcesPage', () => {
 
     // Go's zero time.Time is what a source that has never failed actually sends, and it is not a
     // date. An empty cell is the answer there — "never" is reserved for 最近成功, where a source
-    // that has never answered is itself the finding.
+    // that has never answered is itself the finding (sina and the never-enabled yahoo, here).
     expect(screen.queryByText(/0001-01-01/)).toBeNull()
-    expect(screen.getAllByText('quoteAdmin.never')).toHaveLength(1)
+    expect(screen.getAllByText('quoteAdmin.never')).toHaveLength(2)
   })
 
   it('orders the rows by the server position, not by the order the array arrived in', async () => {
@@ -148,7 +275,8 @@ describe('QuoteSourcesPage', () => {
     // of the order string, so a page that trusted the array would rename the primary source and
     // then save that rename.
     const shuffled = structuredClone(state)
-    shuffled.sources = [shuffled.sources[1], shuffled.sources[0]] // tencent (position 2) first
+    // tencent (position 2) first, then sina (1), then the disabled yahoo (0).
+    shuffled.sources = [shuffled.sources[2], shuffled.sources[1], shuffled.sources[0]]
     apiMock.get.mockResolvedValue(shuffled)
 
     const user = userEvent.setup()
@@ -159,6 +287,7 @@ describe('QuoteSourcesPage', () => {
     expect(within(rows[1]).getByText('sina')).toBeTruthy()
     expect(within(rows[1]).getByText('quoteAdmin.primary')).toBeTruthy()
     expect(within(rows[2]).getByText('tencent')).toBeTruthy()
+    expect(within(rows[3]).getByText('yahoo')).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: 'common.save' }))
     await waitFor(() =>
@@ -166,17 +295,22 @@ describe('QuoteSourcesPage', () => {
     )
   })
 
-  it('saves the order read off the rows, plus both TTLs', async () => {
+  it('saves the order read off the rows, all three TTLs and the home-card switch', async () => {
     const user = userEvent.setup()
     renderPage()
     await screen.findByText('sina')
 
+    // The WHOLE payload, not objectContaining: one Save writes every setting on the page, so a
+    // field that stops being sent is a control the operator can move and cannot save — and the page
+    // would still say "saved", because the request succeeded without it.
     await user.click(screen.getByRole('button', { name: 'common.save' }))
     await waitFor(() =>
       expect(apiMock.post).toHaveBeenCalledWith('/api/admin/quote', {
         order: 'sina,tencent',
         ttlOpenSecs: 30,
         ttlClosedSecs: 300,
+        ttlIntradaySecs: 60,
+        homeCards: true,
       }),
     )
   })
@@ -252,16 +386,72 @@ describe('QuoteSourcesPage', () => {
     const partial = structuredClone(state) as Record<string, unknown>
     delete partial.ttlOpenSecs
     delete partial.ttlClosedSecs
+    delete partial.ttlIntradaySecs
     delete partial.ttlOpenFloor
     delete partial.ttlClosedFloor
+    delete partial.ttlIntradayFloor
+    delete partial.homeCards
     apiMock.get.mockResolvedValue(partial)
 
     renderPage()
     await screen.findByText('sina')
     expect((screen.getByLabelText('quoteAdmin.ttlOpen') as HTMLInputElement).value).toBe('0')
     expect((screen.getByLabelText('quoteAdmin.ttlClosed') as HTMLInputElement).value).toBe('0')
-    expect(screen.getAllByText('quoteAdmin.ttlHint ≥ 0')).toHaveLength(2)
+    expect((screen.getByLabelText('quoteAdmin.ttlIntraday') as HTMLInputElement).value).toBe('0')
+    expect(screen.getAllByText('quoteAdmin.ttlHint ≥ 0')).toHaveLength(3)
     expect(screen.queryByText(/undefined/)).toBeNull()
+
+    // And the switch that decides whether this portal hands a list of codes to a vendor reads OFF
+    // when the answer did not say. `?? true` on the shipped default would put the page's own guess
+    // under a control whose whole purpose is that somebody chose — and the next Save would post it
+    // back as though they had.
+    expect(screen.getByRole('switch', { name: 'quoteAdmin.homeCards' }).getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('does not write back a home-card setting the answer never carried', async () => {
+    // The shape a rolling deploy serves for a few minutes: an older server behind this bundle,
+    // answering everything except the newest key. The admin came to change a TTL.
+    const partial = structuredClone(state) as Record<string, unknown>
+    delete partial.homeCards
+    apiMock.get.mockResolvedValue(partial)
+
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('sina')
+    // Reading OFF is right and is pinned above; WRITING that OFF back is not. It would switch a
+    // default-ON disclosure off in the name of an admin who never saw a decision to make, under a
+    // green "saved" — the TTLs beside it survive the same round trip only because the server
+    // clamps them, and this key has no clamp. The whole payload, so an unexpected key fails here.
+    await user.click(screen.getByRole('button', { name: 'common.save' }))
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith('/api/admin/quote', {
+        order: 'sina,tencent',
+        ttlOpenSecs: 30,
+        ttlClosedSecs: 300,
+        ttlIntradaySecs: 60,
+      }),
+    )
+    expect(Object.keys(apiMock.post.mock.calls[0][1] as object)).not.toContain('homeCards')
+  })
+
+  it('writes the home-card switch the admin moved, even on a body that never carried it', async () => {
+    // The other half: omitting the key must not turn the control into one an operator can move and
+    // cannot save. Moving the switch IS the answer the body was missing.
+    const partial = structuredClone(state) as Record<string, unknown>
+    delete partial.homeCards
+    apiMock.get.mockResolvedValue(partial)
+
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('sina')
+
+    await user.click(screen.getByRole('switch', { name: 'quoteAdmin.homeCards' }))
+    expect(screen.getByRole('switch', { name: 'quoteAdmin.homeCards' }).getAttribute('aria-checked')).toBe('true')
+
+    await user.click(screen.getByRole('button', { name: 'common.save' }))
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith('/api/admin/quote', expect.objectContaining({ homeCards: true })),
+    )
   })
 
   it('shows the TTL the server clamped to, not the one that was typed', async () => {
@@ -285,6 +475,63 @@ describe('QuoteSourcesPage', () => {
     // The point of the test: a green "saved" over a 2 would be the page claiming a setting the
     // server never accepted.
     await waitFor(() => expect((screen.getByLabelText('quoteAdmin.ttlOpen') as HTMLInputElement).value).toBe('5'))
+  })
+
+  it('saves the intraday TTL against its own floor, which is not the open one', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const box = (await screen.findByLabelText('quoteAdmin.ttlIntraday')) as HTMLInputElement
+    expect(box.value).toBe('60')
+    // Three floors, three different numbers, each beside its own field — and the intraday one (15)
+    // is neither of the others (5 and 30), so a hint wired to the wrong state variable shows up
+    // here rather than in production, where a minute series cached for the window that suits a
+    // daily chart is a chart claiming a resolution it does not have.
+    expect(screen.getByText('quoteAdmin.ttlHint ≥ 15')).toBeTruthy()
+    expect(screen.getByText('quoteAdmin.ttlHint ≥ 5')).toBeTruthy()
+    expect(screen.getByText('quoteAdmin.ttlHint ≥ 30')).toBeTruthy()
+
+    // 3 seconds is below the 15-second floor; the server takes it and answers with what it runs.
+    apiMock.post.mockResolvedValue({ ...structuredClone(state), ttlIntradaySecs: 15 })
+    await user.clear(box)
+    await user.type(box, '3')
+    await user.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith('/api/admin/quote', expect.objectContaining({ ttlIntradaySecs: 3 })),
+    )
+    // The clamp read-back, per field: leaving the typed 3 on screen under a green "saved" is the
+    // page reporting a cache window the portal is not running.
+    await waitFor(() => expect((screen.getByLabelText('quoteAdmin.ttlIntraday') as HTMLInputElement).value).toBe('15'))
+    // And the other two are not disturbed by the field that was edited.
+    expect((screen.getByLabelText('quoteAdmin.ttlOpen') as HTMLInputElement).value).toBe('30')
+  })
+
+  it('saves the home-card switch, and states the disclosure in the open', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('sina')
+
+    // The sentence is on the page, not in a tooltip: showing prices on the home cards sends the
+    // codes currently on screen to a third-party vendor on every home page view, which is the whole
+    // reason the feature has a switch instead of only a default.
+    expect(screen.getByText('quoteAdmin.homeCardsHint')).toBeTruthy()
+
+    const sw = screen.getByRole('switch', { name: 'quoteAdmin.homeCards' })
+    expect(sw.getAttribute('aria-checked')).toBe('true')
+    await user.click(sw)
+    expect(screen.getByRole('switch', { name: 'quoteAdmin.homeCards' }).getAttribute('aria-checked')).toBe('false')
+
+    await user.click(screen.getByRole('button', { name: 'common.save' }))
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith('/api/admin/quote', expect.objectContaining({ homeCards: false })),
+    )
+
+    // Read back from the ANSWER, like the clamped TTLs beside it. This fixture's server replies
+    // that the switch is still on — a stale echo, a refusal the handler turned into a no-op — and
+    // what the page must then show is the server's state, not the click that did not take.
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: 'quoteAdmin.homeCards' }).getAttribute('aria-checked')).toBe('true'),
+    )
   })
 
   it('clears the cache and shows the emptied occupancy', async () => {

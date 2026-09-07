@@ -8,15 +8,22 @@ import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
 
-// 管理 → 行情源: the console for the two compiled-in quote vendors.
+// 管理 → 行情源: the console for the compiled-in quote vendors.
 //
 // ADR 0028 §9 shipped quotes with no setting at all, and half of that argument has not survived
 // contact with an admin: the reasoning against admin-editable URLs holds exactly and says nothing
 // about the rest. Choosing among sources that are already compiled in is safe and useful; typing a
-// host is neither. So this page edits the failover order, which sources are on, and the two cache
-// TTLs — and shows the per-source health counters that quote_cache.go has been keeping since it was
-// written while exposing them nowhere (its noteSuccess/noteFailure comment names this panel as the
-// reader they were written for).
+// host is neither. So this page edits the failover order, which sources are on, the three cache
+// TTLs and whether the home feed asks for prices at all — and shows the per-source health counters
+// that quote_cache.go has been keeping since it was written while exposing them nowhere (its
+// noteSuccess/noteFailure comment names this panel as the reader they were written for).
+//
+// What the order MEANS is a capability table, not a preference: the resolver walks the enabled
+// sources in this order and skips any that has not declared the (market, interval) pair in hand, so
+// a source can sit at the top of the list and never be called for a US chart. That is why each row
+// prints what it declares — an operator dragging Yahoo above Tencent is not choosing a vendor for
+// everything, they are choosing one for US dailies and intraday, and a panel that showed only names
+// and an order would make that move look like something it is not.
 //
 // The URLs are absent BY DESIGN, and the page says so in one line rather than leaving a gap where a
 // field should be (quoteAdmin.whyNoUrl): a source here is a PARSER reading fixed field positions
@@ -31,7 +38,21 @@ type QuoteAdminSource = {
   enabled: boolean
   /** 1-based place in the failover order. Absent from the order setting = disabled. */
   position: number
+  /**
+   * Every market this source can say ANYTHING about — the union over the intervals below, which is
+   * what the server's marketIDs() computes and the only honest reading of a single list.
+   *
+   * It is therefore a wider claim than the two lists beside it, and the US is the case that proves
+   * the difference matters: Tencent names `us` here and cannot draw it, because a sixty-bar request
+   * for usAAPL comes back with two rows fifteen years apart (ADR 0030 §4). A panel that showed only
+   * this column would tell an operator moving a source that Tencent serves the US — true of the
+   * price, false of the chart, and the reason the capability column exists.
+   */
   markets: string[]
+  /** Markets this source serves a DAILY series for. Empty is a real answer, not a missing one. */
+  daily: string[]
+  /** Markets it serves an INTRADAY (minute-resolution) series for. */
+  intraday: string[]
   lastSuccess: string
   lastError: string
   lastErrorAt: string
@@ -44,8 +65,12 @@ type QuoteAdminState = {
   cacheBytes: number
   ttlOpenSecs: number
   ttlClosedSecs: number
+  ttlIntradaySecs: number
   ttlOpenFloor: number
   ttlClosedFloor: number
+  ttlIntradayFloor: number
+  /** Whether the home feed asks for prices at all. See the card at the bottom of the page. */
+  homeCards: boolean
 }
 
 // Go's time.Time has no empty form on the wire: a source that has never answered arrives as the zero
@@ -78,6 +103,20 @@ function wireNumber(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
 }
 
+// Where a row sits in the failover chain, for sorting only.
+//
+// A source absent from the order setting has position 0 — and 0 sorts BEFORE 1, so a plain
+// `a.position - b.position` seats every DISABLED source above the primary. That was invisible while
+// both compiled-in sources shipped enabled and stopped being invisible the moment one shipped OFF:
+// Yahoo would have opened this page sitting on top of a chain it is not part of, and — because the
+// order written back is the row order — switching it on would have promoted it to primary in the
+// same gesture, quietly routing every A-share request to an undocumented endpoint. Disabled sources
+// sort last instead, so enabling one APPENDS it to the chain and moving it up stays a drag the
+// operator performs on purpose.
+function seat(r: QuoteAdminSource): number {
+  return r.position > 0 ? r.position : Number.MAX_SAFE_INTEGER
+}
+
 // fmtBytes renders an approximate byte count in human units (as on the storage console — this is the
 // same kind of number: an occupancy estimate, not an allocation).
 function fmtBytes(n: number): string {
@@ -101,8 +140,15 @@ export default function QuoteSourcesPage() {
   const [cacheBytes, setCacheBytes] = useState(0)
   const [ttlOpen, setTtlOpen] = useState(0)
   const [ttlClosed, setTtlClosed] = useState(0)
+  const [ttlIntraday, setTtlIntraday] = useState(0)
   const [ttlOpenFloor, setTtlOpenFloor] = useState(0)
   const [ttlClosedFloor, setTtlClosedFloor] = useState(0)
+  const [ttlIntradayFloor, setTtlIntradayFloor] = useState(0)
+  const [homeCards, setHomeCards] = useState(false)
+  // Whether the value above is anybody's ANSWER — the GET carried the key, or the operator moved
+  // the switch — rather than this page's fail-closed stand-in for a body that did not mention it.
+  // save() sends the key only when this is true; see the comment on the payload.
+  const [homeCardsKnown, setHomeCardsKnown] = useState(false)
   const [loading, setLoading] = useState(true)
   // Separate from `loading` for the reason the storage console records: the reload behind a save or
   // a cache purge must refresh in place. Replacing a page that has just saved with a full-page load
@@ -116,13 +162,29 @@ export default function QuoteSourcesPage() {
     // snapshotHealth, which walks a Go map and sorts it by source NAME — so a page that read the
     // order off the array's order is one refactor away from calling sina the primary because 's'
     // sorts before 't'.
-    setRows([...(st.sources ?? [])].sort((a, b) => a.position - b.position))
+    setRows([...(st.sources ?? [])].sort((a, b) => seat(a) - seat(b)))
     setCacheEntries(wireNumber(st.cacheEntries))
     setCacheBytes(wireNumber(st.cacheBytes))
     setTtlOpen(wireNumber(st.ttlOpenSecs))
     setTtlClosed(wireNumber(st.ttlClosedSecs))
+    setTtlIntraday(wireNumber(st.ttlIntradaySecs))
     setTtlOpenFloor(wireNumber(st.ttlOpenFloor))
     setTtlClosedFloor(wireNumber(st.ttlClosedFloor))
+    setTtlIntradayFloor(wireNumber(st.ttlIntradayFloor))
+    // Strictly `=== true`, and not `?? true` on the shipped default. A body this page cannot read
+    // is exactly where it must not assume consent: switching this on sends the codes on screen to a
+    // third-party vendor on every home page view, so an unreadable answer renders as OFF and the
+    // operator turns it on deliberately. The other direction would have the page inventing a
+    // disclosure nobody agreed to and then writing it back on the next save.
+    //
+    // Reading OFF is half of that; the other half is NOT WRITING IT BACK, which is what the flag
+    // beside it carries. An answer with no `homeCards` is an older server behind a newer bundle
+    // (the shape a rolling deploy serves for a few minutes), and the admin who opened this page in
+    // that window came to change a TTL. Posting the unread OFF would switch a default-ON disclosure
+    // off in their name, under a green "已保存", with nothing on screen admitting it — the TTLs
+    // survive the same round trip only because the server clamps them, and this key has no clamp.
+    setHomeCardsKnown(typeof st.homeCards === 'boolean')
+    setHomeCards(st.homeCards === true)
   }
 
   const load = () => {
@@ -165,12 +227,21 @@ export default function QuoteSourcesPage() {
       message.warning(t('quoteAdmin.orderHint'))
       return
     }
+    // Every setting on the page, except that `homeCards` is sent only when there is something to
+    // send: an operator who moved the switch, or a GET that carried the key. A body that did not
+    // mention it leaves the switch reading OFF (see apply()), and posting THAT back is how a
+    // default-ON disclosure gets switched off by an admin who came to edit a cache TTL. Omitting
+    // the key writes nothing and leaves the server's own value in force, which is the only honest
+    // thing a page that never learned the value can do with it.
+    const body: Record<string, unknown> = {
+      order,
+      ttlOpenSecs: ttlOpen,
+      ttlClosedSecs: ttlClosed,
+      ttlIntradaySecs: ttlIntraday,
+    }
+    if (homeCardsKnown) body.homeCards = homeCards
     try {
-      const st = await api.post<QuoteAdminState>('/api/admin/quote', {
-        order,
-        ttlOpenSecs: ttlOpen,
-        ttlClosedSecs: ttlClosed,
-      })
+      const st = await api.post<QuoteAdminState>('/api/admin/quote', body)
       message.success(t('common.saved'))
       // The server CLAMPS both TTLs to their floors, so the value now in force is the one in the
       // ANSWER, never the one that was typed. Leaving the typed number on screen under a green
@@ -224,6 +295,34 @@ export default function QuoteSourcesPage() {
     return label === `quote.source.${name}` ? name : label
   }
 
+  // What an operator has to know about a particular vendor before switching it on, beside its
+  // switch. Keyed on the source NAME rather than sent by the server, because it is a fact about the
+  // vendor rather than about this build's state — and keyed rather than applied to every disabled
+  // row, so a fourth source does not silently inherit Yahoo's licensing disclaimer. A source with
+  // nothing to declare gets no box; an empty one would read as a warning with the text missing.
+  const sourceNotice = (name: string): string => (name === 'yahoo' ? t('quoteAdmin.yahooNotice') : '')
+
+  // One line of the capability column: an interval, and the markets this source declares for it.
+  //
+  // An empty list renders as a DASH rather than as nothing. "Serves no intraday" and "the server
+  // sent no capability field" would otherwise be the same blank cell, and the first is the fact an
+  // operator is on this page to read — the whole reason Yahoo is worth enabling is that its daily
+  // line names a market the others' do not.
+  const capLine = (label: string, markets: string[] | undefined, testid: string) => (
+    <div data-testid={testid}>
+      <Space wrap size={4}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {label}
+        </Typography.Text>
+        {(markets ?? []).length ? (
+          (markets ?? []).map((m) => <Tag key={m}>{t(`quote.market.${m}`)}</Tag>)
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        )}
+      </Space>
+    </div>
+  )
+
   const columns = [
     {
       key: 'drag',
@@ -238,14 +337,27 @@ export default function QuoteSourcesPage() {
       key: 'source',
       title: t('quoteAdmin.sources'),
       render: (_: unknown, r: QuoteAdminSource) => (
-        <Space wrap size={6}>
-          <Typography.Text strong>{sourceLabel(r.source)}</Typography.Text>
-          {r.enabled ? (
-            enabledOrder[0] === r.source ? (
-              <Tag color="blue">{t('quoteAdmin.primary')}</Tag>
-            ) : (
-              <Tag>{t('quoteAdmin.fallback')}</Tag>
-            )
+        <Space direction="vertical" size={4}>
+          <Space wrap size={6}>
+            <Typography.Text strong>{sourceLabel(r.source)}</Typography.Text>
+            {r.enabled ? (
+              enabledOrder[0] === r.source ? (
+                <Tag color="blue">{t('quoteAdmin.primary')}</Tag>
+              ) : (
+                <Tag>{t('quoteAdmin.fallback')}</Tag>
+              )
+            ) : null}
+          </Space>
+          {/* In the row, in full, next to the switch it is about — not in a tooltip and not in a
+              paragraph further down the page. This is the one thing on the panel that is not a
+              status: it says the endpoint is undocumented and unlicensed, that whether to depend on
+              it is the operator's decision rather than the build's, and that turning it on is what
+              gives US symbols a chart at all. An operator who never hovers must still have read it
+              before their finger is on the switch, because the switch is the decision. */}
+          {sourceNotice(r.source) ? (
+            <div data-testid="quote-source-notice">
+              <Alert type="warning" showIcon style={{ maxWidth: 360 }} message={sourceNotice(r.source)} />
+            </div>
           ) : null}
         </Space>
       ),
@@ -268,10 +380,28 @@ export default function QuoteSourcesPage() {
       key: 'markets',
       title: t('quoteAdmin.markets'),
       render: (_: unknown, r: QuoteAdminSource) => (
-        <Space wrap size={4}>
-          {(r.markets ?? []).map((m) => (
-            <Tag key={m}>{t(`quote.market.${m}`)}</Tag>
-          ))}
+        <div data-testid="quote-source-markets">
+          <Space wrap size={4}>
+            {(r.markets ?? []).map((m) => (
+              <Tag key={m}>{t(`quote.market.${m}`)}</Tag>
+            ))}
+          </Space>
+        </div>
+      ),
+    },
+    {
+      key: 'capabilities',
+      title: t('quoteAdmin.capabilities'),
+      // The markets column above answers "can this source PRICE this market"; these two answer
+      // "and can it draw it, at which resolution". They are separate columns because the answers
+      // differ, per market and per source, and the resolver acts on the pair rather than on the
+      // union — a source is skipped for a (market, interval) it has not declared no matter where the
+      // operator drags it. Without this column the order is a list of names in a sequence whose
+      // effect cannot be predicted from anything on screen.
+      render: (_: unknown, r: QuoteAdminSource) => (
+        <Space direction="vertical" size={2}>
+          {capLine(t('quoteAdmin.daily'), r.daily, 'quote-source-daily')}
+          {capLine(t('quoteAdmin.intraday'), r.intraday, 'quote-source-intraday')}
         </Space>
       ),
     },
@@ -368,7 +498,10 @@ export default function QuoteSourcesPage() {
                 pagination={false}
                 components={sortableTableComponents}
                 columns={columns}
-                scroll={{ x: 900 }}
+                // Wider than the 900 this table shipped with: it has gained a column of market tags
+                // and a notice that has to be READ, and columns that cram are how a row's two
+                // market lists start looking like one. Below this width the table scrolls.
+                scroll={{ x: 1100 }}
               />
             </SortableWrapper>
           </div>
@@ -412,14 +545,56 @@ export default function QuoteSourcesPage() {
               />,
               ttlHint(ttlClosedFloor),
             )}
-
-            <StickyActionBar>
-              <Button type="primary" onClick={save}>
-                {t('common.save')}
-              </Button>
-            </StickyActionBar>
+            {/* Its own TTL, and not a third way of saying the first one: the open/closed pair is
+                about whether the market is moving, while this is about the RESOLUTION of what was
+                asked for. A one-minute series cached for the five minutes that suit a daily chart
+                is four minutes of a chart that claims to be minute-by-minute and is not — the
+                failure looks like data rather than like staleness, which is why it gets a number of
+                its own and a floor (15) higher than the open one. */}
+            {row(
+              t('quoteAdmin.ttlIntraday'),
+              <InputNumber
+                min={1}
+                value={ttlIntraday}
+                onChange={(v) => setTtlNumber(setTtlIntraday, v)}
+                aria-label={t('quoteAdmin.ttlIntraday')}
+              />,
+              ttlHint(ttlIntradayFloor),
+            )}
           </div>
         </Card>
+
+        {/* A disclosure, not a display preference, which is why it is a switch on this page rather
+            than a default nobody was told about: with it on, every home page view sends the codes
+            currently on screen to a third-party vendor. The hint says exactly that, in the open —
+            an operator cannot weigh what they have not been shown, and hiding the sentence behind a
+            question mark next to a switch that ships ON would be this page keeping it from them. */}
+        <Card title={t('quoteAdmin.homeCards')}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* Moving the switch is itself an answer, so it is what makes the value sendable: a
+                key the GET did not carry is omitted from the save, but only until somebody
+                decides it here — otherwise the control would be one an operator can move and
+                cannot save. */}
+            <Switch
+              checked={homeCards}
+              onChange={(on) => {
+                setHomeCards(on)
+                setHomeCardsKnown(true)
+              }}
+              aria-label={t('quoteAdmin.homeCards')}
+            />
+            <Typography.Text type="secondary">{t('quoteAdmin.homeCardsHint')}</Typography.Text>
+          </div>
+        </Card>
+
+        {/* One bar for the whole page, outside the cards: one POST carries the order, the three
+            TTLs and the home-card switch, so a Save button inside the cache card would be a button
+            that saves more than the card it sits in says it does. */}
+        <StickyActionBar>
+          <Button type="primary" onClick={save}>
+            {t('common.save')}
+          </Button>
+        </StickyActionBar>
       </div>
     </LoadGate>
   )
