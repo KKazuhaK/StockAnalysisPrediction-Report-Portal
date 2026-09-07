@@ -866,6 +866,7 @@
   "quote.market.sz": "深交所",
   "quote.market.us": "美股",
   "quote.noHistory": "该市场暂无历史行情数据",
+  "quote.noInterval": "没有已启用的行情源提供这个窗口。可在 管理 → 行情源 里启用一个",
   "quote.noHistorySrc": "历史行情获取失败",
   "quote.noSymbol": "输入一个代码开始",
   "quote.open": "今开",

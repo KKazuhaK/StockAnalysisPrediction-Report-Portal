@@ -336,6 +336,18 @@ describe('PriceChart', () => {
     expect(screen.queryByTestId('price-chart')).toBeNull()
   })
 
+  it('says why there is no history, and draws nothing, for interval_unsupported', () => {
+    // The third reason, and the one the other two were being given for. It is a CONFIGURATION fact:
+    // the market has the data and nothing enabled serves this window, so the sentence has to be
+    // different from the standing-gap one — it is what an operator reads after switching a source
+    // on for exactly this window, and "this market has no data" does not change when they do.
+    render(<PriceChart bars={[]} unavailable="interval_unsupported" />)
+    expect(screen.getByText('quote.noInterval')).toBeTruthy()
+    expect(screen.queryByText('quote.noHistory')).toBeNull()
+    expect(screen.queryByText('quote.noHistorySrc')).toBeNull()
+    expect(screen.queryByTestId('price-chart')).toBeNull()
+  })
+
   it('renders an Empty, not an axis frame, for an empty series with no stated reason', () => {
     render(<PriceChart bars={[]} />)
     expect(screen.getByTestId('price-chart-empty')).toBeTruthy()
@@ -601,6 +613,32 @@ describe('PriceChart', () => {
     rerender(<PriceChart bars={BARS} currency="XYZ" />)
     expect(screen.queryByTestId('price-currency')).toBeNull()
     expect(screen.getByTestId('price-chart').textContent).not.toContain('quote.currency')
+  })
+
+  it('keeps the currency label clear of the topmost price label they share a gutter with', () => {
+    // Both are anchored to the RIGHT EDGE of the price gutter, so they occupy the same x and can
+    // only be separated vertically. They were not: the currency sat five pixels above the plot top
+    // and the first gridline's label reached about five pixels above it from the other side, so 元
+    // printed through the digits of the highest price. This asserts the separation rather than the
+    // constant, because the fix is the GAP and not the number that produced it.
+    renderChart(<PriceChart bars={BARS} currency="CNY" />, 900)
+    const unit = screen.getByTestId('price-currency')
+    const unitBaseline = Number(unit.getAttribute('y'))
+    const unitRight = Number(unit.getAttribute('x'))
+
+    // Every price label on the axis, which is every <text> sharing that exact right edge.
+    const axisLabels = Array.from(
+      screen.getByTestId('price-chart').querySelectorAll('text[text-anchor="end"]'),
+    ).filter((el) => Number(el.getAttribute('x')) === unitRight && el !== unit)
+    expect(axisLabels.length).toBeGreaterThan(0)
+
+    const topLabelBaseline = Math.min(...axisLabels.map((el) => Number(el.getAttribute('y'))))
+    // An 11px label reaches roughly 0.8em above its own baseline. The currency's baseline has to
+    // clear that, with a pixel to spare, or the two glyph boxes intersect.
+    const topLabelAscender = topLabelBaseline - 11 * 0.8
+    expect(unitBaseline).toBeLessThan(topLabelAscender - 1)
+    // And it must still be inside the viewBox rather than clipped off the top edge.
+    expect(unitBaseline - 11 * 0.8).toBeGreaterThan(0)
   })
 
   it('falls back to the default height for one it cannot draw with', () => {

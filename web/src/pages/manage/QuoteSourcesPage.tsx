@@ -51,8 +51,17 @@ type QuoteAdminSource = {
   markets: string[]
   /** Markets this source serves a DAILY series for. Empty is a real answer, not a missing one. */
   daily: string[]
-  /** Markets it serves an INTRADAY (minute-resolution) series for. */
+  /** Markets it serves ONE SESSION of minutes for — 分时, and not the five-day window below. */
   intraday: string[]
+  /**
+   * Markets it serves the FIVE-SESSION window for.
+   *
+   * Separate from `intraday` because they are separate claims, and the panel said otherwise until a
+   * reader found out the hard way: the server used to union the two under one 分时 column, so a
+   * source that served only the one-day window was printed as covering both, and 5日 looked
+   * available in three markets while every 5日 request in every market degraded to a snapshot.
+   */
+  intraday5d: string[]
   lastSuccess: string
   lastError: string
   lastErrorAt: string
@@ -337,27 +346,14 @@ export default function QuoteSourcesPage() {
       key: 'source',
       title: t('quoteAdmin.sources'),
       render: (_: unknown, r: QuoteAdminSource) => (
-        <Space direction="vertical" size={4}>
-          <Space wrap size={6}>
-            <Typography.Text strong>{sourceLabel(r.source)}</Typography.Text>
-            {r.enabled ? (
-              enabledOrder[0] === r.source ? (
-                <Tag color="blue">{t('quoteAdmin.primary')}</Tag>
-              ) : (
-                <Tag>{t('quoteAdmin.fallback')}</Tag>
-              )
-            ) : null}
-          </Space>
-          {/* In the row, in full, next to the switch it is about — not in a tooltip and not in a
-              paragraph further down the page. This is the one thing on the panel that is not a
-              status: it says the endpoint is undocumented and unlicensed, that whether to depend on
-              it is the operator's decision rather than the build's, and that turning it on is what
-              gives US symbols a chart at all. An operator who never hovers must still have read it
-              before their finger is on the switch, because the switch is the decision. */}
-          {sourceNotice(r.source) ? (
-            <div data-testid="quote-source-notice">
-              <Alert type="warning" showIcon style={{ maxWidth: 360 }} message={sourceNotice(r.source)} />
-            </div>
+        <Space wrap size={6}>
+          <Typography.Text strong>{sourceLabel(r.source)}</Typography.Text>
+          {r.enabled ? (
+            enabledOrder[0] === r.source ? (
+              <Tag color="blue">{t('quoteAdmin.primary')}</Tag>
+            ) : (
+              <Tag>{t('quoteAdmin.fallback')}</Tag>
+            )
           ) : null}
         </Space>
       ),
@@ -402,6 +398,11 @@ export default function QuoteSourcesPage() {
         <Space direction="vertical" size={2}>
           {capLine(t('quoteAdmin.daily'), r.daily, 'quote-source-daily')}
           {capLine(t('quoteAdmin.intraday'), r.intraday, 'quote-source-intraday')}
+          {/* A third LINE in the same cell rather than a fourth column: the table is already wide
+              enough to scroll, and what an operator needs is to see the two windows differ, not to
+              sort by either. The label is the range strip's own 5日 — the reader and the operator
+              are looking at the same button. */}
+          {capLine(t('quote.range.5d'), r.intraday5d, 'quote-source-intraday5d')}
         </Space>
       ),
     },
@@ -480,6 +481,25 @@ export default function QuoteSourcesPage() {
         <Card title={t('quoteAdmin.sources')}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <Alert type="info" showIcon message={t('quoteAdmin.whyNoUrl')} />
+            {/* The vendor notices, at the CARD's width rather than inside a table cell.
+                They used to sit in the source column under a 360px cap, where a three-sentence
+                licensing notice wrapped to five lines and pushed its row to roughly two hundred
+                pixels tall — one vendor's disclaimer setting the height of a table an operator
+                came to read the other rows of. The text is unchanged and still shown by default:
+                it is the one thing on this panel that is not a status, and hiding it behind a
+                tooltip would mean an operator who never hovers decides without it. Named per
+                vendor, because at this width it is no longer beside its own row. */}
+            {rows.map((r) =>
+              sourceNotice(r.source) ? (
+                <Alert
+                  key={r.source}
+                  data-testid="quote-source-notice"
+                  type="warning"
+                  showIcon
+                  message={`${sourceLabel(r.source)}：${sourceNotice(r.source)}`}
+                />
+              ) : null,
+            )}
             <Typography.Text type="secondary">{t('quoteAdmin.orderHint')}</Typography.Text>
             <SortableWrapper
               ids={rows.map((r) => r.source)}
@@ -498,9 +518,10 @@ export default function QuoteSourcesPage() {
                 pagination={false}
                 components={sortableTableComponents}
                 columns={columns}
-                // Wider than the 900 this table shipped with: it has gained a column of market tags
-                // and a notice that has to be READ, and columns that cram are how a row's two
-                // market lists start looking like one. Below this width the table scrolls.
+                // Wider than the 900 this table shipped with: it has gained columns of market tags,
+                // and columns that cram are how a row's two market lists start looking like one.
+                // Below this width the table scrolls. The vendor notices are NOT in here — they are
+                // alerts above the table, at the card's width, for exactly this reason.
                 scroll={{ x: 1100 }}
               />
             </SortableWrapper>
@@ -570,7 +591,12 @@ export default function QuoteSourcesPage() {
             an operator cannot weigh what they have not been shown, and hiding the sentence behind a
             question mark next to a switch that ships ON would be this page keeping it from them. */}
         <Card title={t('quoteAdmin.homeCards')}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* alignItems is not a nicety here. A column flex container stretches its children by
+              default, and a Switch that has been stretched is a 1900px blue bar across the card —
+              it stops reading as a control at all, and its off state reads as a progress track that
+              never filled. The switch is sized by its own content; only the hint below it may run
+              the width of the card. */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
             {/* Moving the switch is itself an answer, so it is what makes the value sendable: a
                 key the GET did not carry is omitted from the save, but only until somebody
                 decides it here — otherwise the control would be one an operator can move and

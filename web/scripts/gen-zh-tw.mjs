@@ -33,7 +33,15 @@ const slots = (s) => [...String(s).matchAll(/\{\{\s*([\w.]+)/g)].map((m) => m[1]
 //
 // 代码 is the standing case. In Taiwanese computing 代码 is usually 程式碼 -- source code -- and s2twp
 // converts it that way, which is right for an API and wrong for a stock code. A 股票代码 is 股票代碼.
-const AFTER_CONVERSION = [[/程式碼/g, '代碼']]
+//
+// 窗口 is the second, and it arrived the same way: s2twp reads it as a GUI window and produces 視窗,
+// which is right for an application and wrong for a span of trading time. The 5日 window is a
+// 區間 -- "沒有已啟用的行情源提供這個視窗" tells a Traditional reader that no source provides this
+// dialog box.
+const AFTER_CONVERSION = [
+  [/程式碼/g, '代碼'],
+  [/視窗/g, '區間'],
+]
 const fix = (s) => AFTER_CONVERSION.reduce((acc, [re, to]) => acc.replace(re, to), s)
 
 const out = {}

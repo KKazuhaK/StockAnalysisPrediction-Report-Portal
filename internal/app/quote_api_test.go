@@ -1463,6 +1463,17 @@ const (
 	fixTencentMinuteBJ = "tencent_minute_bj830799.json"
 	fixTencentMinuteUS = "tencent_minute_usAAPL.json"
 	fixTencentBatch    = "tencent_batch_six.txt"
+
+	// day/query — the same minute rows for FIVE sessions, and the source of the 5日 window. Each is
+	// a measurement: Shanghai and Shenzhen answer 5 x 267 rows, Hong Kong 5 x 332, the US refuses
+	// the market outright with {"code":-1,"msg":"param error"}, and Beijing answers five FULL
+	// sessions dated APRIL 2025 — the suspended stock, which is why bj is declared for neither
+	// intraday window rather than for one of them.
+	fixTencentDaysSH = "tencent_days_sh600519.json"
+	fixTencentDaysSZ = "tencent_days_sz000001.json"
+	fixTencentDaysHK = "tencent_days_hk00700.json"
+	fixTencentDaysBJ = "tencent_days_bj830799.json"
+	fixTencentDaysUS = "tencent_days_usAAPL.json"
 )
 
 // A range is now two facts — how many points, and at what RESOLUTION — and they are read out of one
@@ -1520,14 +1531,21 @@ func TestQuoteUnservableIntervalDegradesToTheSnapshotRatherThanA503(t *testing.T
 		ask    quoteInterval
 		want   quoteInterval
 	}{
-		// Served as asked: Tencent's minute endpoint declares these three.
+		// Served as asked, out of the box: Tencent declares both windows on these three, from two
+		// endpoints on one host.
 		{"sh", quoteIntervalIntraday, quoteIntervalIntraday},
 		{"sz", quoteIntervalIntraday, quoteIntervalIntraday},
 		{"hk", quoteIntervalIntraday, quoteIntervalIntraday},
-		// Nobody enabled serves these, so the reader gets the price and an empty chart.
+		{"sh", quoteIntervalIntraday5D, quoteIntervalIntraday5D},
+		{"sz", quoteIntervalIntraday5D, quoteIntervalIntraday5D},
+		{"hk", quoteIntervalIntraday5D, quoteIntervalIntraday5D},
+		// Nobody enabled serves these, so the reader gets the price and an empty chart. The two
+		// markets are here for DIFFERENT measured reasons — day/query refuses the US market with
+		// `param error`, and answers the only Beijing code this repo has a body for with a week
+		// from April 2025 — and both are written at the capability declaration.
 		{"bj", quoteIntervalIntraday, quoteIntervalSnapshot},
+		{"bj", quoteIntervalIntraday5D, quoteIntervalSnapshot},
 		{"us", quoteIntervalIntraday, quoteIntervalSnapshot},
-		{"sh", quoteIntervalIntraday5D, quoteIntervalSnapshot},
 		{"us", quoteIntervalIntraday5D, quoteIntervalSnapshot},
 		// The daily chain is untouched by any of this.
 		{"sh", quoteIntervalDaily, quoteIntervalDaily},
@@ -1541,11 +1559,17 @@ func TestQuoteUnservableIntervalDegradesToTheSnapshotRatherThanA503(t *testing.T
 	// With Yahoo switched on, the two windows it declares stop degrading — which is the operator's
 	// side of the same mechanism, and the only thing that changes is the order setting.
 	on := quoteConfig{Order: []string{quoteSourceTencent, quoteSourceSina, quoteSourceYahoo}}.orDefaults()
-	if got := c.servableInterval(on, quoteAsk(t, "sh"), quoteIntervalIntraday5D); got != quoteIntervalIntraday5D {
-		t.Errorf("5d with yahoo enabled resolved to %q, want it served", got)
+	// The US is now the whole of what enabling Yahoo buys on these two windows — the Chinese
+	// exchanges and Hong Kong are served either way, which is what this change was for.
+	if got := c.servableInterval(on, quoteAsk(t, "us"), quoteIntervalIntraday5D); got != quoteIntervalIntraday5D {
+		t.Errorf("us 5日 with yahoo enabled resolved to %q, want it served", got)
 	}
 	if got := c.servableInterval(on, quoteAsk(t, "us"), quoteIntervalIntraday); got != quoteIntervalIntraday {
 		t.Errorf("us 分时 with yahoo enabled resolved to %q, want it served", got)
+	}
+	// And Beijing still degrades with every source switched on, because no source has a body for it.
+	if got := c.servableInterval(on, quoteAsk(t, "bj"), quoteIntervalIntraday5D); got != quoteIntervalSnapshot {
+		t.Errorf("bj 5日 resolved to %q with every source enabled", got)
 	}
 
 	// And the ENDPOINT applies it, which is a separate claim from the resolver knowing the answer: a
@@ -1565,11 +1589,30 @@ func TestQuoteUnservableIntervalDegradesToTheSnapshotRatherThanA503(t *testing.T
 	if len(got.Bars) != 0 {
 		t.Errorf("a degraded request carried %d bars", len(got.Bars))
 	}
-	quoteEqStr(t, "barsUnavailable", got.BarsUnavailable, quoteBarsMarketUnsupported)
+	// interval_unsupported and NOT market_unsupported. The distinction is the whole of this
+	// assertion: the US has minute data — Yahoo serves it, and the row above proves the resolver
+	// finds it the moment that source is enabled — so "this market has no historical data" is the
+	// wrong sentence, and it is the wrong sentence in the expensive direction, because it is what an
+	// operator reads after enabling a source for exactly this window.
+	quoteEqStr(t, "barsUnavailable", got.BarsUnavailable, quoteBarsIntervalUnsupported)
 	quoteEqStr(t, "barsSource", got.BarsSource, "")
 	if tencent.n() != 1 {
 		t.Errorf("the degraded request cost %d upstream calls, want 1 for the snapshot", tencent.n())
 	}
+
+	// The OTHER branch, which must keep saying what it always said: a DAILY range on a market whose
+	// daily series is not worth drawing is a standing gap, true whatever an operator enables, and it
+	// is the one case market_unsupported is still for.
+	daily := quoteBody(t, quoteGET(t, s, "/api/quote/AAPL?range=3m"))
+	quoteEqStr(t, "daily barsUnavailable", daily.BarsUnavailable, quoteBarsMarketUnsupported)
+	if len(daily.Bars) != 0 {
+		t.Errorf("a degraded daily request carried %d bars", len(daily.Bars))
+	}
+	// An unknown range is the DEFAULT range and not a snapshot request — every entry in the table
+	// asks for a series — so it degrades and reports like the daily one above rather than silently
+	// becoming a price with no notice attached.
+	unknown := quoteBody(t, quoteGET(t, s, "/api/quote/AAPL?range=nonsense"))
+	quoteEqStr(t, "fallback barsUnavailable", unknown.BarsUnavailable, quoteBarsMarketUnsupported)
 }
 
 // intradayStub answers a 分时 request from the captured minute body and every other request from the
@@ -2447,5 +2490,134 @@ func TestEveryRangeOnAMarketWithNoHistoryIsOneCallAndOneEntry(t *testing.T) {
 	}
 	if n := s.quotes.stats().Entries; n != 1 {
 		t.Errorf("four ranges of the same degraded answer hold %d cache entries, want 1", n)
+	}
+}
+
+// ---------- the 5日 window, from day/query ----------
+
+// Five sessions, oldest first, bucketed to five minutes — and every number in the assertions below
+// comes out of the captured body rather than out of this test's arithmetic.
+//
+// The window exists at all because of what the probe that opened this fix measured: with the
+// SHIPPED order, `5d` degraded to a snapshot in every market including the A-shares, so the 5日
+// button was dead for every deployment that had not enabled an undocumented third-party endpoint.
+func TestTencentFiveDayWindowIsFiveSessionsOldestFirst(t *testing.T) {
+	for _, tc := range []struct {
+		market, code, fixture string
+		days, buckets         int
+		firstDate, lastDate   string
+	}{
+		{"sh", "600519", fixTencentDaysSH, 5, 280, "2026-09-01T09:30:00+08:00", "2026-09-07T15:30:00+08:00"},
+		{"sz", "000001", fixTencentDaysSZ, 5, 280, "2026-09-01T09:30:00+08:00", "2026-09-07T15:30:00+08:00"},
+		{"hk", "00700", fixTencentDaysHK, 5, 340, "2026-09-01T09:30:00+08:00", "2026-09-07T16:00:00+08:00"},
+	} {
+		t.Run(tc.market, func(t *testing.T) {
+			got, err := parseTencentDays(tc.market, tc.code, readQuoteFixture(t, tc.fixture), 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if len(got.Bars) != tc.buckets {
+				t.Fatalf("%d bars, want %d five-minute buckets over %d sessions",
+					len(got.Bars), tc.buckets, tc.days)
+			}
+			quoteEqStr(t, "first bar", got.Bars[0].Date, tc.firstDate)
+			quoteEqStr(t, "last bar", got.Bars[len(got.Bars)-1].Date, tc.lastDate)
+			quoteEqStr(t, "barsSource", got.BarsSource, quoteSourceTencent)
+			quoteEqStr(t, "barsUnavailable", got.BarsUnavailable, "")
+
+			// OLDEST FIRST and strictly increasing across the whole window, which is the half the
+			// per-session parser cannot check: the vendor sends the days newest first, and a chart
+			// drawn in that order runs backwards through the week under a rising x axis.
+			distinctDays := map[string]bool{}
+			for i, b := range got.Bars {
+				distinctDays[b.Date[:10]] = true
+				if i > 0 && b.Date <= got.Bars[i-1].Date {
+					t.Fatalf("bar %d is stamped %q, which is not later than %q", i, b.Date, got.Bars[i-1].Date)
+				}
+			}
+			if len(distinctDays) != tc.days {
+				t.Errorf("the window covers %d calendar days, want %d", len(distinctDays), tc.days)
+			}
+			// A bucket is an aggregate of observed prices, never an interpolation: its own high and
+			// low have to bound its open and close, and its volume is a sum of real minutes.
+			var vol int64
+			for i, b := range got.Bars {
+				if b.High < b.Open || b.High < b.Close || b.Low > b.Open || b.Low > b.Close {
+					t.Fatalf("bucket %d is not a bar: o=%d h=%d l=%d c=%d", i, b.Open, b.High, b.Low, b.Close)
+				}
+				vol += b.Volume
+			}
+			if vol <= 0 {
+				t.Errorf("five sessions carried %d 股 in total", vol)
+			}
+		})
+	}
+}
+
+// The two markets day/query does not serve, and they fail differently — which is the point, because
+// only one of them is a statement about the market.
+func TestTencentFiveDayWindowRefusesTheMarketsItDoesNotServe(t *testing.T) {
+	// The US is refused by the VENDOR: {"code":-1,"msg":"param error"}. It must arrive as an error
+	// and never as an empty series, or a market Tencent does not serve here reads as a quiet week.
+	if _, err := parseTencentDays("us", "AAPL", readQuoteFixture(t, fixTencentDaysUS), 0); err == nil {
+		t.Error("the US body parsed; it says param error")
+	}
+
+	// Beijing is the opposite: the body is WELL FORMED and carries five full sessions, so nothing in
+	// the parser can refuse it. It is dated April 2025 — the suspended stock every bj fixture here
+	// is captured from — and that is a fact about this CODE, not about the market. So the guard is
+	// the capability declaration and not a parse error, and this asserts the declaration.
+	bj, err := parseTencentDays("bj", "830799", readQuoteFixture(t, fixTencentDaysBJ), 0)
+	if err != nil {
+		t.Fatalf("the bj body no longer parses, so the note below is now wrong: %v", err)
+	}
+	if len(bj.Bars) == 0 {
+		t.Fatal("the bj fixture is meant to carry a full, and stale, series")
+	}
+	if year := bj.Bars[0].Date[:4]; year == "2026" {
+		t.Fatalf("the bj fixture is no longer the stale capture this test is about (%s)", bj.Bars[0].Date)
+	}
+	// And nothing can ask for it: bj is declared for neither intraday window.
+	c := &quoteCache{}
+	c.init()
+	tg, err := quoteResolve("830799")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := quoteConfig{Order: quoteShippedOrder()}
+	for _, iv := range []quoteInterval{quoteIntervalIntraday, quoteIntervalIntraday5D} {
+		if got := c.sourcesFor(cfg, tg, iv); len(got) != 0 {
+			t.Errorf("%s on bj resolves to %v; the only bj body measured is a year old", iv, got)
+		}
+	}
+}
+
+// The regression this whole change exists for: with the SHIPPED order and no third-party source
+// enabled, every market's 5日 degraded to a snapshot, so the button drew nothing for anybody.
+func TestFiveDayWindowIsServedOutOfTheBoxOnTheMarketsItWasMeasuredFor(t *testing.T) {
+	c := &quoteCache{}
+	c.init()
+	cfg := quoteConfig{Order: quoteShippedOrder()}
+	spec, ok := quoteRanges["5d"]
+	if !ok {
+		t.Fatal("the 5d range is gone")
+	}
+	for _, in := range []string{"601899", "000001", "00700"} {
+		tg, err := quoteResolve(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.servableInterval(cfg, tg, spec.interval); got != quoteIntervalIntraday5D {
+			t.Errorf("%s at 5日 degrades to %s with the shipped sources; it must be served", in, got)
+		}
+	}
+	// Unchanged, and stated so the two are not confused: the US 5日 still has no shipped source,
+	// because day/query refuses the market outright.
+	us, err := quoteResolve("AAPL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.servableInterval(cfg, us, spec.interval); got != quoteIntervalSnapshot {
+		t.Errorf("the US 5日 resolved to %s out of the box; nothing shipped serves it", got)
 	}
 }
