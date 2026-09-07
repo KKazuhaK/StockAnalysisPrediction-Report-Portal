@@ -762,9 +762,10 @@ func TestYahooShipsCompiledInAndDisabled(t *testing.T) {
 		{"sh", quoteIntervalIntraday, "tencent,yahoo"},
 		{"hk", quoteIntervalIntraday, "tencent,yahoo"},
 		{"us", quoteIntervalIntraday, "yahoo"},
-		// The five-day, five-minute window is Yahoo's alone in every market: Tencent's endpoint
-		// answers today and has no window parameter to ask it for more.
-		{"sh", quoteIntervalIntraday5D, "yahoo"},
+		// The five-day window follows the same rule as 分时 now that Tencent's day/query endpoint
+		// backs it: Yahoo trails Tencent where both declare it, and is alone where it is alone.
+		{"sh", quoteIntervalIntraday5D, "tencent,yahoo"},
+		{"hk", quoteIntervalIntraday5D, "tencent,yahoo"},
 		{"us", quoteIntervalIntraday5D, "yahoo"},
 		// Beijing has no measured Yahoo symbol, so it is not in either intraday grant.
 		{"bj", quoteIntervalIntraday, ""},
@@ -1004,16 +1005,26 @@ func TestYahooIsSkippedForAnHKCodeItHasNoSymbolFor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve hk 80737: %v", err)
 	}
-	// The same market, the same interval, two codes: the one Yahoo can spell resolves to it and the
-	// one it cannot resolves to nobody — so the 5日 request degrades rather than 503s.
-	if got := quoteSourceNamesOf(c.sourcesFor(on, spellable, quoteIntervalIntraday5D)); got != "yahoo" {
-		t.Errorf("hk 00700 5日 resolved to [%s], want [yahoo]", got)
+	// The same market, the same interval, two codes. Yahoo is in the chain for the one it can spell
+	// and absent from the chain for the one it cannot — and `knows` is the only thing that can make
+	// that difference, because the two codes are the same market and the grant is a predicate over
+	// markets. Tencent declares the pair for both, which is what the chains below say.
+	if got := quoteSourceNamesOf(c.sourcesFor(on, spellable, quoteIntervalIntraday5D)); got != "tencent,yahoo" {
+		t.Errorf("hk 00700 5日 resolved to [%s], want [tencent,yahoo]", got)
 	}
-	if got := quoteSourceNamesOf(c.sourcesFor(on, unspellable, quoteIntervalIntraday5D)); got != "" {
+	if got := quoteSourceNamesOf(c.sourcesFor(on, unspellable, quoteIntervalIntraday5D)); got != "tencent" {
 		t.Errorf("hk 80737 5日 resolved to [%s]; this portal has no yahoo symbol for that code, and a "+
 			"source that cannot be asked must not be reached through the resolver", got)
 	}
-	if iv := c.servableInterval(on, unspellable, quoteIntervalIntraday5D); iv != quoteIntervalSnapshot {
+	// And the degradation the skip is FOR, on a deployment where Yahoo is the only source enabled:
+	// with nobody able to answer, the reader gets the price and an empty chart rather than a 503 for
+	// a gap no retry closes. Tencent's own grant is what hides this in the default order, which is
+	// why the assertion needs an order that does not contain it.
+	only := quoteConfig{Order: []string{quoteSourceYahoo}}.orDefaults()
+	if got := quoteSourceNamesOf(c.sourcesFor(only, unspellable, quoteIntervalIntraday5D)); got != "" {
+		t.Errorf("with only yahoo enabled, hk 80737 5日 resolved to [%s], want nobody", got)
+	}
+	if iv := c.servableInterval(only, unspellable, quoteIntervalIntraday5D); iv != quoteIntervalSnapshot {
 		t.Errorf("hk 80737 5日 was served as %q; with no source able to answer it, the reader gets the "+
 			"price and an empty chart rather than a 503", iv)
 	}

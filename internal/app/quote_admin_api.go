@@ -46,10 +46,17 @@ type quoteSourceStatus struct {
 	// fifteen years apart. An operator dragging a source up the order is choosing among THESE, so a
 	// panel that showed only the union would make that move look like something it is not.
 	//
-	// Both are always arrays, never null: the page renders an empty one as a dash, which is a real
-	// answer ("serves no intraday") and must not be confusable with a field the server did not send.
-	Daily    []string `json:"daily"`
-	Intraday []string `json:"intraday"`
+	// All three are always arrays, never null: the page renders an empty one as a dash, which is a
+	// real answer ("serves no intraday") and must not be confusable with a field the server did not
+	// send.
+	//
+	// The two intraday windows are separate fields because they are separate claims. They were one
+	// union under a 分时 heading, and that is exactly how the panel came to advertise a window
+	// nothing served: Tencent declared the one-session interval, the column printed its three
+	// markets, and an operator read "5日 works here" while every 5日 request degraded to a snapshot.
+	Daily      []string `json:"daily"`
+	Intraday   []string `json:"intraday"`
+	Intraday5D []string `json:"intraday5d"`
 	// The three timestamps are RFC3339 in UTC, and EMPTY when the thing has never happened — not
 	// the year 1 that a zero time.Time marshals to, which a panel would render as "0001-01-01" and
 	// an operator would read as a real event from a broken clock.
@@ -92,6 +99,7 @@ func (s *Server) quoteSourceStatuses(cfg quoteConfig) []quoteSourceStatus {
 			Markets:     src.Markets,
 			Daily:       src.Daily,
 			Intraday:    src.Intraday,
+			Intraday5D:  src.Intraday5D,
 			LastSuccess: quoteAdminTime(h.LastSuccess),
 			LastError:   h.LastError,
 			LastErrorAt: quoteAdminTime(h.LastErrorAt),

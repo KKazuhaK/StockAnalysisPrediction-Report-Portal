@@ -33,7 +33,12 @@ const (
 	// They are two constants with the same value on purpose. Making one an alias of the other would
 	// tie two independent measurements together, and the next re-measurement would move both.
 	quoteRange1D = 400
-	quoteRange5D = 400
+	// Five sessions at the 5-minute bucket both sources answer this label with. Measured against the
+	// committed fixtures rather than reasoned from session lengths: Yahoo sends 331 points, and
+	// Tencent's five days bucket to 280 on Shanghai and Shenzhen and 340 on Hong Kong. The cap has
+	// to clear the LARGEST of those or a Hong Kong week silently loses its first morning off the
+	// front of the trim and is drawn as four and a half days under a 5日 label.
+	quoteRange5D = 500
 
 	// quoteRangeDefault is what an absent or unrecognised range= falls back to. Three months is the
 	// span the chart is designed around, and falling back is deliberately silent: a range the SPA
@@ -154,16 +159,27 @@ func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
 	out.Cached = cached
 	out.Bars = quoteVisibleBars(iv, resp.Bars)
 	if iv == quoteIntervalSnapshot {
-		// A snapshot request NEVER carries bars, whatever a vendor decides to start returning. There
-		// are two ways to arrive here and the promise is the same for both: a market whose daily
-		// series is not worth drawing (Beijing answers "day":[] on Tencent and a sixteen-month-stale
-		// series on Sina; the US answers a sixty-bar request with two rows fifteen years apart), and
-		// an interval this deployment has no enabled source for. In both cases the data does not
-		// exist as far as this portal is concerned, which is precisely the distinction
-		// market_unsupported carries and source_failed does not — one is a standing gap and the
-		// other is worth retrying.
+		// A snapshot request NEVER carries bars, whatever a vendor decides to start returning.
+		//
+		// Every range in the table asks for a series, so arriving here is always a DEGRADATION —
+		// the reader wanted a chart and this deployment cannot draw one. Neither reason below is
+		// worth retrying, which is what separates both from source_failed, but only one of them is
+		// a fact about the market:
+		//
+		//   - a DAILY range on a market whose daily series is not worth drawing. Beijing answers
+		//     "day":[] on Tencent and a sixteen-month-stale series on Sina; the US answers a
+		//     sixty-bar request with two rows fifteen years apart. A standing gap, true whatever an
+		//     operator enables, and market_unsupported says so.
+		//   - anything else: a WINDOW no enabled source declares. The market has the data and this
+		//     deployment has no source for it. Saying "this market has no historical data" there was
+		//     wrong in the one way that costs somebody an afternoon — it is the sentence an operator
+		//     reads after enabling a source FOR that window, and it did not change.
 		out.BarsSource = ""
-		out.BarsUnavailable = quoteBarsMarketUnsupported
+		if !spec.interval.intraday() && !quoteMarketHasDailyHistory(target.Market.id) {
+			out.BarsUnavailable = quoteBarsMarketUnsupported
+		} else {
+			out.BarsUnavailable = quoteBarsIntervalUnsupported
+		}
 	}
 
 	// Cache-Control carries what is LEFT of the server's own TTL, never the full one. A browser told

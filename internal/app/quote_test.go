@@ -1603,40 +1603,52 @@ func TestQuoteSinaOrderingStandsInForTheIdentity(t *testing.T) {
 
 // ---------- the endpoint the interval picks ----------
 
-// fetchTencentAt's 5日 refusal, which is the single line that makes quoteIntervalIntraday and
-// quoteIntervalIntraday5D two capabilities rather than one. Replacing it with a call to
-// fetchTencentIntraday left the whole suite green, and what that costs is written out at the
-// interval's declaration: this vendor's minute endpoint answers ONE trading day and has no window
-// parameter, so a 5日 request served from it comes back as today's single session under a five-day
-// label — a well-formed series of the wrong span, which is the exact failure the declaration
-// mechanism exists to prevent.
+// fetchTencentAt's interval switch, which is what makes the four quoteInterval values four
+// capabilities rather than one. Each row below names a DIFFERENT endpoint, and picking the wrong one
+// is not an error at runtime — it is a well-formed series of the wrong span under the label the
+// reader chose, which is the whole failure the declaration mechanism exists to prevent. Serving 5日
+// out of minute/query, which answers ONE session and has no window parameter, would draw today
+// alone under a five-day heading.
 //
-// It is asserted with an ALREADY-CANCELLED context, which is what makes this a hermetic test of the
-// refusal rather than of the network: a request that gets past this switch reaches vendorGet and dies
-// of the cancellation, so the two outcomes are distinguishable without a wire. The 分时 and daily
-// rows are the control — they are refused by the CONTEXT, which proves the 5日 row is refused by the
-// switch and not by the same cancellation.
-func TestFetchTencentAtRefusesTheFiveDayWindowBeforeItAsks(t *testing.T) {
+// Asserted with an ALREADY-CANCELLED context, which is what makes this hermetic: a request that gets
+// past the switch reaches vendorGet and dies of the cancellation, naming the URL it was about to
+// call — so which endpoint an interval chose is observable without a wire.
+func TestFetchTencentAtSendsEachIntervalToItsOwnEndpoint(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := fetchTencentAt(ctx, "sh", "600519", quoteRange5D, quoteIntervalIntraday5D)
-	if err == nil {
-		t.Fatal("tencent accepted a 5日 request; its minute endpoint answers one session and has no window parameter")
-	}
-	if errors.Is(err, context.Canceled) {
-		t.Fatalf("the 5日 request reached the network (%v); it must be refused by the interval switch, "+
-			"before any endpoint is chosen", err)
-	}
-	if !strings.Contains(err.Error(), string(quoteIntervalIntraday5D)) {
-		t.Errorf("the refusal reads %q and does not name the interval it refused", err)
+	for _, tc := range []struct {
+		iv   quoteInterval
+		host string
+	}{
+		// One session of minutes, and five sessions of the same rows: two endpoints on one host.
+		{quoteIntervalIntraday, "/appstock/app/minute/query"},
+		{quoteIntervalIntraday5D, "/appstock/app/day/query"},
+		// Both daily shapes go to fqkline.
+		{quoteIntervalDaily, "/appstock/app/fqkline/get"},
+		{quoteIntervalSnapshot, "/appstock/app/fqkline/get"},
+	} {
+		_, err := fetchTencentAt(ctx, "sh", "600519", quoteRange5D, tc.iv)
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("%s was answered with %v rather than reaching an endpoint", tc.iv, err)
+			continue
+		}
+		// The cancellation error carries the URL the transport was about to fetch, which is the only
+		// thing that separates "5日 reached the network" from "5日 reached the RIGHT network call".
+		// Without this the switch could send every interval to one endpoint and still pass.
+		if !strings.Contains(err.Error(), tc.host) {
+			t.Errorf("%s went to %v, want the %s endpoint", tc.iv, err, tc.host)
+		}
 	}
 
-	// The control: the intervals this source DOES serve are not refused here, so they get as far as
-	// the cancelled context. Without these two rows, a fetcher that refused everything would pass.
-	for _, iv := range []quoteInterval{quoteIntervalIntraday, quoteIntervalDaily, quoteIntervalSnapshot} {
-		if _, err := fetchTencentAt(ctx, "sh", "600519", 60, iv); !errors.Is(err, context.Canceled) {
-			t.Errorf("%s was answered with %v rather than reaching an endpoint", iv, err)
-		}
+	// An interval this build has no endpoint for is still refused BEFORE any endpoint is chosen, and
+	// the refusal names it. This is the branch that keeps a fifth interval from silently falling
+	// through to the daily fetcher the day one is added.
+	_, err := fetchTencentAt(ctx, "sh", "600519", 60, quoteInterval("intraday30d"))
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("an undeclared interval reached the network (%v)", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "intraday30d") {
+		t.Errorf("the refusal reads %v and does not name the interval it refused", err)
 	}
 }
