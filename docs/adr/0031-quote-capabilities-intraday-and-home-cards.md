@@ -262,3 +262,49 @@ One defect found while testing the above rather than by using the portal: once b
 were wired, the `iv.intraday()` guard in front of `fetchTencentAt`'s fall-through became dead code,
 so an interval with no endpoint went silently to the daily fetcher — a series of days under whatever
 label the reader picked. The switch is exhaustive now and its default refuses.
+
+---
+
+## Amendment (v0.4.49) — the reader picks the window, and that is a capability too
+
+§3 makes an interval "what a source can actually promise". A **bounded daily window** — the reader's
+own two dates rather than the last N sessions ending today — is one more of those, and it is a
+capability rather than a parameter for the same reason 分时 and 5日 are separate: a source can have
+one and not the other, and the difference is in the vendor's parameters rather than in its data.
+
+`quoteIntervalDailyRange` is daily bars between two dates. Tencent's fqkline takes
+`<sym>,day,<from>,<to>,<count>,bfq` and honours the two date slots — measured 2026-09-08:
+`2026-03-02..2026-04-10` answers exactly the 29 sessions Shanghai traded in it and the 27 Hong Kong
+did. Sina's kline endpoint takes a count and nothing else, so it does not declare the interval and
+the resolver skips it. Without that split, a bounded request handed to a count-only source would
+come back as the last N sessions **labelled with the reader's own dates** — a chart that lies about
+what it shows, which is the failure the whole declaration mechanism exists to prevent.
+
+Three consequences worth writing down:
+
+**The window replaces the range; it never narrows it.** `from`/`to` say which sessions, so the range
+key's bar count and interval have nothing left to contribute. Honouring both would let a 近1月 button
+silently truncate a year-wide window somebody chose. The URL carries one or the other for the same
+reason — a link holding both reopens as whichever half its reader honours.
+
+**A malformed window is refused, not clamped.** `quoteParseWindow` is the allowlist for two strings
+that reach a vendor URL, and it is written the way `quoteRanges` is: a strict `2006-01-02` layout, an
+ordering check, a span ceiling, and a 400 with a reason. Clamping would be wrong here in a way it is
+not wrong for a cache TTL — silently narrowing somebody's window and drawing the result under their
+own dates is the same lie as above, while a clamped TTL is merely a different number for the same
+thing. What reaches the vendor is re-formatted from the *parsed* time, so it is a string this code
+produced rather than one a caller typed.
+
+**The span ceiling is not what bounds the response.** `quoteMaxBars` still is, unchanged, and it is
+still in the URL beside the dates. `quoteWindowMaxDays` bounds the *question*: a request for
+1900-01-01..today is a caller probing rather than a reader choosing.
+
+### What is still not possible: 分时 for an arbitrary past day
+
+The original ask behind §3 was "某天的更细精度" — a chosen day at minute resolution. It is still not
+served, and the reason is measured rather than assumed: `minute/query` and `day/query` **ignore every
+date parameter** (`?date=20260901` and `?days=30` both come back with today and the last five
+sessions respectively). Yahoo's `period1`/`period2` would express it, but this environment gets 429
+from `query1`/`query2.finance.yahoo.com`, and a parser here is written against a committed
+measurement and not against a guess. So the window is daily-only, and the panel says nothing about a
+minute window it cannot draw.

@@ -89,6 +89,26 @@ type quoteVendorStub struct {
 	// `parse` — still as ONE counted call, because the count is the claim the batch endpoint makes
 	// and a stub that inflated it would make that claim untestable.
 	parseBatch func(targets []quoteTarget) (map[string]*QuoteResp, error)
+	// fetchRangeFn is the BOUNDED-WINDOW shape. It is a slot of its own here for the same reason it
+	// is one on the real source: a stub that answered a windowed request from `parse` would let a
+	// test assert that the reader's dates were honoured while what it actually got was the last N
+	// sessions — which is the exact defect the separate fetcher exists to prevent.
+	fetchRangeFn func(market, code, from, to string) (*QuoteResp, error)
+}
+
+// fetchRange is wired onto the source only when the stub sets fetchRangeFn, so a stub without one
+// behaves like a vendor that never declared the window.
+func (v *quoteVendorStub) fetchRange(ctx context.Context, market, code, from, to string) (*QuoteResp, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	v.mu.Lock()
+	v.calls++
+	v.mu.Unlock()
+	if v.err != nil {
+		return nil, v.err
+	}
+	return v.fetchRangeFn(market, code, from, to)
 }
 
 // fetchBatch is the batch shape, and it increments the counter EXACTLY ONCE however many symbols it
@@ -236,7 +256,7 @@ func (c *quoteCache) fetch(ctx context.Context, market, code string, bars int) (
 		return nil, false, 0, err
 	}
 	iv := c.servableInterval(cfg, target, quoteRangeFor("3m").interval)
-	return c.fetchUnder(ctx, cfg, market, code, bars, iv)
+	return c.fetchUnder(ctx, cfg, market, code, bars, iv, quoteWindow{})
 }
 
 func failingStub(msg string) *quoteVendorStub {
@@ -264,6 +284,13 @@ func wireQuoteSources(s *Server, tencent, sina *quoteVendorStub) {
 			// Replaced UNCONDITIONALLY wherever the real source has one, so that a test which
 			// touches /api/quotes without thinking about batching still cannot reach the network.
 			srcs[i].fetchBatch = stub.fetchBatch
+		}
+		if srcs[i].fetchRange != nil {
+			// Same rule for the windowed fetcher, and the same reason: a test that sends from= and
+			// to= without having thought about windows must not reach a vendor. A stub that set no
+			// fetchRangeFn keeps the DECLARATION — so the resolver still routes to it — and fails
+			// when called, which is what an unwired source should look like.
+			srcs[i].fetchRange = stub.fetchRange
 		}
 		if srcs[i].fetchAt != nil {
 			srcs[i].fetchAt = stub.fetchAt
@@ -524,7 +551,7 @@ func TestQuoteAPIReportsEveryStrategyExhausted(t *testing.T) {
 		t.Errorf("code = %q, want quote_unavailable", got)
 	}
 	// A failure is never cached, or one bad minute would be served for five.
-	if _, _, ok := s.quotes.get(quoteCacheKey("sh", "601899", quoteBarsForRange("3m"), quoteIntervalDaily)); ok {
+	if _, _, ok := s.quotes.get(quoteCacheKey("sh", "601899", quoteBarsForRange("3m"), quoteIntervalDaily, quoteWindow{})); ok {
 		t.Error("a failed fetch left an entry in the cache")
 	}
 	// The health counters an admin panel will read. Consecutive failures is the field that separates
@@ -638,7 +665,7 @@ func TestQuoteAPICachesTheSecondRequest(t *testing.T) {
 	// And the entry itself was never stamped. The handler answers from a COPY, so the value every
 	// other request shares still reads Cached=false — otherwise whoever fetches it next is told
 	// they were served a cache hit that they in fact paid for.
-	if entry, _, ok := s.quotes.get(quoteCacheKey("sh", "601899", quoteBarsForRange("3m"), quoteIntervalDaily)); !ok {
+	if entry, _, ok := s.quotes.get(quoteCacheKey("sh", "601899", quoteBarsForRange("3m"), quoteIntervalDaily, quoteWindow{})); !ok {
 		t.Error("the entry the two requests shared is gone")
 	} else if entry.Cached {
 		t.Error("the handler stamped Cached on the shared cache entry instead of on its own copy")
@@ -1059,7 +1086,7 @@ func TestQuoteLoadDoesNotBlameAVendorForACancelledCaller(t *testing.T) {
 		{name: quoteSourceSina, fetch: sina.fetch},
 	}
 
-	if _, err := c.load(ctx, quoteConfigDefault(), "sh", "601899", quoteRange3M, quoteIntervalDaily); !errors.Is(err, context.Canceled) {
+	if _, err := c.load(ctx, quoteConfigDefault(), "sh", "601899", quoteRange3M, quoteIntervalDaily, quoteWindow{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("load under a caller that walked away = %v, want context.Canceled", err)
 	}
 	if health := c.snapshotHealth(); len(health) != 0 {
@@ -1073,7 +1100,7 @@ func TestQuoteLoadDoesNotBlameAVendorForACancelledCaller(t *testing.T) {
 		{name: quoteSourceTencent, fetch: failingStub("tencent is down").fetch},
 		{name: quoteSourceSina, fetch: failingStub("sina is down").fetch},
 	}
-	if _, err := live.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M, quoteIntervalDaily); err == nil {
+	if _, err := live.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M, quoteIntervalDaily, quoteWindow{}); err == nil {
 		t.Fatal("two failing vendors returned no error")
 	}
 	for _, h := range live.snapshotHealth() {
@@ -1091,7 +1118,7 @@ func TestQuoteLoadReportsTheFirstError(t *testing.T) {
 		{name: quoteSourceTencent, fetch: failingStub("tencent is down").fetch},
 		{name: quoteSourceSina, fetch: failingStub("sina is down").fetch},
 	}
-	_, err := c.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M, quoteIntervalDaily)
+	_, err := c.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M, quoteIntervalDaily, quoteWindow{})
 	if err == nil {
 		t.Fatal("two failing vendors returned no error")
 	}
@@ -1102,7 +1129,7 @@ func TestQuoteLoadReportsTheFirstError(t *testing.T) {
 	// An empty source list is its own answer rather than a nil response escaping as a success.
 	var empty quoteCache
 	empty.sources = []quoteSource{}
-	if _, err := empty.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M, quoteIntervalDaily); !errors.Is(err, errQuoteNoSources) {
+	if _, err := empty.load(context.Background(), quoteConfigDefault(), "sh", "601899", quoteRange3M, quoteIntervalDaily, quoteWindow{}); !errors.Is(err, errQuoteNoSources) {
 		t.Errorf("a cache with no sources returned %v, want %v", err, errQuoteNoSources)
 	}
 }
@@ -1141,7 +1168,7 @@ func TestQuoteFlightRechecksTheCacheBeforeCallingAVendor(t *testing.T) {
 	}
 	c.init()
 
-	key := quoteCacheKey("sh", "601899", quoteRange3M, quoteIntervalDaily)
+	key := quoteCacheKey("sh", "601899", quoteRange3M, quoteIntervalDaily, quoteWindow{})
 	c.put(key, &QuoteResp{Symbol: "601899"}, quoteTTLClosed)
 	mu.Lock()
 	now = now.Add(quoteTTLClosed + time.Second)
@@ -1197,7 +1224,7 @@ func TestQuoteEndFlightDeletesBeforeItCloses(t *testing.T) {
 	c.sources = []quoteSource{{name: quoteSourceTencent, fetch: vendor.fetch}}
 	c.init()
 
-	key := quoteCacheKey("sh", "601899", quoteRange3M, quoteIntervalDaily)
+	key := quoteCacheKey("sh", "601899", quoteRange3M, quoteIntervalDaily, quoteWindow{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -1728,7 +1755,7 @@ func TestQuoteIntradayAndDailyDoNotShareACacheSlot(t *testing.T) {
 	ctx := context.Background()
 	cfg := quoteConfigDefault()
 	for _, iv := range []quoteInterval{quoteIntervalIntraday, quoteIntervalDaily} {
-		if _, _, _, err := s.quotes.fetchUnder(ctx, cfg, "hk", "00700", quoteRange1D, iv); err != nil {
+		if _, _, _, err := s.quotes.fetchUnder(ctx, cfg, "hk", "00700", quoteRange1D, iv, quoteWindow{}); err != nil {
 			t.Fatalf("fetch %s: %v", iv, err)
 		}
 	}
@@ -2619,5 +2646,200 @@ func TestFiveDayWindowIsServedOutOfTheBoxOnTheMarketsItWasMeasuredFor(t *testing
 	}
 	if got := c.servableInterval(cfg, us, spec.interval); got != quoteIntervalSnapshot {
 		t.Errorf("the US 5日 resolved to %s out of the box; nothing shipped serves it", got)
+	}
+}
+
+// ---------- the reader's own date window ----------
+
+const (
+	// fqkline with its two DATE slots filled instead of left empty, captured 2026-09-08. The window
+	// is 2026-03-02..2026-04-10 in both, and the two markets traded a different number of sessions
+	// in it — 29 and 27 — which is the point: the answer is the sessions that EXIST in the window,
+	// not a count this portal chose.
+	fixTencentRangeSH = "tencent_fqkline_range_sh600519.json"
+	fixTencentRangeHK = "tencent_fqkline_range_hk00700.json"
+)
+
+// quoteParseWindow is the allowlist for two strings that reach a vendor URL, so it is asserted the
+// way quoteRanges is: what it accepts, and — mostly — what it refuses.
+func TestQuoteWindowRefusesEverythingButAWellFormedPair(t *testing.T) {
+	// Accepted, and NORMALISED: what comes out is a string this code formatted, never the caller's.
+	got, err := quoteParseWindow("  2026-03-02 ", "2026-04-10")
+	if err != nil {
+		t.Fatalf("a well-formed window was refused: %v", err)
+	}
+	if !got.bounded() || got.from != "2026-03-02" || got.to != "2026-04-10" {
+		t.Fatalf("parsed to %+v", got)
+	}
+	// Absent is not an error — it is every request this endpoint served before windows existed.
+	if none, err := quoteParseWindow("", ""); err != nil || none.bounded() {
+		t.Errorf("an absent window: %+v, %v", none, err)
+	}
+	// A single day is a window, not a degenerate one.
+	if one, err := quoteParseWindow("2026-03-02", "2026-03-02"); err != nil || !one.bounded() {
+		t.Errorf("a one-day window: %+v, %v", one, err)
+	}
+
+	for _, tc := range []struct {
+		name, from, to string
+		want           error
+	}{
+		{"only from", "2026-03-02", "", errQuoteWindowHalfOpen},
+		{"only to", "", "2026-04-10", errQuoteWindowHalfOpen},
+		{"backwards", "2026-04-10", "2026-03-02", errQuoteWindowOrder},
+		{"month 13", "2026-13-01", "2026-13-02", errQuoteWindowFormat},
+		{"day 32", "2026-03-32", "2026-04-01", errQuoteWindowFormat},
+		{"unpadded", "2026-3-2", "2026-04-10", errQuoteWindowFormat},
+		{"slashes", "2026/03/02", "2026/04/10", errQuoteWindowFormat},
+		{"epoch", "1772409600", "1775001600", errQuoteWindowFormat},
+		{"a whole century", "1926-01-01", "2026-01-01", errQuoteWindowSpan},
+		// The two that would reach the vendor URL as something other than a date. They are refused
+		// by the LAYOUT, which is the only reason nothing here has to escape anything.
+		{"injection", "2026-03-02,day,,,9999", "2026-04-10", errQuoteWindowFormat},
+		{"a second param", "2026-03-02&x=1", "2026-04-10", errQuoteWindowFormat},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := quoteParseWindow(tc.from, tc.to)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("(%q, %q) → %+v, %v; want %v", tc.from, tc.to, got, err, tc.want)
+			}
+			if got.bounded() {
+				t.Errorf("a refused window still came back bounded: %+v", got)
+			}
+		})
+	}
+}
+
+// The window is part of the cache key, and an ABSENT one contributes nothing — so every key written
+// before this existed is byte-identical to the one written now.
+func TestQuoteWindowIsPartOfTheCacheKeyAndAnAbsentOneIsNot(t *testing.T) {
+	plain := quoteCacheKey("sh", "600519", 66, quoteIntervalDaily, quoteWindow{})
+	if got := quoteCacheKey("sh", "600519", 66, quoteIntervalDaily, quoteWindow{from: "", to: ""}); got != plain {
+		t.Errorf("an empty window changed the key: %q vs %q", got, plain)
+	}
+	march := quoteWindow{from: "2026-03-02", to: "2026-04-10"}
+	april := quoteWindow{from: "2026-04-02", to: "2026-05-10"}
+	a := quoteCacheKey("sh", "600519", quoteMaxBars, quoteIntervalDailyRange, march)
+	b := quoteCacheKey("sh", "600519", quoteMaxBars, quoteIntervalDailyRange, april)
+	if a == b {
+		t.Errorf("two different windows share a cache slot: %q", a)
+	}
+	if a == plain {
+		t.Errorf("a bounded window shares the unbounded slot: %q", a)
+	}
+}
+
+// End to end: the reader's dates reach the vendor, and what comes back is the sessions in that
+// window rather than the last N ending today.
+func TestQuoteCustomWindowAnswersTheSessionsInIt(t *testing.T) {
+	for _, tc := range []struct {
+		market, code, fixture string
+		bars                  int
+		first, last           string
+	}{
+		{"sh", "600519", fixTencentRangeSH, 29, "2026-03-02", "2026-04-10"},
+		{"hk", "00700", fixTencentRangeHK, 27, "2026-03-02", "2026-04-10"},
+	} {
+		t.Run(tc.market, func(t *testing.T) {
+			s := quoteServer(t)
+			var askedFrom, askedTo string
+			v := &quoteVendorStub{}
+			body := readQuoteFixture(t, tc.fixture)
+			v.parse = func(market, code string, bars int) (*QuoteResp, error) {
+				return parseTencentQuote(market, code, readQuoteFixture(t, fixTencentSH), bars)
+			}
+			v.fetchRangeFn = func(market, code, from, to string) (*QuoteResp, error) {
+				askedFrom, askedTo = from, to
+				return parseTencentQuote(market, code, body, 0)
+			}
+			wireQuoteSources(s, v, sinaStub(t))
+
+			rec := quoteGET(t, s, "/api/quote/"+tc.code+"?from=2026-03-02&to=2026-04-10")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("a windowed request → %d (%s)", rec.Code, rec.Body.String())
+			}
+			got := quoteBody(t, rec)
+			// The vendor was handed the reader's OWN dates, not a bar count derived from them.
+			quoteEqStr(t, "from", askedFrom, "2026-03-02")
+			quoteEqStr(t, "to", askedTo, "2026-04-10")
+			if len(got.Bars) != tc.bars {
+				t.Fatalf("%d bars, want the %d sessions the window holds", len(got.Bars), tc.bars)
+			}
+			quoteEqStr(t, "first bar", got.Bars[0].Date, tc.first)
+			quoteEqStr(t, "last bar", got.Bars[len(got.Bars)-1].Date, tc.last)
+			quoteEqStr(t, "barsSource", got.BarsSource, quoteSourceTencent)
+			quoteEqStr(t, "barsUnavailable", got.BarsUnavailable, "")
+			// A window OVERRIDES the range key rather than combining with it: honouring both would
+			// let 近1月 truncate the window the reader chose.
+			if rec := quoteGET(t, s, "/api/quote/"+tc.code+"?range=1m&from=2026-03-02&to=2026-04-10"); rec.Code == http.StatusOK {
+				if n := len(quoteBody(t, rec).Bars); n != tc.bars {
+					t.Errorf("range=1m beside a window gave %d bars, want the window's %d", n, tc.bars)
+				}
+			}
+		})
+	}
+}
+
+// A malformed window is REFUSED, and refused before any vendor is called: quietly falling back to
+// the default range would draw the default window under the reader's own dates.
+func TestQuoteMalformedWindowIsRefusedBeforeAnyVendorCall(t *testing.T) {
+	s := quoteServer(t)
+	tencent := tencentStub(readQuoteFixture(t, fixTencentSH))
+	wireQuoteSources(s, tencent, sinaStub(t))
+
+	for _, q := range []string{
+		"?from=2026-03-02",
+		"?to=2026-04-10",
+		"?from=2026-04-10&to=2026-03-02",
+		"?from=2026-13-01&to=2026-13-02",
+		"?from=1926-01-01&to=2026-01-01",
+	} {
+		rec := quoteGET(t, s, "/api/quote/600519"+q)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s → %d, want 400", q, rec.Code)
+			continue
+		}
+		if code := quoteErrCode(t, rec); code != "quote_bad_range" {
+			t.Errorf("%s carried code %q", q, code)
+		}
+	}
+	if tencent.n() != 0 {
+		t.Errorf("%d refused window(s) still reached a vendor", tencent.n())
+	}
+}
+
+// A source that has not declared the window is SKIPPED rather than called with the count it would
+// otherwise fall back to — which would answer the last N sessions under the reader's own dates.
+func TestQuoteWindowSkipsASourceThatCannotTakeDates(t *testing.T) {
+	c := quoteShippedCache()
+	cfg := quoteConfigDefault()
+	for _, id := range []string{"sh", "sz", "hk"} {
+		got := quoteSourceNamesOf(c.sourcesFor(cfg, quoteAsk(t, id), quoteIntervalDailyRange))
+		// Tencent takes dates; Sina's kline endpoint takes a count and nothing else, so it is absent
+		// here while it is present in the plain daily chain below.
+		if got != "tencent" {
+			t.Errorf("%s dailyRange resolves to [%s], want [tencent]", id, got)
+		}
+	}
+	if got := quoteSourceNamesOf(c.sourcesFor(cfg, quoteAsk(t, "sh"), quoteIntervalDaily)); got != "tencent,sina" {
+		t.Errorf("the plain daily chain changed to [%s]; the window must not have narrowed it", got)
+	}
+	// And the markets Tencent cannot draw daily are the markets it cannot draw a window of either.
+	for _, id := range []string{"us", "bj"} {
+		if got := quoteSourceNamesOf(c.sourcesFor(cfg, quoteAsk(t, id), quoteIntervalDailyRange)); got != "" {
+			t.Errorf("%s dailyRange resolves to [%s]", id, got)
+		}
+	}
+	// A source that DECLARED the interval and has no range fetcher is a wiring mistake, and it says
+	// so rather than falling through to the count-based fetcher.
+	bad := quoteSource{
+		name:  "declared-but-unwired",
+		fetch: func(context.Context, string, string, int) (*QuoteResp, error) { return nil, nil },
+		caps:  []quoteCapability{{intervals: []quoteInterval{quoteIntervalDailyRange}}},
+	}
+	_, err := bad.call(context.Background(), "sh", "600519", 60, quoteIntervalDailyRange,
+		quoteWindow{from: "2026-03-02", to: "2026-04-10"})
+	if err == nil {
+		t.Error("a source declaring dailyRange with no range fetcher answered from its count fetcher")
 	}
 }

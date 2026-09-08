@@ -439,12 +439,25 @@ const (
 	// mode the whole declaration mechanism exists to prevent. One interval per thing a source can
 	// actually promise.
 	quoteIntervalIntraday5D quoteInterval = "intraday5d"
+	// quoteIntervalDailyRange is daily bars for a window the READER chose, rather than the last N
+	// sessions ending today. Same resolution as quoteIntervalDaily and a different CAPABILITY, which
+	// is the only reason it is an interval of its own.
+	//
+	// A source can serve one and not the other, and the difference is in the vendor's parameters
+	// rather than in its data: Tencent's fqkline takes `<sym>,day,<from>,<to>,<count>,bfq` and honours
+	// the two date slots (measured 2026-09-08: 2026-03-02..2026-04-10 answers exactly those 29
+	// sessions), while Sina's kline endpoint takes a COUNT and nothing else. Folding the two together
+	// would let the resolver hand a bounded request to a source that can only count backwards from
+	// today — and what came back would be the wrong window under the reader's own dates, which is the
+	// same failure the 分时/5日 split exists to prevent.
+	quoteIntervalDailyRange quoteInterval = "dailyRange"
 )
 
 // quoteAllIntervals is every interval a request can be for, written once so that a declaration, a
 // capability check and the admin panel's market list cannot disagree about how many there are.
 var quoteAllIntervals = []quoteInterval{
 	quoteIntervalSnapshot, quoteIntervalDaily, quoteIntervalIntraday, quoteIntervalIntraday5D,
+	quoteIntervalDailyRange,
 }
 
 // intraday reports whether this interval's bars are MINUTES rather than days. Two things turn on it
@@ -971,6 +984,15 @@ const (
 	// bfq = 不复权 (unadjusted). NEVER qfq: a front-adjusted series rewrites history every time a
 	// dividend is paid, so a report scored against it stops matching the price it was written about.
 	quoteTencentKlineURL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s,day,,,%d,bfq"
+	// The same endpoint with its two DATE slots filled instead of left empty. Measured 2026-09-08:
+	// `param=sh600519,day,2026-03-02,2026-04-10,640,bfq` answers exactly those 29 sessions, and
+	// hk00700 the 27 it traded — the same `day` array and the same `qt` snapshot the count-based
+	// form sends, which is why parseTencentQuote reads both without knowing which it was handed.
+	//
+	// The count stays in the URL and is NOT redundant beside the dates: it is what bounds the
+	// response when a window is wide, and it is the same quoteMaxBars ceiling every other call here
+	// carries. The dates say WHICH sessions; the count says how many may come back.
+	quoteTencentRangeURL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s,day,%s,%s,%d,bfq"
 	quoteTencentReferer  = "https://gu.qq.com/"
 
 	// A daily candle is under 100 bytes on either vendor, so quoteMaxBars of them plus a snapshot
@@ -987,6 +1009,84 @@ const (
 	// whichever deadline is tighter, so a caller's own budget still wins.
 	quoteFetchTimeout = 8 * time.Second
 )
+
+// ---------- the reader's own window ----------
+
+// quoteWindow is the bounded half of a request: two dates the READER chose, or two empty strings for
+// "the last N sessions ending today", which is what every request was before this existed.
+//
+// Both dates or neither. A half-open window is refused rather than completed with a default, because
+// the two ways to complete it — "from there to today" and "from the beginning to there" — are
+// different questions, and picking one silently answers a question nobody asked.
+type quoteWindow struct{ from, to string }
+
+func (w quoteWindow) bounded() bool { return w.from != "" && w.to != "" }
+
+// key is what the window contributes to a cache key: nothing at all when it is unbounded, so every
+// key written before this type existed is byte-identical to the one written now.
+func (w quoteWindow) key() string {
+	if !w.bounded() {
+		return ""
+	}
+	return ":" + w.from + ".." + w.to
+}
+
+const (
+	// quoteWindowLayout is the ONLY spelling accepted from a caller, and it is also what the vendor
+	// URL carries, so a date that parses here needs no reformatting on the way out.
+	quoteWindowLayout = "2006-01-02"
+	// quoteWindowMaxDays caps the span. Ten years is far more than the 800-bar ceiling a vendor URL
+	// carries — about three trading years — so this is not what bounds the RESPONSE; that is still
+	// quoteMaxBars, unchanged. What this bounds is the QUESTION: a request for 1900-01-01..2026-09-08
+	// is a caller probing rather than a reader choosing, and refusing it with a reason is better than
+	// forwarding it to a vendor and returning whatever tail of it comes back.
+	quoteWindowMaxDays = 3660
+)
+
+var (
+	errQuoteWindowHalfOpen = errors.New("quote: a window needs both from= and to=, or neither")
+	errQuoteWindowFormat   = errors.New("quote: a window date must be YYYY-MM-DD")
+	errQuoteWindowOrder    = errors.New("quote: from= must not be after to=")
+	errQuoteWindowSpan     = errors.New("quote: that window is too wide")
+)
+
+// quoteParseWindow validates the two query parameters into a window, and it is the whole of the
+// allowlist for them.
+//
+// The dates reach a vendor URL, so this is the same kind of boundary quoteRanges is for the bar
+// count and it is written the same way: a strict layout, checked bounds, and a REFUSAL rather than a
+// clamp. A clamp would be wrong here in a way it is not wrong for a TTL — silently narrowing
+// somebody's window and drawing the result under their own dates is a chart that lies about what it
+// shows, while a clamped cache TTL is merely a different number for the same thing.
+//
+// time.Parse with this layout is what rejects "2026-13-01", "2026-3-2" and anything carrying a
+// character a URL would have to escape; nothing here builds a date out of parts.
+func quoteParseWindow(from, to string) (quoteWindow, error) {
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if from == "" && to == "" {
+		return quoteWindow{}, nil
+	}
+	if from == "" || to == "" {
+		return quoteWindow{}, errQuoteWindowHalfOpen
+	}
+	start, err := time.Parse(quoteWindowLayout, from)
+	if err != nil {
+		return quoteWindow{}, fmt.Errorf("%w: %q", errQuoteWindowFormat, from)
+	}
+	end, err := time.Parse(quoteWindowLayout, to)
+	if err != nil {
+		return quoteWindow{}, fmt.Errorf("%w: %q", errQuoteWindowFormat, to)
+	}
+	if end.Before(start) {
+		return quoteWindow{}, fmt.Errorf("%w: %s .. %s", errQuoteWindowOrder, from, to)
+	}
+	if days := int(end.Sub(start).Hours() / 24); days > quoteWindowMaxDays {
+		return quoteWindow{}, fmt.Errorf("%w: %d days, at most %d", errQuoteWindowSpan, days, quoteWindowMaxDays)
+	}
+	// Re-formatted from the PARSED time rather than passed through: what reaches the vendor is then a
+	// string this code produced, not one a caller typed, whatever time.Parse was willing to tolerate.
+	return quoteWindow{from: start.Format(quoteWindowLayout), to: end.Format(quoteWindowLayout)}, nil
+}
 
 // quoteBarCount clamps a requested bar count into something a vendor URL may carry.
 func quoteBarCount(bars int) int {
@@ -1457,6 +1557,30 @@ func fetchTencentDays(ctx context.Context, market, code string, bars int) (*Quot
 		return nil, err
 	}
 	return parseTencentDays(market, code, body, bars)
+}
+
+// fetchTencentRange fetches the daily bars between two dates the reader chose.
+//
+// The dates arrive already validated and re-formatted by quoteParseWindow — nothing here re-checks
+// them, and nothing here accepts them from any other caller — so this function's only job is the URL
+// and the fetch. The response is the ordinary fqkline shape, so the ordinary parser and the ordinary
+// five-check gate run over it unchanged.
+func fetchTencentRange(ctx context.Context, market, code, from, to string) (*QuoteResp, error) {
+	sym, err := quoteSymbol(market, code)
+	if err != nil {
+		return nil, err
+	}
+	rawURL := fmt.Sprintf(quoteTencentRangeURL, sym, from, to, quoteMaxBars)
+	ctx, cancel := context.WithTimeout(ctx, quoteFetchTimeout)
+	defer cancel()
+	body, err := vendorGet(ctx, rawURL, quoteTencentReferer, quoteBodyLimit)
+	if err != nil {
+		vendorLogf(rawURL, "quote range fetch failed for %s: %v", sym, err)
+		return nil, err
+	}
+	// bars=0: the window decides how many rows there are, so trimming to a count here would drop the
+	// OLDEST end of a range the reader explicitly asked for.
+	return parseTencentQuote(market, code, body, 0)
 }
 
 // fetchTencentIntraday fetches one session of minute points plus the snapshot that came with them.
