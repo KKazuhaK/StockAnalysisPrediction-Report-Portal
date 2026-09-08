@@ -163,6 +163,7 @@ describe('AppLayout desktop navigation', () => {
     expect(await screen.findByText('queue-body')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'nav.writeReport' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'nav.runActions' }))
+    expect(screen.getByRole('menu').closest('.rp-run-actions-menu')).not.toBeNull()
     await user.click(screen.getByRole('menuitem', { name: 'nav.writeReport' }))
 
     expect(await screen.findByText('write-report-body')).toBeTruthy()
