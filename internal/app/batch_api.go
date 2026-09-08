@@ -399,10 +399,19 @@ func jobJSON(j BatchJob) map[string]any {
 	// progress bar can treat them as done (total − ok − partial − failed). A running
 	// job's live cancelled count is filled in by apiBatchJobs from LiveJobCounts.
 	cancelled := j.Total - j.Succeeded - j.Partial - j.Failed
-	if cancelled < 0 {
+	if cancelled < 0 || (j.Status != "finished" && j.Status != "cancelled") {
 		cancelled = 0
 	}
+	mode := "now"
+	var preset runPresetSnapshot
+	if j.RunPreset != "" {
+		mode = "preset"
+		_ = json.Unmarshal([]byte(j.RunPreset), &preset)
+	} else if j.RunAt != "" {
+		mode = "scheduled"
+	}
 	return map[string]any{
+		"run_mode": mode, "avoid_window": preset.Invert,
 		"id": j.ID, "target_id": j.TargetID, "status": j.Status, "priority": j.Priority,
 		"concurrency": j.Concurrency, "max_retries": j.MaxRetries,
 		"total": j.Total, "succeeded": j.Succeeded, "partial": j.Partial, "failed": j.Failed, "cancelled": cancelled,
@@ -523,9 +532,12 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 			m["succeeded"], m["partial"], m["failed"], m["cancelled"] = succeeded, partial, failed, cancelled
 		}
 		if j.Status == "queued" {
-			// A not-yet-due 定时 job is "scheduled", not "waiting"; flag it so the UI can
+			// A deferred job is scheduled, not waiting; flag it so the UI can
 			// distinguish, and don't show an ahead count for it.
-			if runAtDue(j.RunAt, now) {
+			if invertBlocksNow(j.RunPreset, now, s.panelLocation()) {
+				m["window_blocked"] = true
+				m["scheduled"] = true
+			} else if runAtDue(j.RunAt, now) {
 				m["ahead"] = queue.Ahead(itemByID(waiting, j.ID), waiting)
 			} else {
 				m["scheduled"] = true
@@ -954,7 +966,7 @@ func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user stri
 	now := time.Now()
 	scheduled := 0
 	for _, j := range s.st.QueuedJobs() {
-		if !runAtDue(j.RunAt, now) {
+		if !runAtDue(j.RunAt, now) || invertBlocksNow(j.RunPreset, now, s.panelLocation()) {
 			scheduled++
 		}
 	}
@@ -1028,7 +1040,8 @@ func (s *Server) apiBatchJobSchedule(w http.ResponseWriter, r *http.Request, use
 		}
 		runAt = rt
 	}
-	if err := s.st.ScheduleJob(id, runAt); err != nil {
+	// A manual time or run-now action replaces the preset eligibility rule.
+	if err := s.st.SetJobWindow(id, runAt, ""); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

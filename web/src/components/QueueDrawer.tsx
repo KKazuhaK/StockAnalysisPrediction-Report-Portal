@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
 import type { BatchJob, BatchQueueSummary, BatchTarget } from '../api/types'
-import { InputsPreview, isTerminal, statusTag } from '../lib/batchUi'
+import { InputsPreview, isTerminal, executionTags, queueStatusTag } from '../lib/batchUi'
 import { UNCHANGED, forgetTags, getIfChanged } from '../lib/conditionalGet'
 import { watchQueue } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
@@ -139,9 +139,10 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
                         )}
                       </div>
                       <InputsPreview inputs={j.inputs} />
+                      <Space size={0} wrap>{executionTags(t, j)}</Space>
                     </div>
                     <Space size={4}>
-                      {statusTag(t, j.status)}
+                      {queueStatusTag(t, j)}
                       {!isTerminal(j.status) && (
                         <Popconfirm title={t('queue.cancelConfirm')} onConfirm={() => cancel(j.id)}>
                           <Button size="small" danger type="text" icon={<StopOutlined />} aria-label={t('queue.cancelConfirm')} />
@@ -150,7 +151,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
                     </Space>
                   </div>
                   <div style={{ marginTop: 6 }}>
-                    {j.scheduled ? (
+                    {j.window_blocked ? <Typography.Text type="secondary">{t('queue.windowWaitHint')}</Typography.Text> : j.scheduled ? (
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                         <ClockCircleOutlined /> {t('queue.scheduledAt', { at: j.run_at })}
                       </Typography.Text>

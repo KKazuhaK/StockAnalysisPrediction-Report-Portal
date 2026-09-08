@@ -650,20 +650,20 @@ func (s *Store) RequeueItems(jobID int64, statuses ...string) (int, error) {
 // batchJobCols is the shared SELECT list for a job row. priority and run_at are columns
 // on batch_jobs now (folded from job_queue / job_schedule, ADR 0013).
 const batchJobCols = `b.id,b.target_id,b.status,b.priority,b.concurrency,b.max_retries,
-	b.total,b.succeeded,b.partial,b.failed,b.created_by,b.created_at,b.started_at,b.finished_at,b.run_at`
+	b.total,b.succeeded,b.partial,b.failed,b.created_by,b.created_at,b.started_at,b.finished_at,b.run_at,b.run_preset`
 
 // batchJobFrom is the shared FROM clause.
 const batchJobFrom = `FROM batch_jobs b`
 
 func scanBatchJob(scan func(...any) error) (BatchJob, error) {
 	var j BatchJob
-	var priority, createdBy, createdAt, startedAt, finishedAt, status, runAt sql.NullString
+	var priority, createdBy, createdAt, startedAt, finishedAt, status, runAt, runPreset sql.NullString
 	if err := scan(&j.ID, &j.TargetID, &status, &priority, &j.Concurrency, &j.MaxRetries,
-		&j.Total, &j.Succeeded, &j.Partial, &j.Failed, &createdBy, &createdAt, &startedAt, &finishedAt, &runAt); err != nil {
+		&j.Total, &j.Succeeded, &j.Partial, &j.Failed, &createdBy, &createdAt, &startedAt, &finishedAt, &runAt, &runPreset); err != nil {
 		return BatchJob{}, err
 	}
-	j.Status, j.Priority, j.CreatedBy, j.CreatedAt, j.StartedAt, j.FinishedAt, j.RunAt =
-		status.String, priority.String, createdBy.String, createdAt.String, startedAt.String, finishedAt.String, runAt.String
+	j.Status, j.Priority, j.CreatedBy, j.CreatedAt, j.StartedAt, j.FinishedAt, j.RunAt, j.RunPreset =
+		status.String, priority.String, createdBy.String, createdAt.String, startedAt.String, finishedAt.String, runAt.String, runPreset.String
 	return j, nil
 }
 

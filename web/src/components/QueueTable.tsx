@@ -40,6 +40,8 @@ import { useAuth } from '../auth'
 import type { BatchItem, BatchJob, BatchJobDetail, BatchQueueSummary, BatchTarget } from '../api/types'
 import {
   BASE_MAX,
+  executionTags,
+  queueStatusTag,
   clampText,
   fmtInputs,
   INPUT_TOTAL_MAX,
@@ -199,6 +201,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
         ) : null
       }
     >
+      {detail && <Space wrap style={{ marginBottom: 12 }}>{executionTags(t, detail.job)}</Space>}
       {/* A job the queue calls "running" is not necessarily running HERE: after a restart the row
           survives while the goroutine driving it does not, and the portal reconciles it by polling
           rather than by executing. The server has always computed this; nothing rendered it, so the
@@ -422,6 +425,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         <div>
           <div style={{ fontSize: 13 }}>{targetName(j.target_id)}</div>
           <InputsPreview inputs={j.inputs} />
+          <Space size={0} wrap>{executionTags(t, j)}</Space>
         </div>
       ),
     },
@@ -430,14 +434,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
     {
       title: t('batch.col.status'),
       width: 108,
-      render: (_: unknown, j) =>
-        j.scheduled ? (
-          <Tag icon={<ClockCircleOutlined />} color="purple" title={j.run_at}>
-            {t('queue.scheduled')}
-          </Tag>
-        ) : (
-          statusTag(t, j.status)
-        ),
+      render: (_: unknown, j) => queueStatusTag(t, j),
     },
     {
       // A queued non-urgent job gets an inline base-priority editor (admin only); urgent
@@ -463,6 +460,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
       title: t('queue.colProgress'),
       width: 220,
       render: (_: unknown, j) => {
+        if (j.window_blocked) return <Typography.Text type="secondary">{t('queue.windowWaitHint')}</Typography.Text>
         if (j.scheduled)
           return (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -483,7 +481,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         const anyFail = j.failed > 0
         const anyOk = j.succeeded > 0 || j.partial > 0
         const status = running ? 'active' : anyFail && !anyOk ? 'exception' : !anyFail && anyOk ? 'success' : undefined
-        const strokeColor = !running && anyFail && anyOk ? '#faad14' : undefined // partial → yellow
+        const strokeColor = !running && !anyOk && !anyFail ? '#8c8c8c' : !running && anyFail && anyOk ? '#faad14' : undefined // partial → yellow
         return (
           <div style={{ maxWidth: 200 }}>
             <Progress
@@ -493,7 +491,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
               strokeColor={strokeColor}
               // Indeterminate "loading" bar: animate a full bar but hide the "100%" —
               // the run is at 0/1, not done, so the number would be a lie.
-              showInfo={!loading}
+              showInfo={!loading && (running || anyOk || anyFail)}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -2 }}>
               {t('batch.progressText', { done, total: j.total, ok: j.succeeded, fail: j.failed, partial: j.partial })}

@@ -385,7 +385,7 @@ func TestSweepPresetUnion(t *testing.T) {
 	// Just after the 09–12 window closed; the 14–18 window is still ahead today → auto-advance
 	// even though the policy is cancel.
 	midday := time.Date(2099, 1, 1, 12, 30, 0, 0, time.UTC)
-	adv := makePresetJob(t, st, two, "cancel", "2099-01-01 12:00:00")
+	adv := makePresetJob(t, st, two, "cancel", fmtLocal(ut(2099, 1, 1, 12, 0)))
 	srv.sweepPresetWindowsLocked(midday)
 	status, ra, rp := jobRow(t, st, adv)
 	if status != "queued" {
@@ -402,7 +402,7 @@ func TestSweepPresetUnion(t *testing.T) {
 
 	// After BOTH windows closed today → period exhausted → cancel fires.
 	evening := time.Date(2099, 1, 1, 19, 0, 0, 0, time.UTC)
-	exp := makePresetJob(t, st, two, "cancel", "2099-01-01 18:00:00")
+	exp := makePresetJob(t, st, two, "cancel", fmtLocal(ut(2099, 1, 1, 18, 0)))
 	srv.sweepPresetWindowsLocked(evening)
 	if status, _, _ := jobRow(t, st, exp); status != "expired" {
 		t.Fatalf("union exhausted: status=%q, want expired", status)

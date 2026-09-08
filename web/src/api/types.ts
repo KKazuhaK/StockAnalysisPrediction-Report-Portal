@@ -138,6 +138,9 @@ export interface BatchJob {
   target_id: number
   status: string
   priority?: string // "urgent" or a base number 0..100 as a string (ADR 0008)
+  run_mode?: RunMode
+  avoid_window?: boolean
+  window_blocked?: boolean
   run_at?: string // one-shot scheduled start ("" = ASAP)
   scheduled?: boolean // queued but not yet due (定时, waiting for run_at)
   inputs?: string // first row's inputs as a JSON string (for a 标的 label)

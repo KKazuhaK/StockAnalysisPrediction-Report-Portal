@@ -84,6 +84,22 @@ describe('QueueTable', () => {
     forgetTags.mockClear()
   })
 
+  it('shows blocked preset runs as waiting with their execution mode', async () => {
+    store.jobs = [job({ status: 'queued', run_mode: 'preset', avoid_window: true, window_blocked: true, priority: 'urgent' })]
+    mount()
+    expect(await screen.findByText('queue.avoidingWindow')).toBeTruthy()
+    expect(screen.getByText('queue.mode.preset')).toBeTruthy()
+    expect(screen.getByText('queue.avoidWindow')).toBeTruthy()
+    expect(screen.queryByText('batch.aheadNext')).toBeNull()
+  })
+
+  it('keeps execution mode visible after a scheduled normal run finishes', async () => {
+    store.jobs = [job({ status: 'finished', run_mode: 'scheduled', priority: '30', succeeded: 1 })]
+    mount()
+    expect(await screen.findByText('queue.mode.scheduled')).toBeTruthy()
+    expect(screen.getByText('queue.normal')).toBeTruthy()
+  })
+
   it('mounts and renders the queue card without crashing', async () => {
     render(
       <App>
