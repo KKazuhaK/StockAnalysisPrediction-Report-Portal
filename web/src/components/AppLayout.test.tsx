@@ -58,6 +58,7 @@ function renderAt(path: string) {
           <Route path="review" element={<div>review-body</div>} />
           <Route path="apps" element={<div>apps-body</div>} />
           <Route path="manage" element={<div>manage-body</div>} />
+          <Route path="report/new" element={<div>write-report-body</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -153,6 +154,18 @@ describe('AppLayout desktop navigation', () => {
     await user.click(screen.getByRole('button', { name: 'Alice' }))
 
     expect(screen.getByRole('button', { name: 'nav.manage' })).toBeTruthy()
+  })
+
+  it('moves write report into the run-analysis dropdown', async () => {
+    const user = userEvent.setup()
+    renderAt('/queue')
+
+    expect(await screen.findByText('queue-body')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'nav.writeReport' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'nav.runActions' }))
+    await user.click(screen.getByRole('menuitem', { name: 'nav.writeReport' }))
+
+    expect(await screen.findByText('write-report-body')).toBeTruthy()
   })
 })
 

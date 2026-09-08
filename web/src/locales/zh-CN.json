@@ -724,6 +724,7 @@
   "nav.refresh": "刷新",
   "nav.review": "复盘",
   "nav.runAnalysis": "运行分析",
+  "nav.runActions": "更多运行操作",
   "nav.runDefaults": "运行默认",
   "nav.runQueue": "运行/队列",
   "nav.security": "登录保护",

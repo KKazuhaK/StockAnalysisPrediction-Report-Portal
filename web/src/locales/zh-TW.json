@@ -724,6 +724,7 @@
   "nav.refresh": "重新整理",
   "nav.review": "覆盤",
   "nav.runAnalysis": "執行分析",
+  "nav.runActions": "更多執行操作",
   "nav.runDefaults": "執行預設",
   "nav.runQueue": "執行/佇列",
   "nav.security": "登入保護",

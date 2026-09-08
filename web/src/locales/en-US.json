@@ -724,6 +724,7 @@
   "nav.refresh": "Refresh",
   "nav.review": "Review",
   "nav.runAnalysis": "Run analysis",
+  "nav.runActions": "More run actions",
   "nav.runDefaults": "Run defaults",
   "nav.runQueue": "Run / queue",
   "nav.security": "Login protection",

@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Badge, Breadcrumb, Button, Divider, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, AuditOutlined, EditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { Badge, Breadcrumb, Button, Divider, Dropdown, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
+import { AppstoreOutlined, AuditOutlined, DownOutlined, EditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -270,31 +270,50 @@ export default function AppLayout() {
             doesn't collide with the button on the wrapped row above it. */}
         <Space size={compact ? [8, 14] : 10} wrap style={{ flexShrink: 0, marginLeft: 'auto' }}>
           {canRun && !chatFocus && (
-            // The primary action keeps its label even on mobile (unlike the other
-            // nav buttons, which collapse to icons when compact).
+            // Keep the primary run action direct. Editors get a compact adjacent menu for manual
+            // report creation, so the related actions share one control without slowing down runs.
+            <Space.Compact>
+              <Button
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                onClick={() => {
+                  setRunTargetId(undefined) // The header button is the generic entry and must not inherit a pinned target.
+                  setRunOpen(true)
+                }}
+                title={t('nav.runAnalysis')}
+              >
+                {t('nav.runAnalysis')}
+              </Button>
+              {canWrite && (
+                <Dropdown
+                  trigger={['click']}
+                  placement="bottomRight"
+                  menu={{
+                    items: [{ key: 'write-report', icon: <EditOutlined aria-hidden="true" />, label: t('nav.writeReport') }],
+                    onClick: ({ key }) => {
+                      if (key === 'write-report') navigate('/report/new')
+                    },
+                  }}
+                >
+                  <Button
+                    type="primary"
+                    icon={<DownOutlined />}
+                    aria-label={t('nav.runActions')}
+                    title={t('nav.runActions')}
+                  />
+                </Dropdown>
+              )}
+            </Space.Compact>
+          )}
+          {canWrite && !canRun && !chatFocus && (
+            // Manual report creation becomes the primary action when running is unavailable.
             <Button
               type="primary"
-              icon={<PlayCircleOutlined />}
-              onClick={() => {
-                setRunTargetId(undefined) // the header button is the generic entry — never inherit a pinned target
-                setRunOpen(true)
-              }}
-              title={t('nav.runAnalysis')}
-            >
-              {t('nav.runAnalysis')}
-            </Button>
-          )}
-          {canWrite && !chatFocus && (
-            // Writing a report by hand (ADR 0026). Primary only where 运行分析 is absent: an
-            // account that holds the editing permission and not the running one has this as its
-            // main action, and two primary buttons side by side name neither.
-            <Button
-              type={canRun ? 'default' : 'primary'}
               icon={<EditOutlined />}
               onClick={() => navigate('/report/new')}
               title={t('nav.writeReport')}
             >
-              {compact && canRun ? null : t('nav.writeReport')}
+              {t('nav.writeReport')}
             </Button>
           )}
           {canRun && !chatFocus && (
