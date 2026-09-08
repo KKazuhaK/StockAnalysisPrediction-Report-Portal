@@ -123,6 +123,23 @@ func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
 	market, code := target.Market.id, target.Code
 	spec := quoteRangeFor(r.URL.Query().Get("range"))
 
+	// The reader's own window, when they picked one. It REPLACES the range rather than narrowing it:
+	// from= and to= say which sessions, so the range key's bar count and interval have nothing left
+	// to contribute, and honouring both would let a 近1月 button silently truncate a year-wide window
+	// the reader chose.
+	//
+	// Refused rather than ignored, and rather than clamped. A malformed or absurd window that this
+	// endpoint quietly turned into the default range would draw the DEFAULT window under the
+	// reader's own dates, which is the one outcome a chart must never produce.
+	win, err := quoteParseWindow(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	if err != nil {
+		jsonErrorCode(w, http.StatusBadRequest, "quote_bad_range", err.Error())
+		return
+	}
+	if win.bounded() {
+		spec = quoteRangeSpec{bars: quoteMaxBars, interval: quoteIntervalDailyRange}
+	}
+
 	// The operator's source order and TTLs, read per request so a save on the 行情 panel takes
 	// effect on the next page view rather than at the next restart.
 	cfg := s.quoteConfigLoad()
@@ -141,7 +158,7 @@ func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
 	// of retrying closes is a worse answer than the price plus an explicit empty chart.
 	iv := s.quotes.servableInterval(cfg, target, spec.interval)
 
-	resp, cached, ttl, err := s.quotes.fetchUnder(r.Context(), cfg, market, code, spec.bars, iv)
+	resp, cached, ttl, err := s.quotes.fetchUnder(r.Context(), cfg, market, code, spec.bars, iv, win)
 	if err != nil {
 		// Every source failed — transport, a non-2xx, or the drift gate, which counts as a failure
 		// and not a warning. 503 rather than 502 or 500: nothing is wrong with the request and

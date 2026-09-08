@@ -16,17 +16,17 @@ import (
 // reading page can only ever get a snapshot — us and bj, whose daily ranges degrade — the card and
 // the page land on ONE key instead of two entries holding the same price.
 func TestQuoteSnapshotKeyIsTheSameKeyWhateverBarCountWasAsked(t *testing.T) {
-	page := quoteCacheKey("us", "AAPL", 66, quoteIntervalSnapshot) // a reading page at 3个月
-	card := quoteCacheKey("us", "AAPL", 0, quoteIntervalSnapshot)  // a home card, which asks for none
+	page := quoteCacheKey("us", "AAPL", 66, quoteIntervalSnapshot, quoteWindow{}) // a reading page at 3个月
+	card := quoteCacheKey("us", "AAPL", 0, quoteIntervalSnapshot, quoteWindow{})  // a home card, which asks for none
 	if page != card {
 		t.Errorf("a US card and a US reading page take two cache slots for one price:\n  page %q\n  card %q", page, card)
 	}
 	// And the normalisation must not leak into an interval that DOES have a series, or 分时 and 1年
 	// would share a slot and whichever was asked for first would be drawn under both labels.
-	if a, b := quoteCacheKey("sh", "601899", 66, quoteIntervalDaily), quoteCacheKey("sh", "601899", 250, quoteIntervalDaily); a == b {
+	if a, b := quoteCacheKey("sh", "601899", 66, quoteIntervalDaily, quoteWindow{}), quoteCacheKey("sh", "601899", 250, quoteIntervalDaily, quoteWindow{}); a == b {
 		t.Errorf("two daily ranges share a cache slot: %q", a)
 	}
-	if a, b := quoteCacheKey("sh", "601899", 0, quoteIntervalDaily), quoteCacheKey("sh", "601899", 0, quoteIntervalSnapshot); a == b {
+	if a, b := quoteCacheKey("sh", "601899", 0, quoteIntervalDaily, quoteWindow{}), quoteCacheKey("sh", "601899", 0, quoteIntervalSnapshot, quoteWindow{}); a == b {
 		t.Errorf("a daily answer and a snapshot share a cache slot: %q", a)
 	}
 }
@@ -43,9 +43,9 @@ func TestSnapshotForTakesTheFreshestEntryAndNotWhicheverTheMapOffersFirst(t *tes
 	stale := &QuoteResp{Symbol: "601899", Snapshot: QuoteSnapshot{Last: 1000}}
 	fresh := &QuoteResp{Symbol: "601899", Snapshot: QuoteSnapshot{Last: 2000}}
 	// Same symbol, three live entries under different ranges. Only the last-expiring one may win.
-	c.put(quoteCacheKey("sh", "601899", 66, quoteIntervalDaily), stale, 1*time.Minute)
-	c.put(quoteCacheKey("sh", "601899", 250, quoteIntervalDaily), fresh, 9*time.Minute)
-	c.put(quoteCacheKey("sh", "601899", 22, quoteIntervalDaily), stale, 2*time.Minute)
+	c.put(quoteCacheKey("sh", "601899", 66, quoteIntervalDaily, quoteWindow{}), stale, 1*time.Minute)
+	c.put(quoteCacheKey("sh", "601899", 250, quoteIntervalDaily, quoteWindow{}), fresh, 9*time.Minute)
+	c.put(quoteCacheKey("sh", "601899", 22, quoteIntervalDaily, quoteWindow{}), stale, 2*time.Minute)
 	// Run it enough times that a map-order win would show: 200 draws over three keys.
 	for i := 0; i < 200; i++ {
 		got, ok := c.snapshotFor("sh", "601899")

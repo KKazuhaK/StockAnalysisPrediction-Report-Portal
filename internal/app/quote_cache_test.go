@@ -304,7 +304,7 @@ func TestQuoteSkippedSourceIsNeverBlamedInTheHealthRecord(t *testing.T) {
 	}}
 
 	// Hong Kong: Tencent is asked and fails, Sina is not asked at all.
-	if _, err := c.load(context.Background(), quoteConfigDefault(), "hk", "00700", 60, quoteIntervalSnapshot); err == nil {
+	if _, err := c.load(context.Background(), quoteConfigDefault(), "hk", "00700", 60, quoteIntervalSnapshot, quoteWindow{}); err == nil {
 		t.Fatal("a failing primary with a skipped fallback returned no error")
 	}
 	if sina.n() != 0 {
@@ -318,7 +318,7 @@ func TestQuoteSkippedSourceIsNeverBlamedInTheHealthRecord(t *testing.T) {
 	// The control: on a market Sina DOES serve, the same stub is called and the same failure IS
 	// recorded. Without this half, a resolver that returned nothing at all would pass the assertions
 	// above.
-	if _, err := c.load(context.Background(), quoteConfigDefault(), "sh", "601899", 60, quoteIntervalDaily); err == nil {
+	if _, err := c.load(context.Background(), quoteConfigDefault(), "sh", "601899", 60, quoteIntervalDaily, quoteWindow{}); err == nil {
 		t.Fatal("two failing vendors returned no error")
 	}
 	if sina.n() != 1 {
@@ -331,7 +331,7 @@ func TestQuoteSkippedSourceIsNeverBlamedInTheHealthRecord(t *testing.T) {
 	// A pair nobody declared is not a vendor outage either: nobody is called, nobody is blamed, and
 	// the caller gets the sentinel that reaches the handler's 503 rather than a nil response.
 	fresh := &quoteCache{sources: defaultQuoteSources()}
-	if _, err := fresh.load(context.Background(), quoteConfigDefault(), "us", "AAPL", 60, quoteIntervalDaily); !errors.Is(err, errQuoteNoSources) {
+	if _, err := fresh.load(context.Background(), quoteConfigDefault(), "us", "AAPL", 60, quoteIntervalDaily, quoteWindow{}); !errors.Is(err, errQuoteNoSources) {
 		t.Errorf("us daily, which no shipped source declares, returned %v, want %v", err, errQuoteNoSources)
 	}
 	if h := fresh.snapshotHealth(); len(h) != 0 {
