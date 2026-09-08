@@ -1604,5 +1604,13 @@
   "webhook.secretHint": "Optional. Used for the HMAC-SHA256 signature so subscribers can verify authenticity.",
   "webhook.test": "Test",
   "webhook.title": "Event webhooks",
-  "webhook.url": "URL"
+  "webhook.url": "URL",
+  "queue.mode.now": "Run immediately",
+  "queue.mode.preset": "Preset window",
+  "queue.mode.scheduled": "Scheduled run",
+  "queue.avoidWindow": "Avoid preset windows",
+  "queue.avoidingWindow": "Waiting outside preset windows",
+  "queue.windowWaitHint": "Waiting for the blocked window to end; the run has not been cancelled.",
+  "queue.normal": "Normal",
+  "queue.idle": "When idle"
 }

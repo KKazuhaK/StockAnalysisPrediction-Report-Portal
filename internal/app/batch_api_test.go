@@ -189,3 +189,78 @@ func TestCancelRunningJobAbortsContext(t *testing.T) {
 
 	s.cancelRunningJob(999) // not running here → no panic, no effect
 }
+
+func TestJobJSONExecutionMode(t *testing.T) {
+	for _, tc := range []struct {
+		job   BatchJob
+		mode  string
+		avoid bool
+	}{
+		{BatchJob{}, "now", false},
+		{BatchJob{RunAt: "2026-09-08 10:00:00"}, "scheduled", false},
+		{BatchJob{RunPreset: `{"freq":"daily","invert":true}`}, "preset", true},
+	} {
+		got := jobJSON(tc.job)
+		if got["run_mode"] != tc.mode || got["avoid_window"] != tc.avoid {
+			t.Fatalf("execution metadata = %v, want mode %s, avoid %v", got, tc.mode, tc.avoid)
+		}
+	}
+	if got := jobJSON(BatchJob{Status: "queued", Total: 1}); got["cancelled"] != 0 {
+		t.Fatalf("queued rows counted as cancelled: %v", got)
+	}
+}
+
+func TestQueuePresetPresentationFromStore(t *testing.T) {
+	s := batchServer(t)
+	s.st.SetSetting("timezone", "UTC")
+	id, err := s.st.CreateBatchJob(1, 1, 0, "admin", []map[string]string{{"symbol": "300001"}}, "urgent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := `{"freq":"daily","intervals":[{"start":{"time":"00:00"},"stop":{"time":"00:00"}}],"invert":true}`
+	if err := s.st.SetJobWindow(id, "", snapshot); err != nil {
+		t.Fatal(err)
+	}
+	detail, ok := s.st.GetBatchJob(id)
+	if !ok || detail.RunPreset != snapshot {
+		t.Errorf("detail lost preset snapshot: %+v", detail)
+	}
+	response := post(t, s.apiBatchJobs, "{}")
+	jobs := response["jobs"].([]any)
+	if len(jobs) != 1 {
+		t.Fatalf("jobs = %v", jobs)
+	}
+	j := jobs[0].(map[string]any)
+	if j["run_mode"] != "preset" || j["avoid_window"] != true || j["window_blocked"] != true || j["scheduled"] != true || j["cancelled"] != float64(0) {
+		t.Fatalf("blocked preset presentation = %v", j)
+	}
+	if _, ok := j["ahead"]; ok {
+		t.Fatalf("blocked run has a queue position: %v", j)
+	}
+	summary := post(t, s.apiBatchQueue, "{}")
+	if summary["waiting"] != float64(0) || summary["scheduled"] != float64(1) {
+		t.Fatalf("blocked run missing from summary: %v", summary)
+	}
+}
+
+func TestRescheduleReplacesPresetWindow(t *testing.T) {
+	s := batchServer(t)
+	id, err := s.st.CreateBatchJob(1, 1, 0, "admin", []map[string]string{{"symbol": "300001"}}, "urgent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.SetJobWindow(id, "", `{"freq":"daily","invert":true}`); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/x", strings.NewReader(`{"run_at":"2099-01-01 12:00:00"}`))
+	r.SetPathValue("id", fmt.Sprint(id))
+	w := httptest.NewRecorder()
+	s.apiBatchJobSchedule(w, r, "admin")
+	if w.Code != http.StatusOK {
+		t.Fatalf("reschedule: %d %s", w.Code, w.Body.String())
+	}
+	j, ok := s.st.GetBatchJob(id)
+	if !ok || j.RunPreset != "" || j.RunAt != "2099-01-01 12:00:00" {
+		t.Fatalf("rescheduled job still carries preset: %+v", j)
+	}
+}

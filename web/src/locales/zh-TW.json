@@ -1604,5 +1604,13 @@
   "webhook.secretHint": "可選。用於 HMAC-SHA256 簽名，訂閱端據此校驗來源。",
   "webhook.test": "測試",
   "webhook.title": "事件推送（Webhook）",
-  "webhook.url": "地址"
+  "webhook.url": "地址",
+  "queue.mode.now": "立即執行",
+  "queue.mode.preset": "預設時間",
+  "queue.mode.scheduled": "定時執行",
+  "queue.avoidWindow": "避開預設時段",
+  "queue.avoidingWindow": "避開時段中",
+  "queue.windowWaitHint": "等待避開時段結束後進入佇列，任務未取消。",
+  "queue.normal": "普通",
+  "queue.idle": "空閒時執行"
 }

@@ -26,6 +26,7 @@ major boundary, and a database has to reach the last release of a line before cr
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v0.4.50](v0.4.50.md) | 2026-09-08 | Execution modes and preset-window waiting in the queue |
 | [v0.4.49](v0.4.49.md) | 2026-09-08 | Pick your own dates |
 | [v0.4.48](v0.4.48.md) | 2026-09-07 | The 5日 button works, and the panel stops promising windows nothing serves |
 | [v0.4.47](v0.4.47.md) | 2026-09-07 | Prices on the home cards, a minute-by-minute chart, and a source you can switch on |

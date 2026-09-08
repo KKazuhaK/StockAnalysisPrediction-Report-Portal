@@ -4,7 +4,7 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import { ALL_SURFACES } from '../api/types'
-import type { BatchTarget, Surface } from '../api/types'
+import type { BatchJob, BatchTarget, Surface } from '../api/types'
 
 // Shared presentation for run/queue views. Priority is a Slurm-style number now, not a
 // tier: a run stores "urgent" or a base number 0..100 (docs/adr/0008-multifactor-priority.md).
@@ -55,9 +55,26 @@ function baseTagColor(n: number): string {
 // priorityTag renders a run's priority: a red urgent tag, else the base number tinted by
 // magnitude.
 export function priorityTag(t: TFunction, p?: string) {
+  if (p === 'idle') return <Tag>{t('queue.idle')}</Tag>
   if (isUrgent(p)) return <Tag color="red">{t('batch.priority.urgent')}</Tag>
   const n = priorityNum(p)
   return <Tag color={baseTagColor(n)}>{n}</Tag>
+}
+
+// Execution mode remains visible after a run leaves the waiting queue.
+export function executionTags(t: TFunction, j: BatchJob) {
+  const mode = j.run_mode || (j.run_at ? 'scheduled' : 'now')
+  return <>
+    <Tag>{t(`queue.mode.${mode}`)}</Tag>
+    {j.avoid_window && <Tag color="purple">{t('queue.avoidWindow')}</Tag>}
+    <Tag color={isUrgent(j.priority) ? 'red' : undefined}>{t(isUrgent(j.priority) ? 'batch.priority.urgent' : j.priority === 'idle' ? 'queue.idle' : 'queue.normal')}</Tag>
+  </>
+}
+
+export function queueStatusTag(t: TFunction, j: BatchJob) {
+  if (j.status === 'queued' && j.window_blocked) return <Tag color="purple">{t('queue.avoidingWindow')}</Tag>
+  if (j.status === 'queued' && j.scheduled) return <Tag color="purple" title={j.run_at}>{t('queue.scheduled')}</Tag>
+  return statusTag(t, j.status)
 }
 
 // inputPairs reads a run's inputs JSON as [key, value] pairs, dropping empty values (e.g. an
