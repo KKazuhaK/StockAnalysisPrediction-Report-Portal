@@ -692,14 +692,14 @@ func TestYahooSourceIsWiredThroughTheIntervalAwareFetcher(t *testing.T) {
 		seen = iv
 		return &QuoteResp{}, nil
 	}}
-	if _, err := probe.call(context.Background(), "us", "AAPL", 60, quoteIntervalIntraday); err != nil {
+	if _, err := probe.call(context.Background(), "us", "AAPL", 60, quoteIntervalIntraday, quoteWindow{}); err != nil {
 		t.Fatalf("call: %v", err)
 	}
 	if seen != quoteIntervalIntraday {
 		t.Errorf("the fetcher was told %q, want %q", seen, quoteIntervalIntraday)
 	}
 	// A source with neither fetcher is an error rather than a nil dereference in a handler goroutine.
-	if _, err := (quoteSource{name: "empty"}).call(context.Background(), "us", "AAPL", 60, quoteIntervalDaily); err == nil {
+	if _, err := (quoteSource{name: "empty"}).call(context.Background(), "us", "AAPL", 60, quoteIntervalDaily, quoteWindow{}); err == nil {
 		t.Error("a source with no fetcher was called without complaint")
 	}
 }

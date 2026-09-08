@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Button, Card, Empty, Input, Result, Segmented, Skeleton, Space, Tag, Typography } from 'antd'
+import { Button, Card, DatePicker, Empty, Input, Result, Segmented, Skeleton, Space, Tag, Typography } from 'antd'
+import dayjs, { type Dayjs } from 'dayjs'
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
@@ -38,6 +39,28 @@ import { NO_ITEM_TOOLTIP } from '../lib/segmented'
 // measured against the vendor), so the chart draws them as a line rather than as candles two pixels
 // wide. The four on the right are the daily candles this app shipped with and are unchanged.
 const QUOTE_RANGES = ['1d', '5d', '1m', '3m', '6m', '1y'] as const
+
+// The reader's own window, as the two URL parameters carry it. Both dates or neither — the server
+// refuses a half-open one rather than completing it, and this page must not send what it would.
+const WINDOW_FMT = 'YYYY-MM-DD'
+type QuoteWin = { from: string; to: string } | null
+
+// A window off the URL, or null. Validated HERE only enough to decide whether to send it: the
+// server owns the real allowlist (it is the thing building a vendor URL), and a second copy of that
+// rule here is a second place for it to drift. What this rejects is only what would make the page
+// itself incoherent — a half-open pair, or a date the picker could not render.
+function winFromParams(from: string, to: string): QuoteWin {
+  if (!from || !to) return null
+  // The SHAPE by regex and the VALIDITY by dayjs. Strict parsing (`dayjs(s, fmt, true)`) would need
+  // the customParseFormat plugin, and pulling a plugin in for a check the server performs properly
+  // anyway is more machinery than the question deserves. This pair still rejects 2026-13-01.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return null
+  const a = dayjs(from)
+  const b = dayjs(to)
+  if (!a.isValid() || !b.isValid() || b.isBefore(a)) return null
+  if (a.format(WINDOW_FMT) !== from || b.format(WINDOW_FMT) !== to) return null
+  return { from: a.format(WINDOW_FMT), to: b.format(WINDOW_FMT) }
+}
 type QuoteRange = (typeof QUOTE_RANGES)[number]
 const DEFAULT_RANGE: QuoteRange = '3m'
 
@@ -98,6 +121,39 @@ function viewportHeight(): number {
 // transport error that named no code at all) is worth one more try.
 const BAD_SYMBOL = 'quote_bad_symbol'
 
+/** Everything the URL carries about what to draw. */
+export interface QuoteNav {
+  symbol: string
+  range: QuoteRange
+  win: QuoteWin
+}
+
+/**
+ * The whole query string, built in ONE place because setSearchParams replaces it: assembling it
+ * anywhere else is what makes "switch the range, lose the symbol" one forgotten line away.
+ *
+ * Exported and pure so the rules below can be asserted directly. They are rules about a LINK — what
+ * somebody pastes into a chat and what it reopens as — and the only way to drive them through the
+ * page is antd's RangePicker, which is not a thing to hang a correctness claim on.
+ */
+export function quoteSearchParams(next: QuoteNav): Record<string, string> {
+  const params: Record<string, string> = {}
+  if (next.symbol) params.symbol = next.symbol
+  if (next.win) {
+    // A window and a range are two answers to one question, so the URL carries ONE of them. The
+    // range key is DROPPED rather than kept beside it: the page reads a window as replacing the
+    // range, the server does too, and a link carrying both would reopen showing whichever half its
+    // reader happened to honour.
+    params.from = next.win.from
+    params.to = next.win.to
+    return params
+  }
+  // The default range stays OUT of the URL, so a link somebody pastes into a chat carries the code
+  // and nothing else; an explicit choice is the one worth writing down.
+  if (next.range !== DEFAULT_RANGE) params.range = next.range
+  return params
+}
+
 /**
  * The answer on screen and THE WINDOW THAT PRODUCED IT, held as one value because they are one
  * fact.
@@ -113,6 +169,12 @@ const BAD_SYMBOL = 'quote_bad_symbol'
 interface Answer {
   resp: QuoteResp
   range: QuoteRange
+  /**
+   * The window that produced these bars, for the same reason `range` is here: a window switch keeps
+   * the previous bars up for the whole round trip, so the label under the chart has to describe the
+   * bars it arrived with rather than whatever the URL says by the time they land.
+   */
+  win: QuoteWin
 }
 
 export default function QuotesApp() {
@@ -127,6 +189,11 @@ export default function QuotesApp() {
   const range: QuoteRange = (QUOTE_RANGES as readonly string[]).includes(rangeParam)
     ? (rangeParam as QuoteRange)
     : DEFAULT_RANGE
+  // A window in the URL REPLACES the range rather than narrowing it, exactly as the server treats
+  // it: from= and to= say which sessions, so the range key has nothing left to contribute. Keeping
+  // both would let a preset button silently truncate a window the reader chose.
+  const win = winFromParams(sp.get('from') || '', sp.get('to') || '')
+  const winKey = win ? win.from + '..' + win.to : ''
 
   const [draft, setDraft] = useState(symbol)
   const [answer, setAnswer] = useState<Answer | null>(null)
@@ -187,7 +254,9 @@ export default function QuotesApp() {
     setLoading(true)
     setError(null)
     api
-      .get<QuoteResp>(`/api/quote/${encodeURIComponent(symbol)}${qs({ range })}`)
+      .get<QuoteResp>(
+        `/api/quote/${encodeURIComponent(symbol)}${win ? qs({ from: win.from, to: win.to }) : qs({ range })}`,
+      )
       .then((d) => {
         if (cancelled) return
         shownSymbol.current = symbol
@@ -196,7 +265,7 @@ export default function QuotesApp() {
         // answer that is allowed through — a range switch re-runs the effect and the cancelled flag
         // drops the older answer — and pairing them at the point of arrival is what keeps that true
         // without anyone having to re-check it.
-        setAnswer({ resp: d, range })
+        setAnswer({ resp: d, range, win })
         setError(null)
       })
       .catch((e) => {
@@ -214,23 +283,19 @@ export default function QuotesApp() {
     return () => {
       cancelled = true
     }
-  }, [symbol, range, nonce])
+    // winKey rather than `win`: winFromParams builds a NEW object every render, so an object in this
+    // list would re-run the effect — and re-hit the vendor — on every unrelated state change on the
+    // page. The string is the value; the object is only its shape.
+  }, [symbol, range, winKey, nonce])
 
   // Both controls write the whole query string, because setSearchParams REPLACES it: building it in
   // one place is what stops "switch the range, lose the symbol" from being one forgotten line away.
-  const go = (next: { symbol: string; range: QuoteRange }) => {
-    const params: Record<string, string> = {}
-    if (next.symbol) params.symbol = next.symbol
-    // The default range stays OUT of the URL, so a link somebody pastes into a chat carries the code
-    // and nothing else; an explicit choice is the one worth writing down.
-    if (next.range !== DEFAULT_RANGE) params.range = next.range
-    setSp(params)
-  }
+  const go = (next: QuoteNav) => setSp(quoteSearchParams(next))
 
   // Enter is the only gesture that changes the page. Searching as you type would put a request
   // behind every keystroke of "600519" — against a vendor endpoint that is neither ours nor
   // rate-limit-generous — and five of those six are for codes the reader never meant to ask about.
-  const submit = (raw: string) => go({ symbol: raw.trim(), range })
+  const submit = (raw: string) => go({ symbol: raw.trim(), range, win })
 
   // No client-side symbol regex on purpose. The grammar (6 digits / 5 digits / 1-6 letters / an
   // explicit `<mkt>:<code>`) is enforced server-side because that is where the URL to the vendor is
@@ -253,11 +318,37 @@ export default function QuotesApp() {
     />
   )
 
+  // The reader's own window, beside the presets rather than inside them.
+  //
+  // It is a separate control and not a seventh Segmented option because it is a different KIND of
+  // choice: the six are one click each and this one is two dates, and folding it in would make the
+  // strip's selected item mean "a picker is open" for one of its seven values. When a window is
+  // set the Segmented shows nothing selected — which is honest, because none of the six is what is
+  // being drawn — and clearing the picker puts the default preset back.
+  const windowPicker = (
+    <DatePicker.RangePicker
+      size="small"
+      allowClear
+      data-testid="quote-window"
+      value={win ? [dayjs(win.from), dayjs(win.to)] : null}
+      // Tomorrow has no sessions in it, and a window that ends in the future is a request no vendor
+      // can answer — refusing it here costs nothing and saves a round trip that comes back empty.
+      disabledDate={(d: Dayjs) => d.isAfter(dayjs(), 'day')}
+      onChange={(v) => {
+        const pair = v && v[0] && v[1] ? { from: v[0].format(WINDOW_FMT), to: v[1].format(WINDOW_FMT) } : null
+        go({ symbol, range, win: pair })
+      }}
+      placeholder={[t('quote.windowFrom'), t('quote.windowTo')]}
+    />
+  )
+
   const rangeSwitcher = (
     <Segmented
       size="small"
-      value={range}
-      onChange={(v) => go({ symbol, range: v as QuoteRange })}
+      value={win ? '' : range}
+      // Picking a PRESET clears the window: the two are one setting with two spellings, and a
+      // preset that left the window in place would highlight itself over a chart it did not draw.
+      onChange={(v) => go({ symbol, range: v as QuoteRange, win: null })}
       options={QUOTE_RANGES.map((r) => ({ label: t(`quote.range.${r}`), value: r, title: NO_ITEM_TOOLTIP }))}
     />
   )
@@ -353,7 +444,10 @@ export default function QuotesApp() {
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('quote.trend')}
             </Typography.Text>
-            {rangeSwitcher}
+            <Space wrap size={8}>
+              {windowPicker}
+              {rangeSwitcher}
+            </Space>
           </div>
 
           {answer ? (
@@ -364,7 +458,10 @@ export default function QuotesApp() {
               height={chartH}
               currency={answer.resp.currency}
               // From the answer's own range, never from the URL's: see Answer above.
-              interval={intervalFor(answer.range)}
+              // A windowed answer is always daily bars, whatever preset the range key still names —
+              // and it is read off the ANSWER's window, so a chart held over from a preset is still
+              // labelled by the request that drew it.
+              interval={answer.win ? 'daily' : intervalFor(answer.range)}
             />
           ) : (
             // The skeleton reserves the chart's real height rather than a token two lines, so the
