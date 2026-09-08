@@ -139,7 +139,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
                         )}
                       </div>
                       <InputsPreview inputs={j.inputs} />
-                      <Space size={0} wrap>{executionTags(t, j)}</Space>
+                      <Space size={[6, 6]} wrap>{executionTags(t, j)}</Space>
                     </div>
                     <Space size={4}>
                       {queueStatusTag(t, j)}

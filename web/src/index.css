@@ -19,6 +19,59 @@ body {
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
+/* Desktop workbench launcher: secondary destinations open from one familiar app-grid
+   control. The generous tile targets keep it easy to scan and use without adding more
+   permanent buttons to the header. */
+.rp-workbench-trigger.ant-btn {
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
+}
+.rp-workbench-menu {
+  width: 276px;
+  max-width: calc(100vw - 40px);
+}
+.rp-workbench-menu__title {
+  padding: 2px 6px 10px;
+  color: var(--ant-color-text-secondary, rgba(0, 0, 0, 0.65));
+  font-size: 13px;
+  font-weight: 600;
+}
+.rp-workbench-menu__grid {
+  display: grid;
+  justify-content: center;
+  gap: 4px;
+}
+.rp-workbench-menu__item.ant-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  height: 92px;
+  padding: 9px 4px 8px;
+  border-radius: 14px;
+  white-space: normal;
+}
+.rp-workbench-menu__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  font-size: 22px;
+  line-height: 44px;
+}
+.rp-workbench-menu__item-label {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ant-color-text, rgba(0, 0, 0, 0.88));
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* markdown body typography (works with antd Typography).
    --md-fs / --md-fw are set by the reading pages from the reader prefs (the "Aa"
    popover); headings/tables/code are all em-relative so they scale off the base. */

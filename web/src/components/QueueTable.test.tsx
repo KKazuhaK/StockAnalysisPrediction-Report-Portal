@@ -93,6 +93,15 @@ describe('QueueTable', () => {
     expect(screen.queryByText('batch.aheadNext')).toBeNull()
   })
 
+  it('keeps wrapped execution-mode tags visually separated', async () => {
+    store.jobs = [job({ status: 'queued', run_mode: 'preset', avoid_window: true, priority: 'urgent' })]
+    mount()
+    const mode = await screen.findByText('queue.mode.preset')
+    const group = mode.closest('.ant-space') as HTMLElement | null
+    expect(group?.style.columnGap).toBe('6px')
+    expect(group?.style.rowGap).toBe('6px')
+  })
+
   it('keeps execution mode visible after a scheduled normal run finishes', async () => {
     store.jobs = [job({ status: 'finished', run_mode: 'scheduled', priority: '30', succeeded: 1 })]
     mount()

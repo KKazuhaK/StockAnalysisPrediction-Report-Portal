@@ -734,6 +734,7 @@
   "nav.users": "账号管理",
   "nav.versions": "报告版本",
   "nav.webhooks": "通知推送",
+  "nav.workbench": "工作台",
   "nav.writeReport": "写报告",
   "ou.add": "新建组织单元",
   "ou.announcementImpactDesc": "以下公告投放给了「{{name}}」。删除分组后，只发给它的那几条将不再有任何投放对象。",
