@@ -68,7 +68,10 @@
 //     vendor's own session field second.
 //   - quote_api.go    GET /api/quote/{symbol} and GET /api/quotes?symbols= (cookie session,
 //     same gate as /api/stock). The batch one is what the home cards use: one upstream call
-//     for a page, capped and refused rather than truncated.
+//     for a page, capped and refused rather than truncated. `range=` picks one of six
+//     preset windows; `from=`/`to=` REPLACE it with the reader's own two dates, validated by
+//     quoteParseWindow — the allowlist for the only caller-supplied strings that reach a
+//     vendor URL (ADR 0031, v0.4.49 amendment).
 //   - quote_admin_api.go  /api/admin/quote — per-source health and capabilities, the cache
 //     occupancy, the three TTLs and the home-card switch. The source URLs are deliberately
 //     NOT settings: a source here is a parser reading the vendor by fixed field positions, so

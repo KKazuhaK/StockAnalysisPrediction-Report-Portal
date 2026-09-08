@@ -149,6 +149,11 @@ var errQuoteNoSources = errors.New("quote: no vendor sources configured")
 // quoteFetchFunc is the shape both vendor fetchers in quote.go already have.
 type quoteFetchFunc func(ctx context.Context, market, code string, bars int) (*QuoteResp, error)
 
+// quoteRangeFetchFunc fetches daily bars between two dates the reader chose. The dates are already
+// validated and re-formatted by quoteParseWindow before they reach here, so a fetcher interpolates
+// them into a vendor URL without re-checking them — and must not accept them from anywhere else.
+type quoteRangeFetchFunc func(ctx context.Context, market, code, from, to string) (*QuoteResp, error)
+
 // quoteIntervalFetchFunc is the same fetch WITH the interval in hand, for a source whose answer
 // depends on it. Both shapes exist because both facts are true: Tencent's and Sina's endpoints take
 // a bar count and nothing else, so handing their fetchers an interval would be a parameter they
@@ -221,6 +226,12 @@ type quoteSource struct {
 	// batching is a property of the vendor's URL, not of its parser: Tencent has an endpoint that
 	// takes a comma list and Sina and Yahoo do not, and no amount of looping here would change that.
 	fetchBatch quoteBatchFetchFunc
+	// fetchRange is the BOUNDED-WINDOW shape, and it is a slot of its own for the same reason
+	// fetchBatch is: the request carries something the other signatures have nowhere to put. A
+	// window is two dates, not a count, and a source that cannot take them must be skipped rather
+	// than called with the count it would otherwise fall back to — which would answer the last N
+	// sessions under the reader's own chosen dates.
+	fetchRange quoteRangeFetchFunc
 	// optIn keeps a compiled-in source OUT of the shipped order (quoteShippedOrder) while leaving it
 	// in every other respect: the panel lists it, quote_source_order accepts its name, and adding it
 	// there is the whole of turning it on. It is not a second enable flag — the order remains the
@@ -289,7 +300,16 @@ func (src quoteSource) covers(m *quoteMarket, iv quoteInterval) bool {
 // A source with NEITHER fetcher set is an error rather than a nil dereference: the empty
 // declaration that lets a test wire a bare stub means "no restriction recorded", and this is what
 // keeps that convenience from reaching the failover loop as a panic in a handler goroutine.
-func (src quoteSource) call(ctx context.Context, market, code string, bars int, iv quoteInterval) (*QuoteResp, error) {
+func (src quoteSource) call(ctx context.Context, market, code string, bars int, iv quoteInterval, win quoteWindow) (*QuoteResp, error) {
+	// The bounded window first, and it never falls through to the other two. A source reached here
+	// for this interval declared it, so a nil fetcher is a wiring mistake and says so; answering it
+	// from fetch or fetchAt would return the last `bars` sessions labelled with the reader's dates.
+	if iv == quoteIntervalDailyRange {
+		if src.fetchRange == nil {
+			return nil, fmt.Errorf("quote: source %q declared %s and has no range fetcher", src.name, iv)
+		}
+		return src.fetchRange(ctx, market, code, win.from, win.to)
+	}
 	switch {
 	case src.fetchAt != nil:
 		return src.fetchAt(ctx, market, code, bars, iv)
@@ -369,6 +389,8 @@ func defaultQuoteSources() []quoteSource {
 			// And a third endpoint, which is not an interval but a SHAPE: q= answers many symbols in
 			// one request. It is what makes a page of home cards one upstream call.
 			fetchBatch: fetchTencentBatch,
+			// And the same daily endpoint with its two date slots filled — see quoteTencentRangeURL.
+			fetchRange: fetchTencentRange,
 			caps: []quoteCapability{
 				// The price, in every market: fqkline answers all five — every fixture in
 				// testdata/quote/ came out of it — and its snapshot half is trusted in all five.
@@ -384,9 +406,15 @@ func defaultQuoteSources() []quoteSource {
 				// does serve US dailies is enabled — and reading the column here would silently hand
 				// the US series back to Tencent at exactly that moment, which is the failure this
 				// whole declaration exists to make impossible.
+				// The daily series, and the same series bounded by the reader's own dates. ONE grant
+				// for both, because here they really are the same capability: fqkline answers the
+				// count-based and the date-based form from the same endpoint with the same array,
+				// and the markets it can and cannot draw are the markets either way. The interval is
+				// separate (a source may have one and not the other — Sina does not take dates); the
+				// GRANT is shared because for this vendor the evidence is one measurement.
 				{
 					markets:   func(m *quoteMarket) bool { return m.id != "us" && m.id != "bj" },
-					intervals: []quoteInterval{quoteIntervalDaily},
+					intervals: []quoteInterval{quoteIntervalDaily, quoteIntervalDailyRange},
 				},
 				// ONE SESSION of minutes, in the three markets where a real one was measured. The
 				// endpoint answers all five and two of the answers are not a series: bj830799 comes
@@ -768,11 +796,14 @@ func (c *quoteCache) init() {
 // at the key's components. What this line actually buys is narrower and still worth having: for a
 // market whose reading page can only ever get a snapshot (us and bj, whose daily ranges degrade),
 // the card's key and the page's key become the SAME key rather than two entries holding one price.
-func quoteCacheKey(market, code string, bars int, iv quoteInterval) string {
+func quoteCacheKey(market, code string, bars int, iv quoteInterval, win quoteWindow) string {
 	if iv == quoteIntervalSnapshot {
 		bars = 0
 	}
-	return market + code + ":" + strconv.Itoa(bars) + ":" + string(iv)
+	// The window contributes NOTHING when it is unbounded, so every key this function wrote before
+	// windows existed is byte-identical to the one it writes now — and two different windows on the
+	// same code and interval are two entries, because they are two different answers.
+	return market + code + ":" + strconv.Itoa(bars) + ":" + string(iv) + win.key()
 }
 
 // quoteEntrySize estimates one entry's footprint. See quoteBarBytes for why an estimate is enough.
@@ -987,7 +1018,7 @@ func (c *quoteCache) servableInterval(cfg quoteConfig, t quoteTarget, iv quoteIn
 // The interval is a parameter rather than something worked out from the market here, because it is
 // half of what sourcesFor answers on and only the caller knows which half it is asking for: a US
 // price and a US daily series are two different chains through the same source table.
-func (c *quoteCache) load(ctx context.Context, cfg quoteConfig, market, code string, bars int, iv quoteInterval) (*QuoteResp, error) {
+func (c *quoteCache) load(ctx context.Context, cfg quoteConfig, market, code string, bars int, iv quoteInterval, win quoteWindow) (*QuoteResp, error) {
 	// Re-resolved rather than passed in, because what the resolver needs is the whole target: the
 	// market row AND the code, the second of which decides whether a source has a symbol for this
 	// request at all. Every caller has one already — this is the same quoteTargetFor the handler ran
@@ -1007,7 +1038,7 @@ func (c *quoteCache) load(ctx context.Context, cfg quoteConfig, market, code str
 	// Every source below has declared this pair and has a spelling for this code; one that has not is
 	// not called and above all is not blamed (sourcesFor).
 	for _, src := range c.sourcesFor(cfg, target, iv) {
-		resp, err := src.call(ctx, market, code, bars, iv)
+		resp, err := src.call(ctx, market, code, bars, iv, win)
 		if err != nil {
 			// A failure that arrives because THIS side stopped waiting is not the vendor's, and it
 			// must not land in the health counters: those are what an operator reads to decide
@@ -1048,10 +1079,10 @@ func (c *quoteCache) load(ctx context.Context, cfg quoteConfig, market, code str
 //
 // The returned *QuoteResp is SHARED with every other caller holding the same cache entry. Nothing
 // downstream may mutate it; the handler copies the struct before stamping Cached on it.
-func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, code string, bars int, iv quoteInterval) (*QuoteResp, bool, time.Duration, error) {
+func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, code string, bars int, iv quoteInterval, win quoteWindow) (*QuoteResp, bool, time.Duration, error) {
 	c.init()
 	cfg = cfg.orDefaults()
-	key := quoteCacheKey(market, code, bars, iv)
+	key := quoteCacheKey(market, code, bars, iv, win)
 	if resp, left, ok := c.get(key); ok {
 		return resp, true, left, nil
 	}
@@ -1103,7 +1134,7 @@ func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, co
 	// The interval is the CALLER's now rather than something worked out from the market here: the 1d
 	// and 5d ranges let a request choose one, so the same market and the same code can be two
 	// different questions. It travels into quoteCacheKey above for the same reason.
-	fl.resp, fl.err = c.load(loadCtx, cfg, market, code, bars, iv)
+	fl.resp, fl.err = c.load(loadCtx, cfg, market, code, bars, iv, win)
 	if fl.err == nil {
 		ttl = cfg.ttlFor(fl.resp, iv)
 		c.put(key, fl.resp, ttl)
@@ -1300,7 +1331,7 @@ func (c *quoteCache) loadBatchUncached(ctx context.Context, cfg quoteConfig, tar
 			out[t.Symbol] = resp
 			// Stored under the SNAPSHOT key, which quoteCacheKey normalises the bar count out of —
 			// so the next card, and the next reading page for a market with no series, are hits.
-			c.put(quoteCacheKey(t.Market.id, t.Code, 0, quoteIntervalSnapshot), resp,
+			c.put(quoteCacheKey(t.Market.id, t.Code, 0, quoteIntervalSnapshot, quoteWindow{}), resp,
 				cfg.ttlFor(resp, quoteIntervalSnapshot))
 		}
 		left = rest

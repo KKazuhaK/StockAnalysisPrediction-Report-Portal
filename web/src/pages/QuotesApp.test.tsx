@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
-import QuotesApp from './QuotesApp'
+import QuotesApp, { quoteSearchParams } from './QuotesApp'
 import { ApiError } from '../api/client'
 import en from '../locales/en-US.json'
 
@@ -558,4 +558,117 @@ describe('QuotesApp', () => {
       expect(line?.textContent).toContain(dict[c.named])
     })
   }
+})
+
+// ---------- the reader's own date window ----------
+
+describe('QuotesApp — the date window', () => {
+  it('sends from and to instead of a range, and never both', async () => {
+    renderApp('/apps/quotes?symbol=600519&from=2026-03-02&to=2026-04-10')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    // The window REPLACES the range. A request carrying both would let the server's range key
+    // truncate a window the reader chose — and the server refuses to honour both for that reason,
+    // so a page that sent both would depend on which of them it happened to win.
+    expect(pending[0].url).toContain('from=2026-03-02')
+    expect(pending[0].url).toContain('to=2026-04-10')
+    expect(pending[0].url).not.toContain('range=')
+  })
+
+  it('drops a range key already in the URL when a window is set beside it', async () => {
+    renderApp('/apps/quotes?symbol=600519&range=1y&from=2026-03-02&to=2026-04-10')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    expect(pending[0].url).not.toContain('range=')
+    expect(pending[0].url).toContain('from=2026-03-02')
+  })
+
+  it('ignores a half-open or malformed window and asks for the range instead', async () => {
+    // The server refuses these with 400. The page must not SEND them: a request it knows will be
+    // refused costs a round trip and puts an error banner over a chart that could have been drawn.
+    for (const q of ['from=2026-03-02', 'to=2026-04-10', 'from=2026-13-01&to=2026-13-02', 'from=2026-3-2&to=2026-04-10']) {
+      pending.length = 0
+      const { unmount } = renderApp(`/apps/quotes?symbol=600519&${q}`)
+      await waitFor(() => expect(pending).toHaveLength(1))
+      expect(pending[0].url, q).not.toContain('from=')
+      expect(pending[0].url, q).not.toContain('to=')
+      unmount()
+    }
+  })
+
+  it('labels a windowed answer as daily whatever range key the URL carried', async () => {
+    // The chart is TOLD its interval. A window is always daily bars, so a stale `range=1d` must not
+    // make the page announce a minute series — that is the mislabelling the interval prop exists to
+    // prevent, arriving from the caller's side.
+    renderApp('/apps/quotes?symbol=600519&range=1d&from=2026-03-02&to=2026-04-10')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    await act(async () => {
+      pending[0].resolve(MAOTAI)
+    })
+    await waitFor(() => expect(screen.getByTestId('chart')).toBeTruthy())
+    expect(lastChart().interval).toBe('daily')
+  })
+
+  it('a preset click clears the window, and the two never both sit in the URL', async () => {
+    const user = userEvent.setup()
+    renderApp('/apps/quotes?symbol=600519&from=2026-03-02&to=2026-04-10')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    await act(async () => {
+      pending[0].resolve(MAOTAI)
+    })
+    await waitFor(() => expect(screen.getByTestId('chart')).toBeTruthy())
+
+    await user.click(screen.getByText(dict['quote.range.1y']))
+    await waitFor(() => {
+      const search = screen.getByTestId('loc').textContent || ''
+      expect(search).toContain('range=1y')
+      expect(search).not.toContain('from=')
+      expect(search).not.toContain('to=')
+    })
+    // And the request that went out is the preset's, not the window's.
+    expect(pending[pending.length - 1].url).toContain('range=1y')
+    expect(pending[pending.length - 1].url).not.toContain('from=')
+  })
+
+  it('does not re-request when nothing but an unrelated render happened', async () => {
+    // The window is rebuilt from the URL on every render, so an object in the effect's dependency
+    // list would re-hit the vendor on every keystroke in the search box. The key is a string for
+    // exactly this reason, and typing is the cheapest way to prove it.
+    const user = userEvent.setup()
+    renderApp('/apps/quotes?symbol=600519&from=2026-03-02&to=2026-04-10')
+    await waitFor(() => expect(pending).toHaveLength(1))
+    await act(async () => {
+      pending[0].resolve(MAOTAI)
+    })
+    await waitFor(() => expect(screen.getByTestId('chart')).toBeTruthy())
+    await user.type(box(), 'AAPL')
+    expect(pending).toHaveLength(1)
+  })
+})
+
+// The link the page produces, asserted directly. These are rules about what somebody pastes into a
+// chat and what it reopens as, and the only gesture that reaches them through the page is antd's
+// RangePicker — not a control to hang a correctness claim on.
+describe('quoteSearchParams', () => {
+  it('carries a window OR a range, never both', () => {
+    const win = { from: '2026-03-02', to: '2026-04-10' }
+    expect(quoteSearchParams({ symbol: '600519', range: '1y', win })).toEqual({
+      symbol: '600519',
+      from: '2026-03-02',
+      to: '2026-04-10',
+    })
+    // Even the default range is absent beside a window, so the two cannot disagree in a link.
+    expect(quoteSearchParams({ symbol: '600519', range: '3m', win })).not.toHaveProperty('range')
+  })
+
+  it('keeps an explicit range and omits the default one', () => {
+    expect(quoteSearchParams({ symbol: '600519', range: '1y', win: null })).toEqual({
+      symbol: '600519',
+      range: '1y',
+    })
+    // 3m is the default: a link to it carries the code and nothing else.
+    expect(quoteSearchParams({ symbol: '600519', range: '3m', win: null })).toEqual({ symbol: '600519' })
+  })
+
+  it('omits an empty symbol rather than writing symbol=', () => {
+    expect(quoteSearchParams({ symbol: '', range: '3m', win: null })).toEqual({})
+  })
 })
