@@ -288,6 +288,7 @@ export default function AppLayout() {
                 <Dropdown
                   trigger={['click']}
                   placement="bottomRight"
+                  classNames={{ root: 'rp-run-actions-menu' }}
                   menu={{
                     items: [{ key: 'write-report', icon: <EditOutlined aria-hidden="true" />, label: t('nav.writeReport') }],
                     onClick: ({ key }) => {

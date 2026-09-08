@@ -72,6 +72,24 @@ body {
   white-space: nowrap;
 }
 
+/* The manual-writing option belongs to the primary run control, so its floating menu uses
+   a quiet tint of the same theme color instead of reading as an unrelated dark button. */
+.rp-run-actions-menu .ant-dropdown-menu {
+  border: 1px solid var(--ant-color-primary-border, #91caff);
+}
+.rp-run-actions-menu .ant-dropdown-menu-item {
+  color: var(--ant-color-primary, #1677ff);
+  background: var(--ant-color-primary-bg, #e6f4ff);
+  font-weight: 600;
+}
+.rp-run-actions-menu .ant-dropdown-menu-item:hover,
+.rp-run-actions-menu .ant-dropdown-menu-item-active {
+  background: var(--ant-color-primary-bg-hover, #bae0ff);
+}
+.rp-run-actions-menu .ant-dropdown-menu-item .ant-dropdown-menu-item-icon {
+  color: inherit;
+}
+
 /* markdown body typography (works with antd Typography).
    --md-fs / --md-fw are set by the reading pages from the reader prefs (the "Aa"
    popover); headings/tables/code are all em-relative so they scale off the base. */
