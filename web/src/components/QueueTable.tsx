@@ -425,7 +425,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         <div>
           <div style={{ fontSize: 13 }}>{targetName(j.target_id)}</div>
           <InputsPreview inputs={j.inputs} />
-          <Space size={0} wrap>{executionTags(t, j)}</Space>
+          <Space size={[6, 6]} wrap>{executionTags(t, j)}</Space>
         </div>
       ),
     },

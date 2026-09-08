@@ -84,6 +84,7 @@ export default function AppLayout() {
   // about a count it has never had — and an absent badge is how this header says "nothing queued".
   const heldQueue = useRef(false)
   const [showTop, setShowTop] = useState(false)
+  const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const canRun = can('run_batch')
   const canWrite = can('report_edit')
@@ -150,6 +151,12 @@ export default function AppLayout() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+  // Route changes always dismiss the launcher, including navigation started from inside its
+  // portal. Relying only on the tile's click handler lets the popover trigger's document-level
+  // click handling race the state update and leave the old menu floating over the next page.
+  useEffect(() => {
+    setWorkbenchOpen(false)
+  }, [loc.pathname])
   // Light poll for the header queue badge (the drawer refreshes faster when open).
   useEffect(() => {
     if (!canRun || queueOpen) return
@@ -190,6 +197,13 @@ export default function AppLayout() {
   const showFooterInfo = settings.footerShowInfo
   const showFooterVersion = settings.footerShowVersion && !!ver
   const showFooter = showFooterInfo || showFooterVersion
+  const workbenchItems = [
+    ...(canRun
+      ? [{ key: 'chat', label: t('nav.chat'), path: '/chat', icon: <MessageOutlined />, color: token.colorPrimary, background: token.colorPrimaryBg }]
+      : []),
+    { key: 'review', label: t('nav.review'), path: '/review', icon: <AuditOutlined />, color: token.colorWarning, background: token.colorWarningBg },
+    { key: 'apps', label: t('nav.apps'), path: '/apps', icon: <AppstoreOutlined />, color: token.colorSuccess, background: token.colorSuccessBg },
+  ]
 
   return (
     <Layout style={{ minHeight: onChat ? undefined : '100vh', height: onChat ? '100dvh' : undefined, background: token.colorBgLayout }}>
@@ -309,26 +323,61 @@ export default function AppLayout() {
               </Button>
             </Badge>
           )}
-          {/* On mobile these fold into the account menu below to keep the header light. */}
+          {/* Secondary destinations share one app-style launcher on desktop. On mobile they
+              fold into the account menu below so the first row stays usable at phone width. */}
           {!compact && (
-            <>
-              {canRun && (
-                <Button icon={<MessageOutlined />} onClick={() => navigate('/chat')} title={t('nav.chat')}>
-                  {t('nav.chat')}
-                </Button>
-              )}
-              <Button icon={<AuditOutlined />} onClick={() => navigate('/review')} title={t('nav.review')}>
-                {t('nav.review')}
-              </Button>
-              <Button icon={<AppstoreOutlined />} onClick={() => navigate('/apps')} title={t('nav.apps')}>
-                {t('nav.apps')}
-              </Button>
-              {admin && (
-                <Button icon={<SettingOutlined />} onClick={() => navigate('/manage')} title={t('nav.manage')}>
-                  {t('nav.manage')}
-                </Button>
-              )}
-            </>
+            <Popover
+              trigger="click"
+              placement="bottomRight"
+              open={workbenchOpen}
+              onOpenChange={setWorkbenchOpen}
+              destroyOnHidden
+              styles={{ container: { padding: 12, borderRadius: 18 } }}
+              content={
+                <div className="rp-workbench-menu" role="menu" aria-label={t('nav.workbench')}>
+                  <div className="rp-workbench-menu__title">{t('nav.workbench')}</div>
+                  <div
+                    className="rp-workbench-menu__grid"
+                    style={{ gridTemplateColumns: `repeat(${workbenchItems.length}, minmax(76px, 1fr))` }}
+                  >
+                    {workbenchItems.map((item) => (
+                      <Button
+                        key={item.key}
+                        type="text"
+                        role="menuitem"
+                        aria-label={item.label}
+                        className="rp-workbench-menu__item"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setWorkbenchOpen(false)
+                          navigate(item.path)
+                        }}
+                      >
+                        <span
+                          className="rp-workbench-menu__icon"
+                          aria-hidden="true"
+                          style={{ color: item.color, background: item.background }}
+                        >
+                          {item.icon}
+                        </span>
+                        <span className="rp-workbench-menu__item-label">{item.label}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              }
+            >
+              <Button
+                type="text"
+                shape="circle"
+                className="rp-workbench-trigger"
+                icon={<AppstoreOutlined />}
+                aria-label={t('nav.workbench')}
+                aria-haspopup="menu"
+                aria-expanded={workbenchOpen}
+                title={t('nav.workbench')}
+              />
+            </Popover>
           )}
           <Popover
             trigger="click"
@@ -352,6 +401,21 @@ export default function AppLayout() {
                 >
                   {t('nav.account')}
                 </Button>
+                {admin && (
+                  <Button
+                    type="text"
+                    block
+                    icon={<SettingOutlined />}
+                    aria-label={t('nav.manage')}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
+                    onClick={() => {
+                      setAccountOpen(false)
+                      navigate('/manage')
+                    }}
+                  >
+                    {t('nav.manage')}
+                  </Button>
+                )}
                 <Divider style={{ margin: '8px 0' }} />
                 {/* On mobile the primary nav folds in here (the header buttons are hidden). */}
                 {compact && (
@@ -373,6 +437,18 @@ export default function AppLayout() {
                     <Button
                       type="text"
                       block
+                      icon={<AuditOutlined />}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
+                      onClick={() => {
+                        setAccountOpen(false)
+                        navigate('/review')
+                      }}
+                    >
+                      {t('nav.review')}
+                    </Button>
+                    <Button
+                      type="text"
+                      block
                       icon={<AppstoreOutlined />}
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
                       onClick={() => {
@@ -382,20 +458,6 @@ export default function AppLayout() {
                     >
                       {t('nav.apps')}
                     </Button>
-                    {admin && (
-                      <Button
-                        type="text"
-                        block
-                        icon={<SettingOutlined />}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}
-                        onClick={() => {
-                          setAccountOpen(false)
-                          navigate('/manage')
-                        }}
-                      >
-                        {t('nav.manage')}
-                      </Button>
-                    )}
                     <Divider style={{ margin: '8px 0' }} />
                   </>
                 )}
@@ -441,7 +503,7 @@ export default function AppLayout() {
               </div>
             }
           >
-            <Button type="text" icon={<UserOutlined />} title={name || user || undefined}>
+            <Button type="text" icon={<UserOutlined />} aria-label={name || user || t('nav.account')} title={name || user || undefined}>
               {!compact && (name || user)}
             </Button>
           </Popover>

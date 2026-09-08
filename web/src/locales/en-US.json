@@ -734,6 +734,7 @@
   "nav.users": "Users",
   "nav.versions": "Report versions",
   "nav.webhooks": "Webhooks",
+  "nav.workbench": "Workbench",
   "nav.writeReport": "Write a report",
   "ou.add": "New organizational unit",
   "ou.announcementImpactDesc": "These announcements are addressed to “{{name}}”. Once the group is gone, the ones sent only to it will have no recipients left.",

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { Grid } from 'antd'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import AppLayout from './AppLayout'
@@ -54,6 +55,9 @@ function renderAt(path: string) {
         <Route element={<AppLayout />}>
           <Route path="chat" element={<div>chat-body</div>} />
           <Route path="queue" element={<div>queue-body</div>} />
+          <Route path="review" element={<div>review-body</div>} />
+          <Route path="apps" element={<div>apps-body</div>} />
+          <Route path="manage" element={<div>manage-body</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -102,6 +106,53 @@ describe('AppLayout queue badge', () => {
     queueState.answer = { running: 0, waiting: 0, scheduled: 0, budget: 3 }
     renderAt('/queue')
     await vi.waitFor(() => expect(forgetTags).toHaveBeenCalledWith('/api/admin/batch/queue'))
+  })
+})
+
+describe('AppLayout desktop navigation', () => {
+  beforeEach(() => {
+    vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: true } as ReturnType<typeof Grid.useBreakpoint>)
+  })
+
+  it('groups secondary destinations in a single workbench launcher', async () => {
+    const user = userEvent.setup()
+    renderAt('/queue')
+
+    expect(await screen.findByText('queue-body')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'nav.chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'nav.review' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'nav.apps' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'nav.workbench' }))
+
+    expect(screen.getByRole('menu', { name: 'nav.workbench' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'nav.chat' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'nav.review' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'nav.apps' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: 'nav.manage' })).toBeNull()
+  })
+
+  it('navigates from the launcher and closes it', async () => {
+    const user = userEvent.setup()
+    renderAt('/queue')
+
+    const trigger = await screen.findByRole('button', { name: 'nav.workbench' })
+    await user.click(trigger)
+    await user.click(screen.getByRole('menuitem', { name: 'nav.review' }))
+
+    expect(await screen.findByText('review-body')).toBeTruthy()
+    await vi.waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('false'))
+  })
+
+  it('keeps management in the account menu at desktop width', async () => {
+    const user = userEvent.setup()
+    renderAt('/queue')
+
+    expect(await screen.findByText('queue-body')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'nav.manage' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Alice' }))
+
+    expect(screen.getByRole('button', { name: 'nav.manage' })).toBeTruthy()
   })
 })
 
