@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import HomePage from './HomePage'
@@ -49,7 +49,7 @@ vi.mock('../api/client', () => ({
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
 vi.mock('../auth', () => ({ useAuth: () => ({ can: () => true }) }))
 vi.mock('../site', () => ({ useSite: () => ({ title: 'Portal' }), SiteLogo: () => null }))
-vi.mock('../components/Omnibox', () => ({ default: () => null }))
+vi.mock('../components/Omnibox', () => ({ default: () => <div data-testid="omnibox" /> }))
 vi.mock('../favorites', () => ({
   useFavorites: () => ({
     items: [],
@@ -156,7 +156,7 @@ function renderHome(path = '/') {
   )
 }
 
-// The filters live inside a collapsed "advanced" panel.
+// The filters live in the popover beside the main search box.
 async function openFilters() {
   await userEvent.click(await screen.findByText('home.advanced'))
 }
@@ -169,6 +169,30 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+})
+
+describe('the advanced filters', () => {
+  it('opens from the main search row without reserving a separate content row', async () => {
+    renderHome()
+    await waitFor(() => expect(state.urls.length).toBeGreaterThan(0))
+
+    const trigger = await screen.findByRole('button', { name: 'home.advanced' })
+    const searchRow = trigger.closest('.rp-home-search-row') as HTMLElement
+    expect(searchRow).toBeTruthy()
+    expect(within(searchRow).getByTestId('omnibox')).toBeTruthy()
+    expect(document.querySelector('.ant-collapse')).toBeNull()
+
+    await userEvent.click(trigger)
+    expect(screen.getAllByText('home.category').length).toBeGreaterThan(0)
+  })
+
+  it('shows how many advanced conditions remain active while the popover is closed', async () => {
+    renderHome('/?kind=k&date_from=2026-09-01&date_to=2026-09-09')
+    await waitFor(() => expect(state.urls.length).toBeGreaterThan(0))
+
+    const trigger = await screen.findByRole('button', { name: 'home.advanced (2)' })
+    expect(trigger.closest('.ant-badge')?.textContent).toContain('2')
+  })
 })
 
 describe('the version filter', () => {
