@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
+  Badge,
   Button,
   Col,
-  Collapse,
   DatePicker,
   Empty,
   Form,
@@ -20,7 +20,7 @@ import {
   theme,
   Typography,
 } from 'antd'
-import { DownOutlined, FolderOutlined } from '@ant-design/icons'
+import { DownOutlined, FilterOutlined, FolderOutlined } from '@ant-design/icons'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
@@ -50,6 +50,7 @@ export default function HomePage() {
   const [data, setData] = useState<HomeResp | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadErr, setLoadErr] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [openGroups, setOpenGroups] = useState<Record<number, boolean>>({}) // per-group reveal state (expand/modal/popover)
   const [form] = Form.useForm()
   const favorites = useFavorites()
@@ -132,11 +133,13 @@ export default function HomePage() {
     if (v.range?.[0]) next.date_from = v.range[0].format('YYYY-MM-DD')
     if (v.range?.[1]) next.date_to = v.range[1].format('YYYY-MM-DD')
     if (v.sort && v.sort !== 'date_desc') next.sort = v.sort
+    setAdvancedOpen(false)
     setSp(next)
   }
 
   const reset = () => {
     form.resetFields()
+    setAdvancedOpen(false)
     setSp({})
   }
 
@@ -170,6 +173,13 @@ export default function HomePage() {
   // one does and never before. It is also how the reports people wrote by hand become a set you can
   // ask for, rather than something you find one at a time.
   const versionOptions = (data?.versions || []).map((v) => ({ value: v.name, label: versionLabel(v.name, v.label, t) }))
+  const advancedFilterCount = [
+    params.kind,
+    params.rtype,
+    params.version,
+    params.date_from || params.date_to,
+    params.sort !== 'date_desc' ? params.sort : '',
+  ].filter(Boolean).length
 
   // Render one entry button. A shortcut link (url = "rp:<action>[:<target>]") triggers an
   // internal action, optionally pre-selected on a specific target; a shortcut whose target the
@@ -247,6 +257,62 @@ export default function HomePage() {
   // own line below), computed once so the triggers row only renders when there is at least one.
   const groupTriggers = linkGroups.filter((g) => g.mode !== 'row').map(renderTrigger).filter(Boolean)
 
+  const advancedSearch = (
+    <div className="rp-home-advanced-popover">
+      <Form form={form} layout="vertical" onFinish={applyFilters}>
+        <Row gutter={16}>
+          <Col xs={24} md={8}>
+            <Form.Item name="q" label={t('home.keyword')}>
+              <Input allowClear placeholder={t('home.keyword')} onPressEnter={applyFilters} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={8}>
+            <Form.Item name="kind" label={t('home.category')}>
+              {/* Loading, not an empty list: the categories come from the same answer as the
+                  cards, and an empty dropdown reads as "there are none". */}
+              <Select allowClear showSearch loading={!data} options={kindOptions} placeholder={t('home.category')} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={8}>
+            <Form.Item name="rtype" label={t('home.type')}>
+              <Select allowClear showSearch loading={!data} options={typeOptions} placeholder={t('home.type')} />
+            </Form.Item>
+          </Col>
+          {versionOptions.length > 0 && (
+            <Col xs={24} md={8}>
+              <Form.Item name="version" label={t('home.version')}>
+                <Select allowClear showSearch loading={!data} options={versionOptions} placeholder={t('home.version')} />
+              </Form.Item>
+            </Col>
+          )}
+          <Col xs={24} md={8}>
+            <Form.Item name="range" label={t('home.dateRange')}>
+              <RangePicker style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={8}>
+            <Form.Item name="sort" label={t('home.sort')}>
+              <Select
+                options={[
+                  { value: 'date_desc', label: t('sort.dateDesc') },
+                  { value: 'date_asc', label: t('sort.dateAsc') },
+                ]}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={24}>
+            <Space className="rp-home-advanced-popover__actions">
+              <Button type="primary" htmlType="submit">
+                {t('home.search')}
+              </Button>
+              <Button onClick={reset}>{t('home.reset')}</Button>
+            </Space>
+          </Col>
+        </Row>
+      </Form>
+    </div>
+  )
+
   return (
     <Space direction="vertical" size={24} style={{ width: '100%' }}>
       {/* Hero: main search */}
@@ -258,8 +324,33 @@ export default function HomePage() {
           <SiteLogo size={28} color={token.colorPrimary} />
           {title}
         </Typography.Title>
-        <div style={{ maxWidth: 640, margin: '0 auto' }}>
-          <Omnibox initial={params.q} />
+        <div className="rp-home-search-row">
+          <div className="rp-home-search-row__input">
+            <Omnibox initial={params.q} />
+          </div>
+          {!favoriteMode && (
+            <Popover
+              trigger="click"
+              placement="bottomRight"
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+              destroyOnHidden
+              title={t('home.advanced')}
+              content={advancedSearch}
+            >
+              <Badge count={advancedFilterCount} size="small">
+                <Button
+                  size="large"
+                  icon={<FilterOutlined />}
+                  aria-label={advancedFilterCount ? `${t('home.advanced')} (${advancedFilterCount})` : t('home.advanced')}
+                  aria-expanded={advancedOpen}
+                  title={t('home.advanced')}
+                >
+                  <span className="rp-home-search-row__advanced-label">{t('home.advanced')}</span>
+                </Button>
+              </Badge>
+            </Popover>
+          )}
         </div>
       </div>
 
@@ -336,69 +427,6 @@ export default function HomePage() {
           }}
         />
       </div>
-
-      {/* Advanced search (collapsible) */}
-      {!favoriteMode && <Collapse
-        items={[
-          {
-            key: 'adv',
-            label: t('home.advanced'),
-            children: (
-              <Form form={form} layout="vertical" onFinish={applyFilters}>
-                <Row gutter={16}>
-                  <Col xs={24} md={8}>
-                    <Form.Item name="q" label={t('home.keyword')}>
-                      <Input allowClear placeholder={t('home.keyword')} onPressEnter={applyFilters} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item name="kind" label={t('home.category')}>
-                      {/* loading, not an empty list: the categories come from the same answer as
-                          the cards, and an empty dropdown reads as "there are none". */}
-                      <Select allowClear showSearch loading={!data} options={kindOptions} placeholder={t('home.category')} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item name="rtype" label={t('home.type')}>
-                      <Select allowClear showSearch loading={!data} options={typeOptions} placeholder={t('home.type')} />
-                    </Form.Item>
-                  </Col>
-                  {versionOptions.length > 0 && (
-                    <Col xs={24} md={8}>
-                      <Form.Item name="version" label={t('home.version')}>
-                        <Select allowClear showSearch loading={!data} options={versionOptions} placeholder={t('home.version')} />
-                      </Form.Item>
-                    </Col>
-                  )}
-                  <Col xs={24} md={8}>
-                    <Form.Item name="range" label={t('home.dateRange')}>
-                      <RangePicker style={{ width: '100%' }} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8}>
-                    <Form.Item name="sort" label={t('home.sort')}>
-                      <Select
-                        options={[
-                          { value: 'date_desc', label: t('sort.dateDesc') },
-                          { value: 'date_asc', label: t('sort.dateAsc') },
-                        ]}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} md={8} style={{ display: 'flex', alignItems: 'flex-end' }}>
-                    <Space style={{ marginBottom: 24 }}>
-                      <Button type="primary" onClick={applyFilters}>
-                        {t('home.search')}
-                      </Button>
-                      <Button onClick={reset}>{t('home.reset')}</Button>
-                    </Space>
-                  </Col>
-                </Row>
-              </Form>
-            ),
-          },
-        ]}
-      />}
 
       {/* Card list */}
       {favoriteMode ? (

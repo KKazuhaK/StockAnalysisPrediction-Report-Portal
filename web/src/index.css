@@ -19,6 +19,40 @@ body {
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
+.rp-home-search-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: min(780px, 100%);
+  margin: 0 auto;
+}
+.rp-home-search-row__input {
+  min-width: 0;
+  flex: 1;
+}
+.rp-home-search-row > .ant-badge {
+  flex-shrink: 0;
+}
+.rp-home-advanced-popover {
+  width: min(620px, calc(100vw - 48px));
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  padding-top: 4px;
+}
+.rp-home-advanced-popover .ant-form-item {
+  margin-bottom: 16px;
+}
+.rp-home-advanced-popover__actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+@media (max-width: 520px) {
+  .rp-home-search-row__advanced-label {
+    display: none;
+  }
+}
+
 /* Keep the symbol on the card's trailing edge until its quick action is relevant. Hover or
    keyboard focus expands the star into the reserved action edge and moves the symbol left;
    selected favorites remain visible, and touch devices always expose the control. */
