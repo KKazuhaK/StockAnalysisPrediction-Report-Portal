@@ -78,14 +78,14 @@ export default function ReportCard({
             )}
           </div>
           {g.symbol && (
-            <Space size={2}>
+            <div className="rp-card-symbol-actions">
               <Typography.Text
                 style={{ fontSize: 15, fontWeight: 500, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
               >
                 {g.symbol}
               </Typography.Text>
               {g.market && <FavoriteButton market={g.market} symbol={g.symbol} className="rp-card-favorite" />}
-            </Space>
+            </div>
           )}
         </Space>
 

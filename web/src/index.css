@@ -19,20 +19,39 @@ body {
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
-/* An unselected star stays quiet in a dense report grid until the card is inspected. Selected
-   favorites remain visible, and touch devices always show the control because they have no hover. */
-.rp-card-favorite {
+/* Keep the symbol on the card's trailing edge until its quick action is relevant. Hover or
+   keyboard focus expands the star into the reserved action edge and moves the symbol left;
+   selected favorites remain visible, and touch devices always expose the control. */
+.rp-card-symbol-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+.ant-card .rp-card-favorite.ant-btn {
+  width: 0;
+  min-width: 0;
+  border-width: 0;
+  padding-inline: 0;
+  overflow: hidden;
   opacity: 0;
-  transition: opacity 120ms ease;
+  pointer-events: none;
+  transition: width 120ms ease, min-width 120ms ease, opacity 120ms ease;
 }
 .ant-card:hover .rp-card-favorite,
-.rp-card-favorite:focus-visible,
-.rp-card-favorite[aria-pressed='true'] {
+.ant-card:focus-within .rp-card-favorite,
+.ant-card .rp-card-favorite:focus-visible,
+.ant-card .rp-card-favorite[aria-pressed='true'] {
+  width: var(--ant-control-height, 32px);
+  min-width: var(--ant-control-height, 32px);
   opacity: 1;
+  pointer-events: auto;
 }
 @media (hover: none) {
-  .rp-card-favorite {
+  .ant-card .rp-card-favorite.ant-btn {
+    width: var(--ant-control-height, 32px);
+    min-width: var(--ant-control-height, 32px);
     opacity: 1;
+    pointer-events: auto;
   }
 }
 
