@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Breadcrumb, Button, Divider, Dropdown, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, AuditOutlined, DownOutlined, EditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, AuditOutlined, DownOutlined, EditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, TableOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -270,8 +270,8 @@ export default function AppLayout() {
             doesn't collide with the button on the wrapped row above it. */}
         <Space size={compact ? [8, 14] : 10} wrap style={{ flexShrink: 0, marginLeft: 'auto' }}>
           {canRun && !chatFocus && (
-            // Keep the primary run action direct. Editors get a compact adjacent menu for manual
-            // report creation, so the related actions share one control without slowing down runs.
+            // Keep the primary run action direct. Related run surfaces share a compact menu,
+            // so single-run execution remains one click away.
             <Space.Compact>
               <Button
                 type="primary"
@@ -284,26 +284,28 @@ export default function AppLayout() {
               >
                 {t('nav.runAnalysis')}
               </Button>
-              {canWrite && (
-                <Dropdown
-                  trigger={['click']}
-                  placement="bottomRight"
-                  classNames={{ root: 'rp-run-actions-menu' }}
-                  menu={{
-                    items: [{ key: 'write-report', icon: <EditOutlined aria-hidden="true" />, label: t('nav.writeReport') }],
-                    onClick: ({ key }) => {
-                      if (key === 'write-report') navigate('/report/new')
-                    },
-                  }}
-                >
-                  <Button
-                    type="primary"
-                    icon={<DownOutlined />}
-                    aria-label={t('nav.runActions')}
-                    title={t('nav.runActions')}
-                  />
-                </Dropdown>
-              )}
+              <Dropdown
+                trigger={['click']}
+                placement="bottomRight"
+                classNames={{ root: 'rp-run-actions-menu' }}
+                menu={{
+                  items: [
+                    { key: 'batch', icon: <TableOutlined aria-hidden="true" />, label: t('nav.batch') },
+                    ...(canWrite ? [{ key: 'write-report', icon: <EditOutlined aria-hidden="true" />, label: t('nav.writeReport') }] : []),
+                  ],
+                  onClick: ({ key }) => {
+                    if (key === 'batch') navigate('/apps/batch')
+                    if (key === 'write-report') navigate('/report/new')
+                  },
+                }}
+              >
+                <Button
+                  type="primary"
+                  icon={<DownOutlined />}
+                  aria-label={t('nav.runActions')}
+                  title={t('nav.runActions')}
+                />
+              </Dropdown>
             </Space.Compact>
           )}
           {canWrite && !canRun && !chatFocus && (

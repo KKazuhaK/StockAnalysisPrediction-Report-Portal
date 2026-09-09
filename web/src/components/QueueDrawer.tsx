@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
 import type { BatchJob, BatchQueueSummary, BatchTarget } from '../api/types'
-import { InputsPreview, isTerminal, executionTags, queueStatusTag } from '../lib/batchUi'
+import { InputsPreview, isTerminal, executionTags, jobProgressPresentation, queueStatusTag } from '../lib/batchUi'
 import { UNCHANGED, forgetTags, getIfChanged } from '../lib/conditionalGet'
 import { watchQueue } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
@@ -126,8 +126,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
         ) : (
           <Space direction="vertical" size={0} style={{ width: '100%' }}>
             {active.map((j) => {
-              const done = j.succeeded + j.partial + j.failed
-              const pct = j.total ? Math.round((done / j.total) * 100) : 0
+              const progress = jobProgressPresentation(j)
               return (
                 <div key={j.id} style={{ padding: '10px 0', borderTop: '0.5px solid var(--rp-border, rgba(128,128,128,0.2))' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
@@ -158,7 +157,13 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
                     ) : j.status === 'queued' ? (
                       <Tag color="default">{j.ahead ? t('batch.aheadN', { n: j.ahead }) : t('batch.aheadNext')}</Tag>
                     ) : (
-                      <Progress percent={pct} size="small" status={j.failed ? 'exception' : 'active'} />
+                      <Progress
+                        percent={progress.loading ? 100 : progress.percent}
+                        size="small"
+                        status={progress.status}
+                        strokeColor={progress.strokeColor}
+                        showInfo={progress.showInfo}
+                      />
                     )}
                   </div>
                 </div>
