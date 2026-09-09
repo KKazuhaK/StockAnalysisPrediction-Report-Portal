@@ -6,6 +6,10 @@ markets). Neither is reversed. What changes is that "which source can answer thi
 property of the market table and becomes a declaration each source makes about itself — and three
 features that were impossible to build honestly until it did.
 
+> **Amended by [ADR 0032](0032-session-aware-live-quote-refresh.md).** Home cards still use one
+> demand-scoped batch and never block the feed, but a visible page may repeat that batch while its
+> returned market evidence says a refresh is useful.
+
 ## Context
 
 Three asks arrived together from the running deployment:
