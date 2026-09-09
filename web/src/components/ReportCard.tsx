@@ -1,4 +1,4 @@
-import { Button, Card, Popover, Space, Tag, Typography, theme } from 'antd'
+import { Button, Card, Space, Tag, Typography, theme } from 'antd'
 import { CalendarOutlined, FileTextOutlined, RightOutlined } from '@ant-design/icons'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
@@ -42,31 +42,49 @@ export default function ReportCard({
   const navigate = useNavigate()
   const isNew = g.src === 'new'
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [baseHeight, setBaseHeight] = useState(0)
+  const shellRef = useRef<HTMLDivElement>(null)
+  const previewOpenTimer = useRef<number | null>(null)
   const previewCloseTimer = useRef<number | null>(null)
 
   useEffect(
     () => () => {
+      if (previewOpenTimer.current !== null) window.clearTimeout(previewOpenTimer.current)
       if (previewCloseTimer.current !== null) window.clearTimeout(previewCloseTimer.current)
     },
     [],
   )
 
-  // Moving focus from the card into the portalled popover briefly asks rc-trigger to close it.
-  // Deferring that close leaves enough time for a quick action to receive its click; entering the
-  // popover cancels the pending close through the matching `open=true` event.
-  const changePreviewOpen = (next: boolean) => {
+  const clearPreviewTimers = () => {
+    if (previewOpenTimer.current !== null) {
+      window.clearTimeout(previewOpenTimer.current)
+      previewOpenTimer.current = null
+    }
     if (previewCloseTimer.current !== null) {
       window.clearTimeout(previewCloseTimer.current)
       previewCloseTimer.current = null
     }
-    if (next) {
-      setPreviewOpen(true)
-      return
-    }
+  }
+
+  // Capture the card's resting height before taking it out of the grid flow. The shell keeps that
+  // exact height while the card grows over its neighbours, so opening the preview never shifts a
+  // row the reader may already be scanning.
+  const openPreview = () => {
+    clearPreviewTimers()
+    const height = shellRef.current?.getBoundingClientRect().height || 0
+    if (height > 0) setBaseHeight(height)
+    setPreviewOpen(true)
+  }
+  const queuePreview = () => {
+    clearPreviewTimers()
+    previewOpenTimer.current = window.setTimeout(openPreview, PREVIEW_HOVER_DELAY_SECONDS * 1000)
+  }
+  const closePreview = (delay = 120) => {
+    clearPreviewTimers()
     previewCloseTimer.current = window.setTimeout(() => {
       setPreviewOpen(false)
       previewCloseTimer.current = null
-    }, 180)
+    }, delay)
   }
 
   // A-SHARE COLOUR CONVENTION: 红涨绿跌 — RED is up, GREEN is down, the reverse of every US and
@@ -93,12 +111,13 @@ export default function ReportCard({
   const hiddenPreviewCount = Math.max(0, Math.max(g.n, members.length) - previewMembers.length)
 
   const preview = (
-    <div className="rp-report-card-preview" data-testid="report-card-preview">
-      <div className="rp-report-card-preview__heading">
-        <Typography.Text strong ellipsis={{ tooltip: displayName }}>
-          {displayName}
-        </Typography.Text>
-        {g.symbol && <Typography.Text type="secondary">{g.symbol}</Typography.Text>}
+    <div
+      className="rp-report-card-preview"
+      data-testid="report-card-preview"
+      aria-label={t('card.quickPreview')}
+    >
+      <div className="rp-report-card-preview__title">
+        <Typography.Text strong>{t('card.quickPreview')}</Typography.Text>
       </div>
 
       {previewMembers.length > 0 && (
@@ -133,19 +152,19 @@ export default function ReportCard({
       )}
 
       <div className="rp-report-card-preview__footer">
-        <Space size={12}>
-          <Typography.Text type="secondary">
-            <CalendarOutlined /> {isInstant(g.time) ? formatReportDateTime(g.time) : g.date}
-          </Typography.Text>
-          <Typography.Text type="secondary">
-            <FileTextOutlined /> {g.n} {t('card.reports')}
-          </Typography.Text>
-        </Space>
         <Space size={4}>
           {g.market && g.symbol && (
             <FavoriteButton market={g.market} symbol={g.symbol} showLabel size="small" />
           )}
-          <Button type="primary" size="small" aria-label={t('queue.viewReport')} onClick={open}>
+          <Button
+            type="primary"
+            size="small"
+            aria-label={t('queue.viewReport')}
+            onClick={(event) => {
+              event.stopPropagation()
+              open()
+            }}
+          >
             {t('queue.viewReport')} <RightOutlined />
           </Button>
         </Space>
@@ -154,20 +173,28 @@ export default function ReportCard({
   )
 
   return (
-    <Popover
-      trigger={['hover', 'focus']}
-      placement="rightTop"
-      mouseEnterDelay={PREVIEW_HOVER_DELAY_SECONDS}
-      mouseLeaveDelay={0.15}
-      destroyOnHidden
-      open={previewOpen}
-      onOpenChange={changePreviewOpen}
-      title={t('card.quickPreview')}
-      content={preview}
+    <div
+      ref={shellRef}
+      className={`rp-report-card-shell${previewOpen ? ' rp-report-card-shell--expanded' : ''}`}
+      style={previewOpen && baseHeight > 0 ? { height: baseHeight } : undefined}
+      onMouseEnter={queuePreview}
+      onMouseLeave={() => closePreview()}
+      onFocusCapture={openPreview}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closePreview(0)
+      }}
+      onKeyDownCapture={(event) => {
+        if (event.key !== 'Escape' || !previewOpen) return
+        event.preventDefault()
+        event.stopPropagation()
+        clearPreviewTimers()
+        setPreviewOpen(false)
+      }}
     >
       <Card
         hoverable
         size="small"
+        className={`rp-report-card${previewOpen ? ' rp-report-card--expanded' : ''}`}
         {...clickable(open, displayName)}
         styles={{ body: { padding: 16 } }}
         style={{ height: '100%' }}
@@ -259,8 +286,9 @@ export default function ReportCard({
               <FileTextOutlined /> {g.n} {t('card.reports')}
             </Typography.Text>
           </Space>
+          {previewOpen && preview}
         </Space>
       </Card>
-    </Popover>
+    </div>
   )
 }
