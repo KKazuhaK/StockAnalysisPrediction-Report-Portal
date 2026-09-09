@@ -72,13 +72,17 @@ describe('ReportCard favorite action', () => {
     expect(button.classList).toContain('rp-card-favorite')
   })
 
-  it('opens a delayed report preview with three summaries and quick actions', async () => {
+  it('expands the current card after a delay with three summaries and quick actions', async () => {
     mount()
 
-    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Test stock' }))
+    const card = screen.getByRole('button', { name: 'Test stock' })
+    fireEvent.mouseEnter(card)
     expect(screen.queryByTestId('report-card-preview')).toBeNull()
 
     const preview = await screen.findByTestId('report-card-preview', {}, { timeout: 2000 })
+    expect(card.contains(preview)).toBe(true)
+    expect(card.classList).toContain('rp-report-card--expanded')
+    expect(document.querySelector('.ant-popover')).toBeNull()
     expect(within(preview).getByText('Preview report one')).toBeTruthy()
     expect(within(preview).getByText('Preview report two')).toBeTruthy()
     expect(within(preview).getByText('Preview report three')).toBeTruthy()
@@ -90,7 +94,6 @@ describe('ReportCard favorite action', () => {
     fireEvent.click(within(preview).getByRole('button', { name: 'favorite.add' }))
     expect(favoriteState.toggle).toHaveBeenCalledWith('sh', '603075')
 
-    fireEvent.blur(screen.getByRole('button', { name: 'Test stock' }))
     fireEvent.click(viewReport)
     expect(screen.getByTestId('location').textContent).toBe('/stock/603075?date=2026-09-08')
   })
