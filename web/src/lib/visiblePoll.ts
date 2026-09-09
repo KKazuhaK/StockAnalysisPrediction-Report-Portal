@@ -35,3 +35,26 @@ export function startVisiblePoll(
     document.removeEventListener('visibilitychange', onVisible)
   }
 }
+
+// Runs one task when its deadline is due and the page is visible. A hidden page remembers that the
+// deadline passed and catches up once on visibility; it never relies on a throttled hidden timer to
+// keep market data current. The caller schedules the next deadline from the response that arrives.
+export function startVisibleDeadline(task: () => void | Promise<void>, delayMs: number): () => void {
+  let stopped = false
+  let fired = false
+  const dueAt = Date.now() + Math.max(0, delayMs)
+
+  const run = () => {
+    if (stopped || fired || document.visibilityState !== 'visible' || Date.now() < dueAt) return
+    fired = true
+    void task()
+  }
+  const onVisible = () => run()
+  const timer = window.setTimeout(run, Math.max(0, delayMs))
+  document.addEventListener('visibilitychange', onVisible)
+  return () => {
+    stopped = true
+    window.clearTimeout(timer)
+    document.removeEventListener('visibilitychange', onVisible)
+  }
+}

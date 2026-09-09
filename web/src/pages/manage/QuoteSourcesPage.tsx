@@ -14,9 +14,10 @@ import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
 // contact with an admin: the reasoning against admin-editable URLs holds exactly and says nothing
 // about the rest. Choosing among sources that are already compiled in is safe and useful; typing a
 // host is neither. So this page edits the failover order, which sources are on, the three cache
-// TTLs and whether the home feed asks for prices at all — and shows the per-source health counters
-// that quote_cache.go has been keeping since it was written while exposing them nowhere (its
-// noteSuccess/noteFailure comment names this panel as the reader they were written for).
+// TTLs, whether the home feed asks for prices, and whether visible pages repeat those requests. It
+// also shows the per-source health counters that quote_cache.go has been keeping since it was
+// written while exposing them nowhere (its noteSuccess/noteFailure comment names this panel as the
+// reader they were written for).
 //
 // What the order MEANS is a capability table, not a preference: the resolver walks the enabled
 // sources in this order and skips any that has not declared the (market, interval) pair in hand, so
@@ -80,6 +81,8 @@ type QuoteAdminState = {
   ttlIntradayFloor: number
   /** Whether the home feed asks for prices at all. See the card at the bottom of the page. */
   homeCards: boolean
+  /** Whether visible quote surfaces follow the server's session-aware refresh advice. */
+  autoRefresh: boolean
 }
 
 // Go's time.Time has no empty form on the wire: a source that has never answered arrives as the zero
@@ -158,6 +161,8 @@ export default function QuoteSourcesPage() {
   // the switch — rather than this page's fail-closed stand-in for a body that did not mention it.
   // save() sends the key only when this is true; see the comment on the payload.
   const [homeCardsKnown, setHomeCardsKnown] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [autoRefreshKnown, setAutoRefreshKnown] = useState(false)
   const [loading, setLoading] = useState(true)
   // Separate from `loading` for the reason the storage console records: the reload behind a save or
   // a cache purge must refresh in place. Replacing a page that has just saved with a full-page load
@@ -194,6 +199,8 @@ export default function QuoteSourcesPage() {
     // survive the same round trip only because the server clamps them, and this key has no clamp.
     setHomeCardsKnown(typeof st.homeCards === 'boolean')
     setHomeCards(st.homeCards === true)
+    setAutoRefreshKnown(typeof st.autoRefresh === 'boolean')
+    setAutoRefresh(st.autoRefresh === true)
   }
 
   const load = () => {
@@ -249,6 +256,7 @@ export default function QuoteSourcesPage() {
       ttlIntradaySecs: ttlIntraday,
     }
     if (homeCardsKnown) body.homeCards = homeCards
+    if (autoRefreshKnown) body.autoRefresh = autoRefresh
     try {
       const st = await api.post<QuoteAdminState>('/api/admin/quote', body)
       message.success(t('common.saved'))
@@ -530,6 +538,18 @@ export default function QuoteSourcesPage() {
 
         <Card title={t('quoteAdmin.cache')}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {row(
+              t('quoteAdmin.autoRefresh'),
+              <Switch
+                checked={autoRefresh}
+                onChange={(on) => {
+                  setAutoRefresh(on)
+                  setAutoRefreshKnown(true)
+                }}
+                aria-label={t('quoteAdmin.autoRefresh')}
+              />,
+              t('quoteAdmin.autoRefreshHint'),
+            )}
             <Space wrap size={16} align="center">
               <span>
                 <Typography.Text type="secondary">{t('quoteAdmin.cacheEntries')}</Typography.Text>{' '}
@@ -614,7 +634,7 @@ export default function QuoteSourcesPage() {
         </Card>
 
         {/* One bar for the whole page, outside the cards: one POST carries the order, the three
-            TTLs and the home-card switch, so a Save button inside the cache card would be a button
+            TTLs and both quote switches, so a Save button inside the cache card would be a button
             that saves more than the card it sits in says it does. */}
         <StickyActionBar>
           <Button type="primary" onClick={save}>

@@ -105,6 +105,7 @@ const state = {
   ttlClosedFloor: 30,
   ttlIntradayFloor: 15,
   homeCards: true,
+  autoRefresh: true,
 }
 
 // The row a source's name appears in. Every capability assertion below is scoped through this: the
@@ -353,6 +354,7 @@ describe('QuoteSourcesPage', () => {
         ttlClosedSecs: 300,
         ttlIntradaySecs: 60,
         homeCards: true,
+        autoRefresh: true,
       }),
     )
   })
@@ -433,6 +435,7 @@ describe('QuoteSourcesPage', () => {
     delete partial.ttlClosedFloor
     delete partial.ttlIntradayFloor
     delete partial.homeCards
+    delete partial.autoRefresh
     apiMock.get.mockResolvedValue(partial)
 
     renderPage()
@@ -448,13 +451,15 @@ describe('QuoteSourcesPage', () => {
     // under a control whose whole purpose is that somebody chose — and the next Save would post it
     // back as though they had.
     expect(screen.getByRole('switch', { name: 'quoteAdmin.homeCards' }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByRole('switch', { name: 'quoteAdmin.autoRefresh' }).getAttribute('aria-checked')).toBe('false')
   })
 
-  it('does not write back a home-card setting the answer never carried', async () => {
+  it('does not write back switches the answer never carried', async () => {
     // The shape a rolling deploy serves for a few minutes: an older server behind this bundle,
     // answering everything except the newest key. The admin came to change a TTL.
     const partial = structuredClone(state) as Record<string, unknown>
     delete partial.homeCards
+    delete partial.autoRefresh
     apiMock.get.mockResolvedValue(partial)
 
     const user = userEvent.setup()
@@ -474,6 +479,7 @@ describe('QuoteSourcesPage', () => {
       }),
     )
     expect(Object.keys(apiMock.post.mock.calls[0][1] as object)).not.toContain('homeCards')
+    expect(Object.keys(apiMock.post.mock.calls[0][1] as object)).not.toContain('autoRefresh')
   })
 
   it('writes the home-card switch the admin moved, even on a body that never carried it', async () => {
@@ -573,6 +579,22 @@ describe('QuoteSourcesPage', () => {
     // what the page must then show is the server's state, not the click that did not take.
     await waitFor(() =>
       expect(screen.getByRole('switch', { name: 'quoteAdmin.homeCards' }).getAttribute('aria-checked')).toBe('true'),
+    )
+  })
+
+  it('saves the automatic-refresh switch and explains that it applies to visible pages', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText('sina')
+
+    expect(screen.getByText('quoteAdmin.autoRefreshHint')).toBeTruthy()
+    const sw = screen.getByRole('switch', { name: 'quoteAdmin.autoRefresh' })
+    expect(sw.getAttribute('aria-checked')).toBe('true')
+    await user.click(sw)
+    await user.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith('/api/admin/quote', expect.objectContaining({ autoRefresh: false })),
     )
   })
 

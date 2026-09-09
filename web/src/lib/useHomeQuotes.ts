@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, qs } from '../api/client'
+import { quoteRefreshDelayMs, readQuoteRefreshAdvice, QUOTE_UNKNOWN_RETRY_SECS } from './quoteRefresh'
+import { startVisibleDeadline } from './visiblePoll'
 
 // The home feed's live prices: ONE batch request for the symbols currently on screen (ADR 0028's
 // fetch-on-read, widened to a page's worth of codes by GET /api/quotes).
@@ -144,19 +146,32 @@ export function useHomeQuotes(symbols: readonly string[]): ReadonlyMap<string, C
     // a filter change or a page step supersedes the request in flight, and without this the older
     // answer can land LAST and paint prices belonging to a card list that is no longer on screen.
     let cancelled = false
-    api
-      .get(`/api/quotes${qs({ symbols: key })}`)
-      .then((body) => {
-        if (!cancelled) setQuotes(readHomeQuotes(body))
-      })
-      .catch(() => {
-        // Deliberately the whole handler. A vendor outage, a 503 from the gate, a refusal because
-        // an operator switched the feature off, an aborted navigation — the cards are identical in
-        // every one of those cases, which is the promise this feature was allowed to ship on.
-        if (!cancelled) setQuotes(NO_QUOTES)
-      })
+    let stopDeadline = () => {}
+    const load = async () => {
+      try {
+        const body = await api.get(`/api/quotes${qs({ symbols: key })}`)
+        if (cancelled) return
+        setQuotes(readHomeQuotes(body))
+        schedule(body)
+      } catch {
+        // Deliberately no page-level error. The feed still clears a value it cannot prove current,
+        // then retries conservatively so one transport failure does not disable the feature.
+        if (cancelled) return
+        setQuotes(NO_QUOTES)
+        schedule(null, true)
+      }
+    }
+    const schedule = (body: unknown, fallback = false) => {
+      stopDeadline()
+      const advice =
+        readQuoteRefreshAdvice(body) ?? (fallback ? { refreshAfterSecs: QUOTE_UNKNOWN_RETRY_SECS } : null)
+      const delay = quoteRefreshDelayMs(advice)
+      stopDeadline = delay == null ? () => {} : startVisibleDeadline(load, delay)
+    }
+    void load()
     return () => {
       cancelled = true
+      stopDeadline()
     }
   }, [key])
 

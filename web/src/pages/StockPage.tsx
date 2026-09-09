@@ -17,6 +17,13 @@ import { useReaderPrefs } from '../reader'
 import { formatReportDateTime, isInstant } from '../lib/datetime'
 import { prefetch, readPrefetched, rememberPrefetched } from '../lib/prefetch'
 import { NO_ITEM_TOOLTIP } from '../lib/segmented'
+import {
+  quoteErrorRefreshAdvice,
+  quoteRefreshDelayMs,
+  readQuoteRefreshAdvice,
+  type QuoteRefreshAdvice,
+} from '../lib/quoteRefresh'
+import { startVisibleDeadline } from '../lib/visiblePoll'
 
 // How stale a warmed report may be and still render without waiting. The live request goes out
 // regardless and corrects it, so this only bounds how long a re-ingested body can linger.
@@ -84,6 +91,7 @@ export default function StockPage() {
   // Bumped by the retry button. The quote is the one thing on this page a reader may want to
   // re-request without navigating, and a nonce is the smallest way to say "run that effect again".
   const [quoteNonce, setQuoteNonce] = useState(0)
+  const [quoteRefresh, setQuoteRefresh] = useState<QuoteRefreshAdvice | null>(null)
 
   // The write is here rather than inside the setState updater on purpose: an updater must be pure,
   // and StrictMode calls it twice in development.
@@ -137,12 +145,14 @@ export default function StockPage() {
     let cancelled = false
     setQuoteLoading(true)
     setQuoteError(null)
+    setQuoteRefresh(null)
     api
       .get<QuoteResp>(`/api/quote/${encodeURIComponent(symbol)}${qs({ range: quoteRange })}`)
       .then((d) => {
         if (cancelled) return
         setQuote(d)
         setQuoteError(null)
+        setQuoteRefresh(readQuoteRefreshAdvice(d))
       })
       .catch((e) => {
         if (cancelled) return
@@ -150,6 +160,7 @@ export default function StockPage() {
         // indication of when it stopped updating is the one thing worse than no price.
         setQuote(null)
         setQuoteError(e)
+        setQuoteRefresh(quoteErrorRefreshAdvice(e))
       })
       .finally(() => {
         if (!cancelled) setQuoteLoading(false)
@@ -158,6 +169,12 @@ export default function StockPage() {
       cancelled = true
     }
   }, [symbol, quoteRange, quoteNonce])
+
+  useEffect(() => {
+    const delay = quoteRefreshDelayMs(quoteRefresh)
+    if (delay == null) return
+    return startVisibleDeadline(() => setQuoteNonce((n) => n + 1), delay)
+  }, [symbol, quoteRange, quoteRefresh?.refreshAfterSecs, quoteRefresh?.refreshAt])
 
   // Warm the neighbours on the timeline. Stepping a day forward or back is the move a reader makes
   // most, and it is the one that costs a whole report — measured at ~96% report, ~4% navigation

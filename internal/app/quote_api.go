@@ -164,7 +164,7 @@ func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
 		// and not a warning. 503 rather than 502 or 500: nothing is wrong with the request and
 		// nothing is wrong with this server, the answer is simply not available right now, and that
 		// is the one thing worth telling the browser because it is the one that means "retry".
-		jsonErrorCode(w, http.StatusServiceUnavailable, "quote_unavailable", "行情源暂时不可用，请稍后再试")
+		s.writeQuoteUnavailable(w, target, iv, cfg)
 		return
 	}
 
@@ -175,6 +175,9 @@ func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
 	out := *resp
 	out.Cached = cached
 	out.Bars = quoteVisibleBars(iv, resp.Bars)
+	advice := quoteRefreshAdviceFor(s.quotes.clockNow(), s.quoteAutoRefresh(), cfg, target, iv, ttl, resp)
+	out.RefreshAfterSecs = advice.RefreshAfterSecs
+	out.RefreshAt = advice.RefreshAt
 	if iv == quoteIntervalSnapshot {
 		// A snapshot request NEVER carries bars, whatever a vendor decides to start returning.
 		//
@@ -205,6 +208,20 @@ func (s *Server) apiQuote(w http.ResponseWriter, r *http.Request, _ string) {
 	// through a session cookie and has no business in a shared proxy's store.
 	w.Header().Set("Cache-Control", "private, max-age="+strconv.Itoa(quoteMaxAgeSeconds(ttl)))
 	writeJSON(w, &out)
+}
+
+func (s *Server) writeQuoteUnavailable(w http.ResponseWriter, target quoteTarget, iv quoteInterval, cfg quoteConfig) {
+	now := s.quotes.clockNow()
+	advice := quoteRefreshAdviceFor(now, s.quoteAutoRefresh(), cfg, target, iv, 0, nil)
+	if due, ok := quoteAdviceDue(now, advice); ok {
+		w.Header().Set("Retry-After", strconv.Itoa(quoteRefreshSeconds(due.Sub(now))))
+	}
+	body := map[string]any{
+		"error": "行情源暂时不可用，请稍后再试",
+		"code":  "quote_unavailable",
+	}
+	quoteAdviceMap(body, advice)
+	writeJSONStatus(w, http.StatusServiceUnavailable, body)
 }
 
 // quoteVisibleBars is the never-null guarantee the TypeScript contract depends on: bars is
@@ -346,7 +363,11 @@ func (s *Server) apiQuotes(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 
 	quotes := map[string]QuoteCard{}
-	answered := s.quotes.fetchBatchUnder(r.Context(), s.quoteConfigLoad(), targets)
+	cfg := s.quoteConfigLoad()
+	now := s.quotes.clockNow()
+	autoRefresh := s.quoteAutoRefresh()
+	answered := s.quotes.fetchBatchUnder(r.Context(), cfg, targets)
+	advices := make([]quoteRefreshAdvice, 0, len(targets))
 	for _, target := range targets {
 		entry, ok := answered[target.Symbol]
 		if !ok || entry.resp == nil {
@@ -355,6 +376,7 @@ func (s *Server) apiQuotes(w http.ResponseWriter, r *http.Request, _ string) {
 			// facts and the spelling says which: "sh600519" is a code this portal understood and no
 			// vendor answered about, and "12345678" is one it refused before asking anybody.
 			missing = append(missing, target.Symbol)
+			advices = append(advices, quoteRefreshAdviceFor(now, autoRefresh, cfg, target, quoteIntervalSnapshot, 0, nil))
 			continue
 		}
 		// Keyed by the VENDOR SYMBOL and not by the code, because a code is not unique across
@@ -362,9 +384,11 @@ func (s *Server) apiQuotes(w http.ResponseWriter, r *http.Request, _ string) {
 		// digits would keep whichever of the two came second. The `symbol` field inside carries the
 		// code, which is what the feed looks a card up by.
 		quotes[target.Symbol] = quoteCardOf(entry)
+		advices = append(advices, quoteRefreshAdviceFor(now, autoRefresh, cfg, target, quoteIntervalSnapshot, entry.ttl, entry.resp))
 	}
 	out["quotes"] = quotes
 	out["missing"] = missing
+	quoteAdviceMap(out, quoteAggregateAdvice(now, advices))
 	// no-store rather than a max-age: this body is fifty answers with fifty different remaining
 	// lifetimes, and any single number here would be wrong for most of them. The server's own cache
 	// is what keeps the vendor call count down; the browser re-asks and is served from it.

@@ -145,7 +145,8 @@ func (s *Server) quoteAdminState() map[string]any {
 		// The home feed's switch. It is here rather than on the general settings page because it is a
 		// fact about the quote vendors — the panel that says which of them this portal talks to is
 		// where "and it talks to them on every home page view" belongs.
-		"homeCards": s.quoteHomeCards(),
+		"homeCards":   s.quoteHomeCards(),
+		"autoRefresh": s.quoteAutoRefresh(),
 	}
 }
 
@@ -154,7 +155,7 @@ func (s *Server) apiAdminQuotes(w http.ResponseWriter, r *http.Request, user str
 	writeJSON(w, s.quoteAdminState())
 }
 
-// apiAdminQuotesSave writes the three settings. POST /api/admin/quote
+// apiAdminQuotesSave writes quote source, cache, and visible-refresh policy. POST /api/admin/quote
 //
 // The two kinds of bad input are handled differently and deliberately. An unknown SOURCE is refused
 // with nothing persisted: there is no sensible interpretation of a vendor this build has no parser
@@ -173,6 +174,7 @@ func (s *Server) apiAdminQuotesSave(w http.ResponseWriter, r *http.Request, user
 		TTLClosedSecs   *int    `json:"ttlClosedSecs"`
 		TTLIntradaySecs *int    `json:"ttlIntradaySecs"`
 		HomeCards       *bool   `json:"homeCards"`
+		AutoRefresh     *bool   `json:"autoRefresh"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -212,6 +214,9 @@ func (s *Server) apiAdminQuotesSave(w http.ResponseWriter, r *http.Request, user
 		// rather than "1"/"0" so that a row an operator greps out of meta reads as what it means; the
 		// reader accepts either.
 		s.st.SetSetting(setQuoteHomeCards, strconv.FormatBool(*in.HomeCards))
+	}
+	if in.AutoRefresh != nil {
+		s.st.SetSetting(setQuoteAutoRefresh, strconv.FormatBool(*in.AutoRefresh))
 	}
 
 	// Which source answers a price, and for how long that answer is repeated, is a policy about what

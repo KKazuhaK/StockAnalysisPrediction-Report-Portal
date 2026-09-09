@@ -693,20 +693,23 @@ func quoteMaxAge(t *testing.T, rec *httptest.ResponseRecorder) int {
 	return n
 }
 
-// WHICH TTL applies comes from the vendor's own session field, which is why there is no trading
-// calendar in this repo to get the Spring Festival wrong every year. How LONG each one lasts is the
-// admin's, and the shipped configuration is still these two constants.
+// WHICH TTL applies comes from the vendor's own session field. Unknown is capped by ADR 0032's
+// conservative probe so the longer closed cache cannot hand every probe the same stale answer.
 func TestQuoteTTLFollowsTheVendorSession(t *testing.T) {
 	def := quoteConfigDefault()
 	open := &QuoteResp{Snapshot: QuoteSnapshot{Session: quoteSessionOpen}}
 	if got := def.ttlFor(open, quoteIntervalDaily); got != quoteTTLOpen {
 		t.Errorf("an open market caches for %v, want %v", got, quoteTTLOpen)
 	}
-	for _, session := range []string{quoteSessionClose, quoteSessionUnknown, ""} {
+	for _, session := range []string{quoteSessionClose, ""} {
 		resp := &QuoteResp{Snapshot: QuoteSnapshot{Session: session}}
 		if got := def.ttlFor(resp, quoteIntervalDaily); got != quoteTTLClosed {
 			t.Errorf("session %q caches for %v, want %v", session, got, quoteTTLClosed)
 		}
+	}
+	unknown := &QuoteResp{Snapshot: QuoteSnapshot{Session: quoteSessionUnknown}}
+	if got := def.ttlFor(unknown, quoteIntervalDaily); got != quoteUnknownRefresh {
+		t.Errorf("unknown session caches for %v, want the probe cap %v", got, quoteUnknownRefresh)
 	}
 	if quoteTTLOpen >= quoteTTLClosed {
 		t.Error("a trading market must be refreshed more often than a closed one")
@@ -1893,9 +1896,11 @@ func TestTencentMinuteGateCatchesAShiftedRow(t *testing.T) {
 
 // quoteBatchView is the wire shape of GET /api/quotes.
 type quoteBatchView struct {
-	Enabled bool                 `json:"enabled"`
-	Quotes  map[string]QuoteCard `json:"quotes"`
-	Missing []string             `json:"missing"`
+	Enabled          bool                 `json:"enabled"`
+	Quotes           map[string]QuoteCard `json:"quotes"`
+	Missing          []string             `json:"missing"`
+	RefreshAfterSecs int                  `json:"refreshAfterSecs"`
+	RefreshAt        string               `json:"refreshAt"`
 }
 
 func quoteBatchMux(s *Server) *http.ServeMux {

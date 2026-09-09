@@ -9,6 +9,13 @@ import type { QuoteResp } from '../api/types'
 import QuoteStrip from '../components/QuoteStrip'
 import PriceChart, { type ChartInterval } from '../components/PriceChart'
 import { NO_ITEM_TOOLTIP } from '../lib/segmented'
+import {
+  quoteErrorRefreshAdvice,
+  quoteRefreshDelayMs,
+  readQuoteRefreshAdvice,
+  type QuoteRefreshAdvice,
+} from '../lib/quoteRefresh'
+import { startVisibleDeadline } from '../lib/visiblePoll'
 
 // The Quotes app (/apps/quotes) — the one place in this portal where a chart filling the screen is
 // the CORRECT behaviour.
@@ -202,6 +209,7 @@ export default function QuotesApp() {
   // Bumped by the retry button: the request is a pure function of (symbol, range), so re-running it
   // needs a dependency that means nothing except "again".
   const [nonce, setNonce] = useState(0)
+  const [refresh, setRefresh] = useState<QuoteRefreshAdvice | null>(null)
   const [chartH, setChartH] = useState(() => chartHeightPx(viewportHeight()))
   // Which symbol the answer currently on screen is about. Not derived from answer.resp.symbol: the
   // server echoes its own CANONICAL code, so "sh600519" in the box comes back as "600519", and
@@ -237,6 +245,7 @@ export default function QuotesApp() {
       setError(null)
       setLoading(false)
       shownSymbol.current = ''
+      setRefresh(null)
       return
     }
     let cancelled = false
@@ -253,6 +262,7 @@ export default function QuotesApp() {
     if (shownSymbol.current !== symbol) setAnswer(null)
     setLoading(true)
     setError(null)
+    setRefresh(null)
     api
       .get<QuoteResp>(
         `/api/quote/${encodeURIComponent(symbol)}${win ? qs({ from: win.from, to: win.to }) : qs({ range })}`,
@@ -267,6 +277,7 @@ export default function QuotesApp() {
         // without anyone having to re-check it.
         setAnswer({ resp: d, range, win })
         setError(null)
+        setRefresh(readQuoteRefreshAdvice(d))
       })
       .catch((e) => {
         if (cancelled) return
@@ -276,6 +287,7 @@ export default function QuotesApp() {
         shownSymbol.current = ''
         setAnswer(null)
         setError(e)
+        setRefresh(quoteErrorRefreshAdvice(e))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -287,6 +299,12 @@ export default function QuotesApp() {
     // list would re-run the effect — and re-hit the vendor — on every unrelated state change on the
     // page. The string is the value; the object is only its shape.
   }, [symbol, range, winKey, nonce])
+
+  useEffect(() => {
+    const delay = quoteRefreshDelayMs(refresh)
+    if (delay == null) return
+    return startVisibleDeadline(() => setNonce((n) => n + 1), delay)
+  }, [symbol, range, winKey, refresh?.refreshAfterSecs, refresh?.refreshAt])
 
   // Both controls write the whole query string, because setSearchParams REPLACES it: building it in
   // one place is what stops "switch the range, lose the symbol" from being one forgotten line away.

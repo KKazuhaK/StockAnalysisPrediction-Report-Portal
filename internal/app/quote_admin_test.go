@@ -65,6 +65,7 @@ type quoteAdminView struct {
 	TTLClosedFloor   int                 `json:"ttlClosedFloor"`
 	TTLIntradayFloor int                 `json:"ttlIntradayFloor"`
 	HomeCards        bool                `json:"homeCards"`
+	AutoRefresh      bool                `json:"autoRefresh"`
 }
 
 func quoteAdminGet(t *testing.T, s *Server) quoteAdminView {
