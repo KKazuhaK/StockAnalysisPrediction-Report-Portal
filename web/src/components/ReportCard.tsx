@@ -54,6 +54,9 @@ export default function ReportCard({
   // Prefer the (as-of) company name, then the code; for thematic reports with
   // neither, show the original document title instead of a bare "报告".
   const displayName = g.name || g.symbol || g.title || t('home.reports')
+  const kinds = (g.kinds?.length ? g.kinds : [g.kind]).filter(Boolean)
+  const visibleKinds = kinds.slice(0, 3)
+  const hiddenKinds = kinds.slice(3)
 
   return (
     <Card hoverable size="small" {...clickable(open, displayName)} styles={{ body: { padding: 16 } }} style={{ height: '100%' }}>
@@ -120,11 +123,16 @@ export default function ReportCard({
         )}
 
         <Space size={[6, 6]} wrap>
-          {(g.kinds?.length ? g.kinds : [g.kind]).filter(Boolean).map((k) => (
+          {visibleKinds.map((k) => (
             <Tag key={k} color={kindColors?.[k] || 'default'} style={{ marginInlineEnd: 0 }}>
               {k}
             </Tag>
           ))}
+          {hiddenKinds.length > 0 && (
+            <Tag style={{ marginInlineEnd: 0 }} title={hiddenKinds.join(', ')}>
+              +{hiddenKinds.length}
+            </Tag>
+          )}
           {!isNew && <Tag>{t('src.old')}</Tag>}
         </Space>
 
