@@ -76,6 +76,11 @@ vi.mock('../components/PriceChart', () => ({
     return <div data-testid="chart">{`chart:${p.bars.length}:${p.currency ?? ''}`}</div>
   },
 }))
+vi.mock('../components/FavoriteButton', () => ({
+  FavoriteButton: ({ market, symbol }: { market: string; symbol: string }) => (
+    <span data-testid="favorite-button">{`${market}${symbol}`}</span>
+  ),
+}))
 
 const lastChart = () => chartProps[chartProps.length - 1]
 
@@ -222,6 +227,7 @@ describe('QuotesApp', () => {
 
       // The strip got the answer, not a placeholder: the name only exists in the payload.
       expect(await screen.findByText(`strip:${c.resp.symbol}:${c.resp.name}`)).toBeTruthy()
+      expect(screen.getByTestId('favorite-button').textContent).toBe(`${c.resp.market}${c.resp.symbol}`)
       expect(lastChart().bars).toHaveLength(2)
       expect(lastChart().currency).toBe(c.resp.currency)
 

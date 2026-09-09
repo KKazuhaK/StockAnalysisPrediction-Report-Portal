@@ -1,6 +1,6 @@
 # ADR 0033 — Per-user stock favorites
 
-**Status: Proposed.** Builds on [ADR 0024](0024-report-versions.md),
+**Status: Accepted.** Builds on [ADR 0024](0024-report-versions.md),
 [ADR 0030](0030-quotes-app-and-multi-market.md),
 [ADR 0031](0031-quote-capabilities-intraday-and-home-cards.md), and
 [ADR 0032](0032-session-aware-live-quote-refresh.md).

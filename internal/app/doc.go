@@ -44,6 +44,8 @@
 //
 // Reports: grouping, reading, export
 //   - group.go      collapse a run (symbol+date) into one card
+//   - favorite_store.go ordered, per-user stock favorites and scoped latest-report lookup
+//   - favorite_api.go   cookie-session favorites list, add, remove, and reorder endpoints
 //   - md.go         GitHub-flavored Markdown renderer
 //   - day_export.go "all of a stock's reports on one date" bundle export
 //   - names.go      A-share company-name fetch + ingest-time snapshot

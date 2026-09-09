@@ -377,6 +377,14 @@ func (s *Store) baseSchemaStmts() []string {
 			sso_provider TEXT DEFAULT '', sso_issuer TEXT DEFAULT '', sso_subject TEXT DEFAULT '',
 			sso_slug TEXT DEFAULT '', sso_nameid_format TEXT DEFAULT '', sso_attrs TEXT DEFAULT '',
 			sso_linked_at TEXT)`,
+		// Personal stock favorites (ADR 0033). Market and symbol are the canonical pair produced by
+		// quoteTargetFor; names and prices stay with their existing live/scoped owners. No foreign
+		// key because account deletion already performs one explicit transactional sweep over every
+		// reusable-username row, and this table joins that same lifecycle in DeleteUser.
+		`CREATE TABLE IF NOT EXISTS user_stock_favorites(
+			username TEXT NOT NULL, market TEXT NOT NULL, symbol TEXT NOT NULL,
+			ord INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+			PRIMARY KEY(username, market, symbol))`,
 		// One row per IdP. Row-shaped (not a meta blob) so multiple providers are later a UI change
 		// with no schema movement; v1 manages one saml row and one oidc row. Secrets (SP private key,
 		// OIDC client secret) are sealed under the keyring DEK (in `meta`) and never returned by any API.
@@ -961,6 +969,9 @@ func (s *Store) DeleteUser(name string) error {
 		{"DELETE FROM auth_requests WHERE username=?", name},
 		// The portal's index of the person's chat threads (Dify holds the messages themselves).
 		{"DELETE FROM chat_conversations WHERE created_by=?", name},
+		// A favorite is a personal preference. A surviving row would make a later holder of this
+		// reusable username inherit the previous reader's watchlist.
+		{"DELETE FROM user_stock_favorites WHERE username=?", name},
 		// The urgent-run allowance, which is a scarce resource allocated per person (ADR 0005).
 		{"DELETE FROM priority_tickets WHERE username=?", name},
 		// The read path consults report_viewers alone (ADR 0024), so a surviving `u:<name>` row

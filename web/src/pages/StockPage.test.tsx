@@ -19,6 +19,7 @@ vi.mock('../auth', () => ({
 // only in the test.
 const REPORT = {
   symbol: '001238',
+  market: 'sz',
   name: 'Test Co',
   selDate: '2026-07-07',
   selKind: 'Research',
@@ -91,6 +92,11 @@ vi.mock('react-router', () => ({
 vi.mock('../reader', () => ({ useReaderPrefs: () => ({ fontSize: 15, fontWeight: 400, wide: false }) }))
 vi.mock('../lib/datetime', () => ({ isInstant: () => false, formatReportDateTime: (s: string) => s }))
 vi.mock('../components/Markdown', () => ({ default: () => <div>md</div> }))
+vi.mock('../components/FavoriteButton', () => ({
+  FavoriteButton: ({ market, symbol }: { market: string; symbol: string }) => (
+    <span data-testid="favorite-button">{`${market}${symbol}`}</span>
+  ),
+}))
 vi.mock('../components/TimelinePanel', () => ({ default: () => <div>timeline</div> }))
 vi.mock('../components/ReaderControls', () => ({ default: () => <div>controls</div> }))
 vi.mock('../components/CompareModal', () => ({
@@ -142,6 +148,7 @@ describe('StockPage', () => {
     // transition without a hooks-count mismatch. The heading uses the server-composed
     // displayTitle (company name folded in), not the bare stored title.
     expect(await screen.findByText('001238 Test Co Report Title')).toBeTruthy()
+    expect(screen.getByTestId('favorite-button').textContent).toBe('sz001238')
     expect(screen.getByText('stock.back')).toBeTruthy()
   })
 
