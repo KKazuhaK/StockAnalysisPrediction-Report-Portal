@@ -55,6 +55,63 @@ body {
   }
 }
 
+.rp-report-card-preview {
+  width: min(340px, calc(100vw - 48px));
+}
+.rp-report-card-preview__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  margin-bottom: 12px;
+}
+.rp-report-card-preview__heading > :first-child {
+  min-width: 0;
+  font-size: 15px;
+}
+.rp-report-card-preview__reports {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+.rp-report-card-preview__report {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rp-report-card-preview__report .ant-tag {
+  max-width: 108px;
+  margin-inline-end: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-report-card-preview__report .ant-typography {
+  min-width: 0;
+}
+.rp-report-card-preview__more.ant-tag {
+  align-self: flex-start;
+  margin: 0;
+}
+.rp-report-card-preview__footer {
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ant-color-border-secondary);
+}
+.rp-report-card-preview__footer > .ant-space:last-child {
+  justify-content: flex-end;
+}
+.rp-report-card-preview__footer .ant-typography {
+  font-size: 12px;
+  white-space: nowrap;
+}
 /* Desktop workbench launcher: secondary destinations open from one familiar app-grid
    control. The generous tile targets keep it easy to scan and use without adding more
    permanent buttons to the header. */

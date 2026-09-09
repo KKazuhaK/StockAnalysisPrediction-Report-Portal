@@ -1,5 +1,6 @@
-import { Card, Space, Tag, Typography, theme } from 'antd'
-import { CalendarOutlined, FileTextOutlined } from '@ant-design/icons'
+import { Button, Card, Popover, Space, Tag, Typography, theme } from 'antd'
+import { CalendarOutlined, FileTextOutlined, RightOutlined } from '@ant-design/icons'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import type { Group } from '../api/types'
@@ -23,6 +24,8 @@ import { FavoriteButton } from './FavoriteButton'
 // a 22px hole would clip — so the numbers are set at 1.2 and the hole is sized for that, rather than
 // the hole being sized for whatever line-height the theme happens to ship.
 const QUOTE_LINE_H = 22
+const PREVIEW_REPORT_LIMIT = 3
+const PREVIEW_HOVER_DELAY_SECONDS = 0.7
 
 export default function ReportCard({
   g,
@@ -38,6 +41,33 @@ export default function ReportCard({
   const { token } = theme.useToken()
   const navigate = useNavigate()
   const isNew = g.src === 'new'
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const previewCloseTimer = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (previewCloseTimer.current !== null) window.clearTimeout(previewCloseTimer.current)
+    },
+    [],
+  )
+
+  // Moving focus from the card into the portalled popover briefly asks rc-trigger to close it.
+  // Deferring that close leaves enough time for a quick action to receive its click; entering the
+  // popover cancels the pending close through the matching `open=true` event.
+  const changePreviewOpen = (next: boolean) => {
+    if (previewCloseTimer.current !== null) {
+      window.clearTimeout(previewCloseTimer.current)
+      previewCloseTimer.current = null
+    }
+    if (next) {
+      setPreviewOpen(true)
+      return
+    }
+    previewCloseTimer.current = window.setTimeout(() => {
+      setPreviewOpen(false)
+      previewCloseTimer.current = null
+    }, 180)
+  }
 
   // A-SHARE COLOUR CONVENTION: 红涨绿跌 — RED is up, GREEN is down, the reverse of every US and
   // European chart. Identical to QuoteStrip's, deliberately, because the same reader crosses from
@@ -58,97 +88,179 @@ export default function ReportCard({
   const kinds = (g.kinds?.length ? g.kinds : [g.kind]).filter(Boolean)
   const visibleKinds = kinds.slice(0, 3)
   const hiddenKinds = kinds.slice(3)
+  const members = g.members || []
+  const previewMembers = members.slice(0, PREVIEW_REPORT_LIMIT)
+  const hiddenPreviewCount = Math.max(0, Math.max(g.n, members.length) - previewMembers.length)
 
-  return (
-    <Card hoverable size="small" {...clickable(open, displayName)} styles={{ body: { padding: 16 } }} style={{ height: '100%' }}>
-      <Space direction="vertical" size={10} style={{ width: '100%' }}>
-        <Space style={{ justifyContent: 'space-between', width: '100%' }} align="start">
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <Typography.Paragraph
-              strong
-              style={{ fontSize: 16, marginBottom: 0 }}
-              ellipsis={{ rows: 2, tooltip: displayName }}
+  const preview = (
+    <div className="rp-report-card-preview" data-testid="report-card-preview">
+      <div className="rp-report-card-preview__heading">
+        <Typography.Text strong ellipsis={{ tooltip: displayName }}>
+          {displayName}
+        </Typography.Text>
+        {g.symbol && <Typography.Text type="secondary">{g.symbol}</Typography.Text>}
+      </div>
+
+      {previewMembers.length > 0 && (
+        <div className="rp-report-card-preview__reports">
+          {previewMembers.map((member) => {
+            const label = member.rtype || member.kind
+            const title = member.title || label
+            return (
+              <div className="rp-report-card-preview__report" key={member.id}>
+                {label && (
+                  <Tag color={kindColors?.[member.kind] || 'default'} title={label}>
+                    {label}
+                  </Tag>
+                )}
+                <Typography.Text ellipsis={{ tooltip: title }}>{title}</Typography.Text>
+              </div>
+            )
+          })}
+          {hiddenPreviewCount > 0 && (
+            <Tag
+              className="rp-report-card-preview__more"
+              title={members
+                .slice(PREVIEW_REPORT_LIMIT)
+                .map((member) => member.title || member.rtype)
+                .filter(Boolean)
+                .join(', ')}
             >
-              {displayName}
-            </Typography.Paragraph>
-            {g.curName && g.curName !== g.name && (
-              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                {t('card.now')}: {g.curName}
-              </Typography.Text>
-            )}
-          </div>
-          {g.symbol && (
-            <div className="rp-card-symbol-actions">
-              <Typography.Text
-                style={{ fontSize: 15, fontWeight: 500, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
-              >
-                {g.symbol}
-              </Typography.Text>
-              {g.market && <FavoriteButton market={g.market} symbol={g.symbol} className="rp-card-favorite" />}
-            </div>
-          )}
-        </Space>
-
-        {/* The live price, and the hole it lands in.
-            Reserved for every card that names a code and for no other: a thematic report has no
-            symbol, can never be quoted, and would only be paying 22 blank pixels for a line it will
-            never fill. No currency label, unlike the strip: reports are A-share only (ADR 0030 §4),
-            so every price that can reach this grid is CNY and there is no second kind of money here
-            to mis-compare it against. A halted stock is shown as whatever the vendor published for
-            it — this line has no room for the 停牌 tag the strip carries, and inventing one from a
-            price alone is not something a card can honestly do. */}
-        {!!g.symbol && (
-          <div
-            data-testid="card-quote-line"
-            style={{ height: QUOTE_LINE_H, display: 'flex', alignItems: 'baseline', gap: 8, overflow: 'hidden' }}
-          >
-            {quote && (
-              <>
-                <span
-                  data-testid="card-quote"
-                  style={{ color: moveColour, fontSize: 16, fontWeight: 600, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}
-                >
-                  {fenToYuan(quote.last)}
-                </span>
-                <span style={{ color: moveColour, fontSize: 13, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}>
-                  {signedFenToYuan(quote.change)}
-                </span>
-                {/* Verbatim, with a '%' and nothing else — not parsed, not reformatted, not derived
-                    from last and prevClose (which is not even carried this far). ADR 0028 §4: on an
-                    ex-rights morning the exchange restates the previous close and the vendor's
-                    percentage is computed against that, so our own arithmetic would print a
-                    double-digit crash on a stock that opened flat. */}
-                <span style={{ color: moveColour, fontSize: 13, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}>
-                  {quote.changePct}%
-                </span>
-              </>
-            )}
-          </div>
-        )}
-
-        <Space size={[6, 6]} wrap>
-          {visibleKinds.map((k) => (
-            <Tag key={k} color={kindColors?.[k] || 'default'} style={{ marginInlineEnd: 0 }}>
-              {k}
-            </Tag>
-          ))}
-          {hiddenKinds.length > 0 && (
-            <Tag style={{ marginInlineEnd: 0 }} title={hiddenKinds.join(', ')}>
-              +{hiddenKinds.length}
+              +{hiddenPreviewCount}
             </Tag>
           )}
-          {!isNew && <Tag>{t('src.old')}</Tag>}
-        </Space>
+        </div>
+      )}
 
-        <Space style={{ justifyContent: 'space-between', width: '100%' }}>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+      <div className="rp-report-card-preview__footer">
+        <Space size={12}>
+          <Typography.Text type="secondary">
             <CalendarOutlined /> {isInstant(g.time) ? formatReportDateTime(g.time) : g.date}
           </Typography.Text>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          <Typography.Text type="secondary">
             <FileTextOutlined /> {g.n} {t('card.reports')}
           </Typography.Text>
         </Space>
-      </Space>
-    </Card>
+        <Space size={4}>
+          {g.market && g.symbol && (
+            <FavoriteButton market={g.market} symbol={g.symbol} showLabel size="small" />
+          )}
+          <Button type="primary" size="small" aria-label={t('queue.viewReport')} onClick={open}>
+            {t('queue.viewReport')} <RightOutlined />
+          </Button>
+        </Space>
+      </div>
+    </div>
+  )
+
+  return (
+    <Popover
+      trigger={['hover', 'focus']}
+      placement="rightTop"
+      mouseEnterDelay={PREVIEW_HOVER_DELAY_SECONDS}
+      mouseLeaveDelay={0.15}
+      destroyOnHidden
+      open={previewOpen}
+      onOpenChange={changePreviewOpen}
+      title={t('card.quickPreview')}
+      content={preview}
+    >
+      <Card
+        hoverable
+        size="small"
+        {...clickable(open, displayName)}
+        styles={{ body: { padding: 16 } }}
+        style={{ height: '100%' }}
+      >
+        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+          <Space style={{ justifyContent: 'space-between', width: '100%' }} align="start">
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <Typography.Paragraph
+                strong
+                style={{ fontSize: 16, marginBottom: 0 }}
+                ellipsis={{ rows: 2, tooltip: displayName }}
+              >
+                {displayName}
+              </Typography.Paragraph>
+              {g.curName && g.curName !== g.name && (
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                  {t('card.now')}: {g.curName}
+                </Typography.Text>
+              )}
+            </div>
+            {g.symbol && (
+              <div className="rp-card-symbol-actions">
+                <Typography.Text
+                  style={{ fontSize: 15, fontWeight: 500, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+                >
+                  {g.symbol}
+                </Typography.Text>
+                {g.market && <FavoriteButton market={g.market} symbol={g.symbol} className="rp-card-favorite" />}
+              </div>
+            )}
+          </Space>
+
+          {/* The live price, and the hole it lands in.
+              Reserved for every card that names a code and for no other: a thematic report has no
+              symbol, can never be quoted, and would only be paying 22 blank pixels for a line it will
+              never fill. No currency label, unlike the strip: reports are A-share only (ADR 0030 §4),
+              so every price that can reach this grid is CNY and there is no second kind of money here
+              to mis-compare it against. A halted stock is shown as whatever the vendor published for
+              it — this line has no room for the 停牌 tag the strip carries, and inventing one from a
+              price alone is not something a card can honestly do. */}
+          {!!g.symbol && (
+            <div
+              data-testid="card-quote-line"
+              style={{ height: QUOTE_LINE_H, display: 'flex', alignItems: 'baseline', gap: 8, overflow: 'hidden' }}
+            >
+              {quote && (
+                <>
+                  <span
+                    data-testid="card-quote"
+                    style={{ color: moveColour, fontSize: 16, fontWeight: 600, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {fenToYuan(quote.last)}
+                  </span>
+                  <span style={{ color: moveColour, fontSize: 13, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}>
+                    {signedFenToYuan(quote.change)}
+                  </span>
+                  {/* Verbatim, with a '%' and nothing else — not parsed, not reformatted, not derived
+                      from last and prevClose (which is not even carried this far). ADR 0028 §4: on an
+                      ex-rights morning the exchange restates the previous close and the vendor's
+                      percentage is computed against that, so our own arithmetic would print a
+                      double-digit crash on a stock that opened flat. */}
+                  <span style={{ color: moveColour, fontSize: 13, lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}>
+                    {quote.changePct}%
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+
+          <Space size={[6, 6]} wrap>
+            {visibleKinds.map((k) => (
+              <Tag key={k} color={kindColors?.[k] || 'default'} style={{ marginInlineEnd: 0 }}>
+                {k}
+              </Tag>
+            ))}
+            {hiddenKinds.length > 0 && (
+              <Tag style={{ marginInlineEnd: 0 }} title={hiddenKinds.join(', ')}>
+                +{hiddenKinds.length}
+              </Tag>
+            )}
+            {!isNew && <Tag>{t('src.old')}</Tag>}
+          </Space>
+
+          <Space style={{ justifyContent: 'space-between', width: '100%' }}>
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+              <CalendarOutlined /> {isInstant(g.time) ? formatReportDateTime(g.time) : g.date}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+              <FileTextOutlined /> {g.n} {t('card.reports')}
+            </Typography.Text>
+          </Space>
+        </Space>
+      </Card>
+    </Popover>
   )
 }

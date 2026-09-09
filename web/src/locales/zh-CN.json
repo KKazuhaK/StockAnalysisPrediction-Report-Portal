@@ -408,6 +408,7 @@
   "captcha.providerUnsupported": "本门户配置了第三方验证码服务，但当前版本没有内置它的脚本。请管理员改用内置图形验证码。",
   "captcha.refresh": "换一张",
   "card.now": "现",
+  "card.quickPreview": "快速预览",
   "card.reports": "篇",
   "chat.backToBottom": "回到底部",
   "chat.busy": "助手繁忙，同时进行的对话过多，请稍后再试。",
