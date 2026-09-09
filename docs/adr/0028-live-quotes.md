@@ -4,7 +4,9 @@
 > accurate on either count: quotes now cover Hong Kong, the US and indices as well, and the
 > full-size chart lives in its own app rather than on the reading page. Everything below about
 > HOW a quote is fetched, gated and rendered still holds — the drift gate, integer 分, the
-> unadjusted basis, the vendor percentage, and the absence of a poller.
+> unadjusted basis, and the vendor percentage. [ADR 0032](0032-session-aware-live-quote-refresh.md)
+> further amends the absence-of-a-poller decision: there is still no server-side whole-market loop,
+> but a visible quote surface may repeat its own demand on session-aware advice from the server.
 
 ## Context
 

@@ -5,6 +5,10 @@ the reading page"* — is wrong on both counts after this. 0028's decisions abou
 fetched, gated and rendered all stand unchanged; what changes is where the surface lives, how many
 markets it covers, and what an operator can see of it.
 
+> **Amended by [ADR 0032](0032-session-aware-live-quote-refresh.md).** The quote-source panel gains
+> an automatic-refresh switch. Existing TTLs remain the rate controls, and clients receive refresh
+> advice rather than reading administrator-only configuration.
+
 ## Context
 
 The quote panel shipped in v0.4.45 and the first feedback from the running deployment was blunt and
