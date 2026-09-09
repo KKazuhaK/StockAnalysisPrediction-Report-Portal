@@ -57,6 +57,7 @@ function renderAt(path: string) {
           <Route path="queue" element={<div>queue-body</div>} />
           <Route path="review" element={<div>review-body</div>} />
           <Route path="apps" element={<div>apps-body</div>} />
+          <Route path="apps/batch" element={<div>batch-body</div>} />
           <Route path="manage" element={<div>manage-body</div>} />
           <Route path="report/new" element={<div>write-report-body</div>} />
         </Route>
@@ -164,9 +165,20 @@ describe('AppLayout desktop navigation', () => {
     expect(screen.queryByRole('button', { name: 'nav.writeReport' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'nav.runActions' }))
     expect(screen.getByRole('menu').closest('.rp-run-actions-menu')).not.toBeNull()
+    expect(screen.getByRole('menuitem', { name: 'nav.batch' })).toBeTruthy()
     await user.click(screen.getByRole('menuitem', { name: 'nav.writeReport' }))
 
     expect(await screen.findByText('write-report-body')).toBeTruthy()
+  })
+
+  it('opens batch execution from the run-analysis dropdown', async () => {
+    const user = userEvent.setup()
+    renderAt('/queue')
+
+    await user.click(await screen.findByRole('button', { name: 'nav.runActions' }))
+    await user.click(screen.getByRole('menuitem', { name: 'nav.batch' }))
+
+    expect(await screen.findByText('batch-body')).toBeTruthy()
   })
 })
 

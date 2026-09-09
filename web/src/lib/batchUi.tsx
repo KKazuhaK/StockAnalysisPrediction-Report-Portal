@@ -77,6 +77,31 @@ export function queueStatusTag(t: TFunction, j: BatchJob) {
   return statusTag(t, j.status)
 }
 
+export type JobProgressPresentation = {
+  done: number
+  percent: number
+  loading: boolean
+  status: 'success' | 'exception' | 'active' | undefined
+  strokeColor: string | undefined
+  showInfo: boolean
+}
+
+// A failed row does not make an in-flight job a failed job. Keep active jobs blue,
+// use amber for a completed mixed outcome, and reserve the red exception state for
+// a completed job where every reported outcome failed.
+export function jobProgressPresentation(j: BatchJob): JobProgressPresentation {
+  const cancelled = j.cancelled || 0
+  const done = j.succeeded + j.partial + j.failed + cancelled
+  const running = j.status === 'running' || j.status === 'cancelling'
+  const percent = j.total ? Math.round((done / j.total) * 100) : 0
+  const loading = running && percent === 0
+  const anyFail = j.failed > 0
+  const anyOk = j.succeeded > 0 || j.partial > 0
+  const status = running ? 'active' : anyFail && !anyOk ? 'exception' : !anyFail && anyOk ? 'success' : undefined
+  const strokeColor = !running && !anyOk && !anyFail ? '#8c8c8c' : !running && anyFail && anyOk ? '#faad14' : undefined
+  return { done, percent, loading, status, strokeColor, showInfo: !loading && (running || anyOk || anyFail) }
+}
+
 // inputPairs reads a run's inputs JSON as [key, value] pairs, dropping empty values (e.g. an
 // unfilled optional field). A body that isn't a JSON object is kept as one unnamed value.
 function inputPairs(s?: string): Array<[string, string]> {

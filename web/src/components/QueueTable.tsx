@@ -48,6 +48,7 @@ import {
   InputsPreview,
   isTerminal,
   isUrgent,
+  jobProgressPresentation,
   priorityNum,
   priorityTag,
   statusTag,
@@ -469,32 +470,20 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
           )
         if (j.status === 'queued') return <Tag>{j.ahead ? t('batch.aheadN', { n: j.ahead }) : t('batch.aheadNext')}</Tag>
         const cancelled = j.cancelled || 0
-        const done = j.succeeded + j.partial + j.failed + cancelled // cancelled rows are terminal too
-        const running = j.status === 'running' || j.status === 'cancelling'
-        const realPct = j.total ? Math.round((done / j.total) * 100) : 0
-        // A running job with no measurable progress yet (a single-row run, or a batch
-        // whose first row is still going) shows an indeterminate "loading" bar — a full
-        // animated stripe — instead of an empty 0% one.
-        const loading = running && realPct === 0
-        // Terminal colour: some-ok+some-fail (partial success) yellow, all-failed red,
-        // any success green, all-cancelled/none neutral.
-        const anyFail = j.failed > 0
-        const anyOk = j.succeeded > 0 || j.partial > 0
-        const status = running ? 'active' : anyFail && !anyOk ? 'exception' : !anyFail && anyOk ? 'success' : undefined
-        const strokeColor = !running && !anyOk && !anyFail ? '#8c8c8c' : !running && anyFail && anyOk ? '#faad14' : undefined // partial → yellow
+        const progress = jobProgressPresentation(j)
         return (
           <div style={{ maxWidth: 200 }}>
             <Progress
-              percent={loading ? 100 : realPct}
+              percent={progress.loading ? 100 : progress.percent}
               size="small"
-              status={status}
-              strokeColor={strokeColor}
+              status={progress.status}
+              strokeColor={progress.strokeColor}
               // Indeterminate "loading" bar: animate a full bar but hide the "100%" —
               // the run is at 0/1, not done, so the number would be a lie.
-              showInfo={!loading && (running || anyOk || anyFail)}
+              showInfo={progress.showInfo}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -2 }}>
-              {t('batch.progressText', { done, total: j.total, ok: j.succeeded, fail: j.failed, partial: j.partial })}
+              {t('batch.progressText', { done: progress.done, total: j.total, ok: j.succeeded, fail: j.failed, partial: j.partial })}
               {cancelled > 0 ? ` · ${t('batch.cancelledN', { n: cancelled })}` : ''}
             </Typography.Text>
           </div>
