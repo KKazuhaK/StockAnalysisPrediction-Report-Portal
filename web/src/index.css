@@ -89,19 +89,18 @@ body {
   white-space: nowrap;
 }
 
-/* The manual-writing option belongs to the primary run control, so its floating menu uses
-   a quiet tint of the same theme color instead of reading as an unrelated dark button. */
+/* The menu belongs to the primary run control, so a subtle theme-colored border connects
+   the two surfaces. Items stay neutral until hover or keyboard focus identifies one action. */
 .rp-run-actions-menu .ant-dropdown-menu {
   border: 1px solid var(--ant-color-primary-border, #91caff);
 }
 .rp-run-actions-menu .ant-dropdown-menu-item {
-  color: var(--ant-color-primary, #1677ff);
-  background: var(--ant-color-primary-bg, #e6f4ff);
   font-weight: 600;
 }
 .rp-run-actions-menu .ant-dropdown-menu-item:hover,
 .rp-run-actions-menu .ant-dropdown-menu-item-active {
-  background: var(--ant-color-primary-bg-hover, #bae0ff);
+  color: var(--ant-color-primary, #1677ff);
+  background: var(--ant-color-primary-bg, #e6f4ff);
 }
 .rp-run-actions-menu .ant-dropdown-menu-item .ant-dropdown-menu-item-icon {
   color: inherit;

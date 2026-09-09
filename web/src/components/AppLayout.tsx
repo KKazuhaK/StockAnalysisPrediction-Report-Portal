@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Breadcrumb, Button, Divider, Dropdown, FloatButton, Grid, Layout, Popover, Segmented, Select, Space, Spin, Tooltip, theme } from 'antd'
-import { AppstoreOutlined, AuditOutlined, DownOutlined, EditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, TableOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, AuditOutlined, DownOutlined, EditOutlined, GlobalOutlined, InfoCircleFilled, LogoutOutlined, MessageOutlined, PlayCircleOutlined, SettingOutlined, UnorderedListOutlined, UserOutlined, VerticalAlignTopOutlined } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
@@ -290,7 +290,7 @@ export default function AppLayout() {
                 classNames={{ root: 'rp-run-actions-menu' }}
                 menu={{
                   items: [
-                    { key: 'batch', icon: <TableOutlined aria-hidden="true" />, label: t('nav.batch') },
+                    { key: 'batch', icon: <PlayCircleOutlined aria-hidden="true" />, label: t('nav.batch') },
                     ...(canWrite ? [{ key: 'write-report', icon: <EditOutlined aria-hidden="true" />, label: t('nav.writeReport') }] : []),
                   ],
                   onClick: ({ key }) => {

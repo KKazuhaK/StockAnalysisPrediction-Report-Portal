@@ -165,7 +165,9 @@ describe('AppLayout desktop navigation', () => {
     expect(screen.queryByRole('button', { name: 'nav.writeReport' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'nav.runActions' }))
     expect(screen.getByRole('menu').closest('.rp-run-actions-menu')).not.toBeNull()
-    expect(screen.getByRole('menuitem', { name: 'nav.batch' })).toBeTruthy()
+    const batchItem = screen.getByRole('menuitem', { name: 'nav.batch' })
+    expect(batchItem.querySelector('.anticon-play-circle')).not.toBeNull()
+    expect(batchItem.querySelector('.anticon-table')).toBeNull()
     await user.click(screen.getByRole('menuitem', { name: 'nav.writeReport' }))
 
     expect(await screen.findByText('write-report-body')).toBeTruthy()
