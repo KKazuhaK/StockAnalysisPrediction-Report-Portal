@@ -506,3 +506,19 @@ describe('the live price on a card', () => {
     expect(screen.getByText('Tb')).toBeTruthy()
   })
 })
+
+describe('the report categories on a card', () => {
+  it('shows at most three categories and summarizes the remainder', async () => {
+    const g = group('a', '')
+    g.kinds = ['kind-one', 'kind-two', 'kind-three', 'kind-four', 'kind-five']
+    state.resp = { ...base, groups: [g], totalRuns: 1 }
+    renderHome()
+
+    expect(await screen.findByText('kind-one')).toBeTruthy()
+    expect(screen.getByText('kind-two')).toBeTruthy()
+    expect(screen.getByText('kind-three')).toBeTruthy()
+    expect(screen.queryByText('kind-four')).toBeNull()
+    expect(screen.queryByText('kind-five')).toBeNull()
+    expect(screen.getByText('+2')).toBeTruthy()
+  })
+})
