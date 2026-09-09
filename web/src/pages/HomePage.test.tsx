@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
@@ -147,6 +147,10 @@ beforeEach(() => {
   state.resp = { ...base }
   state.urls = []
   state.quotes = []
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('the version filter', () => {
@@ -350,6 +354,24 @@ describe('the live price on a card', () => {
 
     expect(quoteUrls()).toHaveLength(1)
     expect(screen.getByTestId('card-quote').textContent).toBe('33.35')
+  })
+
+  it('refreshes an idle visible page from the batch advice without multiplying the request', async () => {
+    vi.useFakeTimers()
+    state.resp = { ...base, groups: [group('a', '600519'), group('b', '000001')], totalRuns: 2 }
+    renderHome()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(state.quotes).toHaveLength(1)
+    await settle(state.quotes[0], {
+      ...quoteBody({ '600519': [3335, 12, '0.12'], '000001': [1180, -25, '-2.07'] }),
+      refreshAfterSecs: 2,
+    })
+
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(state.quotes).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(state.quotes).toHaveLength(2)
+    expect(quoteUrls()).toHaveLength(2)
   })
 
   it('does not let a superseded failure erase the prices that are on screen', async () => {

@@ -900,6 +900,8 @@
   "quote.unavailable": "行情暂不可用",
   "quote.volume": "成交量",
   "quote.yuan": "元",
+  "quoteAdmin.autoRefresh": "交易时自动刷新",
+  "quoteAdmin.autoRefreshHint": "行情页面可见时会在交易期间自动刷新；收盘后暂停，隐藏标签页重新可见时会立即补一次刷新。",
   "quoteAdmin.cache": "缓存",
   "quoteAdmin.cacheBytes": "占用",
   "quoteAdmin.cacheEntries": "条目",

@@ -169,6 +169,7 @@ beforeEach(() => {
   chartProps.length = 0
 })
 afterEach(() => {
+  vi.useRealTimers()
   // jsdom's own defaults, so a viewport a height test moved does not follow the suite around.
   setViewport(768, 1024)
 })
@@ -181,6 +182,25 @@ describe('QuotesApp', () => {
     // refusal, sent on every visit to the app.
     expect(pending).toHaveLength(0)
     expect(screen.queryByTestId('chart')).toBeNull()
+  })
+
+  it('refreshes the same request when a visible idle page reaches the advised delay', async () => {
+    vi.useFakeTimers()
+    renderApp('/apps/quotes?symbol=600519')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(pending).toHaveLength(1)
+    await act(async () => {
+      pending[0].resolve({ ...MAOTAI, refreshAfterSecs: 2 })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1999)
+    })
+    expect(pending).toHaveLength(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(pending).toHaveLength(2)
+    expect(pending[1].url).toBe('/api/quote/600519?range=3m')
   })
 
   const CASES = [

@@ -1115,4 +1115,8 @@ export interface QuoteResp {
   /** Always false: we serve 不复权 (bfq) prices, whose value for a past date never changes. */
   adjusted: boolean
   cached: boolean
+  /** Server-owned advice for the next visible refresh. Omitted when automatic refresh is off. */
+  refreshAfterSecs?: number
+  /** Absolute market-zone wake time used after close. Mutually exclusive with refreshAfterSecs. */
+  refreshAt?: string
 }

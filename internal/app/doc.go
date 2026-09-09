@@ -73,8 +73,8 @@
 //     quoteParseWindow — the allowlist for the only caller-supplied strings that reach a
 //     vendor URL (ADR 0031, v0.4.49 amendment).
 //   - quote_admin_api.go  /api/admin/quote — per-source health and capabilities, the cache
-//     occupancy, the three TTLs and the home-card switch. The source URLs are deliberately
-//     NOT settings: a source here is a parser reading the vendor by fixed field positions, so
+//     occupancy, the three TTLs, and the home-card and visible-refresh switches. Source URLs
+//     are deliberately NOT settings: a source here is a parser reading vendor-fixed positions, so
 //     an admin-typed host produces a drift refusal rather than another source. Choosing among
 //     the compiled-in ones is what the panel offers.
 //

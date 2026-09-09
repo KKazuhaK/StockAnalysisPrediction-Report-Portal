@@ -106,15 +106,17 @@ type QuoteResp struct {
 	// Currency and TZ exist so that the strip cannot print a bare number: 319.97 beside a Chinese
 	// report is a yuan price to every reader who is not told otherwise, and an instant with no zone
 	// is a time the browser will happily render in its own.
-	Currency        string        `json:"currency"`
-	TZ              string        `json:"tz"`
-	Source          string        `json:"source"`
-	Snapshot        QuoteSnapshot `json:"snapshot"`
-	Bars            []QuoteBar    `json:"bars"`
-	BarsSource      string        `json:"barsSource"`
-	BarsUnavailable string        `json:"barsUnavailable"`
-	Adjusted        bool          `json:"adjusted"`
-	Cached          bool          `json:"cached"`
+	Currency         string        `json:"currency"`
+	TZ               string        `json:"tz"`
+	Source           string        `json:"source"`
+	Snapshot         QuoteSnapshot `json:"snapshot"`
+	Bars             []QuoteBar    `json:"bars"`
+	BarsSource       string        `json:"barsSource"`
+	BarsUnavailable  string        `json:"barsUnavailable"`
+	Adjusted         bool          `json:"adjusted"`
+	Cached           bool          `json:"cached"`
+	RefreshAfterSecs int           `json:"refreshAfterSecs,omitempty"`
+	RefreshAt        string        `json:"refreshAt,omitempty"`
 }
 
 const (

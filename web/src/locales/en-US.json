@@ -900,6 +900,8 @@
   "quote.unavailable": "Quote unavailable",
   "quote.volume": "Volume",
   "quote.yuan": "CNY",
+  "quoteAdmin.autoRefresh": "Automatically refresh open markets",
+  "quoteAdmin.autoRefreshHint": "Visible quote pages refresh while trading continues, pause after close, and catch up when a hidden tab becomes visible again.",
   "quoteAdmin.cache": "Cache",
   "quoteAdmin.cacheBytes": "Size",
   "quoteAdmin.cacheEntries": "Entries",

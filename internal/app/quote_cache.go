@@ -517,7 +517,7 @@ func quoteShippedOrder() []string {
 	return out
 }
 
-// ---------- the operator's three choices ----------
+// ---------- operator policy ----------
 
 const (
 	// A comma-separated source order. A source ABSENT from it is off — there is no separate
@@ -539,6 +539,9 @@ const (
 	// happens when somebody opens a stock; this is the one that happens when somebody opens the
 	// front door.
 	setQuoteHomeCards = "home_quotes"
+	// Whether visible quote surfaces repeat their demand while the server says a refresh is useful.
+	// Default on; the existing TTLs remain the rate controls.
+	setQuoteAutoRefresh = "quote_auto_refresh"
 )
 
 // quoteConfig is what an admin can change about the fetch path. Every field's zero value is refused
@@ -552,8 +555,8 @@ type quoteConfig struct {
 }
 
 // quoteConfigDefault is what the portal did before any of this was configurable, and it is what an
-// unconfigured portal still does. The whole point of the three settings is that this function is
-// the answer until somebody saves something else.
+// unconfigured portal still does. This function remains the answer until somebody saves another
+// source order or cache lifetime.
 func quoteConfigDefault() quoteConfig {
 	return quoteConfig{Order: quoteShippedOrder(), TTLOpen: quoteTTLOpen, TTLClosed: quoteTTLClosed,
 		TTLIntraday: quoteTTLIntraday}
@@ -590,11 +593,18 @@ func (cfg quoteConfig) orDefaults() quoteConfig {
 // field and never a calendar.
 func (cfg quoteConfig) ttlFor(resp *QuoteResp, iv quoteInterval) time.Duration {
 	cfg = cfg.orDefaults()
+	unknown := resp != nil && resp.Snapshot.Session == quoteSessionUnknown
 	if iv.intraday() {
+		if unknown {
+			return quoteMinDuration(cfg.TTLIntraday, quoteUnknownRefresh)
+		}
 		return cfg.TTLIntraday
 	}
 	if resp != nil && resp.Snapshot.Session == quoteSessionOpen {
 		return cfg.TTLOpen
+	}
+	if unknown {
+		return quoteMinDuration(cfg.TTLClosed, quoteUnknownRefresh)
 	}
 	return cfg.TTLClosed
 }
@@ -631,9 +641,10 @@ func quoteParseOrder(raw string) (order []string, unknown string) {
 	return order, unknown
 }
 
-// quoteConfigLoad reads the three settings and clamps on READ as well as on save, so a value that
-// reached meta some other way — an older build, a hand edit, a restore — cannot put the portal
-// below a floor or above the ceiling. Same shape and same reason as cleanupConfigLoad (ADR 0017).
+// quoteConfigLoad reads the source order and three TTL settings, and clamps on READ as well as on
+// save, so a value that reached meta some other way — an older build, a hand edit, a restore —
+// cannot put the portal below a floor or above the ceiling. Same shape and same reason as
+// cleanupConfigLoad (ADR 0017).
 func (s *Server) quoteConfigLoad() quoteConfig {
 	cfg := quoteConfigDefault()
 	// Total by construction, like settingInt: these getters sit on the request path and have to
@@ -669,6 +680,13 @@ func (s *Server) quoteHomeCards() bool {
 		return true
 	}
 	return settingBool(s.st.GetSetting(setQuoteHomeCards, ""), true)
+}
+
+func (s *Server) quoteAutoRefresh() bool {
+	if s.st == nil {
+		return true
+	}
+	return settingBool(s.st.GetSetting(setQuoteAutoRefresh, ""), true)
 }
 
 // quoteTTLSetting reads one TTL in seconds. A value outside the range is CLAMPED to the nearer end,
@@ -1154,6 +1172,7 @@ func (c *quoteCache) fetchUnder(ctx context.Context, cfg quoteConfig, market, co
 type quoteBatchEntry struct {
 	resp   *QuoteResp
 	cached bool
+	ttl    time.Duration
 }
 
 // fetchBatchUnder answers many symbols at once, keyed by vendor symbol, and is the whole of what
@@ -1192,8 +1211,8 @@ func (c *quoteCache) fetchBatchUnder(ctx context.Context, cfg quoteConfig, targe
 			continue
 		}
 		seen[t.Symbol] = true
-		if resp, ok := c.snapshotFor(t.Market.id, t.Code); ok {
-			out[t.Symbol] = quoteBatchEntry{resp: resp, cached: true}
+		if resp, ttl, ok := c.snapshotForTTL(t.Market.id, t.Code); ok {
+			out[t.Symbol] = quoteBatchEntry{resp: resp, cached: true, ttl: ttl}
 			continue
 		}
 		misses = append(misses, t)
@@ -1202,7 +1221,7 @@ func (c *quoteCache) fetchBatchUnder(ctx context.Context, cfg quoteConfig, targe
 		return out
 	}
 	for sym, resp := range c.loadBatch(ctx, cfg, misses) {
-		out[sym] = quoteBatchEntry{resp: resp, cached: false}
+		out[sym] = quoteBatchEntry{resp: resp, cached: false, ttl: cfg.ttlFor(resp, quoteIntervalSnapshot)}
 	}
 	return out
 }
@@ -1350,6 +1369,11 @@ func (c *quoteCache) loadBatchUncached(ctx context.Context, cfg quoteConfig, tar
 // It does not promote what it finds to the front of the LRU. A card is a decoration and should not
 // be able to keep a reading page's chart alive at the expense of another reader's.
 func (c *quoteCache) snapshotFor(market, code string) (*QuoteResp, bool) {
+	resp, _, ok := c.snapshotForTTL(market, code)
+	return resp, ok
+}
+
+func (c *quoteCache) snapshotForTTL(market, code string) (*QuoteResp, time.Duration, bool) {
 	c.init()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1369,9 +1393,14 @@ func (c *quoteCache) snapshotFor(market, code string) (*QuoteResp, bool) {
 		}
 	}
 	if best == nil {
-		return nil, false
+		return nil, 0, false
 	}
-	return best.resp, true
+	return best.resp, best.expires.Sub(now), true
+}
+
+func (c *quoteCache) clockNow() time.Time {
+	c.init()
+	return c.now()
 }
 
 // endFlight publishes the leader's result to its waiters. The map entry goes first and the channel

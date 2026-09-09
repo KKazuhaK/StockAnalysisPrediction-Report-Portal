@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import StockPage from './StockPage'
@@ -122,6 +122,7 @@ beforeEach(() => {
   chartProps.length = 0
   // Counted per test below ("expanding costs no second fetch"), so it cannot be cumulative.
   quoteCalls.length = 0
+  delete (QUOTE as typeof QUOTE & { refreshAfterSecs?: number }).refreshAfterSecs
   try {
     window.localStorage.clear()
   } catch {
@@ -130,6 +131,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -172,6 +174,21 @@ describe('StockPage', () => {
     render(<StockPage />)
     await screen.findByText('001238 Test Co Report Title')
     expect(quoteCalls.some((u) => u.startsWith('/api/quote/001238'))).toBe(true)
+  })
+
+  it('refreshes the quote on an idle visible reading page when the server advises it', async () => {
+    vi.useFakeTimers()
+    ;(QUOTE as typeof QUOTE & { refreshAfterSecs?: number }).refreshAfterSecs = 2
+    render(<StockPage />)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(quoteCalls).toHaveLength(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(quoteCalls).toHaveLength(2)
   })
 
   it('renders the quote strip beside the report', async () => {

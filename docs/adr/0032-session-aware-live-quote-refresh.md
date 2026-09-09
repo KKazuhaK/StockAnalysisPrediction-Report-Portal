@@ -1,6 +1,6 @@
 # ADR 0032 — Session-aware refresh for visible live quotes
 
-**Status: Proposed.** Amends [ADR 0028](0028-live-quotes.md),
+**Status: Accepted.** Amends [ADR 0028](0028-live-quotes.md),
 [ADR 0030](0030-quotes-app-and-multi-market.md), and
 [ADR 0031](0031-quote-capabilities-intraday-and-home-cards.md). The server remains demand-driven and
 keeps no durable market data. What changes is that a visible quote surface may repeat that demand
@@ -117,8 +117,9 @@ changes. These hours are used only to choose a future request, not to override a
 The candidate schedule is a wake-up mechanism, not a trading calendar. At `refreshAt`, the client
 makes one request. If the vendor still says `close`, as on a holiday or an exceptional closure, the
 server returns the next candidate boundary and the page sleeps again. A close reported during the
-first five minutes after a candidate opening gets one normal-TTL grace probe before sleeping; this
-allows for a vendor that has not yet moved its session marker from the previous close.
+first five minutes after a candidate opening gets one grace probe at the end of that window before
+sleeping; this allows for a vendor that has not yet moved its session marker from the previous close
+without issuing repeated probes throughout the grace period.
 
 For `session=unknown`, the server uses two pieces of limited evidence:
 
