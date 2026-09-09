@@ -24,6 +24,7 @@ import {
   type QuoteRefreshAdvice,
 } from '../lib/quoteRefresh'
 import { startVisibleDeadline } from '../lib/visiblePoll'
+import { FavoriteButton } from '../components/FavoriteButton'
 
 // How stale a warmed report may be and still render without waiting. The live request goes out
 // regardless and corrects it, so this only bounds how long a re-ingested body can linger.
@@ -237,6 +238,7 @@ export default function StockPage() {
           {data.symbol}
         </Typography.Text>
       </Typography.Title>
+      {data.market && <FavoriteButton market={data.market} symbol={data.symbol} />}
       {rep && rep.name && rep.name !== data.name && (
         <Tag color="orange">
           {t('stock.asOf')}: {rep.name}

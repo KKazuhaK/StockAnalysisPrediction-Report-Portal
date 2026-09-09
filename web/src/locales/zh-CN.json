@@ -1616,5 +1616,20 @@
   "queue.avoidingWindow": "避开时段中",
   "queue.windowWaitHint": "等待避开时段结束后进入队列，任务未取消。",
   "queue.normal": "普通",
-  "queue.idle": "空闲时运行"
+  "queue.idle": "空闲时运行",
+  "err.favorite_bad_order": "收藏排序无效。",
+  "err.favorite_bad_symbol": "股票代码无效。",
+  "err.favorite_limit": "收藏数量已达到 500 只上限。",
+  "err.favorite_read_failed": "读取收藏失败。",
+  "err.favorite_set_changed": "收藏列表已在其他页面发生变化，请刷新后重试。",
+  "err.favorite_write_failed": "保存收藏失败。",
+  "favorite.add": "添加收藏",
+  "favorite.empty": "还没有收藏股票",
+  "favorite.latestReport": "最新报告",
+  "favorite.loadFailed": "收藏加载失败",
+  "favorite.noReport": "暂无报告，可进入行情查看",
+  "favorite.remove": "取消收藏",
+  "favorite.reorder": "拖动排序",
+  "favorite.reports": "报告",
+  "favorite.title": "收藏"
 }

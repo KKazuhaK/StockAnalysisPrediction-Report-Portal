@@ -306,6 +306,12 @@ func RunServer(cfgPath string) {
 	// caller's behalf — and behind the home_quotes switch, because it is the one quote request a
 	// reader makes without asking for a quote.
 	mux.HandleFunc("GET /api/quotes", s.requireUserJSON(s.apiQuotes))
+	// Personal stock favorites (ADR 0033). Ownership comes only from the signed session; the path
+	// carries the canonical market identity and never a username.
+	mux.HandleFunc("GET /api/favorites", s.requireUserJSON(s.apiFavorites))
+	mux.HandleFunc("PUT /api/favorites/order", s.requireUserJSON(s.apiFavoriteReorder))
+	mux.HandleFunc("PUT /api/favorites/{market}/{symbol}", s.requireUserJSON(s.apiFavoriteAdd))
+	mux.HandleFunc("DELETE /api/favorites/{market}/{symbol}", s.requireUserJSON(s.apiFavoriteDelete))
 	mux.HandleFunc("GET /api/run/{key}", s.requireUserJSON(s.apiRun))
 	// The review queue (tracking items). Session-scoped, unlike /api/v1/tracking, which runs on an
 	// ingest token that already has access to everything.

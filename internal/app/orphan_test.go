@@ -117,6 +117,9 @@ func TestDeletingAnAccountTakesEverythingKeyedToTheName(t *testing.T) {
 		time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := st.AddStockFavorite(name, "sh", "600519"); err != nil {
+		t.Fatal(err)
+	}
 
 	rows := func(table, col string) int {
 		t.Helper()
@@ -125,7 +128,8 @@ func TestDeletingAnAccountTakesEverythingKeyedToTheName(t *testing.T) {
 		return n
 	}
 	for _, c := range [][2]string{{"webauthn_credentials", "username"}, {"chat_conversations", "created_by"},
-		{"recurring_tasks", "created_by"}, {"priority_tickets", "username"}, {"auth_requests", "username"}} {
+		{"recurring_tasks", "created_by"}, {"priority_tickets", "username"}, {"auth_requests", "username"},
+		{"user_stock_favorites", "username"}} {
 		if rows(c[0], c[1]) == 0 {
 			t.Fatalf("failed to seed %s", c[0])
 		}
@@ -140,6 +144,7 @@ func TestDeletingAnAccountTakesEverythingKeyedToTheName(t *testing.T) {
 		{"recurring_tasks", "created_by", "an ownerless task keeps firing and keeps spending run quota"},
 		{"priority_tickets", "username", "a reused name would inherit the urgent-run allowance"},
 		{"auth_requests", "username", "a pending link would act on whoever holds the name next"},
+		{"user_stock_favorites", "username", "a reused name would inherit the previous holder's watchlist"},
 	} {
 		if got := rows(c.table, c.col); got != 0 {
 			t.Errorf("%d %s rows outlived the account: %s", got, c.table, c.why)

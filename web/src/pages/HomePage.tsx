@@ -13,6 +13,7 @@ import {
   Popover,
   Result,
   Row,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -34,6 +35,8 @@ import { shortcutOfUrl, shortcutPerm, triggerShortcut } from '../lib/shortcuts'
 import { startVisiblePoll } from '../lib/visiblePoll'
 import { useHomeQuotes } from '../lib/useHomeQuotes'
 import { versionLabel } from '../lib/versionLabel'
+import { useFavorites } from '../favorites'
+import FavoritesGrid from '../components/FavoritesGrid'
 
 const { RangePicker } = DatePicker
 
@@ -49,6 +52,8 @@ export default function HomePage() {
   const [loadErr, setLoadErr] = useState('')
   const [openGroups, setOpenGroups] = useState<Record<number, boolean>>({}) // per-group reveal state (expand/modal/popover)
   const [form] = Form.useForm()
+  const favorites = useFavorites()
+  const favoriteMode = sp.get('view') === 'favorites'
 
   const params = useMemo(
     () => ({
@@ -153,7 +158,11 @@ export default function HomePage() {
   // a late answer drops into a hole that is already the right size instead of re-flowing the whole
   // grid under somebody who has started reading (ReportCard's QUOTE_LINE_H says the rest). Paying
   // it while the feature is off is the price of never paying it while the feature works.
-  const quotes = useHomeQuotes((data?.groups || []).map((g) => g.symbol).filter(Boolean))
+  const quotes = useHomeQuotes(
+    favoriteMode
+      ? []
+      : (data?.groups || []).map((g) => (g.market && g.symbol ? `${g.market}:${g.symbol}` : '')).filter(Boolean),
+  )
 
   const kindOptions = (data?.kinds || []).map((x) => ({ value: x, label: x }))
   const typeOptions = (data?.types || []).map((x) => ({ value: x, label: x }))
@@ -312,8 +321,24 @@ export default function HomePage() {
           </Modal>
         ))}
 
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <Segmented
+          value={favoriteMode ? 'favorites' : 'reports'}
+          options={[
+            { label: t('favorite.reports'), value: 'reports' },
+            { label: `${t('favorite.title')} (${favorites.items.length})`, value: 'favorites' },
+          ]}
+          onChange={(value) => {
+            const next = Object.fromEntries(sp)
+            if (value === 'favorites') next.view = 'favorites'
+            else delete next.view
+            setSp(next)
+          }}
+        />
+      </div>
+
       {/* Advanced search (collapsible) */}
-      <Collapse
+      {!favoriteMode && <Collapse
         items={[
           {
             key: 'adv',
@@ -373,10 +398,19 @@ export default function HomePage() {
             ),
           },
         ]}
-      />
+      />}
 
       {/* Card list */}
-      <Spin spinning={loading}>
+      {favoriteMode ? (
+        <FavoritesGrid
+          items={favorites.items}
+          loading={!favorites.loaded || favorites.loading}
+          error={favorites.error}
+          reordering={favorites.reordering}
+          onRetry={() => void favorites.ensureLoaded(true).catch(() => {})}
+          onReorder={favorites.reorder}
+        />
+      ) : <Spin spinning={loading}>
         {/* A filter change that fails leaves the PREVIOUS answer on screen, which under the new
             filters is the wrong one. Say so above it rather than passing it off as the result. */}
         {loadErr && data && (
@@ -402,15 +436,15 @@ export default function HomePage() {
           <Row gutter={[16, 16]}>
             {data?.groups.map((g) => (
               <Col key={g.key} xs={24} sm={12} lg={8} xl={6}>
-                <ReportCard g={g} kindColors={data.kindColors} quote={quotes.get(g.symbol)} />
+                <ReportCard g={g} kindColors={data.kindColors} quote={quotes.get(`${g.market}${g.symbol}`)} />
               </Col>
             ))}
           </Row>
         )}
-      </Spin>
+      </Spin>}
 
       {/* Pagination — flex-centered (textAlign doesn't center antd's flex Pagination) */}
-      {!!data && data.totalRuns > 0 && (
+      {!favoriteMode && !!data && data.totalRuns > 0 && (
         <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 8 }}>
           <Pagination
             current={data.page}

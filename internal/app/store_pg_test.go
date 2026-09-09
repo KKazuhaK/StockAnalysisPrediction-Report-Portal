@@ -339,3 +339,46 @@ func TestPostgresUsernameCaseGuards(t *testing.T) {
 		t.Errorf("CaseVariantUsernames() = %v, want [alice]", got)
 	}
 }
+
+// TestPostgresStockFavorites executes the transaction and window query on the production driver.
+// SQLite covers the behavior exhaustively in favorite_test.go; this catches placeholder, locking,
+// and ROW_NUMBER differences that can otherwise survive every local test.
+func TestPostgresStockFavorites(t *testing.T) {
+	st := pgStore(t, "user_stock_favorites", "users", "reports")
+	if err := st.UpsertUser(User{Username: "favorite-pg", PasswordHash: "h", Role: "user"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []FavoriteIdentity{{Market: "sh", Symbol: "600519"}, {Market: "hk", Symbol: "00700"}} {
+		if _, created, err := st.AddStockFavorite("favorite-pg", item.Market, item.Symbol); err != nil || !created {
+			t.Fatalf("add %+v: created=%v err=%v", item, created, err)
+		}
+	}
+	if _, created, err := st.AddStockFavorite("favorite-pg", "sh", "600519"); err != nil || created {
+		t.Fatalf("idempotent add: created=%v err=%v", created, err)
+	}
+	if err := st.ReorderStockFavorites("favorite-pg", []FavoriteIdentity{
+		{Market: "hk", Symbol: "00700"}, {Market: "sh", Symbol: "600519"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.StockFavorites("favorite-pg")
+	if len(got) != 2 || got[0].Key() != "hk00700" || got[1].Key() != "sh600519" {
+		t.Fatalf("ordered favorites = %+v", got)
+	}
+
+	if _, _, err := st.UpsertReport(Rep{Title: "Newest", Symbol: "600519", Name: "Moutai",
+		RType: "investment", Date: "2026-09-08", MD: "body"}); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := st.LatestReportsForFavoriteSymbols([]string{"600519"}, nil)
+	if err != nil || latest["600519"].Title != "Newest" {
+		t.Fatalf("latest report = %+v, err=%v", latest, err)
+	}
+
+	if err := st.DeleteUser("favorite-pg"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.StockFavorites("favorite-pg"); len(got) != 0 {
+		t.Fatalf("favorites survived account deletion: %+v", got)
+	}
+}

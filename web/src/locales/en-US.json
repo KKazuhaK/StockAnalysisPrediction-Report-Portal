@@ -1616,5 +1616,20 @@
   "queue.avoidingWindow": "Waiting outside preset windows",
   "queue.windowWaitHint": "Waiting for the blocked window to end; the run has not been cancelled.",
   "queue.normal": "Normal",
-  "queue.idle": "When idle"
+  "queue.idle": "When idle",
+  "err.favorite_bad_order": "The favorite order is invalid.",
+  "err.favorite_bad_symbol": "That is not a valid stock code.",
+  "err.favorite_limit": "You have reached the 500-stock favorite limit.",
+  "err.favorite_read_failed": "Could not load favorites.",
+  "err.favorite_set_changed": "Your favorites changed in another tab. Reload and try again.",
+  "err.favorite_write_failed": "Could not save favorites.",
+  "favorite.add": "Add to favorites",
+  "favorite.empty": "No favorite stocks yet",
+  "favorite.latestReport": "Latest report",
+  "favorite.loadFailed": "Could not load favorites",
+  "favorite.noReport": "No reports yet — open the quote view",
+  "favorite.remove": "Remove from favorites",
+  "favorite.reorder": "Drag to reorder",
+  "favorite.reports": "Reports",
+  "favorite.title": "Favorites"
 }

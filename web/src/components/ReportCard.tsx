@@ -10,6 +10,7 @@ import type { CardQuote } from '../lib/useHomeQuotes'
 // here would be a second money format in the portal, agreeing with the strip on 33.35 and disagreeing
 // with it on every seven-figure amount.
 import { fenToYuan, signedFenToYuan } from '../lib/money'
+import { FavoriteButton } from './FavoriteButton'
 
 // How tall the price line is, in CSS pixels, whether or not there is a price in it.
 //
@@ -77,11 +78,14 @@ export default function ReportCard({
             )}
           </div>
           {g.symbol && (
-            <Typography.Text
-              style={{ fontSize: 15, fontWeight: 500, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
-            >
-              {g.symbol}
-            </Typography.Text>
+            <Space size={2}>
+              <Typography.Text
+                style={{ fontSize: 15, fontWeight: 500, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
+              >
+                {g.symbol}
+              </Typography.Text>
+              {g.market && <FavoriteButton market={g.market} symbol={g.symbol} className="rp-card-favorite" />}
+            </Space>
           )}
         </Space>
 

@@ -4,6 +4,7 @@ import { PrefsProvider, usePrefs } from './prefs'
 import { AuthProvider, useAuth } from './auth'
 import { SiteProvider } from './site'
 import { AnnouncementsProvider } from './announcements'
+import { FavoritesProvider } from './favorites'
 import { lazyRetry } from './lib/lazyRetry'
 import AppLayout from './components/AppLayout'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -70,9 +71,9 @@ function Protected({ children }: { children: React.ReactNode }) {
   // key={user} so signing in as somebody else on a shared machine builds a fresh provider instead
   // of inheriting the previous account's items.
   return (
-    <AnnouncementsProvider key={user} user={user}>
-      {children}
-    </AnnouncementsProvider>
+    <FavoritesProvider key={user} user={user}>
+      <AnnouncementsProvider user={user}>{children}</AnnouncementsProvider>
+    </FavoritesProvider>
   )
 }
 

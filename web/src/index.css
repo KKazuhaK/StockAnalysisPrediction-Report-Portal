@@ -19,6 +19,23 @@ body {
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
+/* An unselected star stays quiet in a dense report grid until the card is inspected. Selected
+   favorites remain visible, and touch devices always show the control because they have no hover. */
+.rp-card-favorite {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.ant-card:hover .rp-card-favorite,
+.rp-card-favorite:focus-visible,
+.rp-card-favorite[aria-pressed='true'] {
+  opacity: 1;
+}
+@media (hover: none) {
+  .rp-card-favorite {
+    opacity: 1;
+  }
+}
+
 /* Desktop workbench launcher: secondary destinations open from one familiar app-grid
    control. The generous tile targets keep it easy to scan and use without adding more
    permanent buttons to the header. */

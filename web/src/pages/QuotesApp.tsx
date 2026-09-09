@@ -16,6 +16,7 @@ import {
   type QuoteRefreshAdvice,
 } from '../lib/quoteRefresh'
 import { startVisibleDeadline } from '../lib/visiblePoll'
+import { FavoriteButton } from '../components/FavoriteButton'
 
 // The Quotes app (/apps/quotes) — the one place in this portal where a chart filling the screen is
 // the CORRECT behaviour.
@@ -421,6 +422,7 @@ export default function QuotesApp() {
         <Typography.Text strong>{data?.name || symbol}</Typography.Text>
         {marketKey && <Tag data-testid="quote-market">{t(marketKey)}</Tag>}
         {isIndex && <Tag data-testid="quote-index">{t('quote.kind.index')}</Tag>}
+        {data && <FavoriteButton market={data.market} symbol={data.symbol} />}
       </Space>
     )
     body = (

@@ -50,6 +50,20 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }
 vi.mock('../auth', () => ({ useAuth: () => ({ can: () => true }) }))
 vi.mock('../site', () => ({ useSite: () => ({ title: 'Portal' }), SiteLogo: () => null }))
 vi.mock('../components/Omnibox', () => ({ default: () => null }))
+vi.mock('../favorites', () => ({
+  useFavorites: () => ({
+    items: [],
+    loaded: true,
+    loading: false,
+    error: null,
+    reordering: false,
+    ensureLoaded: vi.fn(),
+    isFavorite: () => false,
+    isBusy: () => false,
+    toggle: vi.fn(),
+    reorder: vi.fn(),
+  }),
+}))
 // ReportCard is deliberately NOT mocked: the price line, its formatting and its colour are the
 // thing under test here, and a stub standing in for the card would assert only that a prop was
 // passed to it.
@@ -83,6 +97,7 @@ function group(key: string, symbol: string): Group {
   return {
     key,
     symbol,
+    market: symbol.startsWith('6') ? 'sh' : symbol ? 'sz' : undefined,
     name: symbol ? `N${symbol}` : `T${key}`,
     title: symbol ? undefined : `T${key}`,
     date: '2026-09-01',
@@ -97,8 +112,11 @@ function group(key: string, symbol: string): Group {
 // A batch answer, in the keyed-by-symbol shape the endpoint sends. `last` and `change` are 分.
 function quoteBody(rows: Record<string, [number, number, string]>) {
   const quotes: Record<string, unknown> = {}
-  for (const [sym, [last, change, changePct]] of Object.entries(rows)) {
-    quotes[sym] = { symbol: sym, last, change, changePct }
+  for (const [input, [last, change, changePct]] of Object.entries(rows)) {
+    const symbol = input.replace(/^(sh|sz|bj|hk|us)/, '')
+    const market = input.slice(0, input.length - symbol.length) || (symbol.startsWith('6') ? 'sh' : 'sz')
+    const key = `${market}${symbol}`
+    quotes[key] = { symbol, market, name: `N${symbol}`, currency: 'CNY', kind: 'stock', last, change, changePct }
   }
   return { quotes }
 }
@@ -203,6 +221,17 @@ describe('the version filter', () => {
   })
 })
 
+describe('the home content mode', () => {
+  it('shows favorites as a content view without sending the view flag to the report API', async () => {
+    renderHome('/?view=favorites')
+
+    expect(await screen.findByText('favorite.empty')).toBeTruthy()
+    expect(screen.queryByText('home.advanced')).toBeNull()
+    await waitFor(() => expect(state.urls.some((url) => url.startsWith('/api/home'))).toBe(true))
+    expect(state.urls.find((url) => url.startsWith('/api/home'))).not.toContain('view=')
+  })
+})
+
 describe('the live price on a card', () => {
   it('does not hold the feed back: the cards are readable while the batch is still in flight', async () => {
     state.resp = { ...base, groups: [group('a', '600519'), group('b', '')], totalRuns: 2 }
@@ -234,9 +263,9 @@ describe('the live price on a card', () => {
     renderHome()
 
     await waitFor(() => expect(state.quotes).toHaveLength(1))
-    expect(decodeURIComponent(state.quotes[0].url)).toContain('symbols=600519,000001')
+    expect(decodeURIComponent(state.quotes[0].url)).toContain('symbols=sh:600519,sz:000001')
 
-    await settle(state.quotes[0], quoteBody({ '600519': [3335, 12, '0.12'] }))
+    await settle(state.quotes[0], quoteBody({ sh600519: [3335, 12, '0.12'] }))
     await waitFor(() => expect(screen.getAllByTestId('card-quote')).toHaveLength(2))
 
     // One request for four cards, and still one after the answer landed: a card does not fetch its
@@ -253,7 +282,7 @@ describe('the live price on a card', () => {
     // reaches the browser, so the only recomputations available to a card are 12/3335 (0.36%) and
     // 12/3323 (0.36%) — neither of which is 0.12. If 0.12% renders, it was carried verbatim, which
     // is the ex-rights rule of ADR 0028 §4 holding on this surface too.
-    await settle(state.quotes[0], quoteBody({ '600519': [3335, 12, '0.12'] }))
+    await settle(state.quotes[0], quoteBody({ sh600519: [3335, 12, '0.12'] }))
 
     const line = await screen.findByTestId('card-quote-line')
     expect(line.textContent).toBe('33.35+0.120.12%')
@@ -433,10 +462,10 @@ describe('the live price on a card', () => {
     const asked = decodeURIComponent(state.quotes[0].url).replace('/api/quotes?symbols=', '').split(',')
     expect(asked).toHaveLength(50)
     // The first 50 in first-appearance order: the tail is dropped, not a sample of the middle.
-    expect(asked[0]).toBe('600000')
-    expect(asked[49]).toBe('600049')
-    expect(asked).not.toContain('600050')
-    expect(asked).not.toContain('600059')
+    expect(asked[0]).toBe('sh:600000')
+    expect(asked[49]).toBe('sh:600049')
+    expect(asked).not.toContain('sh:600050')
+    expect(asked).not.toContain('sh:600059')
 
     // The 50 that were asked about still get their prices; the tail renders exactly as an unquoted
     // card already does.
@@ -476,9 +505,9 @@ describe('the live price on a card', () => {
     // out of a string and a NaN in the money column. Unreadable and absent are the same thing.
     await settle(state.quotes[0], {
       quotes: {
-        '600519': { symbol: '600519', last: 3335, change: 12, changePct: '0.12' },
-        '000001': { symbol: '000001', last: '1180', change: -25, changePct: '-2.07' },
-        '000002': { symbol: '000002', last: 1180, change: -25, changePct: -2.07 },
+        sh600519: { symbol: '600519', market: 'sh', name: 'N600519', currency: 'CNY', kind: 'stock', last: 3335, change: 12, changePct: '0.12' },
+        sz000001: { symbol: '000001', market: 'sz', name: 'N000001', currency: 'CNY', kind: 'stock', last: '1180', change: -25, changePct: '-2.07' },
+        sz000002: { symbol: '000002', market: 'sz', name: 'N000002', currency: 'CNY', kind: 'stock', last: 1180, change: -25, changePct: -2.07 },
       },
     })
 

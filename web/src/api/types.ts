@@ -253,6 +253,7 @@ export interface GroupMember {
 export interface Group {
   key: string
   symbol: string
+  market?: QuoteResp['market']
   name: string // as-of company name (snapshot)
   curName?: string // current company name; differs after rename / backdoor listing
   title?: string // fallback display title for thematic reports with no stock code/name
@@ -263,6 +264,26 @@ export interface Group {
   src: string // "new" | "old"
   n: number
   members: GroupMember[]
+}
+
+export interface FavoriteReport {
+  id: number
+  name: string
+  title: string
+  date: string
+}
+
+export interface FavoriteItem {
+  market: QuoteResp['market']
+  symbol: string
+  key: string
+  ord: number
+  report?: FavoriteReport
+}
+
+export interface FavoritesResp {
+  items: FavoriteItem[]
+  limit: number
 }
 
 export interface HomeResp {
@@ -297,6 +318,7 @@ export interface SubTab {
 
 export interface StockResp {
   symbol: string
+  market?: QuoteResp['market']
   name: string
   selDate: string
   selKind: string

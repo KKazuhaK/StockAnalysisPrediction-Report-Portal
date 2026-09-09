@@ -449,7 +449,7 @@ func groupsJSON(gs []Group) []map[string]any {
 			members = append(members, map[string]any{"id": m.ID, "rtype": m.RType, "kind": repKind(m), "title": m.Title})
 		}
 		out = append(out, map[string]any{
-			"key": g.Key, "symbol": g.Symbol, "name": g.Name, "curName": g.CurName, "title": g.Title, "date": g.Date,
+			"key": g.Key, "symbol": g.Symbol, "market": marketPrefix(g.Symbol), "name": g.Name, "curName": g.CurName, "title": g.Title, "date": g.Date,
 			"time": g.Time, "kind": g.Kind, "kinds": g.Kinds, "src": g.Src, "n": g.N, "members": members,
 		})
 	}
@@ -529,7 +529,7 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 		subtabs = append(subtabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType})
 	}
 	writeJSON(w, map[string]any{
-		"symbol": symbol, "name": s.names.Get(symbol),
+		"symbol": symbol, "market": marketPrefix(symbol), "name": s.names.Get(symbol),
 		"selDate": selDate, "selKind": selKind, "selId": selID,
 		"timeline": timeline, "kinds": kinds, "subtabs": subtabs,
 		"rep": repJSON(rep, s.names.Get),

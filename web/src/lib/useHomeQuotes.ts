@@ -32,6 +32,10 @@ import { startVisibleDeadline } from './visiblePoll'
  */
 export interface CardQuote {
   symbol: string
+  market: string
+  name: string
+  currency: string
+  kind: string
   /** Last traded price, in 分. */
   last: number
   /** Signed move against the vendor's previous close, in 分. The colour's sign comes from HERE. */
@@ -72,9 +76,10 @@ const NO_QUOTES: ReadonlyMap<string, CardQuote> = new Map()
  * The endpoint promises ONE per-symbol shape: `apiQuotes` maps every entry through `quoteCardOf`,
  * which flattens the price fields onto a `QuoteCard` precisely so nothing on the home page can
  * start depending on a field that endpoint is not promising to serve. So this reads that shape and
- * nothing else — the symbol arrives as the KEY of a keyed body, and is taken from the entry only
- * when it carries one. Anything past that — a missing price, a number where a string belongs, a
- * per-symbol failure the server encoded as an object of its own — returns null and that symbol
+ * nothing else — the canonical market-qualified identity arrives as the KEY of a keyed body, while
+ * the unqualified display code stays in the entry. Anything past that — a missing price, a number
+ * where a string belongs, or a per-symbol failure the server encoded as an object of its own —
+ * returns null and that symbol
  * simply has no quote. This is the decoration's contract with the page: unreadable and absent are
  * the same thing, and neither throws during render.
  */
@@ -82,14 +87,15 @@ function readOne(key: string, v: unknown): CardQuote | null {
   if (!v || typeof v !== 'object') return null
   const o = v as Record<string, unknown>
   const symbol = typeof o.symbol === 'string' && o.symbol ? o.symbol : key
-  const { last, change, changePct } = o
+  const { last, change, changePct, market, name, currency, kind } = o
   if (!symbol) return null
   if (typeof last !== 'number' || typeof change !== 'number' || typeof changePct !== 'string') return null
-  return { symbol, last, change, changePct }
+  if (typeof market !== 'string' || typeof name !== 'string' || typeof currency !== 'string' || typeof kind !== 'string') return null
+  return { symbol, market, name, currency, kind, last, change, changePct }
 }
 
 /**
- * The batch body as a symbol → quote map.
+ * The batch body as a canonical market-qualified identity → quote map.
  *
  * The single place that decides what counts as a quote, and the reason a body of the wrong shape
  * leaves the cards alone instead of taking the feed down with a read off undefined. An array is
@@ -103,7 +109,9 @@ function readHomeQuotes(body: unknown): Map<string, CardQuote> {
   if (!quotes || typeof quotes !== 'object' || Array.isArray(quotes)) return out
   for (const [k, v] of Object.entries(quotes as Record<string, unknown>)) {
     const one = readOne(k, v)
-    if (one) out.set(one.symbol, one)
+    // The response key is the canonical vendor symbol. A bare code is ambiguous across markets:
+    // sh000001 is the Shanghai index while sz000001 is a Shenzhen stock.
+    if (one) out.set(k, one)
   }
   return out
 }
