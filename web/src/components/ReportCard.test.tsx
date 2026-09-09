@@ -1,11 +1,11 @@
 import { App } from 'antd'
-import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { MemoryRouter, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Group } from '../api/types'
 import ReportCard from './ReportCard'
 
-const favoriteState = vi.hoisted(() => ({ active: false }))
+const favoriteState = vi.hoisted(() => ({ active: false, toggle: vi.fn().mockResolvedValue(undefined) }))
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('../api/client', () => ({ errText: (cause: unknown) => String(cause) }))
@@ -18,7 +18,7 @@ vi.mock('../favorites', () => ({
     ensureLoaded: vi.fn(),
     isFavorite: () => favoriteState.active,
     isBusy: () => false,
-    toggle: vi.fn().mockResolvedValue(undefined),
+    toggle: favoriteState.toggle,
   }),
 }))
 
@@ -31,23 +31,35 @@ const report: Group = {
   kind: 'Decision',
   kinds: ['Decision'],
   src: 'new',
-  n: 1,
-  members: [],
+  n: 4,
+  members: [
+    { id: 1, rtype: 'Decision', kind: 'Decision', title: 'Preview report one' },
+    { id: 2, rtype: 'Investment', kind: 'Investment', title: 'Preview report two' },
+    { id: 3, rtype: 'Research', kind: 'Research', title: 'Preview report three' },
+    { id: 4, rtype: 'Technical', kind: 'Technical', title: 'Preview report four' },
+  ],
 }
 
-function mount() {
+function mount(g: Group = report) {
   return render(
     <App>
       <MemoryRouter>
-        <ReportCard g={report} />
+        <ReportCard g={g} />
+        <LocationReadout />
       </MemoryRouter>
     </App>,
   )
 }
 
+function LocationReadout() {
+  const location = useLocation()
+  return <output data-testid="location">{location.pathname}{location.search}</output>
+}
+
 describe('ReportCard favorite action', () => {
   beforeEach(() => {
     favoriteState.active = false
+    favoriteState.toggle.mockClear()
   })
 
   it('keeps the symbol and favorite in a dedicated trailing action slot', () => {
@@ -58,5 +70,28 @@ describe('ReportCard favorite action', () => {
     expect(slot).not.toBeNull()
     expect(slot?.textContent).toContain(report.symbol)
     expect(button.classList).toContain('rp-card-favorite')
+  })
+
+  it('opens a delayed report preview with three summaries and quick actions', async () => {
+    mount()
+
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Test stock' }))
+    expect(screen.queryByTestId('report-card-preview')).toBeNull()
+
+    const preview = await screen.findByTestId('report-card-preview', {}, { timeout: 2000 })
+    expect(within(preview).getByText('Preview report one')).toBeTruthy()
+    expect(within(preview).getByText('Preview report two')).toBeTruthy()
+    expect(within(preview).getByText('Preview report three')).toBeTruthy()
+    expect(screen.queryByText('Preview report four')).toBeNull()
+    expect(within(preview).getByText('+1')).toBeTruthy()
+    const viewReport = within(preview).getByRole('button', { name: 'queue.viewReport' })
+    expect(viewReport).toBeTruthy()
+
+    fireEvent.click(within(preview).getByRole('button', { name: 'favorite.add' }))
+    expect(favoriteState.toggle).toHaveBeenCalledWith('sh', '603075')
+
+    fireEvent.blur(screen.getByRole('button', { name: 'Test stock' }))
+    fireEvent.click(viewReport)
+    expect(screen.getByTestId('location').textContent).toBe('/stock/603075?date=2026-09-08')
   })
 })

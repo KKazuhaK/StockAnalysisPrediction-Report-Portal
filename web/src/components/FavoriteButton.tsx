@@ -10,10 +10,14 @@ export function FavoriteButton({
   market,
   symbol,
   className,
+  showLabel = false,
+  size,
 }: {
   market: QuoteResp['market']
   symbol: string
   className?: string
+  showLabel?: boolean
+  size?: 'small' | 'middle' | 'large'
 }) {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -35,7 +39,8 @@ export function FavoriteButton({
   return (
     <Button
       type="text"
-      shape="circle"
+      shape={showLabel ? undefined : 'circle'}
+      size={size}
       className={className}
       aria-label={label}
       aria-pressed={active}
@@ -44,6 +49,8 @@ export function FavoriteButton({
       loading={busy || (!favorites.loaded && favorites.loading)}
       icon={active ? <StarFilled style={{ color: token.colorWarning }} /> : <StarOutlined />}
       onClick={click}
-    />
+    >
+      {showLabel ? label : null}
+    </Button>
   )
 }

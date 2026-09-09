@@ -408,6 +408,7 @@
   "captcha.providerUnsupported": "本門戶配置了第三方驗證碼服務，但當前版本沒有內建它的指令碼。請管理員改用內建圖形驗證碼。",
   "captcha.refresh": "換一張",
   "card.now": "現",
+  "card.quickPreview": "快速預覽",
   "card.reports": "篇",
   "chat.backToBottom": "回到底部",
   "chat.busy": "助手繁忙，同時進行的對話過多，請稍後再試。",

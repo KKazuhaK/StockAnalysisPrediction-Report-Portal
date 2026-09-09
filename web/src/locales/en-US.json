@@ -408,6 +408,7 @@
   "captcha.providerUnsupported": "This portal is configured to use a hosted captcha provider, which this build does not embed. Ask an administrator to switch to the built-in image captcha.",
   "captcha.refresh": "Get a new one",
   "card.now": "now",
+  "card.quickPreview": "Quick preview",
   "card.reports": "docs",
   "chat.backToBottom": "Back to bottom",
   "chat.busy": "The assistant is busy — too many chats in progress. Try again in a moment.",
