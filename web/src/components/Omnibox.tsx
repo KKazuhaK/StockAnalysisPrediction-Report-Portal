@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { AutoComplete, Grid, Input, Space, Tag, Typography } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router'
@@ -11,7 +12,15 @@ import type { SymbolInfo } from '../api/types'
 // reports). Clicking a suggestion opens that stock's reports; pressing Enter runs a
 // full search over every report. Both land on the home list (?q=…), which renders
 // new and legacy reports alike.
-export default function Omnibox({ size = 'large', initial = '' }: { size?: 'large' | 'middle'; initial?: string }) {
+export default function Omnibox({
+  size = 'large',
+  initial = '',
+  suffix,
+}: {
+  size?: 'large' | 'middle'
+  initial?: string
+  suffix?: ReactNode
+}) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const mobile = !Grid.useBreakpoint().md
@@ -85,6 +94,7 @@ export default function Omnibox({ size = 'large', initial = '' }: { size?: 'larg
         size={size}
         allowClear
         prefix={<SearchOutlined />}
+        suffix={suffix}
         placeholder={t('home.searchPlaceholder')}
         onPressEnter={(e) => search((e.target as HTMLInputElement).value)}
       />

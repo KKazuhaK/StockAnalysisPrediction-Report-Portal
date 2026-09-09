@@ -20,18 +20,20 @@ body {
 }
 
 .rp-home-search-row {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
   width: min(780px, 100%);
   margin: 0 auto;
 }
 .rp-home-search-row__input {
-  min-width: 0;
-  flex: 1;
+  width: 100%;
 }
-.rp-home-search-row > .ant-badge {
-  flex-shrink: 0;
+.rp-home-search-row__advanced.ant-btn {
+  height: 30px;
+  padding-inline: 10px 6px;
+  color: var(--ant-color-text-secondary);
+}
+.rp-home-search-row__advanced.ant-btn:hover,
+.rp-home-search-row__advanced.ant-btn:focus-visible {
+  color: var(--ant-color-primary);
 }
 .rp-home-advanced-popover {
   width: min(620px, calc(100vw - 48px));

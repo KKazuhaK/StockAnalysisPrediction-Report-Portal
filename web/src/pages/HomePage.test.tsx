@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
+import type { ReactNode } from 'react'
 import HomePage from './HomePage'
 import type { Group, HomeResp } from '../api/types'
 
@@ -49,7 +50,9 @@ vi.mock('../api/client', () => ({
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
 vi.mock('../auth', () => ({ useAuth: () => ({ can: () => true }) }))
 vi.mock('../site', () => ({ useSite: () => ({ title: 'Portal' }), SiteLogo: () => null }))
-vi.mock('../components/Omnibox', () => ({ default: () => <div data-testid="omnibox" /> }))
+vi.mock('../components/Omnibox', () => ({
+  default: ({ suffix }: { suffix?: ReactNode }) => <div data-testid="omnibox">{suffix}</div>,
+}))
 vi.mock('../favorites', () => ({
   useFavorites: () => ({
     items: [],
@@ -156,7 +159,7 @@ function renderHome(path = '/') {
   )
 }
 
-// The filters live in the popover beside the main search box.
+// The filters live in the popover opened from the main search field's trailing control.
 async function openFilters() {
   await userEvent.click(await screen.findByText('home.advanced'))
 }
@@ -172,14 +175,14 @@ afterEach(() => {
 })
 
 describe('the advanced filters', () => {
-  it('opens from the main search row without reserving a separate content row', async () => {
+  it('opens from inside the main search field without reserving separate width', async () => {
     renderHome()
     await waitFor(() => expect(state.urls.length).toBeGreaterThan(0))
 
     const trigger = await screen.findByRole('button', { name: 'home.advanced' })
     const searchRow = trigger.closest('.rp-home-search-row') as HTMLElement
     expect(searchRow).toBeTruthy()
-    expect(within(searchRow).getByTestId('omnibox')).toBeTruthy()
+    expect(within(screen.getByTestId('omnibox')).getByRole('button', { name: 'home.advanced' })).toBe(trigger)
     expect(document.querySelector('.ant-collapse')).toBeNull()
 
     await userEvent.click(trigger)

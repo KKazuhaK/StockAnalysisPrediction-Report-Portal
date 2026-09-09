@@ -326,31 +326,35 @@ export default function HomePage() {
         </Typography.Title>
         <div className="rp-home-search-row">
           <div className="rp-home-search-row__input">
-            <Omnibox initial={params.q} />
-          </div>
-          {!favoriteMode && (
-            <Popover
-              trigger="click"
-              placement="bottomRight"
-              open={advancedOpen}
-              onOpenChange={setAdvancedOpen}
-              destroyOnHidden
-              title={t('home.advanced')}
-              content={advancedSearch}
-            >
-              <Badge count={advancedFilterCount} size="small">
-                <Button
-                  size="large"
-                  icon={<FilterOutlined />}
-                  aria-label={advancedFilterCount ? `${t('home.advanced')} (${advancedFilterCount})` : t('home.advanced')}
-                  aria-expanded={advancedOpen}
+            <Omnibox
+              initial={params.q}
+              suffix={!favoriteMode ? (
+                <Popover
+                  trigger="click"
+                  placement="bottomRight"
+                  open={advancedOpen}
+                  onOpenChange={setAdvancedOpen}
+                  destroyOnHidden
                   title={t('home.advanced')}
+                  content={advancedSearch}
                 >
-                  <span className="rp-home-search-row__advanced-label">{t('home.advanced')}</span>
-                </Button>
-              </Badge>
-            </Popover>
-          )}
+                  <Badge count={advancedFilterCount} size="small">
+                    <Button
+                      type="text"
+                      size="small"
+                      className="rp-home-search-row__advanced"
+                      icon={<FilterOutlined />}
+                      aria-label={advancedFilterCount ? `${t('home.advanced')} (${advancedFilterCount})` : t('home.advanced')}
+                      aria-expanded={advancedOpen}
+                      title={t('home.advanced')}
+                    >
+                      <span className="rp-home-search-row__advanced-label">{t('home.advanced')}</span>
+                    </Button>
+                  </Badge>
+                </Popover>
+              ) : undefined}
+            />
+          </div>
         </div>
       </div>
 
