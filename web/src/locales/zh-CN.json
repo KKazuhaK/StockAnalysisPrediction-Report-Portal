@@ -1618,7 +1618,7 @@
   "queue.source.single": "单个执行",
   "queue.avoidWindow": "避开预设时段",
   "queue.avoidingWindow": "避开时段中",
-  "queue.windowWaitHint": "等待避开时段结束后进入队列，任务未取消。",
+  "queue.windowWaitHint": "等待避开时段结束后继续执行，任务未取消。",
   "queue.normal": "普通",
   "queue.idle": "空闲时运行",
   "err.favorite_bad_order": "收藏排序无效。",

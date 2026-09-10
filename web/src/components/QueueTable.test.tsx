@@ -89,8 +89,16 @@ describe('QueueTable', () => {
     mount()
     expect(await screen.findByText('queue.avoidingWindow')).toBeTruthy()
     expect(screen.getByText('queue.mode.preset')).toBeTruthy()
-    expect(screen.getByText('queue.avoidWindow')).toBeTruthy()
+    expect(screen.queryByText('queue.avoidWindow')).toBeNull()
     expect(screen.queryByText('batch.aheadNext')).toBeNull()
+  })
+
+  it('replaces running with the preset-wait status between batch rows', async () => {
+    store.jobs = [job({ status: 'running', run_mode: 'preset', avoid_window: true, window_blocked: true, succeeded: 1, total: 2 })]
+    mount()
+    expect(await screen.findByText('queue.avoidingWindow')).toBeTruthy()
+    expect(screen.queryByText('batch.status.running')).toBeNull()
+    expect(screen.queryByText('queue.avoidWindow')).toBeNull()
   })
 
   it('keeps wrapped execution-mode tags visually separated', async () => {

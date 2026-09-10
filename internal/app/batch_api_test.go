@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
 	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
@@ -240,6 +241,56 @@ func TestQueuePresetPresentationFromStore(t *testing.T) {
 	summary := post(t, s.apiBatchQueue, "{}")
 	if summary["waiting"] != float64(0) || summary["scheduled"] != float64(1) {
 		t.Fatalf("blocked run missing from summary: %v", summary)
+	}
+}
+
+func TestRunningPresetWaitIsNotPresentedAsRunning(t *testing.T) {
+	s := batchServer(t)
+	s.st.SetSetting("timezone", "UTC")
+	makeRunningJob := func() int64 {
+		id, err := s.st.CreateBatchJob(1, 1, 0, "admin", []map[string]string{{"symbol": "300001"}, {"symbol": "300002"}}, "50")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	id := makeRunningJob()
+	snapshot := `{"freq":"daily","intervals":[{"start":{"time":"00:00"},"stop":{"time":"00:00"}}],"invert":true}`
+	if err := s.st.SetJobWindow(id, "", snapshot); err != nil {
+		t.Fatal(err)
+	}
+	items := s.st.BatchJobItems(id)
+	if !s.st.MarkItemRunning(items[0].ID) || !s.st.MarkJobRunning(id) {
+		t.Fatal("failed to seed the admitted first row")
+	}
+	if err := s.st.FinishItem(items[0].ID, batch.Ok, 1, "run-1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	activeID := makeRunningJob()
+	if err := s.st.SetJobWindow(activeID, "", snapshot); err != nil {
+		t.Fatal(err)
+	}
+	activeItems := s.st.BatchJobItems(activeID)
+	if !s.st.MarkItemRunning(activeItems[0].ID) || !s.st.MarkJobRunning(activeID) {
+		t.Fatal("failed to seed the active row")
+	}
+
+	response := post(t, s.apiBatchJobs, "{}")
+	jobs := map[int64]map[string]any{}
+	for _, raw := range response["jobs"].([]any) {
+		job := raw.(map[string]any)
+		jobs[int64(job["id"].(float64))] = job
+	}
+	if jobs[id]["status"] != "running" || jobs[id]["window_blocked"] != true {
+		t.Fatalf("preset wait presentation = %v, want stored running status plus window_blocked", jobs[id])
+	}
+	if _, blocked := jobs[activeID]["window_blocked"]; blocked {
+		t.Fatalf("active preset row presented as waiting: %v", jobs[activeID])
+	}
+	summary := post(t, s.apiBatchQueue, "{}")
+	if summary["running"] != float64(1) || summary["scheduled"] != float64(1) {
+		t.Fatalf("preset wait summary = %v, want one active and one scheduled", summary)
 	}
 }
 

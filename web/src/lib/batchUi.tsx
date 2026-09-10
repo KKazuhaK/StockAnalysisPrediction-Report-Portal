@@ -69,13 +69,12 @@ export function executionTags(t: TFunction, j: BatchJob) {
   return <>
     <Tag color={sourceColor}>{t(`queue.source.${surface === 'run' ? 'single' : surface}`)}</Tag>
     <Tag>{t(`queue.mode.${mode}`)}</Tag>
-    {j.avoid_window && <Tag color="purple">{t('queue.avoidWindow')}</Tag>}
     <Tag color={isUrgent(j.priority) ? 'red' : undefined}>{t(isUrgent(j.priority) ? 'batch.priority.urgent' : j.priority === 'idle' ? 'queue.idle' : 'queue.normal')}</Tag>
   </>
 }
 
 export function queueStatusTag(t: TFunction, j: BatchJob) {
-  if (j.status === 'queued' && j.window_blocked) return <Tag color="purple">{t('queue.avoidingWindow')}</Tag>
+  if (j.window_blocked) return <Tag color="purple">{t('queue.avoidingWindow')}</Tag>
   if (j.status === 'queued' && j.scheduled) return <Tag color="purple" title={j.run_at}>{t('queue.scheduled')}</Tag>
   return statusTag(t, j.status)
 }

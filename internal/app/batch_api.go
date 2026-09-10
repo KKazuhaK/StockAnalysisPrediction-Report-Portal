@@ -432,6 +432,16 @@ func jobSurface(j BatchJob, recorded map[int64]string) string {
 	return SurfaceRun
 }
 
+// jobWindowBlocked reports a real preset wait rather than the job's configured mode. A queued
+// inverted-preset job is blocked outright. A partially completed batch is blocked only after its
+// in-flight rows have drained and queued rows remain; rows already executing are non-preemptive.
+func (s *Server) jobWindowBlocked(j BatchJob, now time.Time, queuedRows, runningRows int) bool {
+	if !invertBlocksNow(j.RunPreset, now, s.panelLocation()) {
+		return false
+	}
+	return j.Status == "queued" || (j.Status == "running" && queuedRows > 0 && runningRows == 0)
+}
+
 // normalizeRunAt validates a one-shot schedule time and returns it in the canonical
 // local "2006-01-02 15:04:05" basis (the same the aging clock uses). It accepts that
 // format or RFC3339, so the client can send either. ok=false on an unparseable value.
@@ -539,17 +549,22 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 		m := jobJSON(j)
 		m["surface"] = jobSurface(j, surfaces)
 		m["inputs"] = queueInputsPreview(firstInputs[j.ID]) // first row's inputs, bounded — see queueInputsPreviewMax
+		queuedRows, runningRows := 0, 0
 		// A running job's stored counts are only written at finish; fill live counts
 		// so the console shows real-time progress.
 		if j.Status == "running" || j.Status == "cancelling" {
-			_, _, succeeded, partial, failed, cancelled := s.st.LiveJobCounts(j.ID)
+			var succeeded, partial, failed, cancelled int
+			queuedRows, runningRows, succeeded, partial, failed, cancelled = s.st.LiveJobCounts(j.ID)
 			m["succeeded"], m["partial"], m["failed"], m["cancelled"] = succeeded, partial, failed, cancelled
+		}
+		windowBlocked := s.jobWindowBlocked(j, now, queuedRows, runningRows)
+		if windowBlocked {
+			m["window_blocked"] = true
 		}
 		if j.Status == "queued" {
 			// A deferred job is scheduled, not waiting; flag it so the UI can
 			// distinguish, and don't show an ahead count for it.
-			if invertBlocksNow(j.RunPreset, now, s.panelLocation()) {
-				m["window_blocked"] = true
+			if windowBlocked {
 				m["scheduled"] = true
 			} else if runAtDue(j.RunAt, now) {
 				m["ahead"] = queue.Ahead(itemByID(waiting, j.ID), waiting)
@@ -792,6 +807,9 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 	_, inProc := s.jobRuns.Load(id) // a job with an active run scope is executing here
 	m := jobJSON(job)
 	m["surface"] = jobSurface(job, s.st.JobSurfaces([]int64{id}))
+	if s.jobWindowBlocked(job, time.Now(), queued, running) {
+		m["window_blocked"] = true
+	}
 	if job.Status == "queued" {
 		waiting := s.queuedItems()
 		m["ahead"] = queue.Ahead(itemByID(waiting, id), waiting)
@@ -975,20 +993,32 @@ func (s *Server) apiBatchJobReprioritize(w http.ResponseWriter, r *http.Request,
 }
 
 // apiBatchQueue is a lightweight queue summary for the home banner + drawer:
-// waiting (due but not yet admitted), running, scheduled (定时, not yet due), and
-// the concurrency budget. Not-yet-due jobs count as scheduled, never as waiting.
+// waiting (due but not yet admitted), actively running, time/window deferred, and the
+// concurrency budget. A running batch parked between rows by an inverted preset is deferred,
+// because no work is executing and presenting it as running would be misleading.
 func (s *Server) apiBatchQueue(w http.ResponseWriter, r *http.Request, user string) {
 	now := time.Now()
 	scheduled := 0
-	for _, j := range s.st.QueuedJobs() {
-		if !runAtDue(j.RunAt, now) || invertBlocksNow(j.RunPreset, now, s.panelLocation()) {
+	blockedRunning := 0
+	loc := s.panelLocation()
+	for _, j := range s.st.SchedulableJobs() {
+		if j.Status == "queued" && (!runAtDue(j.RunAt, now) || invertBlocksNow(j.RunPreset, now, loc)) {
 			scheduled++
+		} else if j.Status == "running" && j.runningItems == 0 && j.liveItems > 0 && invertBlocksNow(j.RunPreset, now, loc) {
+			// The parent job remains "running" in storage after its first row starts, but between
+			// rows an inverted preset can park it. Count that real wait as scheduled, not running.
+			scheduled++
+			blockedRunning++
 		}
+	}
+	running := s.st.RunningJobCount() - blockedRunning
+	if running < 0 {
+		running = 0
 	}
 	// Polled by the header badge and by every open queue view; unchanged is the normal answer.
 	writeJSONIfChanged(w, r, map[string]any{
 		"waiting":      len(s.queuedItems()), // due, awaiting admission (excludes not-yet-due)
-		"running":      s.st.RunningJobCount(),
+		"running":      running,
 		"running_rows": s.st.RunningItemCount(), // concurrent runs (rows) — what the run cap governs
 		"scheduled":    scheduled,
 		"budget":       s.batchBudget(),
