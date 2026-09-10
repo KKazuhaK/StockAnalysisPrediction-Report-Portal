@@ -115,7 +115,7 @@ func TestV1IngestStampsOwnerFromToken(t *testing.T) {
 	}
 
 	tok := s.mintOwnerToken(55, "asker")
-	rec := ingest(`{"symbol":"300750","date":"2026-07-24","subtype":"val","owner_token":"` + tok + `"}`)
+	rec := ingest(`{"symbol":"300750","date":"2026-07-24","subtype":"val","body_md":"x","owner_token":"` + tok + `"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ingest with token: code %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -124,13 +124,13 @@ func TestV1IngestStampsOwnerFromToken(t *testing.T) {
 	}
 
 	// No token → unattributed.
-	rec = ingest(`{"symbol":"000001","date":"2026-07-24","subtype":"val"}`)
+	rec = ingest(`{"symbol":"000001","date":"2026-07-24","subtype":"val","body_md":"x"}`)
 	if ou, ok := reportOwner(t, s.st, idOf(rec)); ok {
 		t.Fatalf("owner without token = %d, want NULL/unattributed", ou)
 	}
 
 	// Tampered token → unattributed (never trust a bad token).
-	rec = ingest(`{"symbol":"600000","date":"2026-07-24","subtype":"val","owner_token":"garbage.sig"}`)
+	rec = ingest(`{"symbol":"600000","date":"2026-07-24","subtype":"val","body_md":"x","owner_token":"garbage.sig"}`)
 	if ou, ok := reportOwner(t, s.st, idOf(rec)); ok {
 		t.Fatalf("owner with tampered token = %d, want NULL", ou)
 	}

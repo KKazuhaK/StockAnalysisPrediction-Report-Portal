@@ -44,13 +44,13 @@ func TestV1IngestStampsRealTime(t *testing.T) {
 	}
 
 	// valid RFC3339 client time → honored verbatim
-	ingest(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总","time":"2026-07-02T01:02:03Z"}`)
+	ingest(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总","time":"2026-07-02T01:02:03Z","body_md":"x"}`)
 	if got := timeOf("300750", "2026-07-02", "汇总"); got != "2026-07-02T01:02:03Z" {
 		t.Errorf("valid client time not honored: %q", got)
 	}
 
 	// invalid client time (date-only) → ignored, server stamps a real instant
-	ingest(`{"symbol":"000001","date":"2026-07-02","subtype":"汇总","time":"2026-07-02"}`)
+	ingest(`{"symbol":"000001","date":"2026-07-02","subtype":"汇总","time":"2026-07-02","body_md":"x"}`)
 	if got := timeOf("000001", "2026-07-02", "汇总"); len(got) == 10 || !strings.HasSuffix(got, "Z") {
 		t.Errorf("invalid client time should be replaced by a server instant, got %q", got)
 	}

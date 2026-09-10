@@ -91,7 +91,7 @@ func TestV1IngestContract(t *testing.T) {
 		t.Errorf("ingest body = %v, want ok:true created:true id:<positive number>", m)
 	}
 	// re-ingest same identity (title included — it is part of it) → created:false
-	if m := decode(do(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总","title":"t"}`, "Bearer tok-all")); m["created"] != false {
+	if m := decode(do(`{"symbol":"300750","date":"2026-07-02","subtype":"汇总","title":"t","body_md":"updated"}`, "Bearer tok-all")); m["created"] != false {
 		t.Errorf("re-ingest created = %v, want false", m["created"])
 	}
 
@@ -104,6 +104,57 @@ func TestV1IngestContract(t *testing.T) {
 	rec = do(`{"symbol":"300750","date":"2026-7-2","subtype":"汇总"}`, "Bearer tok-all")
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("bad-date status=%d, want 400", rec.Code)
+	}
+}
+
+func TestV1IngestRejectsBlankBodiesWithoutOverwriting(t *testing.T) {
+	s := newV1Server(t)
+	post := func(body string) (*httptest.ResponseRecorder, map[string]any) {
+		req := httptest.NewRequest("POST", "/api/v1/reports", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer tok-all")
+		rec := httptest.NewRecorder()
+		s.v1Ingest(rec, req)
+		var response map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("response not JSON: %q", rec.Body.String())
+		}
+		return rec, response
+	}
+	assertBodyError := func(rec *httptest.ResponseRecorder, response map[string]any) {
+		t.Helper()
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("blank-body status=%d body=%s, want 400", rec.Code, rec.Body.String())
+		}
+		errBody, _ := response["error"].(map[string]any)
+		if response["ok"] != false || errBody["code"] != "missing_param" || errBody["message"] != "body_md or body_html is required and must not be blank" {
+			t.Fatalf("blank-body response=%v, want v1 missing_param envelope", response)
+		}
+	}
+
+	blankCases := []string{
+		`{"symbol":"600001","date":"2026-07-02","subtype":"summary","title":"omitted"}`,
+		`{"symbol":"600002","date":"2026-07-02","subtype":"summary","title":"empty","body_md":"","body_html":""}`,
+		`{"symbol":"600003","date":"2026-07-02","subtype":"summary","title":"whitespace","body_md":" \n\t","body_html":"  "}`,
+		`{"symbol":"600004","date":"2026-07-02","subtype":"summary","title":"null","body_md":null,"body_html":null}`,
+	}
+	for _, body := range blankCases {
+		rec, response := post(body)
+		assertBodyError(rec, response)
+	}
+	if got := s.st.CountNew(); got != 0 {
+		t.Fatalf("blank-body requests created %d reports, want 0", got)
+	}
+
+	valid := `{"symbol":"600009","date":"2026-07-02","subtype":"summary","title":"keep","body_md":"original"}`
+	if rec, _ := post(valid); rec.Code != http.StatusOK {
+		t.Fatalf("valid seed status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	blankOverwrite := `{"symbol":"600009","date":"2026-07-02","subtype":"summary","title":"keep","body_md":"  "}`
+	rec, response := post(blankOverwrite)
+	assertBodyError(rec, response)
+	rep := repByIdent(t, s.st, "600009", "2026-07-02", "summary")
+	if rep == nil || rep.MD != "original" {
+		t.Fatalf("blank re-ingest changed existing report: %+v", rep)
 	}
 }
 
@@ -157,6 +208,21 @@ func TestV1IngestDoesNotPersistDerivedHTML(t *testing.T) {
 	}
 	if rep3.MD != "# hi" {
 		t.Errorf("stored MD = %q, want %q", rep3.MD, "# hi")
+	}
+
+	// Whitespace-only Markdown must not hide a valid legacy HTML body. Normalize the
+	// unusable Markdown field, keep the meaningful HTML byte-for-byte, and accept the request.
+	req4 := httptest.NewRequest("POST", "/api/v1/reports", strings.NewReader(
+		`{"symbol":"600163","date":"2026-07-02","subtype":"综合决策","body_md":" \n\t","body_html":"<p>legacy fallback</p>"}`))
+	req4.Header.Set("Authorization", "Bearer tok-all")
+	rec4 := httptest.NewRecorder()
+	s.v1Ingest(rec4, req4)
+	if rec4.Code != http.StatusOK {
+		t.Fatalf("whitespace-md HTML ingest status=%d body=%s", rec4.Code, rec4.Body.String())
+	}
+	rep4 := repByIdent(t, s.st, "600163", "2026-07-02", "综合决策")
+	if rep4 == nil || rep4.MD != "" || rep4.HTML != "<p>legacy fallback</p>" {
+		t.Fatalf("whitespace Markdown did not fall back to HTML-only storage: %+v", rep4)
 	}
 }
 
