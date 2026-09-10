@@ -769,6 +769,63 @@ func (s *Store) JobsFirstInputs(ids []int64) map[int64]string {
 	return out
 }
 
+// JobSurfaces recovers where each queue job was submitted. Normal run and batch submissions
+// already carry their surface in the run.submit audit row; recurring_runs is the durable direct
+// link for jobs fired by a saved schedule. Keeping this derived avoids duplicating provenance in
+// batch_jobs while still making the queue's source explicit.
+func (s *Store) JobSurfaces(ids []int64) map[int64]string {
+	out := map[int64]string{}
+	if len(ids) == 0 {
+		return out
+	}
+	ph := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	auditArgs := make([]any, len(ids))
+	for i, id := range ids {
+		auditArgs[i] = strconv.FormatInt(id, 10)
+	}
+	rows, err := s.query(`SELECT target_id, detail FROM audit_log
+		WHERE target_type='batch_job' AND action='run.submit' AND target_id IN (`+ph+`)
+		ORDER BY at DESC`, auditArgs...)
+	if err == nil {
+		for rows.Next() {
+			var targetID, detail string
+			if rows.Scan(&targetID, &detail) != nil {
+				continue
+			}
+			id, err := strconv.ParseInt(targetID, 10, 64)
+			if err != nil || out[id] != "" {
+				continue
+			}
+			var submitted struct {
+				Surface string `json:"surface"`
+			}
+			if json.Unmarshal([]byte(detail), &submitted) == nil {
+				switch submitted.Surface {
+				case SurfaceRun, SurfaceBatch:
+					out[id] = submitted.Surface
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	recurringArgs := make([]any, len(ids))
+	for i, id := range ids {
+		recurringArgs[i] = id
+	}
+	rows, err = s.query(`SELECT DISTINCT job_id FROM recurring_runs WHERE job_id IN (`+ph+`)`, recurringArgs...)
+	if err == nil {
+		for rows.Next() {
+			var id int64
+			if rows.Scan(&id) == nil {
+				out[id] = SurfaceRecurring
+			}
+		}
+		rows.Close()
+	}
+	return out
+}
+
 // LiveJobCounts returns the live per-status tallies computed from items (so a
 // running job's progress is always consistent, not a stale cached counter).
 // cancelled counts rows the operator cancelled individually (ADR 0011) — terminal
