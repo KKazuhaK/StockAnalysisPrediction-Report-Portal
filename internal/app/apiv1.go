@@ -212,6 +212,19 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		v1err(w, http.StatusBadRequest, "missing_param", "subtype (or rtype) is required")
 		return
 	}
+	// A report is a published document, not a draft placeholder. Normalize only
+	// all-whitespace values so meaningful Markdown indentation and trailing spaces survive.
+	// This also lets a whitespace-only Markdown field fall back to a valid legacy HTML body.
+	if strings.TrimSpace(in.BodyMD) == "" {
+		in.BodyMD = ""
+	}
+	if strings.TrimSpace(in.BodyHTML) == "" {
+		in.BodyHTML = ""
+	}
+	if in.BodyMD == "" && in.BodyHTML == "" {
+		v1err(w, http.StatusBadRequest, "missing_param", "body_md or body_html is required and must not be blank")
+		return
+	}
 	// The manual version is reserved for what people write by hand (ADR 0026), and this refusal is
 	// the whole of that reservation. Without it, "a workflow cannot overwrite your words" would be a
 	// convention held up by nobody thinking to send that version name — and the failure mode is
