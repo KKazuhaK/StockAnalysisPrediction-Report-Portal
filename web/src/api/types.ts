@@ -124,9 +124,9 @@ export interface DifyTargetEdit {
 // Queue summary for the home banner + drawer (docs/adr/0007-run-analysis-and-scheduling.md).
 export interface BatchQueueSummary {
   waiting: number // due, awaiting admission (excludes not-yet-due scheduled)
-  running: number // jobs currently admitted (status running)
+  running: number // jobs with active work; excludes preset-window waits between batch rows
   running_rows?: number // concurrent runs (rows) executing now — what the run cap governs
-  scheduled: number // 定时 jobs not yet due
+  scheduled: number // jobs waiting for a future time or outside an inverted preset window
   budget: number // max concurrent runs (rows) allowed at once
   reserved: number // slots held for urgent runs
   my_priority?: number // the caller's resolved base priority (0..100, ADR 0008)
