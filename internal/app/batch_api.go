@@ -420,6 +420,18 @@ func jobJSON(j BatchJob) map[string]any {
 	}
 }
 
+func jobSurface(j BatchJob, recorded map[int64]string) string {
+	if surface := recorded[j.ID]; surface == SurfaceRun || surface == SurfaceBatch || surface == SurfaceRecurring {
+		return surface
+	}
+	// Queue history predates submission-surface audit data. Row count is the closest truthful
+	// fallback for those jobs: one row is a single run, multiple rows form a batch.
+	if j.Total > 1 {
+		return SurfaceBatch
+	}
+	return SurfaceRun
+}
+
 // normalizeRunAt validates a one-shot schedule time and returns it in the canonical
 // local "2006-01-02 15:04:05" basis (the same the aging clock uses). It accepts that
 // format or RFC3339, so the client can send either. ok=false on an unparseable value.
@@ -520,10 +532,12 @@ func (s *Server) apiBatchJobs(w http.ResponseWriter, r *http.Request, user strin
 		ids[i] = j.ID
 	}
 	firstInputs := s.st.JobsFirstInputs(ids)
+	surfaces := s.st.JobSurfaces(ids)
 	now := time.Now()
 	out := make([]map[string]any, 0, len(jobs))
 	for _, j := range jobs {
 		m := jobJSON(j)
+		m["surface"] = jobSurface(j, surfaces)
 		m["inputs"] = queueInputsPreview(firstInputs[j.ID]) // first row's inputs, bounded — see queueInputsPreviewMax
 		// A running job's stored counts are only written at finish; fill live counts
 		// so the console shows real-time progress.
@@ -777,6 +791,7 @@ func (s *Server) apiBatchJobDetail(w http.ResponseWriter, r *http.Request, user 
 	}
 	_, inProc := s.jobRuns.Load(id) // a job with an active run scope is executing here
 	m := jobJSON(job)
+	m["surface"] = jobSurface(job, s.st.JobSurfaces([]int64{id}))
 	if job.Status == "queued" {
 		waiting := s.queuedItems()
 		m["ahead"] = queue.Ahead(itemByID(waiting, id), waiting)

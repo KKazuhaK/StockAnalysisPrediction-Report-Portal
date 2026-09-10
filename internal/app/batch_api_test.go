@@ -243,6 +243,48 @@ func TestQueuePresetPresentationFromStore(t *testing.T) {
 	}
 }
 
+func TestQueueJobsExposeSubmissionSurface(t *testing.T) {
+	s := batchServer(t)
+	makeJob := func(rows int) int64 {
+		inputs := make([]map[string]string, rows)
+		for i := range inputs {
+			inputs[i] = map[string]string{"symbol": fmt.Sprint(i)}
+		}
+		id, err := s.st.CreateBatchJob(1, 1, 0, "admin", inputs, "50")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	singleID := makeJob(1)
+	batchID := makeJob(2)
+	recurringID := makeJob(1)
+	legacyBatchID := makeJob(2)
+	for id, surface := range map[int64]string{singleID: SurfaceRun, batchID: SurfaceBatch} {
+		s.st.WriteAudit(AuditEntry{
+			Actor: "admin", Action: AuditRunSubmit, TargetType: "batch_job", TargetID: itoa64(id),
+			Detail: runSubmitDetail(runSubmitAudit{Surface: surface}),
+		})
+	}
+	if _, err := s.st.InsertRecurringRun(7, recurringID); err != nil {
+		t.Fatal(err)
+	}
+
+	response := post(t, s.apiBatchJobs, "{}")
+	got := map[int64]string{}
+	for _, raw := range response["jobs"].([]any) {
+		job := raw.(map[string]any)
+		got[int64(job["id"].(float64))], _ = job["surface"].(string)
+	}
+	for id, want := range map[int64]string{
+		singleID: SurfaceRun, batchID: SurfaceBatch, recurringID: SurfaceRecurring, legacyBatchID: SurfaceBatch,
+	} {
+		if got[id] != want {
+			t.Errorf("job %d surface = %q, want %q", id, got[id], want)
+		}
+	}
+}
+
 func TestRescheduleReplacesPresetWindow(t *testing.T) {
 	s := batchServer(t)
 	id, err := s.st.CreateBatchJob(1, 1, 0, "admin", []map[string]string{{"symbol": "300001"}}, "urgent")

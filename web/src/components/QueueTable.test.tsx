@@ -109,6 +109,19 @@ describe('QueueTable', () => {
     expect(screen.getByText('queue.normal')).toBeTruthy()
   })
 
+  it('distinguishes submission source from execution timing', async () => {
+    store.jobs = [
+      { ...job({ id: 1, run_mode: 'now' }), surface: 'run' },
+      { ...job({ id: 2, run_mode: 'scheduled', run_at: '2099-01-01 12:00:00' }), surface: 'batch' },
+      { ...job({ id: 3, run_mode: 'now' }), surface: 'recurring' },
+    ] as BatchJob[]
+    mount()
+    expect(await screen.findByText('queue.source.single')).toBeTruthy()
+    expect(screen.getByText('queue.source.batch')).toBeTruthy()
+    expect(screen.getByText('queue.source.recurring')).toBeTruthy()
+    expect(screen.getByText('queue.mode.scheduled')).toBeTruthy()
+  })
+
   it('mounts and renders the queue card without crashing', async () => {
     render(
       <App>

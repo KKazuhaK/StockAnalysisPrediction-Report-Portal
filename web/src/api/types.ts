@@ -136,6 +136,7 @@ export interface BatchQueueSummary {
 export interface BatchJob {
   id: number
   target_id: number
+  surface?: Extract<Surface, 'run' | 'batch' | 'recurring'> // submission source shown separately from run timing
   status: string
   priority?: string // "urgent" or a base number 0..100 as a string (ADR 0008)
   run_mode?: RunMode

@@ -64,7 +64,10 @@ export function priorityTag(t: TFunction, p?: string) {
 // Execution mode remains visible after a run leaves the waiting queue.
 export function executionTags(t: TFunction, j: BatchJob) {
   const mode = j.run_mode || (j.run_at ? 'scheduled' : 'now')
+  const surface = j.surface || (j.total > 1 ? 'batch' : 'run')
+  const sourceColor = surface === 'recurring' ? 'purple' : surface === 'batch' ? 'cyan' : 'blue'
   return <>
+    <Tag color={sourceColor}>{t(`queue.source.${surface === 'run' ? 'single' : surface}`)}</Tag>
     <Tag>{t(`queue.mode.${mode}`)}</Tag>
     {j.avoid_window && <Tag color="purple">{t('queue.avoidWindow')}</Tag>}
     <Tag color={isUrgent(j.priority) ? 'red' : undefined}>{t(isUrgent(j.priority) ? 'batch.priority.urgent' : j.priority === 'idle' ? 'queue.idle' : 'queue.normal')}</Tag>
