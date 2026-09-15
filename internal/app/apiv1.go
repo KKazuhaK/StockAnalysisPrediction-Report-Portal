@@ -197,7 +197,14 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		v1err(w, http.StatusBadRequest, "bad_json", "request body is not valid JSON")
 		return
 	}
-	in.Symbol = strings.TrimSpace(in.Symbol)
+	// A symbol that is not a code is discarded rather than refused. Refusing would lose a finished
+	// report behind a status nobody reads, which is why this endpoint accepts what it is given; but
+	// storing it files the report under a company that does not exist. Dropping it leaves the report
+	// where a thematic one already sits — with no holding — and says so in the response, because a
+	// silently emptied field is how this went unnoticed. See normalizeSymbol.
+	symbolRaw := strings.TrimSpace(in.Symbol)
+	symbol, symbolDropped := normalizeSymbol(in.Symbol)
+	in.Symbol = symbol
 	in.Title = strings.TrimSpace(in.Title)
 	if in.Symbol == "" && in.Title == "" {
 		v1err(w, http.StatusBadRequest, "missing_param", "symbol or title is required")
@@ -273,9 +280,15 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 	}
 	// created says whether this was a new report or an overwrite of an existing one — the identity
 	// key upserts, so "the report changed and nobody knows when" is otherwise unanswerable.
-	s.recordChange(r, "", AuditReportIngest, "report", strconv.FormatInt(id, 10), map[string]any{
+	ingestAudit := map[string]any{
 		"created": created, "symbol": in.Symbol, "date": in.Date, "subtype": rtype,
-		"version": version, "run_id": in.RunID})
+		"version": version, "run_id": in.RunID}
+	if symbolDropped {
+		// Keep what was sent: without it the audit trail shows a report that simply had no symbol,
+		// which is indistinguishable from a thematic one and hides the producer that needs fixing.
+		ingestAudit["symbol_raw"] = symbolRaw
+	}
+	s.recordChange(r, "", AuditReportIngest, "report", strconv.FormatInt(id, 10), ingestAudit)
 	// Stamp the generating OU first-writer-wins from the signed owner_token (ADR 0022 R1). A missing
 	// or invalid token leaves owner_group NULL (internal/unattributed), which fails closed for
 	// restricted viewers. Ownership is never taken from a plain client-supplied field.
@@ -307,7 +320,13 @@ func (s *Server) v1Ingest(w http.ResponseWriter, r *http.Request) {
 		"rtype": rtype, "kind": kind, "title": in.Title, "source": in.Source,
 		"version": version, "author": "", "created": created,
 	})
-	writeJSON(w, map[string]any{"ok": true, "id": id, "created": created})
+	// symbol is echoed as STORED, not as sent, so a caller can tell that its value was normalized or
+	// discarded without going and reading the row back.
+	out := map[string]any{"ok": true, "id": id, "created": created, "symbol": in.Symbol}
+	if symbolDropped {
+		out["note"] = "symbol " + strconv.Quote(symbolRaw) + " is not a 6-digit code and was dropped; the report is stored without one"
+	}
+	writeJSON(w, out)
 }
 
 // queryScope resolves the owner-scope for a canQuery-admitted v1 READ. canQuery admits BOTH a machine
