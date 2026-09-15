@@ -385,9 +385,9 @@ export default function StockPage() {
                         </span>
                       ),
                       value: sub.id,
-                      // A tab is named for the report TYPE, so hovering is what says WHICH report it
-                      // opens. Suppressed when the report is named exactly what the tab is called,
-                      // which is the case NO_ITEM_TOOLTIP exists for.
+                      // A tab is named for the report type and generator version, so hovering is
+                      // what says WHICH report it opens. Suppressed when the report is named exactly
+                      // what the tab is called, which is the case NO_ITEM_TOOLTIP exists for.
                       title: sub.title && sub.title !== sub.label ? sub.title : NO_ITEM_TOOLTIP,
                     }))}
                   />

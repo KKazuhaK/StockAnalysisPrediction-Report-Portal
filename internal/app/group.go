@@ -68,9 +68,10 @@ func foldKind(k string) string {
 }
 
 var (
-	reDate   = regexp.MustCompile(`\d{4}-\d{2}-\d{2}\s*$`)
-	reLeadNo = regexp.MustCompile(`^\d+\s*`)
-	summary  = []string{"汇总", "综合", "决策", "建议"}
+	reDate             = regexp.MustCompile(`\d{4}-\d{2}-\d{2}\s*$`)
+	reLeadNo           = regexp.MustCompile(`^\d+\s*`)
+	reGeneratorVersion = regexp.MustCompile(`(?i)(?:^|[/\s_-])(v[0-9]+(?:\.[0-9]+)*)\s*$`)
+	summary            = []string{"汇总", "综合", "决策", "建议"}
 )
 
 // collapseLatestBySymbol keeps only the most recent run per stock for the browse/search feed, so a
@@ -131,19 +132,41 @@ func cleanTitle(r Rep) string {
 	return strings.TrimSpace(reLeadNo.ReplaceAllString(t, ""))
 }
 
+// generatorVersion returns producer provenance, not the audience-facing written form in
+// Rep.Version (ADR 0024). A structured source suffix is authoritative; the title fallback keeps
+// historical reports useful because older Dify producers only wrote the version there.
+func generatorVersion(r Rep) string {
+	for _, value := range []string{r.Source, r.Title} {
+		match := reGeneratorVersion.FindStringSubmatch(strings.TrimSpace(value))
+		if len(match) == 2 {
+			return "V" + match[1][1:]
+		}
+	}
+	return ""
+}
+
+func typeTabLabel(base string, r Rep) string {
+	base = strings.TrimSpace(base)
+	version := generatorVersion(r)
+	if version == "" || strings.Contains(strings.ToUpper(base), strings.ToUpper(version)) {
+		return base
+	}
+	return base + " · " + version
+}
+
 // tabLabel names a report in the type strip.
 //
-// A tab names a report TYPE. The type is short, stable, and the same on every stock, which is what
-// a row of buttons can actually hold; the report's own subject is what the reader's header and the
-// tab's tooltip are for. Showing the title here instead meant clamping it to fit, and a clamp that
-// lands inside a version suffix does not read as a truncation at all — a 15-rune title ending
-// "V3.15" was shown as "V3.1", a different and entirely plausible version.
+// A tab names a report TYPE plus its short generator version when present. The type is stable and
+// the provenance suffix makes parallel workflow generations distinguishable; the report's own
+// subject remains in the reader header and tooltip. Showing the whole title here meant clamping it
+// to fit, and a clamp that landed inside a version suffix turned "V3.15" into the plausible but
+// wrong "V3.1".
 //
 // Several reports of one type in a run still have to be told apart; orderAndDefault numbers them,
 // and the tooltip carries the full title.
 func tabLabel(r Rep) string {
 	if t := strings.TrimSpace(r.RType); t != "" {
-		return t
+		return typeTabLabel(t, r)
 	}
 	if t := cleanTitle(r); t != "" {
 		return t

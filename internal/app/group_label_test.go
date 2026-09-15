@@ -5,21 +5,30 @@ import "testing"
 // What a report is CALLED in the report-type strip, and what it is called in a day-export filename.
 //
 // These were one function until the type strip started showing titles long enough to be clipped. A
-// tab names a report TYPE — short, stable, the same on every stock — while an exported file is kept
-// and read on its own, so it wants the report's own subject. Sharing one clamp between the two gave
-// the strip a 14-rune ceiling, and a title whose last characters are a version suffix came out as a
-// different, entirely plausible version: a 15-rune title ending "V3.15" was shown as "V3.1". A tab
-// cannot be read as truncated when the truncation leaves a well-formed value behind.
+// tab names a report TYPE and carries a short generator-version suffix when the producer supplied
+// one — while an exported file is kept and read on its own, so it wants the report's own subject.
+// Sharing one clamp between the two gave the strip a 14-rune ceiling, and a title whose last
+// characters are a version suffix came out as a different, entirely plausible version: a 15-rune
+// title ending "V3.15" was shown as "V3.1". A tab cannot be read as truncated when the truncation
+// leaves a well-formed value behind.
 
 func TestTabLabelNamesTheTypeNotTheTitle(t *testing.T) {
 	for name, tc := range map[string]struct {
 		in   Rep
 		want string
 	}{
-		// The case this exists for: the type is short and exact, and no clamp can reach it.
+		// The source is authoritative for generator provenance. It can carry the precise patch version
+		// even when an older title only carried a shortened family version.
 		"a decision report whose title carries a version suffix": {
+			in: Rep{RType: "投资决策建议", Symbol: "000021",
+				Title: "000021 投资研究与决策报告 V3.15", Source: "dify/investment-decision/V3.15.5"},
+			want: "投资决策建议 · V3.15.5",
+		},
+		// Existing rows predate precise producer sources. Keeping a title fallback preserves the
+		// version readers could see before tabs switched from titles to types.
+		"a historical title supplies the generator version": {
 			in:   Rep{RType: "投资决策建议", Symbol: "000021", Title: "000021 投资研究与决策报告 V3.15"},
-			want: "投资决策建议",
+			want: "投资决策建议 · V3.15",
 		},
 		// Unchanged for every ordinary report: these already showed their type, because their title
 		// was the symbol plus that same type.
@@ -43,6 +52,11 @@ func TestTabLabelNamesTheTypeNotTheTitle(t *testing.T) {
 		"a row with neither type nor title": {
 			in:   Rep{Symbol: "000021"},
 			want: "报告",
+		},
+		// The audience-facing written form is a separate axis (ADR 0024), never generator provenance.
+		"a written-form version is not presented as a generator version": {
+			in:   Rep{RType: "深度分析", Title: "工作流产出", Version: "外部版"},
+			want: "深度分析",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -99,7 +113,7 @@ func TestTabsAndExportsAreNamedByDifferentThings(t *testing.T) {
 	// leaves every other test in this package green — day_export's own tests use fixtures whose
 	// title IS their type, so they cannot tell the two apart.
 	r := Rep{RType: "投资决策建议", Symbol: "000021", Title: "000021 投资研究与决策报告 V3.15"}
-	if got, want := tabLabel(r), "投资决策建议"; got != want {
+	if got, want := tabLabel(r), "投资决策建议 · V3.15"; got != want {
 		t.Errorf("tabLabel = %q, want the type %q", got, want)
 	}
 	if got, want := exportName(r), "投资研究与决策报告 V3.15"; got != want {
@@ -107,5 +121,21 @@ func TestTabsAndExportsAreNamedByDifferentThings(t *testing.T) {
 	}
 	if tabLabel(r) == exportName(r) {
 		t.Error("tabLabel and exportName agree on a report whose title differs from its type; the split is not wired")
+	}
+}
+
+func TestConfiguredTypeLabelKeepsGeneratorVersion(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.UpsertTypeConfig("投资决策建议", "投资决策", "决策", 0, false); err != nil {
+		t.Fatalf("save type config: %v", err)
+	}
+	s := &Server{st: st}
+	r := Rep{
+		RType: "投资决策建议", Symbol: "000021", Title: "000021 投资研究与决策报告 V3.15",
+		Source: "dify/investment-decision/V3.15.6", Time: "2026-09-15T00:00:00Z",
+	}
+	got, _ := s.orderAndDefault([]Rep{r})
+	if len(got) != 1 || got[0].Label != "决策 · V3.15.6" {
+		t.Fatalf("configured tab label = %q, want %q", got[0].Label, "决策 · V3.15.6")
 	}
 }

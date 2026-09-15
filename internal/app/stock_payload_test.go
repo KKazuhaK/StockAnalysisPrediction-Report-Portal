@@ -83,6 +83,7 @@ func TestTypeStripsCarryTheReportEachTabOpens(t *testing.T) {
 	s.st.UpsertReport(Rep{
 		Symbol: "000021", Date: date, Kind: "投资决策", RType: "投资决策建议",
 		Title: "000021 投资研究与决策报告 V3.15", Name: "深科技", MD: "x",
+		Source: "dify/investment-decision/V3.15.5",
 	})
 
 	check := func(t *testing.T, what string, tabs []map[string]any) {
@@ -91,8 +92,8 @@ func TestTypeStripsCarryTheReportEachTabOpens(t *testing.T) {
 			t.Fatalf("%s: no tabs in the payload", what)
 		}
 		tab := tabs[0]
-		if got, want := tab["label"], "投资决策建议"; got != want {
-			t.Errorf("%s: label = %v, want the type %q", what, got, want)
+		if got, want := tab["label"], "投资决策建议 · V3.15.5"; got != want {
+			t.Errorf("%s: label = %v, want the type and generator version %q", what, got, want)
 		}
 		// The same string the reader heading shows, so pointing at a tab and opening it agree.
 		if got, want := tab["title"], "000021 深科技 投资研究与决策报告 V3.15"; got != want {

@@ -1139,7 +1139,7 @@ func (s *Server) orderAndDefault(members []Rep) ([]Rep, int64) {
 	copy(out, members)
 	for i := range out {
 		if c, ok := cfg[out[i].RType]; ok && c.Label != "" {
-			out[i].Label = c.Label
+			out[i].Label = typeTabLabel(c.Label, out[i])
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
