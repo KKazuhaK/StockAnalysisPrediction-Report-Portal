@@ -62,17 +62,25 @@ export default function RunPage() {
   }
   if (!data) return null
   const rep = data.rep
-  // One entry per report TYPE, showing the form currently selected for it. The version axis is the
-  // switcher's job; collapsing here is what stops two forms of one analysis from looking like two
-  // identical tabs.
+  // One entry per REPORT, showing the written form currently selected for it. The version axis is
+  // the switcher's job; collapsing here is what stops two forms of one analysis from looking like
+  // two identical tabs.
+  //
+  // Keyed by type AND title, because that is what "one report" means: two forms of one analysis
+  // share every identity component but version (ADR 0024), while two genuinely different reports of
+  // one type differ by title — one code+date+subtype legitimately carries several. Collapsing on
+  // the type alone swallowed the second kind too, which left the survivor carrying the number
+  // orderAndDefault gave it ("Trade 2") with no sibling on screen for the number to refer to, and
+  // the other report unreachable from the strip.
   const typeTabs = Array.from(
     data.tabs
-      .reduce((byType, tab) => {
-        // Keep the SELECTED form for its type, so the strip's value matches what is being read;
+      .reduce((byReport, tab) => {
+        // Keep the SELECTED form for its report, so the strip's value matches what is being read;
         // otherwise the first one seen. Map preserves insertion order, so the strip keeps the
-        // server's ordering of types.
-        if (!byType.has(tab.rtype) || tab.id === data.selId) byType.set(tab.rtype, tab)
-        return byType
+        // server's ordering.
+        const key = `${tab.rtype}\u0000${tab.title}`
+        if (!byReport.has(key) || tab.id === data.selId) byReport.set(key, tab)
+        return byReport
       }, new Map<string, SubTab>())
       .values(),
   )
@@ -126,7 +134,12 @@ export default function RunPage() {
             <Segmented
               value={data.selId}
               onChange={(v) => setSp({ r: String(v) })}
-              options={typeTabs.map((s) => ({ label: s.label, value: s.id, title: NO_ITEM_TOOLTIP }))}
+              // As on the stock page: the tab names the type, the tooltip names the report.
+              options={typeTabs.map((s) => ({
+                label: s.label,
+                value: s.id,
+                title: s.title && s.title !== s.label ? s.title : NO_ITEM_TOOLTIP,
+              }))}
             />
           </div>
         )}

@@ -27,8 +27,10 @@ const REPORT = {
   // Two of each so both strips render: one option apiece and they are hidden.
   kinds: ['Research', 'Trading'],
   subtabs: [
-    { label: 'Sub', id: 1 },
-    { label: 'Sentiment', id: 2 },
+    { label: 'Sub', id: 1, rtype: 'Sub', title: '001238 Test Co Report Title' },
+    { label: 'Sentiment', id: 2, rtype: 'Sentiment', title: '001238 Test Co Sentiment' },
+    // A tab whose report is named exactly what the tab is called: nothing to add on hover.
+    { label: 'Valuation', id: 3, rtype: 'Valuation', title: 'Valuation' },
   ],
   timeline: [],
   rep: { id: 1, name: 'Test Co', title: 'Report Title', displayTitle: '001238 Test Co Report Title', date: '2026-07-07', source: 'x', html: '', md: '# hi', time: '' },
@@ -162,16 +164,33 @@ describe('StockPage', () => {
     expect(await screen.findByText(/compare-open:1/)).toBeTruthy()
   })
 
+  // rc-segmented puts an item's `title` on its .ant-segmented-item-label wrapper, NOT on the custom
+  // node passed as the label. Reading the attribute off the node findByText returns therefore always
+  // answered null, and this assertion held whatever the page did.
+  const itemTitle = (el: HTMLElement) => el.closest('.ant-segmented-item-label')?.getAttribute('title') ?? null
+
   // rc-segmented defaults each item's `title` to its own label text, so the browser drew a native
   // tooltip repeating the button — flush under it, reading as though the two were one control stuck
-  // together. These strips scroll instead of truncating, so the label is always fully visible and
-  // the tooltip could only ever restate it.
-  it('does not repeat a category or report-type label as a native tooltip', async () => {
+  // together. The category strip scrolls instead of truncating, so its label is always fully visible
+  // and the tooltip could only ever restate it.
+  it('does not repeat a category label as a native tooltip', async () => {
     render(<StockPage />)
-    for (const label of ['Trading', 'Sentiment']) {
-      const el = await screen.findByText(label)
-      expect(el.getAttribute('title') ?? '', `${label} tooltip`).toBe('')
-    }
+    expect(itemTitle(await screen.findByText('Trading'))).toBe('')
+  })
+
+  // A report-type tab is named for the TYPE, so the one thing it does NOT say is which report it
+  // opens. Hovering answers that. The type is all a button can hold — naming the report there meant
+  // clamping the title to fit, and a clamp landing inside a version suffix turned "V3.15" into
+  // "V3.1": a truncation that reads as a different, entirely plausible version.
+  it('names the report a type tab opens, on hover', async () => {
+    render(<StockPage />)
+    expect(itemTitle(await screen.findByText('Sentiment'))).toBe('001238 Test Co Sentiment')
+  })
+
+  // Suppressed where it would only restate the button, which is the whole point of NO_ITEM_TOOLTIP.
+  it('adds no tooltip when the report is named exactly what its tab is called', async () => {
+    render(<StockPage />)
+    expect(itemTitle(await screen.findByText('Valuation'))).toBe('')
   })
 
   // Both quote components shipped orphaned once: written, tested in isolation, imported by nothing,

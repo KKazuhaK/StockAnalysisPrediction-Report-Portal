@@ -113,22 +113,58 @@ func isSummary(r Rep) bool {
 	return false
 }
 
-// label short tab label: strips the symbol prefix and date suffix.
-func label(r Rep) string {
+// exportNameMaxRunes caps a day-export filename. It is a FILESYSTEM limit, not a display one: a
+// path component must fit in 255 bytes everywhere we ship, and a CJK rune costs 3 bytes, so 60
+// runes leaves room for the running "NN_" prefix and the ".md"/".pdf" extension. Titles genuinely
+// run past it — the longest in production is 232 runes.
+const exportNameMaxRunes = 60
+
+// cleanTitle is a report's own subject: its title with the symbol prefix and any trailing date
+// removed, so a stored title of symbol + descriptor + date reads as just the descriptor. Empty when
+// the title was nothing but those two strippable parts.
+func cleanTitle(r Rep) string {
 	t := strings.TrimSpace(r.Title)
 	if r.Symbol != "" {
 		t = strings.Replace(t, r.Symbol, "", 1)
 	}
 	t = strings.TrimSpace(reDate.ReplaceAllString(t, ""))
-	t = strings.TrimSpace(reLeadNo.ReplaceAllString(t, ""))
+	return strings.TrimSpace(reLeadNo.ReplaceAllString(t, ""))
+}
+
+// tabLabel names a report in the type strip.
+//
+// A tab names a report TYPE. The type is short, stable, and the same on every stock, which is what
+// a row of buttons can actually hold; the report's own subject is what the reader's header and the
+// tab's tooltip are for. Showing the title here instead meant clamping it to fit, and a clamp that
+// lands inside a version suffix does not read as a truncation at all — a 15-rune title ending
+// "V3.15" was shown as "V3.1", a different and entirely plausible version.
+//
+// Several reports of one type in a run still have to be told apart; orderAndDefault numbers them,
+// and the tooltip carries the full title.
+func tabLabel(r Rep) string {
+	if t := strings.TrimSpace(r.RType); t != "" {
+		return t
+	}
+	if t := cleanTitle(r); t != "" {
+		return t
+	}
+	return "报告"
+}
+
+// exportName is the base filename a report is saved under in a day export. Unlike a tab, a file is
+// kept and read on its own, so it is named for the report rather than for its type — two reports of
+// one type must not both be filed under that type's name. Only the length cap remains, and that one
+// is a filesystem constraint.
+func exportName(r Rep) string {
+	t := cleanTitle(r)
 	if t == "" {
-		t = r.RType
+		t = strings.TrimSpace(r.RType)
 	}
 	if t == "" {
 		t = "报告"
 	}
-	if r := []rune(t); len(r) > 14 {
-		t = string(r[:14])
+	if runes := []rune(t); len(runes) > exportNameMaxRunes {
+		t = string(runes[:exportNameMaxRunes])
 	}
 	return t
 }

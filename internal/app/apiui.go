@@ -512,7 +512,7 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 		}
 	}
 	for i := range kindReps {
-		kindReps[i].Label = label(kindReps[i])
+		kindReps[i].Label = tabLabel(kindReps[i])
 	}
 	kindReps, defID := s.orderAndDefault(kindReps)
 	selID, _ := strconv.ParseInt(q.Get("r"), 10, 64)
@@ -526,7 +526,11 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	}
 	subtabs := make([]map[string]any, 0, len(kindReps))
 	for _, m := range kindReps {
-		subtabs = append(subtabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType})
+		subtabs = append(subtabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType,
+			// A tab names the TYPE, so the report it opens is named here instead: the strip
+			// shows this on hover. Same string as the reader heading, so pointing at a tab and
+			// opening it agree.
+			"title": s.repDisplayTitle(&m)})
 	}
 	writeJSON(w, map[string]any{
 		"symbol": symbol, "market": marketPrefix(symbol), "name": s.names.Get(symbol),
@@ -556,7 +560,8 @@ func (s *Server) apiRun(w http.ResponseWriter, r *http.Request, user string) {
 	// choice.
 	tabs := make([]map[string]any, 0, len(members))
 	for _, m := range members {
-		tabs = append(tabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType, "version": m.Version})
+		tabs = append(tabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType, "version": m.Version,
+			"title": s.repDisplayTitle(&m)})
 	}
 	first := members[0]
 	writeJSON(w, map[string]any{

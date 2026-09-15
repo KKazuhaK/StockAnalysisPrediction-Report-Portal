@@ -67,7 +67,7 @@ func dayExportEntries(reps []Rep) []dayEntry {
 	for i, r := range ordered {
 		// A running "NN_" prefix keeps the ZIP in reading order and guarantees a unique
 		// name, so duplicate labels (e.g. two "重组交易分析") never collide.
-		base := fmt.Sprintf("%02d_%s", i+1, sanitizeFilename(label(r)))
+		base := fmt.Sprintf("%02d_%s", i+1, sanitizeFilename(exportName(r)))
 		out = append(out, dayEntry{base: base, rep: r})
 	}
 	return out
