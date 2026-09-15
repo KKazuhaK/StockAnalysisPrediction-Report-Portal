@@ -81,6 +81,41 @@ func TestOpenAPIIngestRequestMatchesRuntimeValidation(t *testing.T) {
 	}
 }
 
+// The source field is producer provenance, not an opaque author label: workflow versions are
+// surfaced by the Portal from a stable `dify/<module>/<execution-version>` suffix. Keep the public
+// contract explicit so a refreshed Dify API tool teaches new workflows the value that the reader
+// actually consumes.
+func TestOpenAPIDocumentsStructuredProducerSource(t *testing.T) {
+	var spec map[string]any
+	if err := json.Unmarshal(openapiJSON, &spec); err != nil {
+		t.Fatalf("openapi.json is not valid JSON: %v", err)
+	}
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	ingest := schemas["IngestRequest"].(map[string]any)
+	properties := ingest["properties"].(map[string]any)
+	source := properties["source"].(map[string]any)["description"].(string)
+	for _, want := range []string{"dify/<模块>/<执行版本>", "V3.15.6", "识别并显示"} {
+		if !strings.Contains(source, want) {
+			t.Errorf("IngestRequest.source description = %q, missing %q", source, want)
+		}
+	}
+	paths := spec["paths"].(map[string]any)
+	getReports := paths["/api/v1/reports"].(map[string]any)["get"].(map[string]any)
+	params := getReports["parameters"].([]any)
+	for _, raw := range params {
+		param := raw.(map[string]any)
+		if param["name"] != "source" {
+			continue
+		}
+		description := param["description"].(string)
+		if !strings.Contains(description, "dify/1-6-4投资决策/V3.15.6") {
+			t.Errorf("query source description = %q, missing structured-version example", description)
+		}
+		return
+	}
+	t.Fatal("GET /api/v1/reports is missing its source parameter")
+}
+
 func TestOpenAPILocalizedEndpoint(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/openapi.json?lang=en-US", nil)
 	rec := httptest.NewRecorder()
