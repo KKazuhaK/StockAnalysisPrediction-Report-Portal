@@ -527,9 +527,9 @@ func (s *Server) apiStock(w http.ResponseWriter, r *http.Request, user string) {
 	subtabs := make([]map[string]any, 0, len(kindReps))
 	for _, m := range kindReps {
 		subtabs = append(subtabs, map[string]any{"id": m.ID, "label": m.Label, "rtype": m.RType,
-			// A tab names the TYPE, so the report it opens is named here instead: the strip
-			// shows this on hover. Same string as the reader heading, so pointing at a tab and
-			// opening it agree.
+			// A tab names the type and generator version, so the report it opens is named here
+			// instead: the strip shows this on hover. Same string as the reader heading, so
+			// pointing at a tab and opening it agree.
 			"title": s.repDisplayTitle(&m)})
 	}
 	writeJSON(w, map[string]any{

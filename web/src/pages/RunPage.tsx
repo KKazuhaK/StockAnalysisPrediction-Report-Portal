@@ -134,7 +134,8 @@ export default function RunPage() {
             <Segmented
               value={data.selId}
               onChange={(v) => setSp({ r: String(v) })}
-              // As on the stock page: the tab names the type, the tooltip names the report.
+              // As on the stock page: the tab names the type and generator version; the tooltip
+              // names the report.
               options={typeTabs.map((s) => ({
                 label: s.label,
                 value: s.id,

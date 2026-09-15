@@ -129,7 +129,8 @@ sc, me = admin.login("admin", ADMIN_PW)
 check("A", "管理员登录", sc == 200 and me.get("admin") is True, f"{sc} {me}")
 check("A", "首启种子：27 个报告类型", len(sql("SELECT name FROM type_config")) == 27)
 check("A", "首启种子：默认分组", len(sql("SELECT id FROM user_groups WHERE is_default=1")) == 1)
-check("A", "首启种子：默认版本", sql("SELECT name FROM report_versions") == [("default",)])
+check("A", "首启种子：默认与人工版本",
+      set(sql("SELECT name FROM report_versions")) == {("default",), ("manual",)})
 
 # Tokens are stored hashed (ADR 0019), so the plaintext exists only in the creation response —
 # reading the table gives a NULL `token` column. That is the design working; the harness has to

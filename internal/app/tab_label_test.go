@@ -50,6 +50,20 @@ func TestTabsNameTheWrittenFormAndNumberTheReport(t *testing.T) {
 			},
 			want: []string{"深度分析", "深度分析 · 人工"},
 		},
+		// Generator provenance and written form are independent axes. Readers need both when an
+		// editor corrects the output of a specifically versioned workflow.
+		"generator version and written form compose": {
+			in: func() []Rep {
+				base := Rep{RType: "投资决策建议", Title: "000021 投资研究与决策报告 V3.15.5",
+					Source: "dify/1-6-4投资决策/V3.15.5", Version: "default", Time: "2026-09-01T00:00:00Z"}
+				base.Label = tabLabel(base)
+				manual := base
+				manual.Version = "manual"
+				manual.Time = "2026-09-02T00:00:00Z"
+				return []Rep{base, manual}
+			}(),
+			want: []string{"投资决策建议 · V3.15.5", "投资决策建议 · V3.15.5 · 人工"},
+		},
 		// Unchanged: title is part of a report's identity, so one code+date+subtype carries several
 		// genuinely different reports and a number is exactly what tells them apart.
 		"two different reports of one type": {

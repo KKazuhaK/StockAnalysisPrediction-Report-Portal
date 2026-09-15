@@ -312,7 +312,7 @@ export interface TimelineNode {
 
 export interface SubTab {
   id: number
-  label: string // the report TYPE, which is what the tab is named for
+  label: string // the report type plus generator version when the producer supplied one
   title: string // the report this tab opens, server-composed (same string as the reader heading)
   rtype: string
   version?: string // which written form this tab is (ADR 0024)
