@@ -3,15 +3,15 @@
   "info": {
     "title": "研报门户 · Dify 机器接口 (v1)",
     "version": "1.0.0",
-    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，去重身份由服务端按 `symbol|date|subtype|title|version` 判定（title 恒参与；无 symbol 的专题报告靠 title 立身。客户端不传 id，kind 不参与）；接口返回并寻址的 `id` 是该报告的数字 id。多语言：请求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化后的 OpenAPI JSON。",
+    "description": "供 Dify 工作流入库/查询/复核研报的机器接口。鉴权：请求头 `Authorization: Bearer <token>`（令牌在系统设置页管理，作用域 ingest|query|all）；浏览器登录的 cookie 会话也满足 query。成功响应为 JSON；错误统一为 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入库为幂等 upsert，去重身份由服务端按 `symbol|date|subtype|title|version` 判定（title 恒参与；无 symbol 的专题报告靠 title 立身。客户端不传 id，kind 不参与）；`source` 可使用稳定格式 `dify/<模块>/<执行版本>`（如 `dify/1-6-4投资决策/V3.15.6`），Portal 会从末尾的 `V...` 识别执行版本并显示。接口返回并寻址的 `id` 是该报告的数字 id。多语言：请求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化后的 OpenAPI JSON。",
     "x-i18n": {
       "en-US": {
         "title": "Research Report Portal · Dify Machine API (v1)",
-        "description": "Machine API for Dify workflows to ingest, query, and review research reports. Authentication: `Authorization: Bearer <token>`; tokens are managed in System Settings and use the `ingest`, `query`, or `all` scope. A browser cookie session also satisfies query access. Successful responses are JSON; errors use `{ok:false,error:{code,message}}`. Dates use `YYYY-MM-DD`. Ingest is an idempotent upsert. Deduplication is derived server-side from `symbol|date|subtype|title|version`; title always participates, and a thematic report without a `symbol` is identified by its title. `kind` is not part of identity. Clients do not send an id. Returned and path-addressed `id` values are the report's numeric id. Localization: request `/api/openapi.json?lang=en-US` or `?lang=zh-TW` for a localized OpenAPI JSON document."
+        "description": "Machine API for Dify workflows to ingest, query, and review research reports. Authentication: `Authorization: Bearer <token>`; tokens are managed in System Settings and use the `ingest`, `query`, or `all` scope. A browser cookie session also satisfies query access. Successful responses are JSON; errors use `{ok:false,error:{code,message}}`. Dates use `YYYY-MM-DD`. Ingest is an idempotent upsert. Deduplication is derived server-side from `symbol|date|subtype|title|version`; title always participates, and a thematic report without a `symbol` is identified by its title. `kind` is not part of identity. For producer provenance, `source` may use the stable form `dify/<module>/<execution-version>` such as `dify/1-6-4投资决策/V3.15.6`; the Portal recognizes and displays the trailing `V...`. Clients do not send an id. Returned and path-addressed `id` values are the report's numeric id. Localization: request `/api/openapi.json?lang=en-US` or `?lang=zh-TW` for a localized OpenAPI JSON document."
       },
       "zh-TW": {
         "title": "研報門戶 · Dify 機器介面 (v1)",
-        "description": "供 Dify 工作流入庫/查詢/複核研報的機器介面。鑑權：請求頭 `Authorization: Bearer <token>`（令牌在系統設定頁管理，作用域 ingest|query|all）；瀏覽器登入的 cookie 會話也滿足 query。成功響應為 JSON；錯誤統一為 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入庫為冪等 upsert，去重身份由服務端按 `symbol|date|subtype|title|version` 判定（title 恆參與；無 symbol 的專題報告靠 title 立身。客戶端不傳 id，kind 不參與）；介面返回並尋址的 `id` 是該報告的數字 id。多語言：請求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化後的 OpenAPI JSON。"
+        "description": "供 Dify 工作流入庫/查詢/複核研報的機器介面。鑑權：請求頭 `Authorization: Bearer <token>`（令牌在系統設定頁管理，作用域 ingest|query|all）；瀏覽器登入的 cookie 會話也滿足 query。成功響應為 JSON；錯誤統一為 `{ok:false,error:{code,message}}`。日期用 `YYYY-MM-DD`。入庫為冪等 upsert，去重身份由服務端按 `symbol|date|subtype|title|version` 判定（title 恆參與；無 symbol 的專題報告靠 title 立身。客戶端不傳 id，kind 不參與）；`source` 可使用穩定格式 `dify/<模組>/<執行版本>`（如 `dify/1-6-4投資決策/V3.15.6`），Portal 會從末尾的 `V...` 識別執行版本並顯示。介面返回並尋址的 `id` 是該報告的數字 id。多語言：請求 `/api/openapi.json?lang=en-US` 或 `?lang=zh-TW` 可取得本地化後的 OpenAPI JSON。"
       }
     }
   },
@@ -202,7 +202,7 @@
                 "description": "Report title. Required when `symbol` is empty; it replaces `symbol` in the identity key so different same-day themes do not overwrite each other."
               },
               "source": {
-                "description": "Source or author. Query endpoints can filter by this field."
+                "description": "Source or author. Query endpoints can filter by this field. Producer workflows may use the stable form `dify/<module>/<execution-version>`, for example `dify/1-6-4投资决策/V3.15.6`; the Portal recognizes and displays the trailing `V...`."
               },
               "run_id": {
                 "description": "Batch/generation run label. It does not participate in the identity key."
@@ -245,7 +245,7 @@
                 "description": "報告標題。symbol 為空時（專題/主題類報告）必填，替代 symbol 參與身份鍵，避免同日不同主題互相覆蓋。"
               },
               "source": {
-                "description": "來源/作者，可按此過濾查詢。"
+                "description": "來源/作者，可按此過濾查詢。生產工作流可使用穩定格式 `dify/<模組>/<執行版本>`，例如 `dify/1-6-4投資決策/V3.15.6`；Portal 會識別並顯示末尾的 `V...`。"
               },
               "run_id": {
                 "description": "批次/生成輪次標籤，不參與身份鍵。"
@@ -305,7 +305,7 @@
           },
           "source": {
             "type": "string",
-            "description": "来源/作者，可按此过滤查询。"
+            "description": "来源/作者，可按此过滤查询。机器工作流建议使用稳定格式 `dify/<模块>/<执行版本>`，例如 `dify/1-6-4投资决策/V3.15.6`；Portal 会从末尾的 `V...` 识别并显示执行版本。"
           },
           "run_id": {
             "type": "string",
@@ -746,13 +746,13 @@
             "schema": {
               "type": "string"
             },
-            "description": "精确来源过滤，可单独使用。",
+            "description": "精确来源过滤，可单独使用。若要按生产工作流执行版本过滤，请使用 `dify/1-6-4投资决策/V3.15.6` 这类稳定格式。",
             "x-i18n": {
               "en-US": {
-                "description": "Exact source filter. Can be used alone."
+                "description": "Exact source filter. Can be used alone. To filter by producer execution version, use the stable suffix form such as `dify/1-6-4投资决策/V3.15.6`."
               },
               "zh-TW": {
-                "description": "精確來源過濾，可單獨使用。"
+                "description": "精確來源過濾，可單獨使用。若要按生產工作流執行版本過濾，請使用 `dify/1-6-4投資決策/V3.15.6` 這類穩定格式。"
               }
             }
           },
