@@ -23,8 +23,14 @@ func labelsOf(t *testing.T, s *Server, in []Rep) []string {
 	return got
 }
 
+// Label comes from the real producer, not from a literal. Hardcoding it here (as this helper did)
+// meant the suite that OWNS tab labels never called the function that makes them: reverting
+// tabLabel to the title-derived label it replaced left every case below green while the strip on
+// screen read something else entirely.
 func rep(rtype, title, version, at string) Rep {
-	return Rep{RType: rtype, Title: title, Version: version, Time: at, Label: rtype}
+	r := Rep{RType: rtype, Title: title, Version: version, Time: at}
+	r.Label = tabLabel(r)
+	return r
 }
 
 func TestTabsNameTheWrittenFormAndNumberTheReport(t *testing.T) {

@@ -1015,7 +1015,7 @@ func (s *Server) runMembers(r *http.Request, user, key string) []Rep {
 		sort.SliceStable(members, func(i, j int) bool { return members[i].Time < members[j].Time })
 	}
 	for i := range members {
-		members[i].Label = label(members[i])
+		members[i].Label = tabLabel(members[i])
 	}
 	return members
 }

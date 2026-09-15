@@ -67,3 +67,71 @@ func TestReadingPayloadIsMostlyTheReportItself(t *testing.T) {
 		t.Errorf("navigation is %d of %d bytes (>25%%): warming this endpoint would re-send it each time", skeleton, total)
 	}
 }
+
+// A tab is labelled with the report TYPE, so the one thing it cannot say is WHICH report it opens.
+// The payload carries that separately and the strips show it on hover. Nothing else asserts the
+// field exists: drop it from either handler and the Go suite, the SPA suite, typecheck and the
+// build all stay green while every tooltip silently disappears, because the client falls back to
+// no-tooltip when `title` is undefined.
+func TestTypeStripsCarryTheReportEachTabOpens(t *testing.T) {
+	s := tenancyServer(t)
+	s.names = LoadNames(t.TempDir(), s.st)
+	s.st.UpsertUser(User{Username: "alice", PasswordHash: "h", Role: "user"})
+
+	// The shape this exists for: a title the tab label cannot hold, ending in a version suffix.
+	const date = "2026-09-14"
+	s.st.UpsertReport(Rep{
+		Symbol: "000021", Date: date, Kind: "投资决策", RType: "投资决策建议",
+		Title: "000021 投资研究与决策报告 V3.15", Name: "深科技", MD: "x",
+	})
+
+	check := func(t *testing.T, what string, tabs []map[string]any) {
+		t.Helper()
+		if len(tabs) == 0 {
+			t.Fatalf("%s: no tabs in the payload", what)
+		}
+		tab := tabs[0]
+		if got, want := tab["label"], "投资决策建议"; got != want {
+			t.Errorf("%s: label = %v, want the type %q", what, got, want)
+		}
+		// The same string the reader heading shows, so pointing at a tab and opening it agree.
+		if got, want := tab["title"], "000021 深科技 投资研究与决策报告 V3.15"; got != want {
+			t.Errorf("%s: title = %v, want the report %q", what, got, want)
+		}
+	}
+
+	t.Run("stock page", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/stock/000021", nil)
+		req.SetPathValue("symbol", "000021")
+		s.apiStock(rec, req, "alice")
+		if rec.Code != 200 {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Subtabs []map[string]any `json:"subtabs"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		check(t, "subtabs", out.Subtabs)
+	})
+
+	t.Run("run page", func(t *testing.T) {
+		key := "000021|" + date
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/run/"+key, nil)
+		req.SetPathValue("key", key)
+		s.apiRun(rec, req, "alice")
+		if rec.Code != 200 {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Tabs []map[string]any `json:"tabs"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		check(t, "tabs", out.Tabs)
+	})
+}
