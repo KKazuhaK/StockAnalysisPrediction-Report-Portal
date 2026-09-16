@@ -93,6 +93,7 @@ The application re-wraps the existing data-encryption key, then logs that `secre
 ### PostgreSQL
 
 SQLite is suitable for small deployments and requires no separate service. For multiple instances, larger installations, or a shared database with Dify, set `db_driver: postgres` and `db_dsn`; the application code is the same.
+The PostgreSQL path is covered by integration tests.
 
 ## Dify ingestion API
 
@@ -107,10 +108,11 @@ Example request:
   "date": "2024-01-01",
   "kind": "投资决策",
   "subtype": "汇总",
-  "title": "比亚迪 投资决策汇总",
+  "title": "比亚迪 投资研究与决策报告 V3.15.6",
+  "version": "V3.15.6",
   "body_md": "# 结论\n**买入**。",
   "run_id": "batch-2024-01",
-  "source": "Dify",
+  "source": "dify/1-6-4投资决策/V3.15.6",
   "tracking": [
     { "itype": "assumption", "content": "毛利率维持 20%", "status": "pending", "review_point": "下季度财报" }
   ]
@@ -119,7 +121,7 @@ Example request:
 
 Required fields are `date`, `subtype`, and at least one of `symbol` or `title`. A report must provide non-empty `body_md` or legacy-compatible `body_html`; Markdown takes precedence when both are present.
 
-The report identity key is `symbol|date|subtype|title`. Ingesting the same key overwrites the existing report; `run_id` is only a batch label. The title participates in identity so different topics on the same date and subtype remain separate reports.
+The report identity key is `symbol|date|subtype|title|version`. Ingesting the same key overwrites the existing report; `run_id` is only a batch label. The title always participates in identity, and omitting `version` selects the default report version. Producer workflows should use the stable `dify/<module>/<execution-version>` form for `source`; the Portal recognizes a trailing `V...` and displays it as the execution version. This execution version is independent of the report-edition field `version` used in the identity key.
 
 ## Local development
 
@@ -172,7 +174,7 @@ After the first image push, set the GitHub Container Registry package to public 
 ## Extension points
 
 - **Roles**: add an entry to the `roleRegistry` in `roles.go`; account management and authorization pick it up automatically.
-- **Localization**: add English resources in `web/src/i18n.ts`; components use `useTranslation()` and `t('key')`.
+- **Localization**: maintain locale resources in `web/src/locales/*.json`; components use `useTranslation()` and `t('key')`.
 - **Report types**: report types are discovered from data and managed in the web UI, including grouping, ordering, default selection, renaming, and deletion.
 - **APIs**: the Dify machine API is in `internal/app/apiv1.go` under `/api/v1/*`; browser and management JSON endpoints are in `internal/app/apiui.go`.
 - **New packages**: add substantial functionality under `internal/<module>` and import it from `internal/app`.

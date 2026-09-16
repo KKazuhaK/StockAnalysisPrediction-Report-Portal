@@ -2,24 +2,24 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-自托管的研究报告阅读门户，替代旧的 Mail Research Report System。**前端 React + Ant Design (Vite 构建)**，后端单 Go 二进制（JSON API + 用 `go:embed` 内嵌前端 `dist/`），SQLite/Postgres 双驱动、Docker 一键部署。
+自托管的研究报告阅读门户，替代旧的 Mail Research Report System。前端采用 React、Ant Design 和 Vite，后端以单个 Go 二进制提供 JSON API，并通过 `go:embed` 内嵌前端构建产物。系统支持 SQLite 和 PostgreSQL，并提供 Docker 部署配置。
 
 ## 功能
 
-- **omnibox 主搜索**：一个搜索框输代码或名字 → `AutoComplete` 补全（代码 + 名字 + 报告数 + 最近日期）→ 回车/选中进个股详情。**高级搜索**（类型/日期范围/关键字/来源/排序）折叠在可展开面板里，不占主路径。
-- **个股详情时间线**：一只票的所有报告聚合，`Timeline` 选日期 → 大类 `Segmented` → 小文档 `Tabs` → 正文。
-- **自给自足**：旧门户的历史报告已一次性导入本地库，与新报告同库同源；读透旧门户的实时通道和一次性导入器都已随旧门户退役而删除。
-- **实时行情与日 K 线**：个股页在报告上方显示实时价格（现价/涨跌/开高低收/量额/行情时间）和一张手写 SVG 的日 K 线图（1 月 / 3 月 / 6 月 / 1 年），腾讯为主源、新浪为备源，读时抓取 + TTL + 单飞，**不落库、不轮询、不加后台循环**。价格一律**整数分**，涨跌幅用厂商自己的字符串（自己重算会在除权日打印出一次假暴跌），K 线取**不复权**（前复权的历史价会随分红被反复重算）。解析器带一道防漂移闸门：厂商加一个字段所有区间检查依然通过，真正兜住的是“厂商自报涨跌幅必须与现价/昨收算得上”这条恒等式。北交所只给快照，不给 K 线 —— 两家的日线一家为空、一家停在十六个月前，看起来像数据的陈旧数据比没有更糟。详见 [ADR 0028](docs/adr/0028-live-quotes.md)。
+- **统一搜索**：按股票代码或名称搜索，自动补全结果包含代码、名称、报告数量和最近报告日期。高级搜索支持类型、日期范围、关键字、来源和排序条件。
+- **个股报告时间线**：聚合同一标的的全部报告，并按日期、大类和报告类型分层浏览。
+- **统一历史数据**：旧门户的历史报告已导入本地数据库，与新报告使用同一数据源；旧门户的实时读取通道和一次性导入器均已随旧系统退役而删除。
+- **实时行情与日 K 线**：个股页显示实时价格、涨跌、OHLC、成交量、成交额和行情时间，并提供 1 个月、3 个月、6 个月和 1 年区间的 SVG 日 K 线图。腾讯为主数据源，新浪为备用数据源；数据按需获取，采用 TTL 缓存和请求合并，不持久化，也不进行后台轮询。价格以整数分存储，涨跌幅采用数据源返回值，K 线使用不复权价格。解析器会校验数据源涨跌幅与现价、昨收之间的一致性，以降低上游字段变化导致的错误。北交所当前仅提供行情快照，不展示缺失或明显过期的日线数据。详见 [ADR 0028](docs/adr/0028-live-quotes.md)。
 - **正文渲染**：`react-markdown` + GFM（表格/任务列表），旧报告 HTML 回退直渲。
 - **导出**：Markdown（原生）+ PDF（镜像内 wkhtmltopdf）。
-- **网页管理**（管理员）：入口按钮、报告类型（按大类分组/**拖拽排序**/默认页/改名/增删）、账号（角色）、系统设置（多令牌 + 接口文档）。入口按钮与类型顺序都用 **@dnd-kit 拖拽排序**、松手即存。
-- **多令牌**：Dify 接口鉴权支持多枚 Bearer 令牌（备注/作用域 all|ingest|query/有效期），在“系统设置”里管。
-- **账号与角色**：可扩展的角色注册表（admin/user，易加更多）；首次启动自动创建 admin 并把密码打印到终端。账号可设**有效期**，到期后当前会话立即失效。
-- **报告版本**：同一篇报告可以有多个版本——完整的内部版、只有结论的对外版、以后还可以有客户版等。每个版本由各自的运行产出，在“管理 → 报告版本”里注册，并按版本配置**谁能读**（分组或单个账号）和**能看到谁申请的报告**（仅本人 / 本分组 / 全部）。阅读页在有多个可见版本时提供切换。可读权限与可运行权限**完全分离**，所以可以有只读不跑的客户。详见 [ADR 0024](docs/adr/0024-report-versions.md)。
-- **单点登录（SSO）**：SAML 2.0 与 OIDC/OAuth2，可同时启用，在“管理 → 单点登录”里配置。SP 地址由公开访问地址推导并可一键复制；组映射规则按顺序命中，同时决定**角色与组织单位**（后者才是真正的权限边界，见 ADR 0022）；首次登录自动建号默认**关闭**。密钥加密存储、任何接口都不会回显。详见 [ADR 0023](docs/adr/0023-sso-saml-oidc.md)。
+- **网页管理**：管理员可管理入口按钮、报告类型、账号、角色、API 令牌和接口文档。入口按钮与报告类型支持基于 `@dnd-kit` 的拖拽排序，并在操作完成后持久化。
+- **多令牌**：Dify 接口支持多枚 Bearer 令牌，可分别配置备注、作用域（`all`、`ingest` 或 `query`）和有效期，并通过“系统设置”统一管理。
+- **账号与角色**：角色注册表支持扩展；首次启动自动创建 `admin` 账号，并将随机生成的密码输出到终端。账号可配置有效期，到期后现有会话立即失效。
+- **报告版本**：同一篇报告可保存内部版、对外版或客户版等多个版本。每个版本由独立运行产出，并可在“管理 → 报告版本”中配置可读账号或分组，以及报告申请范围（仅本人、本分组或全部）。阅读页会在存在多个可见版本时提供版本切换。读取权限与运行权限相互独立，可支持只读账号。详见 [ADR 0024](docs/adr/0024-report-versions.md)。
+- **单点登录（SSO）**：SAML 2.0 与 OIDC/OAuth2 可同时启用，并通过“管理 → 单点登录”配置。SP 地址根据公开访问地址生成；组映射规则按顺序匹配，同时确定角色和组织单位，其中组织单位构成权限边界（见 ADR 0022）。首次登录自动创建账号默认关闭。密钥加密存储，接口不会返回密钥明文。详见 [ADR 0023](docs/adr/0023-sso-saml-oidc.md)。
 - **两步验证与 Passkey**：本地账号可在“账号与安全”页自助启用 TOTP（含一次性恢复码，只显示一次），并注册 WebAuthn Passkey（可注册多个、可命名、可吊销，含克隆检测）。Passkey 是**第二因素**而非免密登录：先输密码，再用 Passkey 代替验证码。修改密码、增删 Passkey、开关两步验证都要求**再次验证身份**（密码或当前验证码），并与登录共用锁定策略；改密码会让其他所有设备下线。
 - **主题与 i18n**：浅色/深色/跟随系统（antd `ConfigProvider` + `darkAlgorithm`）；中文/英文界面切换（`react-i18next` + antd locale，报告正文本身是中文数据不翻译）；响应式适配手机/平板/桌面。
-- **零配置起步**：首次运行若无 `config.yaml` 会**自动生成**（含随机 `secret_key`）；config 只放基础设施，其余全在网页里管、存数据库。
+- **自动初始化**：首次运行时，如果 `config.yaml` 不存在，系统会自动生成配置文件和随机 `secret_key`。配置文件仅保存基础设施参数，其他产品设置通过网页管理并存储在数据库中。
 
 ## 部署（Docker，推荐）
 
@@ -28,18 +28,18 @@ mkdir -p /opt/StockAnalysisPrediction-Report-Portal
 cd /opt/StockAnalysisPrediction-Report-Portal
 curl -O https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/main/docker-compose.yml
 docker compose up -d
-docker compose logs            # 首启会打印随机管理员密码(admin / xxxxx)
+docker compose logs            # 查看首次启动生成的管理员初始密码
 ```
 
-浏览器开 `http://<host>:8790`（compose 默认绑 `127.0.0.1:8790`，对外用 nginx 反代 + TLS），用打印的密码登录，进“账号管理”改密码。
+在浏览器中访问 `http://<host>:8790`。Compose 默认监听 `127.0.0.1:8790`；外部访问应通过反向代理提供 TLS。使用启动日志中的初始密码登录，并在“账号管理”中修改密码。
 
-**更新**：`docker compose pull && docker compose up -d`（镜像 `:latest` 稳定 / `:beta` 最新 / `:vX.Y.Z` 锁版本）。
+**更新**：`docker compose pull && docker compose up -d`（镜像标签：`:latest` 稳定版、`:beta` 预发布版、`:vX.Y.Z` 固定版本）。
 
-首启会在 `./config/config.yaml` 生成默认配置，一般只需设 `secret_key`（`openssl rand -hex 32`）。
+首次启动会在 `./config/config.yaml` 生成默认配置。通常只需设置 `secret_key`，可使用 `openssl rand -hex 32` 生成随机值。
 
 ## 配置（config.yaml）
 
-只放**基础设施**；其余（账号、入口按钮、报告类型、令牌、Webhook、应用…）都在网页里管、存数据库。
+`config.yaml` 仅保存基础设施参数；账号、入口按钮、报告类型、令牌、Webhook 和应用等设置均通过网页管理并存储在数据库中。
 
 ```yaml
 listen: ":8790"
@@ -52,57 +52,57 @@ db_path: "data/portal.db"
 
 ### 备份与恢复
 
-门户的一切都在库里——账号、分组、报告正文、人工版与修订历史、应用、令牌、Webhook、设置。所以有两条命令：
+数据库保存账号、分组、报告正文、人工版及其修订历史、应用、令牌、Webhook 和系统设置。备份与恢复命令如下：
 
 ```bash
 report-portal backup dump.jsonl          # 导出整库（"-" 表示写到标准输出）
-report-portal backup - | gzip > dump.gz  # 想压缩就自己接一段管道
+report-portal backup - | gzip > dump.gz  # 通过标准输出流进行压缩
 
-report-portal restore dump.jsonl         # 默认是试运行：只校验+报数，什么都不写
-report-portal restore dump.jsonl --force # 真的恢复（会清空并替换整库，先停掉门户）
+report-portal restore dump.jsonl         # 试运行：仅校验并输出统计，不修改数据库
+report-portal restore dump.jsonl --force # 执行恢复：清空并替换数据库；操作前应停止服务
 ```
 
-Docker 里这么用（注意 compose 的 `down -v` 会连库一起删）：
+Docker 部署环境中的示例（`docker compose down -v` 会同时删除数据库卷）：
 
 ```bash
 docker compose exec report-portal /app/report-portal backup - | gzip > dump-$(date +%F).gz
 zcat dump-2026-09-04.gz | docker compose exec -T report-portal /app/report-portal restore - --force
 ```
 
-几点值得知道：
+运行特性：
 
-- **一个格式，两种驱动**。同一个文件在 SQLite 和 Postgres 之间可以互导，所以“用大了，搬去 PG”和“搬回单文件”都只是导一次、恢复一次。
-- **不带 `--force` 就是试运行**：会完整读一遍、校验一遍、报出会加载多少行、会删掉多少行，但一个字都不写。想确认“这份备份还能不能用”，在跑着的机器上直接跑这条就行。
-- **恢复是替换，不是合并**，而且整个过程在一个事务里——文件中途断了，库还是原样。
-- **导出会短暂挡住写入（仅 SQLite）**：整个导出是一个读事务，期间不写。实测 5 万篇报告约 1.2 秒——是停顿不是停机，换来的是“同一时刻的快照”；一张表一张表地读一个还在变的库，那不叫备份。Postgres 没有这个停顿。
-- **文件大小约等于正文总量**：5 万篇约 307 MiB（未压缩）。格式本身几乎不额外占地方，但直接落盘会很大——`-` 存在的意义就是让你接 `gzip`。
-- **恢复比导出慢，而且中途不出声**：同样 5 万篇，导出 1.2 秒、恢复约 7.6 秒（逐行插入，单事务）。库更大就是更长的沉默——而这条命令正在替换你的数据。**中途 Ctrl-C 是安全的**：事务没提交过，下次打开会自动回滚，什么都没变。想确认“这份备份还能不能读”，跑不带 `--force` 的试运行就够了（同样数据约 1.7 秒）。
-- **备份文件本身是机密**（含密码哈希、令牌哈希），落盘权限是 `0600`。SSO 密钥在里面是密文，解它的 `secret_key` 在 `config.yaml` 里、**不在备份里**——所以 `config/` 目录要跟备份一起存，不然恢复出来的 SSO 是打不开的。
+- **跨驱动兼容**：同一备份格式可用于 SQLite 和 PostgreSQL，因此数据库迁移只需执行一次导出和一次恢复。
+- **默认试运行**：不带 `--force` 时，命令会读取并校验完整备份，输出预计加载和删除的行数，但不修改数据库。该模式可用于验证备份完整性。
+- **事务性替换**：恢复操作替换现有数据，而不是合并数据。整个过程在单个事务中完成；读取失败或操作中断时，数据库保持恢复前状态。
+- **SQLite 导出期间的写入行为**：导出使用读事务以获得一致性快照，期间会短暂阻塞写入。基准数据为 5 万篇报告约 1.2 秒。PostgreSQL 不存在该写入阻塞。
+- **备份容量**：未压缩备份的大小接近报告正文总量；5 万篇报告的基准数据约为 307 MiB。使用标准输出 `-` 可直接通过 `gzip` 压缩。
+- **恢复耗时**：在 5 万篇报告的基准数据中，导出约需 1.2 秒，恢复约需 7.6 秒，试运行校验约需 1.7 秒。恢复过程不会持续输出进度；在事务提交前中断操作，后续打开数据库时会自动回滚。
+- **敏感数据保护**：备份文件包含密码哈希和令牌哈希，文件权限设置为 `0600`。SSO 密钥在备份中保持加密，其解密依赖 `config.yaml` 中的 `secret_key`，因此应将配置目录与备份一并保存。
 
 详见 [ADR 0027](docs/adr/0027-backup-and-restore.md)。
 
 ### 轮换 secret_key
 
-`secret_key` 除了签会话，还包着 SSO 密钥环——存下来的 OIDC/SAML 密钥用一把数据密钥加密，而那把数据密钥被 `secret_key` 派生的密钥包起来。所以直接改 `secret_key` 会打不开密钥环；程序会**明确报错并且什么都不改**，而不是重新生成一把（那会把已经存下的密钥全部变成永久无法解密）。
+`secret_key` 用于会话签名和保护 SSO 密钥环。OIDC/SAML 密钥由数据加密密钥加密，该数据密钥再由 `secret_key` 派生的密钥封装。直接替换 `secret_key` 会导致密钥环无法解密；系统会返回明确错误并保持原有数据不变。
 
-正确做法是把旧的那把一起写上，重启一次，然后删掉：
+轮换时应同时配置新旧密钥，完成一次重启后再删除旧密钥配置：
 
 ```yaml
 secret_key: "新的长随机串"
-secret_key_previous: "旧的那把"   # 或环境变量 RP_SECRET_KEY_PREVIOUS
+secret_key_previous: "旧的长随机串" # 或环境变量 RP_SECRET_KEY_PREVIOUS
 ```
 
-重启后只重新包了**一行**——数据密钥本身没变，任何已存密钥都不用重新录入。日志会提示可以删掉 `secret_key_previous`；留着不危险，但那是磁盘上的第二把活密钥，所以每次启动都会提醒一次。
+重启后，系统仅重新封装数据加密密钥，已存储的 SSO 密钥无需重新录入。日志提示轮换完成后，应删除 `secret_key_previous`，避免在磁盘上长期保留第二个有效密钥。
 
-旧密钥彻底丢了的话，只能删掉 `meta` 表里的 `keyring_salt` / `keyring_wrapped_dek` 两行再重新录入 SSO 密钥。换 `secret_key` 同时也会让所有人的登录会话失效，需要重新登录。
+如果旧密钥永久丢失，需要删除 `meta` 表中的 `keyring_salt` 和 `keyring_wrapped_dek` 记录，并重新录入 SSO 密钥。轮换 `secret_key` 也会使所有现有登录会话失效。
 
-### Postgres
+### PostgreSQL
 
-内部小用 SQLite 即可（单文件零依赖）。要多实例共享/上规模/跟 Dify 的 PG 合并，改 `db_driver: postgres` + `db_dsn` 即可，代码不变（已用真 PG 18 验证）。
+SQLite 适用于单实例和小规模部署，且无需独立数据库服务。多实例部署、较大数据规模或与 Dify 共用数据库服务时，可设置 `db_driver: postgres` 和 `db_dsn`。SQLite 与 PostgreSQL 使用同一数据访问层，PostgreSQL 路径由集成测试覆盖。
 
 ## Dify 入库接口
 
-Dify 工作流用 HTTP 节点 `POST /api/v1/reports` 入库，请求头 `Authorization: Bearer <令牌>`（令牌在“系统设置 → API 令牌”建，scope 含 `ingest`）。完整接口清单见网页“系统设置 → 接口说明”，机器可读的规格是 `/api/openapi.json`。请求体：
+Dify 工作流通过 `POST /api/v1/reports` 入库，请求头为 `Authorization: Bearer <令牌>`。令牌可在“系统设置 → API 令牌”中创建，且作用域须包含 `ingest`。完整接口清单见“系统设置 → 接口说明”，机器可读的 OpenAPI 规范位于 `/api/openapi.json`。请求体示例：
 
 ```json
 {
@@ -111,10 +111,11 @@ Dify 工作流用 HTTP 节点 `POST /api/v1/reports` 入库，请求头 `Authori
   "date": "2024-01-01",
   "kind": "投资决策",
   "subtype": "汇总",
-  "title": "比亚迪 投资决策汇总",
+  "title": "比亚迪 投资研究与决策报告 V3.15.6",
+  "version": "V3.15.6",
   "body_md": "# 结论\n**买入**。",
   "run_id": "batch-2024-01",
-  "source": "Dify",
+  "source": "dify/1-6-4投资决策/V3.15.6",
   "tracking": [
     { "itype": "assumption", "content": "毛利率维持 20%", "status": "pending", "review_point": "下季度财报" }
   ]
@@ -122,10 +123,11 @@ Dify 工作流用 HTTP 节点 `POST /api/v1/reports` 入库，请求头 `Authori
 ```
 
 - 必填：`date`、`subtype`，以及 `symbol` 和 `title` 至少有一个（宏观/行业/策略等专题报告没有个股代码，靠 `title` 立身）；`body_md` 或兼容旧数据导入的 `body_html` 至少一项须含非空白正文。两者都有时以 Markdown 为准。
-- **查询时 `symbol` 传了就不能是空字符串**：`GET /api/v1/reports?symbol=` 一律 400。空不等于“不限”——它意味着上游把代码弄丢了，静默放行会把别家公司的报告递给你。入库不受此限：专题报告本来就没代码，靠 `title` 立身。
+- **查询参数 `symbol` 不能是空字符串**：`GET /api/v1/reports?symbol=` 返回 400。空字符串表示上游未正确提供代码，不能作为“不限标的”处理，否则可能返回无关报告。入库允许不提供代码；专题报告使用 `title` 作为身份锚点。
 - **`name`**：可选，入库当时的公司名快照。**借壳/改名后老报告仍显示当时名**（如老报告“鼎泰新材”不会被改成现名“顺丰控股”），显示时若与现名不同会两者都标出；不传则取名录里的现名。
-- `kind`（大类）不传则按 `subtype` 推断，**它不参与身份**（否则大类改归类会把一份报告劈成两份）。
-- **身份键 = `symbol|date|subtype|title`，同键覆盖更新**（重跑同一天同标题的同类型报告即覆盖，`run_id` 只是批次标签）。标题参与身份，所以同一天同类型的不同选题各自成篇、互不覆盖。
+- `kind`（大类）省略时按 `subtype` 推断，且不参与身份键，避免分类调整后产生重复报告。
+- **身份键为 `symbol|date|subtype|title|version`**。相同身份键的再次入库会覆盖原报告，`run_id` 仅作为批次标签。`title` 始终参与身份键；`version` 省略时使用默认报告版本。
+- **`source` 表示生产来源**。工作流建议使用 `dify/<模块>/<执行版本>` 格式；Portal 会识别末尾的 `V...` 并显示执行版本。该执行版本与身份键中的报告版本 `version` 是两个独立概念。
 
 ## 本地开发
 
@@ -149,19 +151,19 @@ cd web && npm run build              # 产出 internal/web/dist/
 go run ./cmd/report-portal           # 访问 :8790，SPA 由二进制内嵌服务
 ```
 
-辅助命令：`go run ./cmd/report-portal hashpw '密码'`（生成 bcrypt）、`... adduser <名> <密码> admin`（兜底建管理员）、`... fetchnames`（抓全量 A 股名称）、`... backup <文件|->` / `... restore <文件|-> [--force]`（整库导出/恢复，见上文“备份与恢复”）、`... recompute-kinds`（改过分类后重算 kind）、`... freeze-names`（把当前名称固化到历史报告上）、`... version`（版本/commit/构建时间）。
+辅助命令：`go run ./cmd/report-portal hashpw '密码'`（生成 bcrypt 哈希）、`... adduser <名> <密码> admin`（恢复管理员访问）、`... fetchnames`（更新 A 股名称）、`... backup <文件|->` / `... restore <文件|-> [--force]`（导出或恢复完整数据库）、`... recompute-kinds`（分类调整后重新计算 `kind`）、`... freeze-names`（将当前名称固化到历史报告）以及 `... version`（显示版本、提交和构建时间）。
 
 ## 发布
 
-打 `v*` tag（`git tag v1.0.0 && git push origin v1.0.0`）触发 CI：跨平台编译 → 发 GitHub Release（二进制归档 + SHA256）→ 推多架构镜像到 `ghcr.io`。带 `-` 的（如 `v1.0.0-beta`）标记为预发布，只打 `:beta` 不动 `:latest`。
+推送 `v*` 标签（`git tag v1.0.0 && git push origin v1.0.0`）会触发 CI：执行跨平台编译、发布包含二进制归档和 SHA256 校验文件的 GitHub Release，并将多架构镜像推送至 `ghcr.io`。包含连字符的版本（如 `v1.0.0-beta`）标记为预发布，仅更新 `:beta`，不更新 `:latest`。
 
-> 首次推镜像后，到仓库 Packages 设置把 ghcr 包设为 public，否则 `docker compose pull` 需登录。
+> 首次推送镜像后，如需支持未登录的 `docker compose pull`，请在仓库 Packages 设置中将对应 GHCR 包设为公开。
 
-## 扩展点（这是个正经项目 🙂）
+## 扩展点
 
 - **角色**：`roles.go` 的 `roleRegistry` 加一项（角色→权限点），账号管理下拉与鉴权自动生效。
-- **多语言**：`web/src/i18n.ts` 的 `en` 资源批量补词条即生效；组件用 `useTranslation()` 的 `t('key')`。
-- **报告类型**：数据里自动发现，网页“类型管理”按大类分组/排序/指定默认页/改名/增删；未匹配自动兜底。
+- **多语言**：在 `web/src/locales/*.json` 中维护各语言词条；组件通过 `useTranslation()` 和 `t('key')` 读取本地化文本。
+- **报告类型**：系统从数据中发现报告类型，并在“类型管理”中提供分组、排序、默认项、重命名和增删功能；未匹配项使用默认分类。
 - **接口**：Dify 机器接口（Bearer）全部在 `internal/app/apiv1.go`（`/api/v1/*`，唯一的机器接口面）；浏览器/管理 JSON 接口在 `internal/app/apiui.go`。
 - **新包**：加功能就新建 `internal/<模块>`（如 `internal/auth` 做 SSO、`internal/dify` 直连 Dify），由 `internal/app` 引入。
 
