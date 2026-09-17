@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/dify"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
 // Reconnect-not-retry tuning: how often to poll a started-but-disconnected run, and

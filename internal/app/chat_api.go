@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/dify"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
 // HTTP handlers for the interactive chat/assistant surface (docs/adr/0012-interactive-chat.md).

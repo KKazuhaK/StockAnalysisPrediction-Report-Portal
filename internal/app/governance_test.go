@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 // EffectiveGroupSettings layers permissive baseline < Default group < primary group.

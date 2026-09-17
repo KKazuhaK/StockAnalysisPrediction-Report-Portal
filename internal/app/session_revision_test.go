@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 func TestPasswordChangeInvalidatesExistingSession(t *testing.T) {

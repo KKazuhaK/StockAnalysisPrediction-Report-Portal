@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/webhook"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/webhook"
 )
 
 func callID(h func(http.ResponseWriter, *http.Request, string), method string, id int64) *httptest.ResponseRecorder {

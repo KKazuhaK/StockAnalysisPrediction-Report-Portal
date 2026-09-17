@@ -1,4 +1,4 @@
-module github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal
+module github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal
 
 go 1.26.6
 

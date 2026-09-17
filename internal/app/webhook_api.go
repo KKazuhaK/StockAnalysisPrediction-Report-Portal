@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/webhook"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/webhook"
 )
 
 // Admin HTTP handlers for managing outbound webhooks (PermManage). The secret is

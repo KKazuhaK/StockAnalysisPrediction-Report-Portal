@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/dify"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
 // seedDifyTarget creates a Dify target with a known secret and returns its id.

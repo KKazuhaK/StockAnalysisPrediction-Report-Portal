@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 // ouFixture builds root → restricted OU (org) → its sub-team, plus a restricted user in the team,

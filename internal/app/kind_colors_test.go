@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 // KindColors lets an admin assign an antd Tag preset color to each report kind

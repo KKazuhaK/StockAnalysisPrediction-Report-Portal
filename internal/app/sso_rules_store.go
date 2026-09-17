@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/ssorules"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/ssorules"
 )
 
 // The SSO group rules, stored as one ordered JSON list in `meta`.

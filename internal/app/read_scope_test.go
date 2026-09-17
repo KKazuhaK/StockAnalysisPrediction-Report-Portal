@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 // readScopeFixture builds two restricted OUs (A, B) and, for symbol 600000: A's own report, an
