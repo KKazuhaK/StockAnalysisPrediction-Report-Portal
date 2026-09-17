@@ -56,7 +56,12 @@ func TestSAMLSubjectRejectsTransient(t *testing.T) {
 // completeSSOLogin expects: single-valued as a bare string, multi-valued as a slice. Rejecting a
 // duplicate attribute Name is no longer this function's job — samlProvider sets
 // Config.StrictAttributes: true, so authcore/saml itself refuses that assertion before samlClaims
-// ever sees it (see TestSAMLProviderConfigIsStrict and TestSAMLProviderRejectsDuplicateAttribute).
+// ever sees it (see TestSAMLProviderConfigIsStrict).
+//
+// That refusal is covered here only at the config level. Proving it end to end needs a Response
+// whose signature actually validates, because authcore checks attributes after signature
+// validation, and these tests have no signing harness — every other rejection they exercise
+// (assertion count, weak algorithm, encrypted assertion, Destination) happens before it.
 func TestSAMLClaimsFlattensAttributes(t *testing.T) {
 	a := &saml.Assertion{Attributes: map[string][]string{
 		// authcore indexes one <Attribute> under BOTH its Name and FriendlyName when they differ —
