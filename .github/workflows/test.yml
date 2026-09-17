@@ -110,10 +110,12 @@ jobs:
   # Full -race over every package, on main pushes only: PRs run the scoped go-race lane above.
   # The other packages get their own job rather than riding in every shard — they were ~50s of
   # duplicated work per shard. internal/app is one big test binary and dominates the wall clock,
-  # so its tests are split eight ways by a partition generated from the test list (the Go
+  # so its tests are split four ways by a partition generated from the test list (the Go
   # toolchain has no -shard flag). Round-robin over the deterministic list keeps the shards
   # balanced as tests are added and is self-maintaining: a new test lands in exactly one shard
-  # without editing this file.
+  # without editing this file. Four is the point of diminishing returns: every shard pays the same
+  # ~45s race-instrumented compile, so eight shards saved only ~20s more wall clock at twice the
+  # jobs. (Measured on main: 4x~3m, 8x~2m40s, unsplit 6m30s.)
   go-race-others:
     name: go race full (other packages)
     if: github.event_name != 'pull_request'
@@ -137,25 +139,25 @@ jobs:
           retention-days: 7
 
   go-race-full:
-    name: go race full (${{ matrix.shard }}/8)
+    name: go race full (${{ matrix.shard }}/4)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Race shard ${{ matrix.shard }}/8 of internal/app
+      - name: Race shard ${{ matrix.shard }}/4 of internal/app
         shell: bash
         run: |
           set -euo pipefail
           tests=$(go test -list '^Test' ./internal/app/ | grep '^Test' | grep -v '^TestMain$')
-          regex=$(printf '%s\n' "$tests" | awk -v s="${{ matrix.shard }}" -v m=8 'NR % m == s % m' | paste -sd'|' -)
+          regex=$(printf '%s\n' "$tests" | awk -v s="${{ matrix.shard }}" -v m=4 'NR % m == s % m' | paste -sd'|' -)
           go test -race -count=1 -timeout=10m -run "^(${regex})$" ./internal/app/ 2>&1 | tee "go-race-shard-${{ matrix.shard }}.txt"
       - name: Upload race output
         if: failure()
