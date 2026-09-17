@@ -4,10 +4,22 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# One run per ref: a newer push to the same PR cancels the previous run instead of queueing a
+# second full pass over superseded code.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   go-test:
+    name: go-test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16-alpine
@@ -27,8 +39,8 @@ jobs:
       # test skips. Verifies the real PG path: schema DDL, STRING_AGG, ILIKE search.
       TEST_POSTGRES_DSN: "postgres://portal:portal@localhost:5432/reports_test?sslmode=disable"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - run: go build ./... # compile every package (fails fast on a build break)
@@ -39,16 +51,68 @@ jobs:
       # govulncheck: fails on a known vulnerability reachable from our code. A hard gate rather than
       # advisory because we own an XML signature verifier (SAML, ADR 0023): its signing dependencies
       # have shipped signature-bypass CVEs, and a routine `go mod tidy` must not be able to walk the
-      # module graph back onto a vulnerable version without CI noticing.
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-      - run: go test ./... -v
+      # module graph back onto a vulnerable version without CI noticing. Pinned so a new advisory
+      # database release is the only thing that can change this gate's verdict.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      # -count=1 disables Go's test result cache: setup-go restores GOCACHE between runs, and a
+      # cached "ok" from a previous run would let a flaky test report green without executing.
+      - run: go test -count=1 -timeout=5m ./...
+
+  # The race detector on the concurrent core, split by event: full `-race ./...` is dominated by
+  # internal/app (one big test binary), which used to put 6+ minutes on every PR. A PR runs the
+  # packages where concurrency actually lives plus the app package's scheduler/engine/webhook
+  # tests; a main-branch push runs everything as the post-merge backstop, so a missed race turns
+  # into a red main instead of a blocked PR.
+  go-race:
+    name: go race
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -race -count=1 -timeout=5m ./internal/queue/ ./internal/batch/ ./internal/dify/ ./internal/webhook/
+      # The subset is name-based on purpose: the run queue, scheduler, retry/reconcile loops,
+      # webhook delivery and chat gate are the paths a race detector can actually catch here.
+      - run: >-
+          go test -race -count=1 -timeout=10m ./internal/app/
+          -run 'Batch|Schedul|Priority|Ticket|Urgent|Queue|Cancel|Retry|Requeue|Resume|Reconcile|Webhook|Chat|Job|Throttle|Shutdown|Cleanup|Recurring|Dify'
+
+  go-race-full:
+    name: go race full
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -race -count=1 -timeout=15m ./...
+
+  # The project's own tests passing does not prove the workflow YAML is valid. actionlint checks
+  # expressions, matrix and job dependencies, and shell-checks the embedded run: scripts with the
+  # shellcheck that ships on the runner image.
+  workflow-lint:
+    name: workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
   web-build:
     name: web typecheck + build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: npm
@@ -75,11 +139,12 @@ jobs:
   font-image:
     name: font chain + coverage gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - name: Build the font stages and run the gate
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.release

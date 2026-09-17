@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/app"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/version"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/app"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/version"
 )
 
 func main() {

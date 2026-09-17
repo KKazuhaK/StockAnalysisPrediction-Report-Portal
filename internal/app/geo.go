@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/geoip"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/geoip"
 )
 
 // IP → place, for the audit log.

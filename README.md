@@ -26,7 +26,7 @@ A self-hosted research report portal that replaces the legacy Mail Research Repo
 ~~~bash
 mkdir -p /opt/StockAnalysisPrediction-Report-Portal
 cd /opt/StockAnalysisPrediction-Report-Portal
-curl -O https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/main/docker-compose.yml
 docker compose up -d
 docker compose logs            # prints the generated admin password on first startup
 ~~~

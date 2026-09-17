@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/captcha"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/captcha"
 )
 
 // Captcha configuration and the gate that public forms pass through.

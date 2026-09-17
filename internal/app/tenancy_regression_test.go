@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 func tenancyServer(t *testing.T) *Server {

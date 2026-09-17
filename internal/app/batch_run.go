@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/queue"
 )
 
 // This file is the batch orchestration layer: it ties the store, the engine, and
