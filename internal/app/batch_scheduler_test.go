@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/batch"
 )
 
 // provFn adapts a ctx-aware func to a batch.Provider for scheduler tests.

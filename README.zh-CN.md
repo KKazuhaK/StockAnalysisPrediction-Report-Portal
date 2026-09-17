@@ -26,7 +26,7 @@
 ```bash
 mkdir -p /opt/StockAnalysisPrediction-Report-Portal
 cd /opt/StockAnalysisPrediction-Report-Portal
-curl -O https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/main/docker-compose.yml
 docker compose up -d
 docker compose logs            # 查看首次启动生成的管理员初始密码
 ```

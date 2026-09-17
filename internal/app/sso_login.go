@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/ssorules"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/ssorules"
 )
 
 // The shared tail of every SSO login (ADR 0023). Both protocols hand a verified identity to

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 func secretServer(t *testing.T) *Server {

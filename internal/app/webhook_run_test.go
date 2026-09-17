@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/webhook"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/webhook"
 )
 
 // fireEvent delivers a signed payload to matching active subscribers only, and

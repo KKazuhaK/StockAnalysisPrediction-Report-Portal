@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/version"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/web"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/version"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/web"
 )
 
 // The title baked into the built index.html; replaced at serve time with the configured

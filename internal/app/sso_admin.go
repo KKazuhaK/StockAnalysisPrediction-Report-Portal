@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/ssorules"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/ssorules"
 )
 
 // Admin API for SSO configuration (ADR 0023). Everything lives in the DB and is edited here;

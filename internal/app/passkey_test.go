@@ -1,13 +1,14 @@
 package app
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -195,5 +196,50 @@ func TestPasskeyCeremonyIsSingleUse(t *testing.T) {
 	token, _ = s.stashCeremony("alice", "webauthn-reg", &webauthn.SessionData{UserID: []byte("alice")})
 	if _, ok := s.takeCeremonyAny(token, "webauthn-login"); ok {
 		t.Error("a registration ceremony must not be usable as a login ceremony")
+	}
+}
+
+// The account adapter exposes exactly what the WebAuthn library needs — identity plus the stored
+// credentials — and the list endpoint shows a user their own registered passkeys.
+func TestPasskeyUserAdapterAndList(t *testing.T) {
+	s := passkeyServer(t)
+	s.st.AddPasskey("alice", "My laptop", fakeCred("cred-a", 3))
+
+	rec := httptest.NewRecorder()
+	s.apiPasskeyList(rec, httptest.NewRequest(http.MethodGet, "/api/me/passkeys", nil), "alice")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apiPasskeyList → %d", rec.Code)
+	}
+	var out struct {
+		Passkeys []map[string]any `json:"passkeys"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Passkeys) != 1 || out.Passkeys[0]["label"] != "My laptop" {
+		t.Fatalf("passkeys = %v", out.Passkeys)
+	}
+	// Another user's list is empty.
+	rec = httptest.NewRecorder()
+	s.apiPasskeyList(rec, httptest.NewRequest(http.MethodGet, "/api/me/passkeys", nil), "bob")
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Passkeys) != 0 {
+		t.Fatalf("bob sees %d passkeys, want 0", len(out.Passkeys))
+	}
+
+	pu, err := s.passkeyUser("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(pu.WebAuthnID()) != "alice" || pu.WebAuthnName() != "alice" || pu.WebAuthnDisplayName() != "alice" {
+		t.Fatalf("adapter identity = %q/%q/%q", pu.WebAuthnID(), pu.WebAuthnName(), pu.WebAuthnDisplayName())
+	}
+	if creds := pu.WebAuthnCredentials(); len(creds) != 1 {
+		t.Fatalf("adapter credentials = %d, want 1", len(creds))
+	}
+	if ds := credentialDescriptors(pu.creds); len(ds) != 1 || string(ds[0].CredentialID) != "cred-a" {
+		t.Fatalf("credential descriptors = %v", ds)
 	}
 }

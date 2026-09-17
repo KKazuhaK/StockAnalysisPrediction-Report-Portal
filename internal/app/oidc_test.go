@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 // signRS256 hand-rolls a compact JWS. RS256 is just PKCS#1 v1.5 over SHA-256, so this keeps the
