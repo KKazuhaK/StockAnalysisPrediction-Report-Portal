@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 	"github.com/crewjam/saml"
 	"golang.org/x/crypto/bcrypt"
 )

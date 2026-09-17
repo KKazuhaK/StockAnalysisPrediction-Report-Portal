@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/geoip"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/geoip"
 )
 
 // The audit log (retention is the storage-cleanup subsystem's Target D, ADR 0017).

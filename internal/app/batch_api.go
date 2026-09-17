@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/queue"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/queue"
 	"io"
 	"net/http"
 	"sort"
@@ -343,7 +343,9 @@ func (s *Server) apiBatchTargetSurfaces(w http.ResponseWriter, r *http.Request, 
 	}
 	// Reject an empty selection rather than storing it: [] would normalise to '' and mean
 	// "every surface", the exact opposite of what an admin who unticked everything meant.
-	if len(TargetSurfaces(strings.Join(in.Surfaces, ","))) == 0 {
+	// A non-empty list whose every entry is unknown is the same mistake in a different shape.
+	normalized := TargetSurfaces(strings.Join(in.Surfaces, ","))
+	if len(in.Surfaces) == 0 || len(normalized) == 0 {
 		jsonError(w, http.StatusBadRequest, "select at least one surface")
 		return
 	}
