@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/webhook"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/webhook"
 )
 
 // Outbound event dispatch. fireEvent is the single entry point the rest of the app

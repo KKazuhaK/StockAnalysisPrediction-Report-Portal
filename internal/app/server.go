@@ -28,10 +28,10 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/captcha"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/version"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/captcha"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/version"
 )
 
 // pdf.html is the only server-side template kept (for PDF export); all pages are rendered by the React SPA (web/dist).

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 // TestRunsTodayCountsRowsSincePanelMidnight locks the daily-run counter (ADR 0022 R2): it sums ROWS

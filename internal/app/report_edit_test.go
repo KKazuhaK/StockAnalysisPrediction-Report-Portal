@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 // Hand-written reports (ADR 0026).

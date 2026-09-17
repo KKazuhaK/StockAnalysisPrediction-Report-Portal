@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/dify"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
 // Chat concurrency gate + admin observability (docs/adr/0012-interactive-chat.md).

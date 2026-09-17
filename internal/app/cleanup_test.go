@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
 )
 
 // cleanupDue fires at most once per matching day, gated by frequency, weekday/month-day, the

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/config"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/version"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/version"
 )
 
 // Backup and restore for the whole database, as two CLI subcommands.

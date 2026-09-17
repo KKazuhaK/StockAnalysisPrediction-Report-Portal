@@ -1,7 +1,7 @@
 # Zero-clone deployment:
 #   mkdir -p /opt/StockAnalysisPrediction-Report-Portal
 #   cd /opt/StockAnalysisPrediction-Report-Portal
-#   curl -O https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/main/docker-compose.yml
+#   curl -O https://raw.githubusercontent.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/main/docker-compose.yml
 #   docker compose up -d
 #   docker compose logs           # first run prints the random admin password
 #   # To enable legacy-portal passthrough / change settings: log in and configure under Settings
@@ -49,7 +49,7 @@ services:
     #   :latest → newest stable (recommended, default)
     #   :beta   → newest build (incl. pre-releases), always bleeding edge
     #   :vX.Y.Z → pin a specific version
-    image: ghcr.io/kkazuhak/stockanalysisprediction-report-portal:latest
+    image: ghcr.io/kazuhahub/stockanalysisprediction-report-portal:latest
     container_name: report-portal
     restart: unless-stopped
     pull_policy: always

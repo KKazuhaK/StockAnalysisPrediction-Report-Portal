@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/mail"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/mail"
 )
 
 // notifyJobDone emails the submitter that their batch job finished, if they opted in

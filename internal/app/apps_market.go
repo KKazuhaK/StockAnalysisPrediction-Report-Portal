@@ -20,7 +20,7 @@ import (
 
 // defaultAppMarketIndexURL points at this repo's own apps/index.json so the market
 // works out of the box; an admin can repoint it via the app_market_index_url setting.
-const defaultAppMarketIndexURL = "https://raw.githubusercontent.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/main/apps/index.json"
+const defaultAppMarketIndexURL = "https://raw.githubusercontent.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/main/apps/index.json"
 
 // appMarketEntry is one app listed in the market index. `path` is resolved relative
 // to the index URL; an absolute `url` (if set) overrides it.

@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/batch"
 )
 
 // reconcileProv implements both Provider.Run and Reconciler.Reconcile with counters, so a test can

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/dify"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
 // difyRunStub streams a workflow run ending in the given status, or returns a status

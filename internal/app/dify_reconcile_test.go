@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/batch"
-	"github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal/internal/dify"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/batch"
+	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
 // A dropped pure-agent chat stream carries no workflow_run_id, so GetWorkflowRun can't
