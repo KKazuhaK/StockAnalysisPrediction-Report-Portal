@@ -15,6 +15,12 @@ concurrency:
 permissions:
   contents: read
 
+# No go.work on the runner, and no silent toolchain download: the installed Go must satisfy the
+# go directive exactly. (Adopted from Passwall-Sub-Panel's CI.)
+env:
+  GOWORK: "off"
+  GOTOOLCHAIN: "local"
+
 jobs:
   go-test:
     name: go-test
@@ -56,7 +62,17 @@ jobs:
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       # -count=1 disables Go's test result cache: setup-go restores GOCACHE between runs, and a
       # cached "ok" from a previous run would let a flaky test report green without executing.
-      - run: go test -count=1 -timeout=5m ./...
+      - name: Test
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout=5m ./... 2>&1 | tee go-test-output.txt
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-output
+          path: go-test-output.txt
+          retention-days: 7
 
   # The race detector on the concurrent core, split by event: full `-race ./...` is dominated by
   # internal/app (one big test binary), which used to put 6+ minutes on every PR. A PR runs the
@@ -73,12 +89,23 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: go test -race -count=1 -timeout=5m ./internal/queue/ ./internal/batch/ ./internal/dify/ ./internal/webhook/
-      # The subset is name-based on purpose: the run queue, scheduler, retry/reconcile loops,
-      # webhook delivery and chat gate are the paths a race detector can actually catch here.
-      - run: >-
-          go test -race -count=1 -timeout=10m ./internal/app/
-          -run 'Batch|Schedul|Priority|Ticket|Urgent|Queue|Cancel|Retry|Requeue|Resume|Reconcile|Webhook|Chat|Job|Throttle|Shutdown|Cleanup|Recurring|Dify'
+      - name: Race the concurrency packages and the app scheduler tests
+        run: |
+          set -o pipefail
+          {
+            go test -race -count=1 -timeout=5m ./internal/queue/ ./internal/batch/ ./internal/dify/ ./internal/webhook/
+            # The subset is name-based on purpose: the run queue, scheduler, retry/reconcile loops,
+            # webhook delivery and chat gate are the paths a race detector can actually catch here.
+            go test -race -count=1 -timeout=10m ./internal/app/ \
+              -run 'Batch|Schedul|Priority|Ticket|Urgent|Queue|Cancel|Retry|Requeue|Resume|Reconcile|Webhook|Chat|Job|Throttle|Shutdown|Cleanup|Recurring|Dify'
+          } 2>&1 | tee go-race-output.txt
+      - name: Upload race output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-race-output
+          path: go-race-output.txt
+          retention-days: 7
 
   # Full -race over every package, on main pushes only: PRs run the scoped go-race lane above.
   # The other packages get their own job rather than riding in every shard — they were ~50s of
@@ -97,9 +124,17 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: |
-          set -euo pipefail
-          go list ./... | grep -v '/internal/app$' | xargs go test -race -count=1 -timeout=5m
+      - name: Race the other packages
+        run: |
+          set -o pipefail
+          go list ./... | grep -v '/internal/app$' | xargs go test -race -count=1 -timeout=5m 2>&1 | tee go-race-others.txt
+      - name: Upload race output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-race-others-output
+          path: go-race-others.txt
+          retention-days: 7
 
   go-race-full:
     name: go race full (${{ matrix.shard }}/8)
@@ -121,7 +156,14 @@ jobs:
           set -euo pipefail
           tests=$(go test -list '^Test' ./internal/app/ | grep '^Test' | grep -v '^TestMain$')
           regex=$(printf '%s\n' "$tests" | awk -v s="${{ matrix.shard }}" -v m=8 'NR % m == s % m' | paste -sd'|' -)
-          go test -race -count=1 -timeout=10m -run "^(${regex})$" ./internal/app/
+          go test -race -count=1 -timeout=10m -run "^(${regex})$" ./internal/app/ 2>&1 | tee "go-race-shard-${{ matrix.shard }}.txt"
+      - name: Upload race output
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-race-shard-${{ matrix.shard }}-output
+          path: go-race-shard-${{ matrix.shard }}.txt
+          retention-days: 7
 
   # The project's own tests passing does not prove the workflow YAML is valid. actionlint checks
   # expressions, matrix and job dependencies, and shell-checks the embedded run: scripts with the
@@ -161,26 +203,75 @@ jobs:
         working-directory: web
         run: npm run build
 
-  # The font chain used to be executed for the first time during a release: Dockerfile.release runs
-  # only on a tag, so a typo in it surfaced after the binaries were built and, before the release job
-  # learned to wait on this one, after the GitHub Release was already public. Two releases were lost
-  # that way. `--target runtime-base` stops before the stage that copies the Go binary, so this needs
-  # no build artifacts — it fetches the fonts, patches the CJK cmap and runs the coverage gate, which
-  # is the part that actually breaks.
-  font-image:
-    name: font chain + coverage gate
+  # Builds the final release image and runs it. This used to stop at `--target runtime-base` (the
+  # font gate), so the first execution of the actual container — entrypoint, privilege drop,
+  # config seeding, HTTP bind, /healthz — happened on a user's machine. The full build runs the
+  # same font gate on the way through and then proves the container starts and answers.
+  docker-image:
+    name: docker image (font gate + smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build the linux/amd64 binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          mod=$(go list -m)
+          mkdir -p bin/linux-amd64
+          go build -trimpath -ldflags "-s -w -X ${mod}/internal/version.Version=ci" \
+            -o bin/linux-amd64/report-portal ./cmd/report-portal
       - uses: docker/setup-buildx-action@v4
-      - name: Build the font stages and run the gate
+      - name: Build the release image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.release
-          target: runtime-base
-          platforms: linux/amd64 # one arch is enough to catch a Dockerfile or gate error
+          platforms: linux/amd64 # one arch is enough to catch a Dockerfile or startup error
           push: false
+          load: true
+          tags: report-portal:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Run the image and probe it
+        run: |
+          set -euo pipefail
+          docker run -d --name rp-smoke -p 18790:8790 report-portal:ci
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:18790/healthz; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$healthy" != 1 ]; then
+            echo "::error::/healthz did not answer within 120s"
+            docker logs rp-smoke
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:18790/healthz; echo
+          # The entrypoint starts as root and must hand the server over to PUID/PGID (10001);
+          # PID 1 is the server because the entrypoint execs it.
+          server_uid=$(docker exec rp-smoke cat /proc/1/status | awk '/^Uid:/{print $2}')
+          if [ "$server_uid" != "10001" ]; then
+            echo "::error::server runs as uid ${server_uid}, want 10001"
+            docker logs rp-smoke
+            exit 1
+          fi
+          # The version subcommand proves the binary executes inside the image with no network,
+          # no capabilities and as a non-root user, and that the injected build id survived.
+          version_out=$(docker run --rm --network none --cap-drop ALL \
+            --security-opt no-new-privileges --user 10001:10001 \
+            --entrypoint /app/report-portal report-portal:ci version)
+          echo "$version_out"
+          case "$version_out" in
+            *ci*) ;;
+            *) echo "::error::version output is missing the injected build id"; exit 1 ;;
+          esac
