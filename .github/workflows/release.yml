@@ -110,7 +110,6 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          check-latest: true
           cache-dependency-path: go.sum
       - name: Download web bundle
         uses: actions/download-artifact@v8
@@ -289,3 +288,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
+          # Registry cache, not the per-branch GitHub cache: every tag is a new ref, so type=gha
+          # would start cold on each release and re-download ~35 MB of fonts plus the wkhtmltopdf
+          # deb per arch. Both the fonts and apt layers live in ghcr instead and are reused across
+          # releases. The first release after this change populates the cache (~3 min); later ones
+          # only rebuild the COPY layers.
+          cache-from: type=registry,ref=ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}:buildcache,mode=max
