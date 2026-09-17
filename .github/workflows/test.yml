@@ -58,11 +58,31 @@ jobs:
       # cached "ok" from a previous run would let a flaky test report green without executing.
       - run: go test -count=1 -timeout=5m ./...
 
-  # The race detector in its own lane instead of inside go-test: it multiplies the app package's
-  # wall clock (the run queue, batch engine and webhook retries are the concurrent parts worth
-  # checking), and running it in parallel keeps the critical path at go-test's length.
+  # The race detector on the concurrent core, split by event: full `-race ./...` is dominated by
+  # internal/app (one big test binary), which used to put 6+ minutes on every PR. A PR runs the
+  # packages where concurrency actually lives plus the app package's scheduler/engine/webhook
+  # tests; a main-branch push runs everything as the post-merge backstop, so a missed race turns
+  # into a red main instead of a blocked PR.
   go-race:
     name: go race
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -race -count=1 -timeout=5m ./internal/queue/ ./internal/batch/ ./internal/dify/ ./internal/webhook/
+      # The subset is name-based on purpose: the run queue, scheduler, retry/reconcile loops,
+      # webhook delivery and chat gate are the paths a race detector can actually catch here.
+      - run: >-
+          go test -race -count=1 -timeout=10m ./internal/app/
+          -run 'Batch|Schedul|Priority|Ticket|Urgent|Queue|Cancel|Retry|Requeue|Resume|Reconcile|Webhook|Chat|Job|Throttle|Shutdown|Cleanup|Recurring|Dify'
+
+  go-race-full:
+    name: go race full
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -70,8 +90,6 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      # No Postgres service on purpose: the race detector targets in-process concurrency, and the
-      # Postgres integration tests skip without TEST_POSTGRES_DSN rather than slow this lane down.
       - run: go test -race -count=1 -timeout=15m ./...
 
   # The project's own tests passing does not prove the workflow YAML is valid. actionlint checks
