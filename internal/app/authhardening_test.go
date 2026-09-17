@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +13,7 @@ import (
 	"time"
 
 	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
-	"github.com/crewjam/saml"
+	"github.com/KazuhaHub/authcore/saml"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -258,85 +260,92 @@ func mustHash(pw string) string {
 	return string(h)
 }
 
-// TestSAMLRejectsWeakSignatureAlgorithms proves the portal enforces its own algorithm policy.
-// goxmldsig's default validation context maps rsa-sha1 to x509.SHA1WithRSA and applies no policy of
-// its own, so an IdP left on the ADFS/legacy-Keycloak default would otherwise anchor every login on
-// SHA-1 — for which collisions are practical — with nothing logged.
-func TestSAMLRejectsWeakSignatureAlgorithms(t *testing.T) {
-	resp := func(sigAlg, digestAlg string) []byte {
-		return []byte(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
-			<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo>
-			<ds:SignatureMethod Algorithm="` + sigAlg + `"/>
-			<ds:Reference><ds:DigestMethod Algorithm="` + digestAlg + `"/></ds:Reference>
-			</ds:SignedInfo></ds:Signature></samlp:Response>`)
+// TestSAMLProviderRejectsWeakSignatureAlgorithm proves the portal's algorithm policy still applies
+// once wired through authcore/saml. goxmldsig's default validation context maps rsa-sha1 straight
+// to x509.SHA1WithRSA and applies no policy of its own, so an IdP left on the ADFS/legacy-Keycloak
+// default would otherwise anchor every login on SHA-1 — for which collisions are practical — with
+// nothing logged. The check runs on the raw XML before any signature is verified (authcore/saml,
+// rawxml.go), so an unsigned-in-substance document that merely DECLARES a weak algorithm is enough
+// to reach it without hand-building a real signature.
+func TestSAMLProviderRejectsWeakSignatureAlgorithm(t *testing.T) {
+	s := samlTestServer(t)
+	p := samlTestProvider(t, s)
+	provider, _, err := s.samlProvider(p)
+	if err != nil {
+		t.Fatalf("samlProvider: %v", err)
 	}
-	const sha256Sig = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
-	const sha256Dig = "http://www.w3.org/2001/04/xmlenc#sha256"
-
-	if err := rejectWeakSignatureAlgs(resp(sha256Sig, sha256Dig)); err != nil {
-		t.Errorf("SHA-256 must be accepted: %v", err)
+	acs := s.samlACSURL(p.Slug)
+	resp := func(sigAlg string) string {
+		return `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Destination="` + acs + `">
+			<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo>
+			<SignatureMethod Algorithm="` + sigAlg + `"/>
+			<Reference><DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/></Reference>
+			</SignedInfo></Signature>
+			<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="a1"/></Response>`
 	}
-	for _, tc := range []struct{ name, sig, dig string }{
-		{"rsa-sha1 signature", "http://www.w3.org/2000/09/xmldsig#rsa-sha1", sha256Dig},
-		{"sha1 digest", sha256Sig, "http://www.w3.org/2000/09/xmldsig#sha1"},
-		{"md5 digest", sha256Sig, "http://www.w3.org/2001/04/xmldsig-more#md5"},
-		{"an algorithm nobody considered", "http://example.test/my-own-crypto", sha256Dig},
-	} {
-		if err := rejectWeakSignatureAlgs(resp(tc.sig, tc.dig)); err == nil {
-			t.Errorf("%s must be refused", tc.name)
-		}
+	_, err = provider.ValidateResponse(context.Background(),
+		samlPostResponse(acs, resp("http://www.w3.org/2000/09/xmldsig#rsa-sha1")), nil)
+	if !errors.Is(err, saml.ErrWeakSignatureAlgorithm) {
+		t.Errorf("rsa-sha1 must be refused as ErrWeakSignatureAlgorithm, got %v", err)
 	}
-	// A strong OUTER signature must not vouch for a SHA-1 inner one.
-	nested := []byte(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
-		<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo>
-		<ds:SignatureMethod Algorithm="` + sha256Sig + `"/>
-		<ds:Reference><ds:DigestMethod Algorithm="` + sha256Dig + `"/></ds:Reference></ds:SignedInfo></ds:Signature>
-		<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
-		<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo>
-		<ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>
-		</ds:SignedInfo></ds:Signature></saml:Assertion></samlp:Response>`)
-	if err := rejectWeakSignatureAlgs(nested); err == nil {
-		t.Error("a SHA-1 assertion signature must be refused even under a SHA-256 response signature")
+	if got := samlFailureReason(err); got != "saml_weak_signature" {
+		t.Errorf("samlFailureReason(%v) = %q, want saml_weak_signature", err, got)
 	}
 }
 
-// TestSAMLRejectsEncryptedAssertions proves the declared non-goal is an explicit refusal rather than
-// an absence of support. crewjam looks for an encrypted assertion FIRST and would feed it to the SP
-// private key, which is the decryption-oracle surface ADR 0023 chose not to take on.
-func TestSAMLRejectsEncryptedAssertions(t *testing.T) {
-	enc := []byte(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
-		<saml:EncryptedAssertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
-		<xenc:EncryptedData xmlns:xenc="http://www.w3.org/2001/04/xmlenc#"/></saml:EncryptedAssertion></samlp:Response>`)
-	if err := rejectEncryptedAssertion(enc); err == nil {
-		t.Error("an encrypted assertion must be refused")
+// TestSAMLProviderRejectsEncryptedAssertion proves the declared non-goal (ADR 0023) is still an
+// explicit refusal, not an absence of support, once wired through authcore/saml. crewjam looks for
+// an encrypted assertion FIRST and would feed it to the SP private key, which is the
+// decryption-oracle surface ADR 0023 chose not to take on. Like the weak-algorithm check, this runs
+// before any signature verification, so an intentionally-unsigned document reaches it.
+func TestSAMLProviderRejectsEncryptedAssertion(t *testing.T) {
+	s := samlTestServer(t)
+	p := samlTestProvider(t, s)
+	provider, _, err := s.samlProvider(p)
+	if err != nil {
+		t.Fatalf("samlProvider: %v", err)
 	}
-	plain := []byte(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
-		<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"/></samlp:Response>`)
-	if err := rejectEncryptedAssertion(plain); err != nil {
-		t.Errorf("a plain assertion must pass: %v", err)
+	acs := s.samlACSURL(p.Slug)
+	xmlDoc := `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Destination="` + acs + `">
+		<EncryptedAssertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+		<EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"/></EncryptedAssertion></Response>`
+	_, err = provider.ValidateResponse(context.Background(), samlPostResponse(acs, xmlDoc), nil)
+	if !errors.Is(err, saml.ErrEncryptedAssertionNotAllowed) {
+		t.Errorf("an encrypted assertion must be refused as ErrEncryptedAssertionNotAllowed, got %v", err)
+	}
+	if got := samlFailureReason(err); got != "saml_encrypted" {
+		t.Errorf("samlFailureReason(%v) = %q, want saml_encrypted", err, got)
 	}
 }
 
-// TestReplayEntryOutlivesTheAcceptanceWindow proves the replay cache cannot lapse while the library
-// would still accept the assertion. crewjam accepts until NotOnOrAfter PLUS MaxClockSkew, and it
-// checks SubjectConfirmationData's own NotOnOrAfter too — an entry keyed on the shorter of those
-// would reopen the very replay it exists to close.
-func TestReplayEntryOutlivesTheAcceptanceWindow(t *testing.T) {
-	notAfter := time.Now().Add(4 * time.Minute)
-	a := &saml.Assertion{Conditions: &saml.Conditions{NotOnOrAfter: notAfter}}
-	if got := assertionExpiry(a); !got.After(notAfter.Add(saml.MaxClockSkew)) {
-		t.Errorf("expiry %s must outlast NotOnOrAfter+MaxClockSkew (%s)", got, notAfter.Add(saml.MaxClockSkew))
+// TestSAMLProviderRequiresDestination proves the gap crewjam leaves open is still closed once
+// wired through authcore/saml: crewjam only enforces Destination when the Response itself is
+// signed OR the attribute is present, so an attacker can omit it on an unsigned Response (still
+// valid when only the Assertion is signed) to skip the check entirely. authcore/saml's
+// RequireDestination (on by default, left unset here — see samlConfig) closes that independently of
+// crewjam, and this reaches it the same way the two tests above do: before any signature check.
+func TestSAMLProviderRequiresDestination(t *testing.T) {
+	s := samlTestServer(t)
+	p := samlTestProvider(t, s)
+	provider, _, err := s.samlProvider(p)
+	if err != nil {
+		t.Fatalf("samlProvider: %v", err)
 	}
-	// A later SubjectConfirmationData window must extend the entry as well.
-	scNotAfter := time.Now().Add(9 * time.Minute)
-	a.Subject = &saml.Subject{SubjectConfirmations: []saml.SubjectConfirmation{
-		{SubjectConfirmationData: &saml.SubjectConfirmationData{NotOnOrAfter: scNotAfter}}}}
-	if got := assertionExpiry(a); !got.After(scNotAfter.Add(saml.MaxClockSkew)) {
-		t.Errorf("expiry %s must outlast the SubjectConfirmationData window (%s)", got, scNotAfter.Add(saml.MaxClockSkew))
+	acs := s.samlACSURL(p.Slug)
+	oneAssertion := func(destAttr string) string {
+		return `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol"` + destAttr + `>
+			<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="a1"/></Response>`
 	}
-	// A hostile NotOnOrAfter still cannot pin a row for long.
-	a = &saml.Assertion{Conditions: &saml.Conditions{NotOnOrAfter: time.Now().Add(100 * 365 * 24 * time.Hour)}}
-	if got := assertionExpiry(a); got.After(time.Now().Add(2 * time.Hour)) {
-		t.Errorf("a hostile NotOnOrAfter must stay clamped, got %s", got)
+	_, err = provider.ValidateResponse(context.Background(), samlPostResponse(acs, oneAssertion("")), nil)
+	if !errors.Is(err, saml.ErrMissingDestination) {
+		t.Errorf("an absent Destination must be refused as ErrMissingDestination, got %v", err)
+	}
+	_, err = provider.ValidateResponse(context.Background(),
+		samlPostResponse(acs, oneAssertion(` Destination="https://evil.example/acs"`)), nil)
+	if !errors.Is(err, saml.ErrDestinationMismatch) {
+		t.Errorf("a Destination for another SP must be refused as ErrDestinationMismatch, got %v", err)
+	}
+	if got := samlFailureReason(saml.ErrMissingDestination); got != "saml_destination" {
+		t.Errorf("samlFailureReason(ErrMissingDestination) = %q, want saml_destination", got)
 	}
 }
