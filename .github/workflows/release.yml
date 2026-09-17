@@ -1,14 +1,17 @@
 name: Release
 
-# 单流水线同时产出 GitHub Release 归档 + ghcr.io 多架构镜像，二者来自同一批二进制。
-# 套路抄 KazuhaHub/Passwall-Sub-Panel：
+# One pipeline produces both the GitHub Release archives and the ghcr.io multi-arch image from one
+# batch of binaries. Pattern borrowed from KazuhaHub/Passwall-Sub-Panel:
 #
-#   web     → 只构建一次前端 SPA(Vite)，作为 artifact 复用（旧写法在每个 matrix 里各编一遍 = 浪费）
-#   build   → matrix 原生交叉编译 6 平台，把 web 产物下载进 web/dist 后 //go:embed 进二进制
-#   release → 打 tar/zip + SHA256，发 GitHub Release
-#   docker  → 复用 linux amd64/arm64 二进制推多架构镜像（容器内不编译，免 QEMU）
+#   web     → build the SPA (Vite) once and reuse it as an artifact (the old shape rebuilt it inside
+#             every matrix leg = wasted work)
+#   build   → matrix cross-compiles 6 platforms, downloads the web bundle into web/dist and
+#             //go:embed-s it into the binary
+#   release → tar/zip + SHA256, publishes the GitHub Release
+#   docker  → reuses the linux amd64/arm64 binaries to push a multi-arch image (no in-container
+#             build, so no QEMU)
 #
-# 你从 Release 校验的二进制与镜像里的逐字节一致（同一 artifact）。
+# A binary verified from the Release is byte-for-byte the one in the image (the same artifact).
 
 on:
   push:
@@ -20,14 +23,17 @@ on:
         required: true
         type: string
 
+# Least privilege by default; the two jobs that write override it (release -> GitHub Release,
+# docker -> ghcr.io). Everything else inherits contents: read, so a compromised build step cannot
+# push to the repository.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   setup:
     name: Resolve tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       tag: ${{ steps.t.outputs.tag }}
       owner_lc: ${{ steps.t.outputs.owner_lc }}
@@ -35,19 +41,33 @@ jobs:
     steps:
       - id: t
         shell: bash
+        # Passed through env rather than interpolated into the script: a workflow_dispatch input is
+        # user-controlled text, and "${{ inputs.tag }}" inside a run: block is how a shell injection
+        # enters a release pipeline.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
-            tag="${GITHUB_REF_NAME}"
+            tag="$GITHUB_REF_NAME"
           fi
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "owner_lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-          echo "repo_lc=$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          owner_lc="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
+          repo_lc="$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "tag=${tag}"
+            echo "owner_lc=${owner_lc}"
+            echo "repo_lc=${repo_lc}"
+          } >> "$GITHUB_OUTPUT"
 
   web:
     name: Build web assets
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: setup
     steps:
       - uses: actions/checkout@v6
@@ -73,6 +93,7 @@ jobs:
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [setup, web]
     strategy:
       fail-fast: false
@@ -107,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          mod=github.com/KKazuhaK/StockAnalysisPrediction-Report-Portal
+          mod=github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal
           short_sha="${COMMIT:0:7}"
           build_date="$(date -u +%FT%TZ)"
           ldflags="-s -w"
@@ -125,13 +146,16 @@ jobs:
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
     # Waits on docker, not just build, for two reasons. A gate can only gate what it precedes: run
     # the two in parallel and either failure below lands after the Release is already public and its
     # archives are downloadable.
     #   1. The image build runs the glyph gate (scripts/probe-font-coverage.sh, in the runtime-base
     #      stage of Dockerfile.release) on both arches. test.yml's font-image job gates amd64
     #      pre-merge, so by tag time this is re-verification — except on arm64, first checked here.
-    #   2. The release body advertises `docker pull ghcr.io/…:${VERSION}` (generated below).
+    #   2. The release body advertises `docker pull ghcr.io/...:${VERSION}` (generated below).
     #      Publishing ahead of the push means a Release page pointing at a tag ghcr.io lacks.
     # Costs the release job the image build's wall clock. Note the scope: an archive ships neither
     # fonts nor wkhtmltopdf, so a tarball's glyph coverage is whatever its host provides
@@ -158,7 +182,8 @@ jobs:
             mkdir -p "build/${pkg}"
             cp "${dir}/report-portal${ext}" "build/${pkg}/"
             chmod +x "build/${pkg}/report-portal${ext}" || true
-            # README + 示例配置 + LICENSE 都是跟踪文件，缺失即让发布显式失败
+            # README + example config + LICENSE are tracked files; a missing one must fail the
+            # release loudly rather than ship an incomplete archive.
             cp README.md config.example.yaml LICENSE "build/${pkg}/"
             if [ "$goos" = "windows" ]; then
               (cd build && zip -qr "../dist/${pkg}.zip" "${pkg}")
@@ -166,7 +191,7 @@ jobs:
               tar -C build -czf "dist/${pkg}.tar.gz" "${pkg}"
             fi
           done
-          (cd dist && sha256sum * > SHA256SUMS.txt)
+          (cd dist && sha256sum -- * > SHA256SUMS.txt)
       - name: Generate release body
         shell: bash
         env:
@@ -174,6 +199,7 @@ jobs:
           OWNER_LC: ${{ needs.setup.outputs.owner_lc }}
           REPO_LC: ${{ needs.setup.outputs.repo_lc }}
         run: |
+          set -euo pipefail
           notes_file="docs/releases/${VERSION}.md"
           if [ -f "${notes_file}" ]; then
             cat "${notes_file}" > release_notes.md
@@ -182,15 +208,15 @@ jobs:
             : > release_notes.md
           fi
           cat <<EOF >> release_notes.md
-          ### Docker 镜像 (ghcr.io)
+          ### Container image (ghcr.io)
 
           \`\`\`shell
           docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:latest
-          # 或锁定版本
+          # or pin a version
           docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:${VERSION}
           \`\`\`
 
-          ### 校验
+          ### Verify
 
           \`\`\`shell
           sha256sum -c SHA256SUMS.txt
@@ -205,7 +231,7 @@ jobs:
           tag_name: ${{ needs.setup.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: ${{ needs.setup.outputs.tag }}
-          # 带 "-"（如 v1.0.0-beta）标为预发布，/releases/latest 会排除它。
+          # A "-" suffix (e.g. v1.0.0-beta) marks a pre-release; /releases/latest excludes it.
           prerelease: ${{ contains(needs.setup.outputs.tag, '-') }}
           generate_release_notes: true
           body_path: release_notes.md
@@ -217,6 +243,10 @@ jobs:
   docker:
     name: Publish container image
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
     needs: [setup, build]
     steps:
       - uses: actions/checkout@v6
@@ -235,9 +265,9 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}
-          # 两条滚动通道：
-          #   :latest → 只跟最新【稳定】版（不含预发布）
-          #   :beta   → 跟最新一次发布（含预发布），始终"最新"
+          # Two rolling channels:
+          #   :latest -> tracks only the newest stable release (pre-releases excluded)
+          #   :beta   -> tracks the newest release including pre-releases, always "current"
           tags: |
             type=raw,value=${{ needs.setup.outputs.tag }}
             type=raw,value=latest,enable=${{ startsWith(needs.setup.outputs.tag, 'v') && !contains(needs.setup.outputs.tag, '-') }}
@@ -252,7 +282,8 @@ jobs:
         with:
           context: .
           file: Dockerfile.release
-          # 免 QEMU：Dockerfile.release 只 COPY 预编译的对应架构二进制，debian 基础镜像本身多架构。
+          # No QEMU: Dockerfile.release only COPYs the prebuilt per-arch binary; the debian base
+          # image itself is multi-arch.
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
