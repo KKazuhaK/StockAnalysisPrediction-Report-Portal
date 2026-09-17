@@ -80,17 +80,36 @@ jobs:
           go test -race -count=1 -timeout=10m ./internal/app/
           -run 'Batch|Schedul|Priority|Ticket|Urgent|Queue|Cancel|Retry|Requeue|Resume|Reconcile|Webhook|Chat|Job|Throttle|Shutdown|Cleanup|Recurring|Dify'
 
+  # Full -race over every package, on main pushes only: PRs run the scoped go-race lane above.
+  # internal/app is one big test binary and dominated the wall clock, so its tests are split four
+  # ways by a partition generated from the test list (the Go toolchain has no -shard flag).
+  # Round-robin over the deterministic list keeps the shards balanced as tests are added, and is
+  # self-maintaining: a new test lands in exactly one shard without editing this file. The smaller
+  # packages are cheap enough under -race to run in every shard.
   go-race-full:
-    name: go race full
+    name: go race full (${{ matrix.shard }}/4)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: go test -race -count=1 -timeout=15m ./...
+      - run: |
+          set -euo pipefail
+          go list ./... | grep -v '/internal/app$' | xargs go test -race -count=1 -timeout=5m
+      - name: Race shard ${{ matrix.shard }}/4 of internal/app
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=$(go test -list '^Test' ./internal/app/ | grep '^Test' | grep -v '^TestMain$')
+          regex=$(printf '%s\n' "$tests" | awk -v s="${{ matrix.shard }}" -v m=4 'NR % m == s % m' | paste -sd'|' -)
+          go test -race -count=1 -timeout=10m -run "^(${regex})$" ./internal/app/
 
   # The project's own tests passing does not prove the workflow YAML is valid. actionlint checks
   # expressions, matrix and job dependencies, and shell-checks the embedded run: scripts with the
