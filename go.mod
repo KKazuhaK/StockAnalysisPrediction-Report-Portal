@@ -8,15 +8,15 @@ require (
 	github.com/crewjam/saml v0.5.1
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/go-webauthn/webauthn v0.18.1
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/pquerna/otp v1.5.0
-	github.com/yuin/goldmark v1.8.4
+	github.com/yuin/goldmark v1.8.6
 	golang.org/x/crypto v0.57.0
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.37.0
 	golang.org/x/text v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.53.0
+	modernc.org/sqlite v1.58.0
 )
 
 require (
@@ -39,7 +39,7 @@ require (
 	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
-	github.com/mattn/go-isatty v0.0.22 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mojocn/base64Captcha v1.3.8 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/oschwald/maxminddb-golang v1.13.1 // indirect
@@ -53,7 +53,7 @@ require (
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	modernc.org/libc v1.74.1 // indirect
+	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.11.0 // indirect
+	modernc.org/memory v1.12.1 // indirect
 )
