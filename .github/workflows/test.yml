@@ -81,20 +81,17 @@ jobs:
           -run 'Batch|Schedul|Priority|Ticket|Urgent|Queue|Cancel|Retry|Requeue|Resume|Reconcile|Webhook|Chat|Job|Throttle|Shutdown|Cleanup|Recurring|Dify'
 
   # Full -race over every package, on main pushes only: PRs run the scoped go-race lane above.
-  # internal/app is one big test binary and dominated the wall clock, so its tests are split four
-  # ways by a partition generated from the test list (the Go toolchain has no -shard flag).
-  # Round-robin over the deterministic list keeps the shards balanced as tests are added, and is
-  # self-maintaining: a new test lands in exactly one shard without editing this file. The smaller
-  # packages are cheap enough under -race to run in every shard.
-  go-race-full:
-    name: go race full (${{ matrix.shard }}/4)
+  # The other packages get their own job rather than riding in every shard — they were ~50s of
+  # duplicated work per shard. internal/app is one big test binary and dominates the wall clock,
+  # so its tests are split eight ways by a partition generated from the test list (the Go
+  # toolchain has no -shard flag). Round-robin over the deterministic list keeps the shards
+  # balanced as tests are added and is self-maintaining: a new test lands in exactly one shard
+  # without editing this file.
+  go-race-others:
+    name: go race full (other packages)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -103,12 +100,27 @@ jobs:
       - run: |
           set -euo pipefail
           go list ./... | grep -v '/internal/app$' | xargs go test -race -count=1 -timeout=5m
-      - name: Race shard ${{ matrix.shard }}/4 of internal/app
+
+  go-race-full:
+    name: go race full (${{ matrix.shard }}/8)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Race shard ${{ matrix.shard }}/8 of internal/app
         shell: bash
         run: |
           set -euo pipefail
           tests=$(go test -list '^Test' ./internal/app/ | grep '^Test' | grep -v '^TestMain$')
-          regex=$(printf '%s\n' "$tests" | awk -v s="${{ matrix.shard }}" -v m=4 'NR % m == s % m' | paste -sd'|' -)
+          regex=$(printf '%s\n' "$tests" | awk -v s="${{ matrix.shard }}" -v m=8 'NR % m == s % m' | paste -sd'|' -)
           go test -race -count=1 -timeout=10m -run "^(${regex})$" ./internal/app/
 
   # The project's own tests passing does not prove the workflow YAML is valid. actionlint checks
