@@ -2,65 +2,23 @@ package geoip
 
 import "testing"
 
-// The two free databases disagree about the shape of the same field: MaxMind nests
-// "country" as an object, ipinfo Lite makes it the country's NAME as a plain string.
-// Decoding into a fixed struct picks one and silently reads nothing from the other,
-// which looks exactly like "this address is not in the database".
-
-func TestReadsTheMaxMindShape(t *testing.T) {
-	got := mapRecord(map[string]any{
-		"country": map[string]any{
-			"iso_code": "CN",
-			"names":    map[string]any{"en": "China", "zh-CN": "中国"},
-		},
-		"city": map[string]any{"names": map[string]any{"en": "Shenzhen"}},
-		"subdivisions": []any{
-			map[string]any{"names": map[string]any{"en": "Guangdong"}},
-		},
-	})
-	want := Location{CountryCode: "CN", Country: "China", Region: "Guangdong", City: "Shenzhen"}
-	if got != want {
-		t.Errorf("got %+v, want %+v", got, want)
-	}
-}
-
-func TestReadsTheIpinfoLiteShape(t *testing.T) {
-	got := mapRecord(map[string]any{"country": "China", "country_code": "CN"})
-	want := Location{CountryCode: "CN", Country: "China"}
-	if got != want {
-		t.Errorf("got %+v, want %+v", got, want)
-	}
-}
-
-// Outermost first: the state, not the county below it.
-func TestTakesTheOutermostSubdivision(t *testing.T) {
-	got := mapRecord(map[string]any{
-		"subdivisions": []any{
-			map[string]any{"names": map[string]any{"en": "California"}},
-			map[string]any{"names": map[string]any{"en": "Santa Clara County"}},
-		},
-	})
-	if got.Region != "California" {
-		t.Errorf("region = %q, want California", got.Region)
-	}
-}
-
-// A record with no English name must still produce something. Returning "" would
-// render as a bare flag with no place next to it.
-func TestFallsBackToAnyName(t *testing.T) {
-	got := mapRecord(map[string]any{
-		"country": map[string]any{"iso_code": "JP", "names": map[string]any{"ja": "日本"}},
-	})
-	if got.Country != "日本" || got.CountryCode != "JP" {
-		t.Errorf("got %+v, want the Japanese name and JP", got)
-	}
-}
-
-func TestEmptyRecordIsEmpty(t *testing.T) {
-	if !mapRecord(map[string]any{}).Empty() {
-		t.Error("an empty record produced a location")
-	}
-}
+// mapRecord and the schema-decoding behavior it implements (MaxMind's nested
+// "country" object vs. ipinfo Lite's flat string, outermost-subdivision-first,
+// name-fallback-without-English, empty-record handling) used to be tested here
+// directly, because this package used to own that decoding.
+//
+// It doesn't anymore: this package is now a thin adapter over
+// github.com/KazuhaHub/authcore/geoip, which owns decoding and is tested there
+// (authcore's geoip/geoip_test.go and geoip/fixture_test.go), with coverage that
+// is a superset of what lived here — the authcore suite adds a country-code-only
+// schema variant, a plain-string city/region variant, and an end-to-end test built
+// against real constructed .mmdb fixtures, none of which this package ever had.
+// Re-testing mapRecord's behavior from this side would just be testing authcore's
+// internals through a second door.
+//
+// What stays here is behavior this adapter package itself is still responsible
+// for: nil-safety and the public IsResolvable/Lookup contract it exposes to
+// internal/app.
 
 // Addresses that are in no database, so asking is only slower.
 func TestPrivateAndBogusAddressesAreNotResolvable(t *testing.T) {
