@@ -213,7 +213,14 @@ func clientIP(r *http.Request, trusted []*net.IPNet) string {
 	for i := len(chain) - 1; i >= 0 && ipTrusted(current, trusted); i-- {
 		next := net.ParseIP(strings.TrimSpace(chain[i]))
 		if next == nil {
-			continue
+			// A hop that does not parse ends the chain of custody: nothing to its
+			// left has been vouched for by a trusted proxy, so stop here rather
+			// than stepping over it. Skipping instead would let anyone who can
+			// reach the portal from inside trusted_proxies -- a neighbouring
+			// container when the range is a whole Docker network, say -- park an
+			// unparseable hop in front of an address of their choosing and have
+			// it adopted as the client.
+			break
 		}
 		current = next
 	}
