@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/KazuhaHub/authcore v0.0.0-20260917134832-99368735839d
-	github.com/coreos/go-oidc/v3 v3.20.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/crewjam/saml v0.5.1
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/go-webauthn/webauthn v0.18.1
