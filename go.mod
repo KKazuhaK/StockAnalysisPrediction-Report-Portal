@@ -3,7 +3,7 @@ module github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal
 go 1.26.6
 
 require (
-	github.com/KazuhaHub/authcore v0.0.0-20260917105012-fcd79922bfb2
+	github.com/KazuhaHub/authcore v0.0.0-20260917114141-cb3569e55330
 	github.com/beevik/etree v1.7.0
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/crewjam/saml v0.5.1
