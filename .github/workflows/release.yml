@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 15
     needs: setup
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.sha }}
       - uses: actions/setup-node@v6
@@ -127,7 +127,7 @@ jobs:
           - { goos: windows, goarch: amd64, ext: ".exe" }
           - { goos: windows, goarch: arm64, ext: ".exe" }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.sha }}
       - uses: actions/setup-go@v6
@@ -191,7 +191,7 @@ jobs:
     # (internal/app/pdf.go resolves the binary from PATH). The gate is a property of the image.
     needs: [setup, build, docker]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.sha }}
       - uses: actions/download-artifact@v8
@@ -306,7 +306,7 @@ jobs:
       packages: write
     needs: [setup, build]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.sha }}
       - uses: actions/download-artifact@v8
