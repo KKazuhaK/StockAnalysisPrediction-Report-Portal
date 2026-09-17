@@ -29,6 +29,17 @@ on:
 permissions:
   contents: read
 
+# Publisher jobs run with no go.work and no silent toolchain switch, mirroring test.yml.
+env:
+  GOWORK: "off"
+  GOTOOLCHAIN: "local"
+
+# Serialize releases, and never cancel one in flight: two overlapping runs would race the rolling
+# :latest/:beta tags and the release page. (Pattern from Passwall-Sub-Panel.)
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   setup:
     name: Resolve tag
@@ -36,6 +47,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.t.outputs.tag }}
+      sha: ${{ steps.t.outputs.sha }}
       owner_lc: ${{ steps.t.outputs.owner_lc }}
       repo_lc: ${{ steps.t.outputs.repo_lc }}
     steps:
@@ -53,6 +65,12 @@ jobs:
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             tag="$INPUT_TAG"
+            # A dispatch from main would build main's code and label it with the tag. Require the
+            # selected ref to be the tag itself, so GITHUB_SHA below is the tagged commit.
+            if [ "$GITHUB_REF" != "refs/tags/${tag}" ]; then
+              echo "::error::select the ${tag} tag as the workflow ref when dispatching"
+              exit 1
+            fi
           else
             tag="$GITHUB_REF_NAME"
           fi
@@ -60,6 +78,7 @@ jobs:
           repo_lc="$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
           {
             echo "tag=${tag}"
+            echo "sha=${GITHUB_SHA}"
             echo "owner_lc=${owner_lc}"
             echo "repo_lc=${repo_lc}"
           } >> "$GITHUB_OUTPUT"
@@ -71,6 +90,8 @@ jobs:
     needs: setup
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.setup.outputs.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -107,10 +128,15 @@ jobs:
           - { goos: windows, goarch: arm64, ext: ".exe" }
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.setup.outputs.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          # Deliberately uncached: a published binary must not come out of a shared, mutable build
+          # cache. Recompiling from the checksum-verified module set costs a minute per leg and
+          # buys determinism for the artifact users verify. (Pattern from Passwall-Sub-Panel.)
+          cache: false
       - name: Download web bundle
         uses: actions/download-artifact@v8
         with:
@@ -123,11 +149,11 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
           VERSION: ${{ needs.setup.outputs.tag }}
-          COMMIT: ${{ github.sha }}
+          COMMIT: ${{ needs.setup.outputs.sha }}
         run: |
           set -euo pipefail
           mkdir -p out
-          mod=github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal
+          mod=$(go list -m)
           short_sha="${COMMIT:0:7}"
           build_date="$(date -u +%FT%TZ)"
           ldflags="-s -w"
@@ -135,6 +161,10 @@ jobs:
           ldflags+=" -X ${mod}/internal/version.Commit=${short_sha}"
           ldflags+=" -X ${mod}/internal/version.BuildDate=${build_date}"
           go build -trimpath -ldflags="${ldflags}" -o "out/report-portal${{ matrix.ext }}" ./cmd/report-portal
+          # Prove the binary carries the provenance we think it does. go version -m reads it from
+          # the binary itself, so a wrong module path (which makes every -X a silent no-op) or a
+          # checkout of the wrong commit cannot pass.
+          sh scripts/check-release-build.sh "out/report-portal${{ matrix.ext }}" "$GOOS" "$GOARCH" "$COMMIT"
       - uses: actions/upload-artifact@v7
         with:
           name: report-portal-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -152,7 +182,7 @@ jobs:
     # the two in parallel and either failure below lands after the Release is already public and its
     # archives are downloadable.
     #   1. The image build runs the glyph gate (scripts/probe-font-coverage.sh, in the runtime-base
-    #      stage of Dockerfile.release) on both arches. test.yml's font-image job gates amd64
+    #      stage of Dockerfile.release) on both arches. test.yml's docker-image job gates amd64
     #      pre-merge, so by tag time this is re-verification — except on arm64, first checked here.
     #   2. The release body advertises `docker pull ghcr.io/...:${VERSION}` (generated below).
     #      Publishing ahead of the push means a Release page pointing at a tag ghcr.io lacks.
@@ -162,6 +192,8 @@ jobs:
     needs: [setup, build, docker]
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.setup.outputs.sha }}
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -173,6 +205,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist build
+          # Exactly six platforms or the release is incomplete; a missing artifact must not ship
+          # as a five-platform release with a green check.
+          set -- artifacts/report-portal-*
+          test "$#" = 6 || { echo "expected 6 platform artifacts, found $#"; exit 1; }
           for dir in artifacts/report-portal-*; do
             np="${dir#artifacts/report-portal-}"   # e.g. linux-amd64
             goos="${np%-*}"; goarch="${np##*-}"
@@ -206,13 +242,21 @@ jobs:
           else
             : > release_notes.md
           fi
+          # :latest only ever points at a stable release (see the metadata rules). A pre-release
+          # advertising it would hand the reader a command that silently installs the previous
+          # stable instead of the build they are looking at, so a pre-release names its own tag.
+          if [ "${VERSION#*-}" != "$VERSION" ]; then
+            pull_lines="docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:${VERSION}"
+          else
+            pull_lines="docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:latest
+          # or pin a version
+          docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:${VERSION}"
+          fi
           cat <<EOF >> release_notes.md
           ### Container image (ghcr.io)
 
           \`\`\`shell
-          docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:latest
-          # or pin a version
-          docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:${VERSION}
+          ${pull_lines}
           \`\`\`
 
           ### Verify
@@ -221,6 +265,19 @@ jobs:
           sha256sum -c SHA256SUMS.txt
           \`\`\`
           EOF
+      - name: Recheck the immutable tag before publication
+        shell: bash
+        env:
+          VERSION: ${{ needs.setup.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.setup.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
+          actual=$(git rev-parse --verify "refs/tags/${VERSION}^{commit}")
+          test "$actual" = "$EXPECTED_SHA" || {
+            echo "::error::tag ${VERSION} moved during the build; refusing publication"
+            exit 1
+          }
       - uses: softprops/action-gh-release@v3
         with:
           # The default GITHUB_TOKEN (github-actions[bot]) is blocked from creating releases on
@@ -228,13 +285,14 @@ jobs:
           # the release is created with a PAT stored as the RELEASE_PAT secret instead.
           token: ${{ secrets.RELEASE_PAT }}
           tag_name: ${{ needs.setup.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ needs.setup.outputs.sha }}
           name: ${{ needs.setup.outputs.tag }}
           # A "-" suffix (e.g. v1.0.0-beta) marks a pre-release; /releases/latest excludes it.
           prerelease: ${{ contains(needs.setup.outputs.tag, '-') }}
           generate_release_notes: true
           body_path: release_notes.md
           append_body: true
+          fail_on_unmatched_files: true
           files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
@@ -249,11 +307,26 @@ jobs:
     needs: [setup, build]
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.setup.outputs.sha }}
       - uses: actions/download-artifact@v8
         with: { name: report-portal-linux-amd64, path: bin/linux-amd64 }
       - uses: actions/download-artifact@v8
         with: { name: report-portal-linux-arm64, path: bin/linux-arm64 }
       - run: chmod +x bin/linux-amd64/report-portal bin/linux-arm64/report-portal
+      - name: Recheck the immutable tag before image publication
+        shell: bash
+        env:
+          VERSION: ${{ needs.setup.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.setup.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
+          actual=$(git rev-parse --verify "refs/tags/${VERSION}^{commit}")
+          test "$actual" = "$EXPECTED_SHA" || {
+            echo "::error::tag ${VERSION} moved during the build; refusing publication"
+            exit 1
+          }
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -274,7 +347,7 @@ jobs:
           labels: |
             org.opencontainers.image.title=report-portal
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.setup.outputs.sha }}
             org.opencontainers.image.version=${{ needs.setup.outputs.tag }}
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v7
