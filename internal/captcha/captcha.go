@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	captchacore "github.com/KazuhaHub/authcore/captcha"
+	authcorecaptcha "github.com/KazuhaHub/authcore/captcha"
 )
 
 // Provider identifiers. One source of truth, shared with the settings validation so the admin API
@@ -88,7 +88,7 @@ type Response struct {
 // Delegated to authcore/captcha.HostOf: the implementation there is byte-for-byte what this
 // package used to do on its own.
 func HostOf(baseURL string) string {
-	return captchacore.HostOf(baseURL)
+	return authcorecaptcha.HostOf(baseURL)
 }
 
 // imageStoreCapacity matches base64Captcha.GCLimitNumber, the capacity the portal relied on before
@@ -110,13 +110,13 @@ type Service struct {
 	// store backs the image generator below. Kept as its own field (rather than reached through
 	// gen) because it is also exercised directly in tests, the same way it was before this package
 	// wrapped authcore/captcha.
-	store captchacore.Store
-	gen   *captchacore.ImageGenerator
+	store authcorecaptcha.Store
+	gen   *authcorecaptcha.ImageGenerator
 	http  *http.Client
 	// endpoints holds the siteverify URL used for each token provider. Kept here — rather than left
 	// to authcore/captcha's own built-in defaults — so a test can redirect a provider at an
 	// httptest.Server, and so every call site always passes an explicit endpoint through
-	// captchacore.WithEndpoint instead of depending on NewTokenVerifier's provider-name lookup.
+	// authcorecaptcha.WithEndpoint instead of depending on NewTokenVerifier's provider-name lookup.
 	endpoints map[string]string
 }
 
@@ -127,10 +127,10 @@ type Service struct {
 // has to be re-issued — which is what the widget's refresh already does. Persisting it would add a
 // table and a sweeper to protect nothing.
 func New() *Service {
-	store := captchacore.NewMemoryStore(imageStoreCapacity, imageStoreTTL)
+	store := authcorecaptcha.NewMemoryStore(imageStoreCapacity, imageStoreTTL)
 	return &Service{
 		store: store,
-		gen:   captchacore.NewImageGenerator(store),
+		gen:   authcorecaptcha.NewImageGenerator(store),
 		// Shared across every TokenVerifier this Service builds (see verifyToken), so that
 		// constructing a fresh TokenVerifier per call — required because authcore/captcha fixes a
 		// verifier's config at construction time — does not also throw away TCP/TLS connection
@@ -138,9 +138,9 @@ func New() *Service {
 		// without WithHTTPClient gets a brand-new *http.Client (and Transport) on every call.
 		http: &http.Client{Timeout: tokenVerifyTimeout},
 		endpoints: map[string]string{
-			ProviderTurnstile: captchacore.TurnstileEndpoint,
-			ProviderRecaptcha: captchacore.RecaptchaEndpoint,
-			ProviderHCaptcha:  captchacore.HCaptchaEndpoint,
+			ProviderTurnstile: authcorecaptcha.TurnstileEndpoint,
+			ProviderRecaptcha: authcorecaptcha.RecaptchaEndpoint,
+			ProviderHCaptcha:  authcorecaptcha.HCaptchaEndpoint,
 		},
 	}
 }
@@ -204,20 +204,20 @@ func (s *Service) Verify(ctx context.Context, set Settings, r Response) (bool, e
 //
 // authcore/captcha logs nothing on its own (by design — see its MIGRATION.md); the two log lines
 // below reproduce what this package's own verifyToken used to log directly, now driven off the
-// structured captchacore.Result instead of raw provider JSON.
+// structured authcorecaptcha.Result instead of raw provider JSON.
 func (s *Service) verifyToken(ctx context.Context, provider, secret, token, remoteIP, expectedHost string) (bool, error) {
 	endpoint := s.endpoints[provider]
 	if endpoint == "" {
 		return false, fmt.Errorf("captcha: no siteverify endpoint for this provider")
 	}
-	opts := []captchacore.TokenOption{
-		captchacore.WithEndpoint(endpoint),
-		captchacore.WithHTTPClient(s.http),
+	opts := []authcorecaptcha.TokenOption{
+		authcorecaptcha.WithEndpoint(endpoint),
+		authcorecaptcha.WithHTTPClient(s.http),
 	}
 	if expectedHost != "" {
-		opts = append(opts, captchacore.WithAllowedHostnames(expectedHost))
+		opts = append(opts, authcorecaptcha.WithAllowedHostnames(expectedHost))
 	}
-	tv, err := captchacore.NewTokenVerifier(captchacore.Provider(provider), secret, opts...)
+	tv, err := authcorecaptcha.NewTokenVerifier(authcorecaptcha.Provider(provider), secret, opts...)
 	if err != nil {
 		return false, fmt.Errorf("captcha: %w", err)
 	}

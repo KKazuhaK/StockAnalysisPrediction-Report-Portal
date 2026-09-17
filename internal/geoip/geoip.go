@@ -24,30 +24,30 @@
 package geoip
 
 import (
-	authgeoip "github.com/KazuhaHub/authcore/geoip"
+	authcoregeoip "github.com/KazuhaHub/authcore/geoip"
 )
 
 // Location and DBInfo are aliased, not redeclared, so the JSON shape internal/app
 // already depends on (audit.go's AuditEntry.Geo field, the admin status view) is
 // authcore's own type and can never drift out of sync with it.
 type (
-	Location = authgeoip.Location
-	DBInfo   = authgeoip.DBInfo
+	Location = authcoregeoip.Location
+	DBInfo   = authcoregeoip.DBInfo
 )
 
 // IsResolvable reports whether an address is a routable public one worth looking
 // up. A loopback or RFC1918 address is in no database, and asking would only
 // produce an empty answer more slowly.
-func IsResolvable(ip string) bool { return authgeoip.IsResolvable(ip) }
+func IsResolvable(ip string) bool { return authcoregeoip.IsResolvable(ip) }
 
 // Reader wraps an open .mmdb. Safe for concurrent Lookup — the underlying authcore
 // Reader is — so one Reader serves every request; the owner handles open, close and
 // reload.
-type Reader struct{ r *authgeoip.Reader }
+type Reader struct{ r *authcoregeoip.Reader }
 
 // Open opens an .mmdb file.
 func Open(path string) (*Reader, error) {
-	r, err := authgeoip.Open(path)
+	r, err := authcoregeoip.Open(path)
 	if err != nil {
 		return nil, err
 	}
