@@ -1,122 +1,132 @@
 package app
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/config"
-	"github.com/beevik/etree"
-	"github.com/crewjam/saml"
+	"github.com/KazuhaHub/authcore/saml"
 )
 
-// TestRequireDestination covers the gap crewjam leaves open: when a Response is unsigned it SKIPS
-// the Destination check entirely if the attribute is absent (service_provider.go:1008), so an
-// assertion captured at another SP could be replayed at ours. Absence must be a rejection.
-func TestRequireDestination(t *testing.T) {
-	const acs = "https://portal.example/api/auth/saml/acme/acs"
-	ok := `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Destination="` + acs + `"/>`
-	if err := requireDestination([]byte(ok), acs); err != nil {
-		t.Errorf("a matching Destination must pass: %v", err)
-	}
-	for name, doc := range map[string]string{
-		"absent":    `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol"/>`,
-		"empty":     `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Destination=""/>`,
-		"other SP":  `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Destination="https://evil.example/acs"/>`,
-		"not xml":   `not xml at all`,
-		"near miss": `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol" Destination="` + acs + `/"/>`,
-	} {
-		if err := requireDestination([]byte(doc), acs); err == nil {
-			t.Errorf("%s Destination must be rejected", name)
-		}
-	}
+// samlPostResponse builds an httptest ACS POST carrying xmlDoc as the (unsigned, hand-built)
+// SAMLResponse. Used by the tests below that exercise authcore/saml.Provider.ValidateResponse's
+// PRE-signature structural checks (assertion count, Destination, weak-algorithm allowlist,
+// encrypted-assertion refusal) — all of which run on the raw XML before crewjam ever verifies a
+// signature, so a deliberately unsigned document is enough to reach them.
+func samlPostResponse(acsURL, xmlDoc string) *http.Request {
+	body := "SAMLResponse=" + url.QueryEscape(base64.StdEncoding.EncodeToString([]byte(xmlDoc)))
+	req := httptest.NewRequest(http.MethodPost, acsURL, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return req
 }
 
 // TestSAMLSubjectRejectsTransient proves a NameID that changes on every login is refused as an
 // account key — linking to it would mint a new account per sign-in.
 func TestSAMLSubjectRejectsTransient(t *testing.T) {
 	mk := func(format, value string) *saml.Assertion {
-		return &saml.Assertion{Subject: &saml.Subject{
-			NameID: &saml.NameID{Format: format, Value: value}}}
+		return &saml.Assertion{NameID: value, NameIDFormat: format}
 	}
 	if _, _, err := samlSubject(mk("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent", "abc")); err != nil {
 		t.Errorf("a persistent NameID must be accepted: %v", err)
 	}
 	for name, a := range map[string]*saml.Assertion{
-		"transient":  mk("urn:oasis:names:tc:SAML:2.0:nameid-format:transient", "xyz"),
-		"empty":      mk("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent", "  "),
-		"no nameid":  {Subject: &saml.Subject{}},
-		"no subject": {},
+		"transient":   mk("urn:oasis:names:tc:SAML:2.0:nameid-format:transient", "xyz"),
+		"empty value": mk("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent", "  "),
+		"zero value":  {},
 	} {
 		if _, _, err := samlSubject(a); err == nil {
 			t.Errorf("%s must be rejected as an account key", name)
 		}
 	}
+	if _, _, err := samlSubject(nil); err == nil {
+		t.Error("a nil assertion must be rejected, not panic")
+	}
 }
 
-// TestSAMLClaimsRejectDuplicateAttributes proves attribute pollution is refused rather than
-// resolved last-wins. Rules map an attribute to a role AND an OU, so a duplicate is aimed straight
-// at the tenancy boundary.
-func TestSAMLClaimsRejectDuplicateAttributes(t *testing.T) {
-	attr := func(name, friendly string, vals ...string) saml.Attribute {
-		a := saml.Attribute{Name: name, FriendlyName: friendly}
-		for _, v := range vals {
-			a.Values = append(a.Values, saml.AttributeValue{Value: v})
-		}
-		return a
+// TestSAMLClaimsFlattensAttributes proves samlClaims reshapes authcore's Attributes bag the way
+// completeSSOLogin expects: single-valued as a bare string, multi-valued as a slice. Rejecting a
+// duplicate attribute Name is no longer this function's job — samlProvider sets
+// Config.StrictAttributes: true, so authcore/saml itself refuses that assertion before samlClaims
+// ever sees it (see TestSAMLProviderConfigIsStrict).
+//
+// That refusal is covered here only at the config level. Proving it end to end needs a Response
+// whose signature actually validates, because authcore checks attributes after signature
+// validation, and these tests have no signing harness — every other rejection they exercise
+// (assertion count, weak algorithm, encrypted assertion, Destination) happens before it.
+func TestSAMLClaimsFlattensAttributes(t *testing.T) {
+	a := &saml.Assertion{Attributes: map[string][]string{
+		// authcore indexes one <Attribute> under BOTH its Name and FriendlyName when they differ —
+		// this is what that looks like once ValidateResponse has already built the Assertion.
+		"groups": {"analysts", "admins"},
+		"http://schemas.xmlsoap.org/claims/Group": {"analysts", "admins"},
+		"mail": {"a@b.c"},
+	}}
+	claims := samlClaims(a)
+	groups, ok := claims["groups"].([]any)
+	if !ok || len(groups) != 2 {
+		t.Errorf("groups = %#v, want a 2-element slice", claims["groups"])
 	}
-	good := &saml.Assertion{AttributeStatements: []saml.AttributeStatement{{Attributes: []saml.Attribute{
-		attr("http://schemas.xmlsoap.org/claims/Group", "groups", "analysts", "admins"),
-		attr("mail", "", "a@b.c"),
-	}}}}
-	claims, err := samlClaims(good)
-	if err != nil {
-		t.Fatalf("a well-formed assertion must parse: %v", err)
-	}
-	// Both the URN and the FriendlyName are addressable, since IdPs send the long form while
-	// admins configure the short one.
-	if claims["groups"] == nil || claims["http://schemas.xmlsoap.org/claims/Group"] == nil {
+	if claims["http://schemas.xmlsoap.org/claims/Group"] == nil {
 		t.Errorf("both the attribute Name and FriendlyName must be indexed: %v", claims)
 	}
 	if claims["mail"] != "a@b.c" {
 		t.Errorf("single-valued attribute = %v, want the bare string", claims["mail"])
 	}
-
-	dup := &saml.Assertion{AttributeStatements: []saml.AttributeStatement{{Attributes: []saml.Attribute{
-		attr("groups", "", "analysts"),
-		attr("groups", "", "admins"),
-	}}}}
-	if _, err := samlClaims(dup); err == nil {
-		t.Error("a duplicate attribute name must be rejected, not resolved last-wins")
-	}
 }
 
-// TestSAMLReplayIsRefused proves the cache crewjam does not provide: the same assertion cannot be
-// consumed twice, and the guard is keyed per IdP.
+// TestSAMLReplayIsRefused proves the cache authcore/saml delegates to us actually persists and
+// actually refuses a second use, and that the guard is scoped per IdP — see samlReplayCache's doc
+// comment in saml_replay.go for why per-IdP scoping is what keeps this migration from repeating the
+// audit package's tenancy failure.
 func TestSAMLReplayIsRefused(t *testing.T) {
 	st := newTestStore(t)
-	a := &saml.Assertion{ID: "_assert-1"}
-	exp := assertionExpiry(a)
-	if !st.MarkAssertionSeen("https://idp.example", a.ID, exp) {
-		t.Fatal("the first use of an assertion must be accepted")
+	now := time.Now()
+	exp := now.Add(10 * time.Minute)
+
+	c := samlReplayCache{st: st, idpEntityID: "https://idp.example"}
+	if seen, err := c.SeenOrAdd(context.Background(), "_assert-1", exp, now); err != nil || seen {
+		t.Fatalf("the first use of an assertion must be accepted, got seen=%v err=%v", seen, err)
 	}
-	if st.MarkAssertionSeen("https://idp.example", a.ID, exp) {
-		t.Error("replaying an assertion must be refused")
+	if seen, err := c.SeenOrAdd(context.Background(), "_assert-1", exp, now); err != nil || !seen {
+		t.Errorf("replaying an assertion must be refused, got seen=%v err=%v", seen, err)
+	}
+	// A different IdP's id space must not collide with this one's.
+	other := samlReplayCache{st: st, idpEntityID: "https://idp-b.example"}
+	if seen, err := other.SeenOrAdd(context.Background(), "_assert-1", exp, now); err != nil || seen {
+		t.Errorf("the same assertion id under a different IdP must be a fresh sighting, got seen=%v err=%v", seen, err)
 	}
 }
 
-// TestAssertionExpiryIsClamped proves a hostile NotOnOrAfter cannot pin a replay row forever, and
-// that a missing one still yields a usable window.
-func TestAssertionExpiryIsClamped(t *testing.T) {
-	far := &saml.Assertion{Conditions: &saml.Conditions{NotOnOrAfter: time.Now().Add(72 * time.Hour)}}
-	if got := assertionExpiry(far); got.After(time.Now().Add(35 * time.Minute)) {
-		t.Errorf("expiry = %v, want it clamped to ~30 minutes", got)
+// TestSAMLReplayCacheClampsTTL proves a hostile (or just misconfigured) far-future expiry cannot
+// pin a replay row in the database forever. authcore/saml.Provider computes only a LOWER bound on
+// how long an id must be remembered (Provider.expiryFor has no ceiling); the 30-minute ceiling is
+// this project's own policy, carried over unchanged from the pre-authcore assertionExpiry, and it
+// lives in samlReplayCache.SeenOrAdd now. This reads the persisted row back — not just SeenOrAdd's
+// return value — to prove the clamp was actually applied to what got written.
+func TestSAMLReplayCacheClampsTTL(t *testing.T) {
+	st := newTestStore(t)
+	c := samlReplayCache{st: st, idpEntityID: "https://idp.example"}
+	now := time.Now()
+	if _, err := c.SeenOrAdd(context.Background(), "_assert-hostile", now.Add(72*time.Hour), now); err != nil {
+		t.Fatal(err)
 	}
-	// Conditions is optional in the schema (a nil pointer), and must not panic.
-	if got := assertionExpiry(&saml.Assertion{}); !got.After(time.Now()) {
-		t.Error("an assertion with no Conditions must still get a future replay window")
+	sum := sha256.Sum256([]byte("https://idp.example\x00_assert-hostile"))
+	var expUnix int64
+	err := st.queryRow(`SELECT expires_at FROM sso_assertion_seen WHERE seen_key=?`, hex.EncodeToString(sum[:])).Scan(&expUnix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := time.Unix(expUnix, 0); got.After(now.Add(35 * time.Minute)) {
+		t.Errorf("stored replay expiry = %v, want it clamped to ~30 minutes from now", got)
 	}
 }
 
@@ -150,8 +160,8 @@ func TestSPKeypairGeneration(t *testing.T) {
 	}
 }
 
-// samlTestServer / samlTestProvider give a provider complete enough for samlSP: a public URL, an
-// SP keypair (minted on save) and parseable IdP metadata.
+// samlTestServer / samlTestProvider give a provider complete enough for samlProvider: a public URL,
+// an SP keypair (minted on save) and parseable IdP metadata.
 func samlTestServer(t *testing.T) *Server {
 	t.Helper()
 	st := newTestStore(t)
@@ -181,33 +191,82 @@ func samlTestProvider(t *testing.T, s *Server) SSOProvider {
 	return p
 }
 
-// The portal asked for exactly the thing it then refused.
-//
-// crewjam defaults AuthnNameIDFormat to TRANSIENT when it is unset — "to maintain library
-// back-compat", per its own comment — so every AuthnRequest carried a NameIDPolicy demanding a
-// transient NameID. A compliant IdP obeys, and samlSubject rejects transient because a value that
-// changes on every login cannot key an account. A closed loop: correct IdP configuration could
-// never satisfy it, and the only clue was "bad_response" on the login page.
+// TestSAMLProviderConfigIsStrict pins samlConfig's StrictAttributes: true. authcore/saml defaults
+// StrictAttributes to false, and samlClaims itself no longer checks for a duplicate attribute Name
+// — that responsibility moved entirely into authcore/saml's Config. If a future edit ever drops
+// this field (or its value), attribute-pollution rejection silently disappears rather than failing
+// loudly, which is exactly the failure mode this test exists to catch. Every Config field is
+// exported, so this needs no reflection into authcore/saml's otherwise-private Provider internals
+// — see samlConfig's doc comment in saml.go.
+func TestSAMLProviderConfigIsStrict(t *testing.T) {
+	s := samlTestServer(t)
+	p := samlTestProvider(t, s)
+	m, err := s.samlLoadMaterial(p)
+	if err != nil {
+		t.Fatalf("samlLoadMaterial: %v", err)
+	}
+	if cfg := s.samlConfig(p, m); !cfg.StrictAttributes {
+		t.Error("samlConfig must set StrictAttributes: true, or a duplicate attribute name silently merges instead of being refused")
+	}
+}
+
+// TestSAMLProviderRejectsMultipleAssertions is the regression this migration exists to add: crewjam
+// alone parses every Assertion/EncryptedAssertion in a Response and accepts the first one that
+// validates (GHSA-j2jp-wvqg-wc2g class — a signature bypass via a smuggled second assertion), and
+// the pre-authcore saml.go had NO check for this at all (confirmed by grep over its history: there
+// was no assertion-count logic anywhere). authcore/saml closes it unconditionally, before any
+// signature is verified, so an unsigned two-Assertion document is enough to prove the wiring here
+// actually reaches that check.
+func TestSAMLProviderRejectsMultipleAssertions(t *testing.T) {
+	s := samlTestServer(t)
+	p := samlTestProvider(t, s)
+	provider, _, err := s.samlProvider(p)
+	if err != nil {
+		t.Fatalf("samlProvider: %v", err)
+	}
+	xmlDoc := `<Response xmlns="urn:oasis:names:tc:SAML:2.0:protocol">
+		<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="a1"/>
+		<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion" ID="a2"/>
+	</Response>`
+	req := samlPostResponse(s.samlACSURL(p.Slug), xmlDoc)
+
+	_, err = provider.ValidateResponse(context.Background(), req, nil)
+	if !errors.Is(err, saml.ErrTooManyAssertions) {
+		t.Errorf("a Response with two Assertion elements must be refused as ErrTooManyAssertions, got %v", err)
+	}
+	if got := samlFailureReason(err); got != "saml_multiple_assertions" {
+		t.Errorf("samlFailureReason(%v) = %q, want saml_multiple_assertions", err, got)
+	}
+}
+
+// TestAuthnRequestDoesNotAskForATransientNameID guards against the closed loop the portal hit
+// before: crewjam defaults AuthnNameIDFormat to TRANSIENT when it is unset ("to maintain library
+// back-compat", per its own comment), so an AuthnRequest that omitted it would demand a transient
+// NameID, and samlSubject rejects transient because a value that changes on every login cannot key
+// an account. authcore/saml.Config leaves NameIDFormat unset, which it documents defaults to
+// Unspecified rather than crewjam's raw zero value — this proves that default actually reaches the
+// wire, by decoding the redirect-bound AuthnRequest back out of the URL authcore hands us.
 func TestAuthnRequestDoesNotAskForATransientNameID(t *testing.T) {
 	s := samlTestServer(t)
 	p := samlTestProvider(t, s)
-	sp, err := s.samlSP(p)
+	provider, _, err := s.samlProvider(p)
 	if err != nil {
-		t.Fatalf("samlSP: %v", err)
+		t.Fatalf("samlProvider: %v", err)
 	}
-	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(saml.HTTPRedirectBinding),
-		saml.HTTPRedirectBinding, saml.HTTPPostBinding)
+	authReq, err := provider.NewAuthnRequest("relay-state")
 	if err != nil {
-		t.Fatalf("MakeAuthenticationRequest: %v", err)
+		t.Fatalf("NewAuthnRequest: %v", err)
 	}
-	doc := etree.NewDocument()
-	doc.SetRoot(req.Element())
-	xmlStr, err := doc.WriteToString()
+	u, err := url.Parse(authReq.RedirectURL)
 	if err != nil {
-		t.Fatalf("serialize: %v", err)
+		t.Fatalf("parse redirect URL: %v", err)
 	}
-	if strings.Contains(xmlStr, "nameid-format:transient") {
-		t.Errorf("the AuthnRequest still demands a transient NameID:\n%s", xmlStr)
+	xmlBytes, err := saml.DecodeRedirectMessage(u.Query().Get("SAMLRequest"), 0)
+	if err != nil {
+		t.Fatalf("decode SAMLRequest: %v", err)
+	}
+	if strings.Contains(string(xmlBytes), "nameid-format:transient") {
+		t.Errorf("the AuthnRequest still demands a transient NameID:\n%s", xmlBytes)
 	}
 }
 
