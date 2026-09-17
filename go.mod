@@ -3,10 +3,11 @@ module github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal
 go 1.26.6
 
 require (
-	github.com/KazuhaHub/authcore v0.0.0-20260917114141-cb3569e55330
+	github.com/KazuhaHub/authcore v0.0.0-20260917125428-2137c0fdf84c
 	github.com/beevik/etree v1.7.0
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/crewjam/saml v0.5.1
+	github.com/descope/virtualwebauthn v1.0.5
 	github.com/go-webauthn/webauthn v0.18.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/microcosm-cc/bluemonday v1.0.27
