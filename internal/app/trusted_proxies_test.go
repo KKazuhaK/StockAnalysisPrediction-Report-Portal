@@ -122,3 +122,30 @@ func TestTrustAllIsReportedSoItCanBeWarnedAbout(t *testing.T) {
 		t.Error("an empty list was mistaken for trust-all")
 	}
 }
+
+// TestMalformedHopEndsTheChain covers the one input the right-to-left walk cannot treat as noise.
+//
+// Skipping a hop that does not parse steps over the boundary the walk exists to find: everything
+// to the left of it was written by someone no trusted proxy has vouched for. With a whole Docker
+// network in trusted_proxies -- the shape config.example.yaml's sibling docker-compose.yml
+// suggests -- a neighbouring container can then park an unparseable hop in front of any address
+// and have the portal adopt it, for both the rate-limit key and the audit column.
+func TestMalformedHopEndsTheChain(t *testing.T) {
+	nets, err := parseTrustedProxies([]string{"127.0.0.0/8", "10.0.0.0/8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Everything to the right of the unparseable hop is trusted, so the walk reaches it while it
+	// is still willing to step left.
+	r := peerWithXFF("127.0.0.1", "9.9.9.9, garbage, 10.0.0.5")
+	if got := clientIP(r, nets); got == "9.9.9.9" {
+		t.Fatal("the walk stepped over an unparseable hop and adopted the address to its left, " +
+			"which anyone inside trusted_proxies can choose")
+	}
+
+	// A well-formed chain through the same two trusted hops still resolves to the real client.
+	r = peerWithXFF("127.0.0.1", "9.9.9.9, 203.0.113.9, 10.0.0.5")
+	if got := clientIP(r, nets); got != "203.0.113.9" {
+		t.Fatalf("clientIP = %q, want 203.0.113.9 (the first untrusted hop from the right)", got)
+	}
+}
