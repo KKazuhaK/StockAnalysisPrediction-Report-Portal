@@ -341,18 +341,26 @@ body {
   font-weight: 400;
 }
 .rp-run-input-field--has-help > .ant-form-item > .ant-form-item-row > .ant-form-item-label {
-  padding-inline-end: 26px;
+  padding-inline-end: 34px;
 }
 .rp-run-input-help.ant-btn {
   position: absolute;
   z-index: 1;
-  inset-block-start: 0;
+  inset-block-start: -2px;
   inset-inline-end: 0;
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
   padding: 0;
   color: var(--ant-color-text-secondary);
+}
+.rp-run-input-help.ant-btn .anticon {
+  font-size: 18px;
 }
 .rp-run-input-help__content {
   max-width: min(360px, calc(100vw - 64px));

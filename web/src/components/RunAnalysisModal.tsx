@@ -15,7 +15,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd'
-import { DownOutlined, PlayCircleOutlined, QuestionCircleOutlined } from '@ant-design/icons'
+import { DownOutlined, InfoCircleOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
@@ -361,7 +361,7 @@ export default function RunAnalysisModal({
               size="small"
               shape="circle"
               className="rp-run-input-help"
-              icon={<QuestionCircleOutlined />}
+              icon={<InfoCircleOutlined />}
               aria-label={t('run.inputHelp', { field: title })}
             />
           </Popover>
