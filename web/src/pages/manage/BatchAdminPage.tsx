@@ -260,6 +260,10 @@ export default function BatchAdminPage() {
     setNewVar('')
   }
 
+  const setInputPresentation = (index: number, patch: Pick<DifyInput, 'display_label'> | Pick<DifyInput, 'description'>) => {
+    setInputs((current) => current.map((input, i) => (i === index ? { ...input, ...patch } : input)))
+  }
+
   const saveTarget = async () => {
     // api_key is always read back: in create mode its rule makes it required; in edit mode
     // the rule is optional, so a blank keeps the stored key while a typed value rotates it.
@@ -493,7 +497,7 @@ export default function BatchAdminPage() {
             key: 'targets',
             label: t('batch.admin.targets'),
             children: (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Space orientation="vertical" size={12} style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                   <Button icon={<CloudDownloadOutlined />} loading={refreshing} onClick={() => pullUpdate()}>
                     {t('batch.refresh.all')}
@@ -531,7 +535,7 @@ export default function BatchAdminPage() {
             key: 'plugins',
             label: t('batch.admin.advancedPlugins'),
             children: (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Space orientation="vertical" size={12} style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <Upload accept=".json" showUploadList={false} beforeUpload={importFile}>
                     <Button icon={<UploadOutlined />}>{t('batch.admin.importManifest')}</Button>
@@ -593,14 +597,14 @@ export default function BatchAdminPage() {
                 <Alert
                   type={probed.inputsError ? 'warning' : 'success'}
                   showIcon
-                  message={probed.inputsError ? t('batch.dify.connectedNoInputs', { name: probed.name }) : t('batch.dify.connected', { name: probed.name })}
+                  title={probed.inputsError ? t('batch.dify.connectedNoInputs', { name: probed.name }) : t('batch.dify.connected', { name: probed.name })}
                 />
               )}
               <Form.Item name="name" label={t('batch.admin.targetName')} rules={[{ required: true }]} style={{ marginTop: 14 }}>
                 <Input placeholder={t('batch.admin.targetNamePlaceholder')} />
               </Form.Item>
               {isChat && (
-                <Alert type="info" showIcon style={{ marginBottom: 10 }} message={<>{difyModeTag(t, mode)}{t('batch.dify.chatHint')}</>} />
+                <Alert type="info" showIcon style={{ marginBottom: 10 }} title={<>{difyModeTag(t, mode)}{t('batch.dify.chatHint')}</>} />
               )}
               <div style={{ marginBottom: 6 }}>
                 <Typography.Text type="secondary">{t('batch.dify.inputsLabel')}</Typography.Text>
@@ -618,6 +622,41 @@ export default function BatchAdminPage() {
                 <Input placeholder={t('batch.dify.addInputPlaceholder')} value={newVar} onChange={(e) => setNewVar(e.target.value)} onPressEnter={addInput} />
                 <Button onClick={addInput}>{t('common.add')}</Button>
               </Space.Compact>
+
+              {inputs.length > 0 && (
+                <div className="rp-dify-input-descriptions">
+                  <Typography.Text strong>{t('batch.dify.inputDescriptions')}</Typography.Text>
+                  <Typography.Paragraph type="secondary">
+                    {t('batch.dify.inputDescriptionsHint')}
+                  </Typography.Paragraph>
+                  {inputs.map((input, index) => {
+                    const field = input.label || input.variable
+                    return (
+                      <label key={input.variable} className="rp-dify-input-description">
+                        <span>
+                          <Typography.Text>{field}</Typography.Text>
+                          {field !== input.variable && <Typography.Text code>{input.variable}</Typography.Text>}
+                        </span>
+                        <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+                          <Input
+                            value={input.display_label || ''}
+                            aria-label={t('batch.dify.inputDisplayLabelFor', { field })}
+                            placeholder={t('batch.dify.inputDisplayLabelPlaceholder', { field })}
+                            onChange={(event) => setInputPresentation(index, { display_label: event.target.value })}
+                          />
+                          <Input.TextArea
+                            autoSize={{ minRows: 1, maxRows: 3 }}
+                            value={input.description || ''}
+                            aria-label={t('batch.dify.inputDescriptionFor', { field })}
+                            placeholder={t('batch.dify.inputDescriptionPlaceholder')}
+                            onChange={(event) => setInputPresentation(index, { description: event.target.value })}
+                          />
+                        </Space>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
 
               <Form.Item
                 name="collapse_optional_inputs"

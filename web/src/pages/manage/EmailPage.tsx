@@ -93,7 +93,7 @@ export default function EmailPage() {
   return (
     <Card title={t('nav.email')}>
       <LoadGate loading={loading} error={loadErr} onRetry={load}>
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text type="secondary">{t('email.hint')}</Typography.Text>
         {row(t('email.enabled'), <Switch checked={enabled} onChange={setEnabled} />)}
         {row(t('email.host'), <Input style={{ width: 260 }} value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.example.com" />)}

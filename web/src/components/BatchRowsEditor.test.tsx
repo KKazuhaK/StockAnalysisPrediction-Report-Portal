@@ -15,7 +15,7 @@ vi.mock('react-i18next', () => ({
 const inputs: PluginInput[] = [
   { key: 'symbol', label: 'Stock code', required: true },
   { key: 'query', label: 'Research query', required: true },
-  { key: 'context', label: 'Context (optional, JSON)' },
+  { key: 'context', label: 'Context', description: 'JSON object passed to the workflow' },
 ]
 
 function Harness({ onValidityChange = () => {} }: { onValidityChange?: (valid: boolean) => void }) {
@@ -35,6 +35,7 @@ describe('BatchRowsEditor', () => {
     expect(screen.getAllByText('Research query').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Context').length).toBeGreaterThan(0)
     expect(screen.getAllByText('run.optionalMark').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /run\.inputHelp.*Context/ })).toBeTruthy()
   })
 
   it('accepts a multi-row spreadsheet paste starting at the focused cell', () => {

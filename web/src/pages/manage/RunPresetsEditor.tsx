@@ -8,6 +8,7 @@ import type { RunFreq, RunOverrun, RunPreset, RunPresetAnchor, RunPresetInterval
 import { WEEK_ORDER, parseWeeklyRows, presetSummary, weeklyIntervals, wrapsMidnight, type WeeklyRow } from '../../lib/runSchedule'
 import { DragHandle, SortableItem, SortableWrapper } from './dnd'
 import LoadGate from '../../components/LoadGate'
+import CompactNumberInput from '../../components/CompactNumberInput'
 
 // Admin editor for preset low-peak scheduling windows (docs/adr/0014). An ordered, drag-sortable
 // list (like LinksPage / TypesPage); each preset is edited in a modal whose anchor fields adapt to
@@ -187,7 +188,7 @@ export default function RunPresetsEditor() {
   }
 
   return (
-    <Space direction="vertical" size={10} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={10} style={{ width: '100%' }}>
       <LoadGate loading={!loaded && !loadErr} error={loaded ? undefined : loadErr} onRetry={load} minHeight={140} title={t('common.loadFailedContent')}>
       {presets.length === 0 ? (
         <Empty description={t('preset.none')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -301,7 +302,7 @@ function PresetForm({
   const setRow = (i: number, next: WeeklyRow) => putRows((rows ?? []).map((r, j) => (j === i ? next : r)))
 
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
       <Field label={t('preset.label')}>
         <Input value={draft.label} onChange={(e) => set({ label: e.target.value })} placeholder={t('preset.labelPlaceholder')} style={{ maxWidth: 260 }} />
       </Field>
@@ -314,7 +315,7 @@ function PresetForm({
         />
       </Field>
       <Field label={t('preset.windows')}>
-        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={6} style={{ width: '100%' }}>
           {rows
             ? rows.map((r, i) => (
                 <Space key={i} wrap align="center">
@@ -424,10 +425,10 @@ function AnchorFields({ freq, anchor, onChange }: { freq: RunFreq; anchor: RunPr
         />
       )}
       {freq === 'yearly' && (
-        <InputNumber min={1} max={12} value={anchor.month ?? 1} onChange={(m) => onChange({ ...anchor, month: m ?? 1 })} addonBefore={t('run.month')} />
+        <CompactNumberInput min={1} max={12} value={anchor.month ?? 1} onChange={(m) => onChange({ ...anchor, month: m ?? 1 })} before={t('run.month')} />
       )}
       {(freq === 'monthly' || freq === 'yearly') && (
-        <InputNumber min={1} max={31} value={anchor.day ?? 1} onChange={(d) => onChange({ ...anchor, day: d ?? 1 })} addonBefore={t('run.day')} />
+        <CompactNumberInput min={1} max={31} value={anchor.day ?? 1} onChange={(d) => onChange({ ...anchor, day: d ?? 1 })} before={t('run.day')} />
       )}
       <HourPicker value={anchor.time || '00:00'} onChange={(v) => onChange({ ...anchor, time: v })} />
     </Space>

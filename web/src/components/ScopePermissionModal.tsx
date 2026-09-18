@@ -1,4 +1,4 @@
-import { List, Modal, Space, Typography } from 'antd'
+import { Modal, Space, Typography } from 'antd'
 import { EditOutlined, EyeOutlined, KeyOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 
@@ -36,24 +36,21 @@ export default function ScopePermissionModal({ open, appName, scopes, confirmLoa
       onCancel={onCancel}
       destroyOnHidden
     >
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text>{t('apps.permIntro', { name: appName })}</Typography.Text>
         {scopes.length === 0 ? (
           <Typography.Text type="secondary">{t('apps.permNone')}</Typography.Text>
         ) : (
-          <List
-            size="small"
-            bordered
-            dataSource={scopes}
-            renderItem={(s) => (
-              <List.Item>
+          <div className="rp-plain-list rp-plain-list--bordered" role="list">
+            {scopes.map((s) => (
+              <div className="rp-plain-list__item" role="listitem" key={s}>
                 <Space>
                   {scopeIcon(s)}
                   <span>{SCOPE_LABEL[s] ? t(SCOPE_LABEL[s]) : s}</span>
                 </Space>
-              </List.Item>
-            )}
-          />
+              </div>
+            ))}
+          </div>
         )}
       </Space>
     </Modal>

@@ -244,7 +244,7 @@ export default function ManageLayout() {
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
           placement="left"
-          width={260}
+          size={260}
           title={t('nav.manage')}
           styles={{ body: { padding: 8 } }}
         >

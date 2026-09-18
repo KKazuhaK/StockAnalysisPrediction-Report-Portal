@@ -142,11 +142,11 @@ export default function AppView() {
 
   if (error) {
     return (
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/apps')}>
           {t('apps.back')}
         </Button>
-        <Alert type="error" showIcon message={error} />
+        <Alert type="error" showIcon title={error} />
       </Space>
     )
   }
@@ -159,7 +159,7 @@ export default function AppView() {
   }
 
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
       <Space style={{ width: '100%', justifyContent: 'space-between' }} wrap>
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/apps')}>

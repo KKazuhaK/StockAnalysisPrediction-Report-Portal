@@ -15,29 +15,12 @@ export const MAX_FILE_MB = 15
 export const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
 export const MAX_FILES = 10
 
-// Dify often appends format, source, and fallback guidance to a field label in parentheses.
-// Forms can keep the short field name aligned and expose the trailing text as help without
-// throwing that metadata away.
-const trailingInputDetail = /\s*[\uFF08(]([^\uFF08\uFF09()]*)[\uFF09)]\s*$/
-const optionalDetailPrefix = /^(?:optional|\u53ef\u9009|\u53ef\u9078)\s*(?:[,\uFF0C;\uFF1B:\uFF1A]\s*)?/i
-
-export function compactInputLabel(input: PluginInput): { title: string; detail: string } {
-  const raw = (input.label || input.key).trim()
-  let title = raw
-  const details: string[] = []
-  let match = title.match(trailingInputDetail)
-  while (match?.index != null) {
-    details.unshift(match[1].trim())
-    title = title.slice(0, match.index).trim()
-    match = title.match(trailingInputDetail)
-  }
-  if (!title) return { title: raw, detail: '' }
+// Presentation metadata is declarative. A label may legitimately contain parentheses, dates,
+// units, or the word "optional", so deriving help from its punctuation corrupts source data.
+export function inputDisplayMeta(input: PluginInput): { title: string; detail: string } {
   return {
-    title,
-    detail: details
-      .map((detail) => detail.replace(optionalDetailPrefix, '').trim())
-      .filter(Boolean)
-      .join(' · '),
+    title: (input.label || input.key).trim(),
+    detail: (input.description || '').trim(),
   }
 }
 

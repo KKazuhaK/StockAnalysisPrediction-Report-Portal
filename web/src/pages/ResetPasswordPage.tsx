@@ -46,7 +46,7 @@ export default function ResetPasswordPage() {
         ) : !resetToken ? (
           <Result status="warning" title={t('reset.noToken')} extra={<Link to="/login">{t('reset.toLogin')}</Link>} />
         ) : (
-          <Space direction="vertical" size={18} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={18} style={{ width: '100%' }}>
             <Typography.Title level={4} style={{ margin: 0 }}>
               {t('reset.title')}
             </Typography.Title>

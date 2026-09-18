@@ -46,11 +46,13 @@ type Info struct {
 // Input is one declared input variable of a workflow (from user_input_form). Variable
 // is the key sent in `inputs` and doubles as the batch CSV column.
 type Input struct {
-	Variable string   `json:"variable"`
-	Label    string   `json:"label"`
-	Type     string   `json:"type"` // text-input | paragraph | number | select | file | file-list
-	Required bool     `json:"required"`
-	Options  []string `json:"options,omitempty"`
+	Variable     string   `json:"variable"`
+	Label        string   `json:"label"`
+	DisplayLabel string   `json:"display_label,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Type         string   `json:"type"` // text-input | paragraph | number | select | file | file-list
+	Required     bool     `json:"required"`
+	Options      []string `json:"options,omitempty"`
 }
 
 // The two Input types that carry files rather than a plain value: their run input is a
@@ -142,11 +144,12 @@ func (c *Client) Parameters(ctx context.Context) ([]Input, error) {
 	}
 	var doc struct {
 		UserInputForm []map[string]struct {
-			Variable string   `json:"variable"`
-			Label    string   `json:"label"`
-			Type     string   `json:"type"`
-			Required bool     `json:"required"`
-			Options  []string `json:"options"`
+			Variable    string   `json:"variable"`
+			Label       string   `json:"label"`
+			Description string   `json:"description"`
+			Type        string   `json:"type"`
+			Required    bool     `json:"required"`
+			Options     []string `json:"options"`
 		} `json:"user_input_form"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -162,7 +165,8 @@ func (c *Client) Parameters(ctx context.Context) ([]Input, error) {
 			if f.Variable == "" {
 				continue // skip malformed entries
 			}
-			out = append(out, Input{Variable: f.Variable, Label: f.Label, Type: t, Required: f.Required, Options: f.Options})
+			out = append(out, Input{Variable: f.Variable, Label: f.Label, Description: f.Description,
+				Type: t, Required: f.Required, Options: f.Options})
 		}
 	}
 	return out, nil

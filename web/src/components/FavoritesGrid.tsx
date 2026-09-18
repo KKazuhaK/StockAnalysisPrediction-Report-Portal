@@ -64,7 +64,7 @@ function FavoriteCard({ item, quote, disabled }: { item: FavoriteItem; quote?: C
         styles={{ body: { padding: 16 } }}
         {...clickable(() => navigate(destination), name)}
       >
-        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={10} style={{ width: '100%' }}>
           <Space align="start" style={{ justifyContent: 'space-between', width: '100%' }}>
             <div style={{ minWidth: 0, flex: 1 }}>
               <Typography.Paragraph strong ellipsis={{ rows: 1, tooltip: name }} style={{ fontSize: 16, marginBottom: 4 }}>

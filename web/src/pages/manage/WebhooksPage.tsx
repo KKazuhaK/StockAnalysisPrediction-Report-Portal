@@ -123,7 +123,7 @@ export default function WebhooksPage() {
         </Button>
       }
     >
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text type="secondary">{t('webhook.hint')}</Typography.Text>
         <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load} minHeight={180} title={t('common.loadFailedContent')}>
           <Table rowKey="id" size="small" dataSource={hooks} columns={cols} pagination={false} scroll={{ x: 'max-content' }} />

@@ -28,9 +28,10 @@ type Manifest struct {
 // InputDecl declares one input the plugin expects per row. The keys double as the
 // CSV header and drive the executor's dynamic form.
 type InputDecl struct {
-	Key      string `json:"key"`
-	Label    string `json:"label"`
-	Required bool   `json:"required"`
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required"`
 }
 
 // ConfigDecl declares one per-target config field (e.g. base_url, api_key). Secret

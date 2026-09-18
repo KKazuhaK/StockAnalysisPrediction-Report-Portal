@@ -90,7 +90,7 @@ export default function VersionsPage() {
   ]
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+    <Space orientation="vertical" size="large" style={{ width: '100%' }}>
       <div>
         <Typography.Title level={4} style={{ marginBottom: 4 }}>
           {t('versions.title')}
@@ -132,8 +132,8 @@ export default function VersionsPage() {
             )
           }
         >
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            {v.is_default && <Alert type="info" showIcon message={t('versions.defaultHint')} />}
+          <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+            {v.is_default && <Alert type="info" showIcon title={t('versions.defaultHint')} />}
             <div>
               <Typography.Text strong>{t('versions.label')}</Typography.Text>
               <Input

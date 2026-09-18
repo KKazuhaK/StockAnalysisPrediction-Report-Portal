@@ -74,7 +74,7 @@ export default function AppsHub() {
   const isEmpty = builtins.length === 0 && apps.length === 0
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Typography.Title level={4} style={{ margin: 0 }}>
         {t('nav.apps')}
       </Typography.Title>
@@ -85,7 +85,7 @@ export default function AppsHub() {
         <Alert
           type="warning"
           showIcon
-          message={t('common.loadFailedContent')}
+          title={t('common.loadFailedContent')}
           description={loadErr}
           action={<Button size="small" onClick={load}>{t('common.retry')}</Button>}
         />

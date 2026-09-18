@@ -44,7 +44,7 @@ export default function InheritField({
         value={inheriting ? 'inherit' : 'own'}
         onChange={(e) => onInheritingChange(e.target.value === 'inherit')}
       >
-        <Space direction="vertical" size={6}>
+        <Space orientation="vertical" size={6}>
           <Radio value="inherit">
             {/* Some sources have no value worth naming — the system default is just "the system
                 default" — and "inherit the system default — the system default" says it twice. */}

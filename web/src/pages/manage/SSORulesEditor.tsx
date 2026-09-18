@@ -33,6 +33,8 @@ const emptyRule = (): SSORuleRow => ({
   note: '',
 })
 
+type RuleTableRow = SSORuleRow & { _rowKey: string }
+
 export default function SSORulesEditor({
   providers,
   groups,
@@ -73,6 +75,10 @@ export default function SSORulesEditor({
   // Row keys are positions, not ids: an unsaved row has no id yet, and the server assigns ids from
   // the array order on save, so a position is the only thing stable across an edit.
   const keys = useMemo(() => rules.map((_, i) => String(i)), [rules])
+  const tableRows = useMemo<RuleTableRow[]>(
+    () => rules.map((rule, index) => ({ ...rule, _rowKey: String(index) })),
+    [rules],
+  )
 
   const patch = (i: number, v: Partial<SSORuleRow>) => {
     setRules((prev) => prev.map((r, j) => (i === j ? { ...r, ...v } : r)))
@@ -221,9 +227,9 @@ export default function SSORulesEditor({
   return (
     <div>
       <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load} minHeight={220}>
-      <Alert type="info" showIcon style={{ marginBottom: 12 }} message={t('sso.rules.intro')} />
+      <Alert type="info" showIcon style={{ marginBottom: 12 }} title={t('sso.rules.intro')} />
       {providers.filter((p) => p.id > 0).length === 0 && (
-        <Alert type="warning" showIcon style={{ marginBottom: 12 }} message={t('sso.rules.noProviders')} />
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }} title={t('sso.rules.noProviders')} />
       )}
 
       <SortableWrapper
@@ -233,11 +239,11 @@ export default function SSORulesEditor({
           setDirty(true)
         }}
       >
-        <Table<SSORuleRow>
-          rowKey={(_, i) => String(i)}
+        <Table<RuleTableRow>
+          rowKey="_rowKey"
           size="small"
           loading={loading}
-          dataSource={rules}
+          dataSource={tableRows}
           pagination={false}
           components={sortableTableComponents}
           columns={columns}

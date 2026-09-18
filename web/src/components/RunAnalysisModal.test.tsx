@@ -3,7 +3,6 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from 'antd'
 import RunAnalysisModal from './RunAnalysisModal'
-import { compactInputLabel } from '../lib/difyInputs'
 import type { PluginInput } from '../api/types'
 
 // Every GET the modal makes hangs, which is what a slow link looks like for the seconds that
@@ -61,24 +60,6 @@ const warm = vi.hoisted(() => ({
   defaults: {} as Record<string, unknown>,
   collapseOptional: false,
 }))
-
-describe('compactInputLabel', () => {
-  it('understands full-width punctuation and removes optional from the help copy', () => {
-    expect(
-      compactInputLabel({
-        key: 'information_cutoff',
-        label: 'Info cutoff \uFF08optional\uFF0C ISO +08:00\uFF09',
-      }),
-    ).toEqual({ title: 'Info cutoff', detail: 'ISO +08:00' })
-
-    expect(
-      compactInputLabel({
-        key: 'execution_context',
-        label: 'Execution context \uFF08optional\uFF09',
-      }),
-    ).toEqual({ title: 'Execution context', detail: '' })
-  })
-})
 
 describe('RunAnalysisModal with the shell-warmed answers already in hand', () => {
   it('opens on the form, with no spinner at all', async () => {
@@ -209,22 +190,23 @@ describe('RunAnalysisModal draws each input as its declared type', () => {
     expect(screen.getByLabelText(/Policy/)).toBeTruthy()
   })
 
-  it('keeps input labels compact and reveals trailing guidance from a help button', async () => {
+  it('shows an explicit field description from the input contract behind a help button', async () => {
     const user = userEvent.setup()
     await open([
       {
         key: 'report_date',
-        label: 'Report date (optional, supplied by the parent caller)',
+        label: 'Report date',
+        description: 'Supplied by the parent caller',
       },
     ])
 
     const label = document.body.querySelector('.rp-run-input-label')
     expect(label?.querySelector('.rp-run-input-label__name')?.textContent).toBe('Report date')
     expect(label?.querySelector('.rp-run-input-label__optional')?.textContent).toBe('run.optionalMark')
-    expect(screen.queryByText('supplied by the parent caller')).toBeNull()
+    expect(screen.queryByText('Supplied by the parent caller')).toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'run.inputHelp:{"field":"Report date"}' }))
-    expect(await screen.findByText('supplied by the parent caller')).toBeTruthy()
+    expect(await screen.findByText('Supplied by the parent caller')).toBeTruthy()
   })
 
   it('gives a paragraph a textarea, a number a spinner and a select its options', async () => {

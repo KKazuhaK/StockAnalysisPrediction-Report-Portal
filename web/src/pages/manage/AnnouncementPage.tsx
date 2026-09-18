@@ -384,9 +384,9 @@ export default function AnnouncementPage() {
   )
 
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 860 }}>
+    <Space orientation="vertical" size={12} style={{ width: '100%', maxWidth: 860 }}>
       <LoadGate loading={loading} error={loadErr} onRetry={load}>
-        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={10} style={{ width: '100%' }}>
           <Space wrap>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit(null)}>
               {t('announcementAdmin.add')}
@@ -440,7 +440,7 @@ export default function AnnouncementPage() {
               ) : preview.length === 0 ? (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('announcementAdmin.previewEmpty')} />
               ) : (
-                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <Space orientation="vertical" size={8} style={{ width: '100%' }}>
                   {preview.map((a) => (
                     <AnnouncementAlert key={a.id} announcement={a} />
                   ))}
@@ -453,7 +453,7 @@ export default function AnnouncementPage() {
             <Alert
               showIcon
               type="warning"
-              message={t('announcementAdmin.crowded', { count: liveCount })}
+              title={t('announcementAdmin.crowded', { count: liveCount })}
               style={{ borderRadius: 8 }}
             />
           )}
@@ -477,7 +477,7 @@ export default function AnnouncementPage() {
       <Drawer
         open={open}
         onClose={() => setOpen(false)}
-        width={520}
+        size={520}
         destroyOnHidden
         title={editing ? t('announcementAdmin.editTitle') : t('announcementAdmin.add')}
         footer={

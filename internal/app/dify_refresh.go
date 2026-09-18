@@ -36,6 +36,29 @@ type difyInputDiff struct {
 	Changed         bool     `json:"changed"`
 }
 
+// Display labels and descriptions are portal presentation metadata. Refresh owns the remote
+// structural declaration (label, type, required, options) but must not erase explicit local
+// presentation merely because the upstream response does not know about it.
+func preserveInputPresentation(local, remote []dify.Input) []dify.Input {
+	presentation := make(map[string]dify.Input, len(local))
+	for _, input := range local {
+		if strings.TrimSpace(input.DisplayLabel) != "" || strings.TrimSpace(input.Description) != "" {
+			presentation[input.Variable] = input
+		}
+	}
+	out := append([]dify.Input(nil), remote...)
+	for i := range out {
+		localInput := presentation[out[i].Variable]
+		if strings.TrimSpace(localInput.DisplayLabel) != "" {
+			out[i].DisplayLabel = localInput.DisplayLabel
+		}
+		if strings.TrimSpace(localInput.Description) != "" {
+			out[i].Description = localInput.Description
+		}
+	}
+	return out
+}
+
 func diffInputs(local, remote []dify.Input) difyInputDiff {
 	var d difyInputDiff
 	lreq := map[string]bool{}
@@ -173,6 +196,7 @@ func (s *Server) previewDifyRefresh(ctx context.Context, tgt BatchTarget) difyRe
 	if difyModeChat(info.Mode) {
 		inputs = ensureQueryInput(inputs)
 	}
+	inputs = preserveInputPresentation(cfg.Inputs, inputs)
 	res.Inputs = inputs
 	res.difyInputDiff = diffInputs(cfg.Inputs, inputs)
 	res.SymbolInputLost = symbolInputLost(cfg.SymbolInput, inputs)

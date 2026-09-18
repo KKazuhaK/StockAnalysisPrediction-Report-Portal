@@ -3,6 +3,7 @@ import { Alert, App, Button, Card, Divider, Input, InputNumber, Select, Space, S
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
 import LoadGate from '../../components/LoadGate'
+import CompactNumberInput from '../../components/CompactNumberInput'
 
 // Login protection and self-service registration.
 //
@@ -135,7 +136,7 @@ export default function SecurityPage() {
   const tokenProvider = captcha.provider !== 'image'
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%', maxWidth: 720 }}>
+    <Space orientation="vertical" size="large" style={{ width: '100%', maxWidth: 720 }}>
       <Card title={t('security.loginTitle')}>
         <Row label={t('security.loginMode')} hint={t('security.loginModeHint')}>
           <Select
@@ -154,13 +155,13 @@ export default function SecurityPage() {
           <Switch checked={login.sso_only} onChange={(v) => setLogin({ ...login, sso_only: v })} />
         </Row>
         {!login.sso_available && (login.mode !== 'local_only' || login.sso_only) && (
-          <Alert type="warning" showIcon style={{ marginTop: 12 }} message={t('security.noProviderWarning')} />
+          <Alert type="warning" showIcon style={{ marginTop: 12 }} title={t('security.noProviderWarning')} />
         )}
       </Card>
 
       <Card title={t('security.captchaTitle')}>
         <Typography.Paragraph type="secondary">{t('security.captchaDesc')}</Typography.Paragraph>
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
           <Row label={t('security.provider')} hint={t('security.providerHint')}>
             <Select
               value={captcha.provider}
@@ -176,7 +177,7 @@ export default function SecurityPage() {
           </Row>
           {tokenProvider && (
             <>
-              <Alert type="warning" showIcon message={t('security.tokenProviderNote')} />
+              <Alert type="warning" showIcon title={t('security.tokenProviderNote')} />
               <Row label={t('security.siteKey')}>
                 <Input value={captcha.site_key} onChange={(e) => setCaptcha({ ...captcha, site_key: e.target.value })} />
               </Row>
@@ -229,9 +230,9 @@ export default function SecurityPage() {
 
       <Card title={t('security.regTitle')}>
         <Typography.Paragraph type="secondary">{t('security.regDesc')}</Typography.Paragraph>
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
           {reg.enabled && reg.require_verify && !emailOK && (
-            <Alert type="error" showIcon message={t('security.regNeedsEmail')} />
+            <Alert type="error" showIcon title={t('security.regNeedsEmail')} />
           )}
           <Row label={t('security.regEnabled')}>
             <Switch checked={reg.enabled} onChange={(v) => setReg({ ...reg, enabled: v })} />
@@ -275,41 +276,41 @@ export default function SecurityPage() {
           that is what they are: how long being signed in lasts, and how hard someone may knock. */}
       <Card title={t('security.limitsTitle')}>
         <Typography.Paragraph type="secondary">{t('security.limitsDesc')}</Typography.Paragraph>
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
           <Row label={t('security.sessionTTL')} hint={t('security.sessionTTLHint')}>
-            <InputNumber
+            <CompactNumberInput
               min={1}
               max={24 * 365}
               value={limits.session_ttl_hours}
               onChange={(v) => setLimits({ ...limits, session_ttl_hours: v || 1 })}
-              addonAfter={t('security.hours')}
+              after={t('security.hours')}
             />
           </Row>
           <Row label={t('security.loginFailMax')} hint={t('security.loginFailMaxHint')}>
-            <InputNumber
+            <CompactNumberInput
               min={1}
               max={1000}
               value={limits.login_fail_max}
               onChange={(v) => setLimits({ ...limits, login_fail_max: v || 1 })}
-              addonAfter={t('security.times')}
+              after={t('security.times')}
             />
           </Row>
           <Row label={t('security.loginFailWindow')} hint={t('security.loginFailWindowHint')}>
-            <InputNumber
+            <CompactNumberInput
               min={1}
               max={24 * 60}
               value={limits.login_fail_window_min}
               onChange={(v) => setLimits({ ...limits, login_fail_window_min: v || 1 })}
-              addonAfter={t('security.minutes')}
+              after={t('security.minutes')}
             />
           </Row>
           <Row label={t('security.apiRate')} hint={t('security.apiRateHint')}>
-            <InputNumber
+            <CompactNumberInput
               min={0}
               max={100000}
               value={limits.apiv1_rate_per_min}
               onChange={(v) => setLimits({ ...limits, apiv1_rate_per_min: v ?? 0 })}
-              addonAfter={t('security.perMin')}
+              after={t('security.perMin')}
             />
           </Row>
         </Space>

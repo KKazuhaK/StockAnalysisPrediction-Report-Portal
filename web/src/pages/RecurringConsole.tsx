@@ -247,7 +247,7 @@ export default function RecurringConsole() {
       title: t('recurring.colName'),
       dataIndex: 'name',
       render: (name: string, task: RecurringTask) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Typography.Text strong>{name}</Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {task.target_name || t('recurring.targetGone')} · {t('recurring.rowsN', { n: task.row_count })}
@@ -301,7 +301,7 @@ export default function RecurringConsole() {
   const weekdayOptions = [0, 1, 2, 3, 4, 5, 6].map((d) => ({ value: d, label: t(`run.weekday.${d}`) }))
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Card
         title={
           <Space>
@@ -315,7 +315,7 @@ export default function RecurringConsole() {
           </Button>
         }
       >
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('recurring.intro')}</Typography.Text>
           {targetsLoaded && targets.length === 0 && <Typography.Text type="warning">{t('recurring.noTargets')}</Typography.Text>}
           <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load} minHeight={200} title={t('common.loadFailedContent')}>
@@ -345,7 +345,7 @@ export default function RecurringConsole() {
         width={680}
         destroyOnHidden
       >
-        <Space direction="vertical" size={12} style={{ width: '100%', marginTop: 8 }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%', marginTop: 8 }}>
           <div>
             <Typography.Text>{t('recurring.fieldName')}</Typography.Text>
             <Input value={draft.name} onChange={(e) => set('name', e.target.value)} placeholder={t('recurring.namePlaceholder')} />
@@ -490,7 +490,7 @@ export default function RecurringConsole() {
       <Drawer
         open={history != null}
         onClose={() => setHistory(null)}
-        width={440}
+        size={440}
         title={history ? t('recurring.historyTitle', { name: history.task.name }) : ''}
       >
         <Table

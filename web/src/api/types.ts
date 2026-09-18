@@ -19,6 +19,7 @@ export interface Me {
 export interface PluginInput {
   key: string
   label?: string
+  description?: string // explicit help copy; labels are never parsed to infer this
   required?: boolean
   // The declared control kind, straight from Dify's /parameters ("text-input" | "paragraph" |
   // "number" | "select" | "file" | "file-list"). Absent on an older server, and on a manifest
@@ -58,6 +59,8 @@ export interface StepUpPolicy {
 export interface DifyInput {
   variable: string
   label?: string
+  display_label?: string // optional portal-owned short label; Dify's source label remains intact
+  description?: string // portal/Dify metadata shown behind the field help control
   type?: string
   required?: boolean
   options?: string[]

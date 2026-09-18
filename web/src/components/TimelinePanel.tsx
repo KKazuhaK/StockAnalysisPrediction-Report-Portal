@@ -57,7 +57,7 @@ export default function TimelinePanel({ nodes, selected, onSelect, horizontal }:
           const active = n.date === selected
           return {
             color: active ? token.colorPrimary : 'gray',
-            children: (
+            content: (
               <a
                 {...clickable(() => onSelect(n.date))}
                 style={{

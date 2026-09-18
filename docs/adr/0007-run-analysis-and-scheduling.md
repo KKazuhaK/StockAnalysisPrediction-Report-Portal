@@ -21,7 +21,7 @@ so a one-row submit needs no engine change.
 
 2. **Single-run reuses `POST /api/admin/batch/jobs`** with `rows:[oneObject]`,
    `concurrency:1`. The modal renders one field per the target's discovered input
-   (`{key,label,required}`, incl. Dify), enforces `required`, and assembles the
+   (`{key,label,description,required}`, incl. Dify), enforces `required`, and assembles the
    one row client-side. 加急 gating, ticket spend, and the `downgraded` response
    are unchanged.
 

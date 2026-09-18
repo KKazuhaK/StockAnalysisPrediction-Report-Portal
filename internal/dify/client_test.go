@@ -26,7 +26,7 @@ func stub(t *testing.T) *httptest.Server {
 		case "/info":
 			w.Write([]byte(`{"name":"[运行入口/工具] 1-6-4投资决策模块-CoD-V2","description":"…","mode":"workflow","author_name":"wfeixu"}`))
 		case "/parameters":
-			w.Write([]byte(`{"user_input_form":[{"text-input":{"label":"上市公司代码","max_length":48,"options":[],"required":true,"type":"text-input","variable":"symbol"}},{"select":{"label":"类型","required":false,"type":"select","variable":"kind","options":["a","b"]}}]}`))
+			w.Write([]byte(`{"user_input_form":[{"text-input":{"label":"上市公司代码","description":"六位交易所代码","max_length":48,"options":[],"required":true,"type":"text-input","variable":"symbol"}},{"select":{"label":"类型","required":false,"type":"select","variable":"kind","options":["a","b"]}}]}`))
 		case "/workflows/run":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
@@ -60,7 +60,7 @@ func TestInfoAndParameters(t *testing.T) {
 	if len(inputs) != 2 {
 		t.Fatalf("inputs = %+v, want 2", inputs)
 	}
-	if inputs[0].Variable != "symbol" || inputs[0].Label != "上市公司代码" || inputs[0].Type != "text-input" || !inputs[0].Required {
+	if inputs[0].Variable != "symbol" || inputs[0].Label != "上市公司代码" || inputs[0].Description != "六位交易所代码" || inputs[0].Type != "text-input" || !inputs[0].Required {
 		t.Fatalf("inputs[0] = %+v", inputs[0])
 	}
 	if inputs[1].Variable != "kind" || inputs[1].Type != "select" || len(inputs[1].Options) != 2 {

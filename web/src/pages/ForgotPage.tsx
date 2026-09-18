@@ -52,7 +52,7 @@ export default function ForgotPage() {
       style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24, background: token.colorBgLayout }}
     >
       <Card style={{ width: 420, maxWidth: '100%' }}>
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
           <Space>
             <SiteLogo />
             <Typography.Title level={4} style={{ margin: 0 }}>

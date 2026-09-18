@@ -351,7 +351,7 @@ export default function LinksPage() {
   }
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
         <Typography.Text type="secondary">{t('links.hint')}</Typography.Text>
         <Space>

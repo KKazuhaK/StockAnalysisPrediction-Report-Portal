@@ -73,7 +73,7 @@ export default function CompareModal({
 
   return (
     <Modal open={open} onCancel={onClose} footer={null} width={860} title={t('compare.title')} destroyOnHidden>
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={12} style={{ width: '100%' }}>
         {candidates == null && !err ? (
           <div style={{ display: 'grid', justifyItems: 'center', gap: 12, padding: 24 }}>
             <Spin />
@@ -99,7 +99,7 @@ export default function CompareModal({
           </Space>
         )}
 
-        {err && <Alert type="error" showIcon message={err} />}
+        {err && <Alert type="error" showIcon title={err} />}
 
         {loading ? (
           <Spin />

@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_FILES, buildRow, fileIds, fileLimit, isFileInput } from './difyInputs'
+import { MAX_FILES, buildRow, fileIds, fileLimit, inputDisplayMeta, isFileInput } from './difyInputs'
 import type { PluginInput } from '../api/types'
 
 const decl = (key: string, type?: string): PluginInput => ({ key, type })
+
+describe('inputDisplayMeta', () => {
+  it('never infers help text by parsing a field label', () => {
+    expect(inputDisplayMeta({ key: 'date', label: 'Report date (optional, parent supplied)' })).toEqual({
+      title: 'Report date (optional, parent supplied)',
+      detail: '',
+    })
+  })
+
+  it('uses only the explicit description as help text', () => {
+    expect(inputDisplayMeta({ key: 'date', label: 'Report date', description: 'Parent supplied' })).toEqual({
+      title: 'Report date',
+      detail: 'Parent supplied',
+    })
+  })
+})
 
 describe('isFileInput / fileLimit', () => {
   it('recognises the two file kinds and nothing else', () => {

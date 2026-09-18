@@ -403,7 +403,7 @@ export default function QuoteSourcesPage() {
       // operator drags it. Without this column the order is a list of names in a sequence whose
       // effect cannot be predicted from anything on screen.
       render: (_: unknown, r: QuoteAdminSource) => (
-        <Space direction="vertical" size={2}>
+        <Space orientation="vertical" size={2}>
           {capLine(t('quoteAdmin.daily'), r.daily, 'quote-source-daily')}
           {capLine(t('quoteAdmin.intraday'), r.intraday, 'quote-source-intraday')}
           {/* A third LINE in the same cell rather than a fourth column: the table is already wide
@@ -443,7 +443,7 @@ export default function QuoteSourcesPage() {
         if (!r.lastError) return null
         const at = stampOrNever(r.lastErrorAt)
         return (
-          <Space direction="vertical" size={0}>
+          <Space orientation="vertical" size={0}>
             {/* Verbatim, and never truncated to a code: what an operator needs off this page is the
                 vendor's own sentence — "drift gate" and "connection refused" call for opposite
                 responses, and only this string tells them apart. */}
@@ -488,7 +488,7 @@ export default function QuoteSourcesPage() {
 
         <Card title={t('quoteAdmin.sources')}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <Alert type="info" showIcon message={t('quoteAdmin.whyNoUrl')} />
+            <Alert type="info" showIcon title={t('quoteAdmin.whyNoUrl')} />
             {/* The vendor notices, at the CARD's width rather than inside a table cell.
                 They used to sit in the source column under a 360px cap, where a three-sentence
                 licensing notice wrapped to five lines and pushed its row to roughly two hundred
@@ -504,7 +504,7 @@ export default function QuoteSourcesPage() {
                   data-testid="quote-source-notice"
                   type="warning"
                   showIcon
-                  message={`${sourceLabel(r.source)}：${sourceNotice(r.source)}`}
+                  title={`${sourceLabel(r.source)}：${sourceNotice(r.source)}`}
                 />
               ) : null,
             )}

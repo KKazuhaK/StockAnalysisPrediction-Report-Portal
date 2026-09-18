@@ -10,6 +10,21 @@ import (
 	"github.com/KazuhaHub/StockAnalysisPrediction-Report-Portal/internal/dify"
 )
 
+func TestPreserveInputPresentationKeepsPortalMetadata(t *testing.T) {
+	local := []dify.Input{{Variable: "symbol", Label: "Old label", DisplayLabel: "Portal label", Description: "Local help"}}
+	remote := []dify.Input{
+		{Variable: "symbol", Label: "New label", DisplayLabel: "Remote label", Description: "Remote help"},
+		{Variable: "query", Label: "Query", Description: "Remote help"},
+	}
+	got := preserveInputPresentation(local, remote)
+	if got[0].Label != "New label" || got[0].DisplayLabel != "Portal label" || got[0].Description != "Local help" {
+		t.Fatalf("existing input = %+v", got[0])
+	}
+	if got[1].Description != "Remote help" {
+		t.Fatalf("remote description = %+v", got[1])
+	}
+}
+
 func in(v string, req bool) dify.Input {
 	return dify.Input{Variable: v, Required: req, Type: "text-input"}
 }

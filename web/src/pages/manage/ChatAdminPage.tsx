@@ -8,6 +8,7 @@ import { startVisiblePoll } from '../../lib/visiblePoll'
 import Markdown from '../../components/Markdown'
 import LoadGate from '../../components/LoadGate'
 import type { ChatTurn } from '../../api/types'
+import CompactNumberInput from '../../components/CompactNumberInput'
 
 // Assistant admin (docs/adr/0012-interactive-chat.md). Two independent controls:
 //  1. A concurrency ceiling on in-flight chat turns — chat is interactive, so it does NOT
@@ -162,10 +163,10 @@ export default function ChatAdminPage() {
   ]
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Card title={t('chatAdmin.limitCard')}>
         <LoadGate loading={!liveLoaded && !cfgErr} error={liveLoaded ? undefined : cfgErr} onRetry={load} minHeight={180}>
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Space wrap>
             <span style={{ display: 'inline-block', minWidth: 110 }}>{t('chatAdmin.limit')}</span>
             <InputNumber min={0} max={100} value={limit} onChange={(v) => setLimit(v ?? 0)} />
@@ -178,7 +179,7 @@ export default function ChatAdminPage() {
           </Space>
           <Space wrap>
             <span style={{ display: 'inline-block', minWidth: 110 }}>{t('chatAdmin.turnTimeout')}</span>
-            <InputNumber min={1} max={120} value={turnTimeout} onChange={(v) => setTurnTimeout(v ?? 20)} addonAfter={t('chatAdmin.minutes')} />
+            <CompactNumberInput min={1} max={120} value={turnTimeout} onChange={(v) => setTurnTimeout(v ?? 20)} after={t('chatAdmin.minutes')} />
             <Typography.Text type="secondary">{t('chatAdmin.turnTimeoutHint')}</Typography.Text>
           </Space>
           <Button type="primary" onClick={save}>
@@ -280,7 +281,7 @@ export default function ChatAdminPage() {
       <Drawer
         open={viewConv != null}
         onClose={() => setViewConv(null)}
-        width={fullWidth ? '100%' : 640}
+        size={fullWidth ? '100%' : 640}
         destroyOnHidden
         title={
           viewConv ? (
@@ -305,7 +306,7 @@ export default function ChatAdminPage() {
         ) : viewTurns.length === 0 ? (
           <Empty description={t('chatAdmin.convEmpty')} />
         ) : (
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
             {viewTurns.map((turn, i) => (
               <div key={i}>
                 {turn.query && (
