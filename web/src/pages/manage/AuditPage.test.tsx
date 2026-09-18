@@ -19,14 +19,21 @@ vi.mock('../../api/client', () => ({
 const vocab = vi.hoisted(
   () => new Set(['audit.v.reason.bad_password', 'audit.v.field.primary_group', 'audit.t.batch_job']),
 )
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    // A STRING second argument is i18next's default-value form, not interpolation: it is what comes
-    // back when the bundle has no such key. Honouring the distinction is what makes the stub usable
-    // for a renderer whose whole point is telling "known vocabulary" from "not taught yet".
-    t: (k: string, fb?: unknown) => (typeof fb === 'string' ? (vocab.has(k) ? k : fb) : k),
-  }),
-}))
+vi.mock('react-i18next', () => {
+  // One `t`, handed back from one object, because that is what the real hook does.
+  //
+  // A fresh `t` per call made every render produce a new `load` callback on the page, so its effect
+  // re-ran and re-fetched on EVERY render: the table never stopped spinning (antd sets
+  // pointer-events: none on a spinning table), and clicking a row became a race. A laptop won it and
+  // CI lost it, which is how this shipped red.
+  //
+  // A STRING second argument is i18next's default-value form, not interpolation: it is what comes
+  // back when the bundle has no such key. Honouring the distinction is what makes the stub usable
+  // for a renderer whose whole point is telling "known vocabulary" from "not taught yet".
+  const t = (k: string, fb?: unknown) => (typeof fb === 'string' ? (vocab.has(k) ? k : fb) : k)
+  const api = { t }
+  return { useTranslation: () => api }
+})
 
 const RESP = {
   total: 2,
@@ -271,5 +278,11 @@ describe('AuditPage', () => {
     mount()
     await waitFor(() => expect(apiMock.get).toHaveBeenCalled())
     expect(String(apiMock.get.mock.calls[0][0])).toContain('limit=50')
+    // Exactly once, and this is load-bearing rather than tidiness. A mock that handed back a fresh
+    // `t` on every call made the page's effect re-run and re-fetch on every render: ten calls in
+    // 400ms and climbing, the table spinning the whole time (antd sets pointer-events: none on a
+    // spinning table), and every click on a row a race. A laptop won that race; CI lost it.
+    await new Promise((r) => setTimeout(r, 400))
+    expect(apiMock.get.mock.calls.length).toBe(1)
   })
 })
