@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from 'antd'
-import RunAnalysisModal, { compactInputLabel } from './RunAnalysisModal'
+import RunAnalysisModal from './RunAnalysisModal'
+import { compactInputLabel } from '../lib/difyInputs'
 import type { PluginInput } from '../api/types'
 
 // Every GET the modal makes hangs, which is what a slow link looks like for the seconds that

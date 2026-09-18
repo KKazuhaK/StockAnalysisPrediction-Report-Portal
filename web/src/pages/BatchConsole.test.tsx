@@ -43,7 +43,7 @@ describe('BatchConsole', () => {
     expect(screen.queryByRole('combobox')).toBeNull()
   })
 
-  it('prefills the CSV header when a target is selected', async () => {
+  it('opens a wide row editor with run settings in a separate rail', async () => {
     const user = userEvent.setup()
     render(
       <App>
@@ -55,7 +55,67 @@ describe('BatchConsole', () => {
     fireEvent.mouseDown(screen.getByRole('combobox'))
     await user.click(await screen.findByText('Research'))
 
-    const editor = screen.getByPlaceholderText('batch.csvPlaceholder') as HTMLTextAreaElement
+    expect(document.body.querySelector('.rp-batch-compose-layout')).toBeTruthy()
+    expect(document.body.querySelector('.rp-batch-compose-data')).toBeTruthy()
+    expect(document.body.querySelector('.rp-batch-compose-settings')).toBeTruthy()
+    expect(document.body.querySelector('.rp-batch-grid')).toBeTruthy()
+
+    await user.click(screen.getByText('batch.editor.csvMode'))
+    const editor = screen.getByPlaceholderText(/batch\.csvPlaceholder/) as HTMLTextAreaElement
     expect(editor.value).toBe('code,query')
+  })
+
+  it('submits the rows pasted into the table', async () => {
+    const user = userEvent.setup()
+    apiMock.post.mockResolvedValue({ job_id: 7, concurrency: 1 })
+    render(
+      <App>
+        <BatchConsole />
+      </App>,
+    )
+
+    fireEvent.mouseDown(await screen.findByRole('combobox'))
+    await user.click(await screen.findByText('Research'))
+    const first = screen.getAllByRole('textbox', { name: 'batch.editor.cellLabel' })[0]
+    fireEvent.paste(first, { clipboardData: { getData: () => '000001\talpha\n000002\tbeta' } })
+    const run = screen.getByRole('button', { name: /batch\.run/ }) as HTMLButtonElement
+    await waitFor(() => expect(run.disabled).toBe(false))
+    await user.click(run)
+
+    await waitFor(() =>
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/api/admin/batch/jobs',
+        expect.objectContaining({
+          target_id: 1,
+          rows: [
+            { code: '000001', query: 'alpha' },
+            { code: '000002', query: 'beta' },
+          ],
+        }),
+      ),
+    )
+  })
+
+  it('clears synchronized CSV content after a successful submission', async () => {
+    const user = userEvent.setup()
+    apiMock.post.mockResolvedValue({ job_id: 8, concurrency: 1 })
+    render(
+      <App>
+        <BatchConsole />
+      </App>,
+    )
+
+    fireEvent.mouseDown(await screen.findByRole('combobox'))
+    await user.click(await screen.findByText('Research'))
+    await user.click(screen.getByText('batch.editor.csvMode'))
+    const editor = screen.getByPlaceholderText(/batch\.csvPlaceholder/) as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: 'code,query\n000001,alpha' } })
+    const run = screen.getByRole('button', { name: /batch\.run/ }) as HTMLButtonElement
+    await waitFor(() => expect(run.disabled).toBe(false))
+    await user.click(run)
+
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(1))
+    expect(screen.queryByDisplayValue('code,query\n000001,alpha')).toBeNull()
+    expect(document.body.querySelector('.rp-batch-grid')).toBeTruthy()
   })
 })

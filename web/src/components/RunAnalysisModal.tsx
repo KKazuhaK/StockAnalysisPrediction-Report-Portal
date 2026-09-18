@@ -22,7 +22,7 @@ import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
 import { formatReportDateTime } from '../lib/datetime'
-import { buildRow, isFileInput } from '../lib/difyInputs'
+import { buildRow, compactInputLabel, isFileInput } from '../lib/difyInputs'
 import { readPrefetched } from '../lib/prefetch'
 import {
   noRunDefaults,
@@ -66,33 +66,6 @@ function inputControl(i: PluginInput, targetId: number, hint = i.label || i.key)
       return <DifyFileInput targetId={targetId} type={i.type} />
     default:
       return <Input placeholder={hint} />
-  }
-}
-
-// Dify labels often use a trailing parenthesis as a miniature help paragraph (format, source,
-// fallback behavior, and sometimes the word "optional"). In a two-column form that paragraph
-// becomes layout, making the neighboring control start lower. Keep the actual field name in the
-// label and move those trailing details to the explicit help affordance instead.
-const trailingInputDetail = /\s*[\uFF08(]([^\uFF08\uFF09()]*)[\uFF09)]\s*$/
-const optionalDetailPrefix = /^(?:optional|\u53ef\u9009|\u53ef\u9078)\s*(?:[,\uFF0C;\uFF1B:\uFF1A]\s*)?/i
-
-export function compactInputLabel(i: PluginInput) {
-  const raw = (i.label || i.key).trim()
-  let title = raw
-  const details: string[] = []
-  let match = title.match(trailingInputDetail)
-  while (match?.index != null) {
-    details.unshift(match[1].trim())
-    title = title.slice(0, match.index).trim()
-    match = title.match(trailingInputDetail)
-  }
-  if (!title) return { title: raw, detail: '' }
-  return {
-    title,
-    detail: details
-      .map((detail) => detail.replace(optionalDetailPrefix, '').trim())
-      .filter(Boolean)
-      .join(' · '),
   }
 }
 

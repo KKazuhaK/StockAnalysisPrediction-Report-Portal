@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { App, Button, Card, Checkbox, Input, InputNumber, Select, Space, Tag, Typography, Upload } from 'antd'
+import { Alert, App, Button, Card, Checkbox, InputNumber, Select, Space, Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
-import { PlayCircleOutlined, UploadOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined } from '@ant-design/icons'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import type { BatchTarget, BatchTickets, RunPreset, RunPresetsResp } from '../api/types'
-import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
 import { BASE_MAX, visibleOn } from '../lib/batchUi'
+import { activeBatchRows, blankBatchRow, type BatchDraftRow } from '../lib/batchRows'
 import {
   noRunDefaults,
   readRunDefaults,
@@ -19,6 +19,7 @@ import {
 import RunScheduleControls from '../components/RunScheduleControls'
 import QueueTable from '../components/QueueTable'
 import LoadGate from '../components/LoadGate'
+import BatchRowsEditor from '../components/BatchRowsEditor'
 
 export default function BatchConsole() {
   const { t } = useTranslation()
@@ -34,7 +35,9 @@ export default function BatchConsole() {
   const [defaults, setDefaults] = useState<RunFormDefaults>(noRunDefaults)
   const [schedule, setSchedule] = useState<RunSchedule>(scheduleFromDefaults(noRunDefaults))
   const [notify, setNotify] = useState(false)
-  const [csvText, setCsvText] = useState('')
+  const [draftRows, setDraftRows] = useState<BatchDraftRow[]>([])
+  const [editorValid, setEditorValid] = useState(false)
+  const [editorReset, setEditorReset] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   // The form knows nothing until the workflow list and the run defaults are in — same gate the
   // single-run dialog took in b32be03, for the same reason: "no runnable targets" is a statement
@@ -85,27 +88,19 @@ export default function BatchConsole() {
 
   const enabledPresets = useMemo(() => presets.filter((p) => p.enabled), [presets])
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
-  const inputKeys = useMemo(() => (target?.inputs || []).map((i) => i.key), [target])
-  const rows = useMemo(() => (inputKeys.length ? csvToRows(csvText, inputKeys) : []), [csvText, inputKeys])
+  const rows = useMemo(() => activeBatchRows(draftRows), [draftRows])
 
-  // Match the recurring-task editor: selecting a workflow exposes its CSV columns immediately.
-  // Preserve real editor content when switching targets; replace only an empty editor or the old
-  // target's untouched header template.
+  // Keep values whose keys exist on the next workflow, which makes correcting an accidental
+  // target choice cheap without ever assigning a value to a different column by position.
   const pickTarget = (v: number | undefined) => {
-    const newKeys = (targets.find((tg) => tg.id === v)?.inputs || []).map((i) => i.key)
-    const oldHeader = toCSV(inputKeys, [])
-    setCsvText((text) => {
-      const keepBody = text.trim() !== '' && text.trim() !== oldHeader
-      return keepBody ? text : toCSV(newKeys, [])
+    const nextInputs = targets.find((tg) => tg.id === v)?.inputs || []
+    setDraftRows((current) => {
+      const filled = activeBatchRows(current)
+      if (filled.length === 0) return [blankBatchRow(nextInputs)]
+      return filled.map((row) => Object.fromEntries(nextInputs.map((input) => [input.key, row[input.key] ?? ''])))
     })
+    setEditorValid(false)
     setTargetId(v)
-  }
-
-  const readFile = (file: File) => {
-    const reader = new FileReader()
-    reader.onload = () => setCsvText(String(reader.result || ''))
-    reader.readAsText(file)
-    return false
   }
 
   const run = async () => {
@@ -134,7 +129,9 @@ export default function BatchConsole() {
       if (res.run_at) message.success(t('run.scheduledOk', { at: res.run_at }))
       else message.success(t('batch.msg.started', { id: res.job_id, n: rows.length }))
       if (res.downgraded) message.warning(t('batch.ticketDowngraded'))
-      setCsvText(toCSV(inputKeys, []))
+      setDraftRows([blankBatchRow(target?.inputs || [])])
+      setEditorValid(false)
+      setEditorReset((value) => value + 1)
       setSchedule(scheduleFromDefaults(defaults))
       setNotify(false)
       loadTickets() // an urgent run may have spent a ticket; the embedded queue self-refreshes
@@ -156,83 +153,104 @@ export default function BatchConsole() {
         }
       >
         <LoadGate loading={loading} error={loadErr} onRetry={load} minHeight={200} title={t('common.loadFailedContent')}>
-        {targets.length === 0 ? (
-          <Typography.Text type="secondary">{t('batch.noTargets')}</Typography.Text>
-        ) : (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Space wrap>
-              <span>{t('batch.target')}：</span>
-              <Select
-                showSearch
-                optionFilterProp="label"
-                style={{ minWidth: 280 }}
-                placeholder={t('batch.selectTarget')}
-                value={targetId}
-                onChange={pickTarget}
-                options={targets.map((tg) => ({
-                  value: tg.id,
-                  label: tg.plugin_name ? `${tg.name}（${tg.plugin_name}）` : tg.name,
-                }))}
-              />
-              <span>{t('batch.maxRetries')}：</span>
-              <InputNumber min={0} max={5} value={maxRetries} onChange={(v) => setMaxRetries(v ?? 0)} />
-              <span>{t('batch.rowConcurrency')}：</span>
-              <InputNumber min={1} max={20} value={rowConcurrency} onChange={(v) => setRowConcurrency(v ?? 1)} />
-              {admin && (
-                <>
-                  <span>{t('batch.priorityLabel')}：</span>
-                  <InputNumber
-                    min={0}
-                    max={BASE_MAX}
-                    value={basePriority}
-                    onChange={(v) => setBasePriority(v ?? 50)}
-                    disabled={schedule.urgent || schedule.idle}
+          {targets.length === 0 ? (
+            <Typography.Text type="secondary">{t('batch.noTargets')}</Typography.Text>
+          ) : (
+            <div className="rp-batch-compose-layout">
+              <section className="rp-batch-compose-data">
+                <Typography.Title level={5} className="rp-batch-compose-title">
+                  {t('batch.editor.dataTitle')}
+                </Typography.Title>
+                <div className="rp-batch-target-picker">
+                  <Typography.Text>{t('batch.target')}</Typography.Text>
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder={t('batch.selectTarget')}
+                    value={targetId}
+                    onChange={pickTarget}
+                    options={targets.map((tg) => ({
+                      value: tg.id,
+                      label: tg.plugin_name ? `${tg.name}（${tg.plugin_name}）` : tg.name,
+                    }))}
                   />
-                </>
-              )}
-            </Space>
-            {target && (
-              <div>
-                <Typography.Text type="secondary">{t('batch.csvHeaderHint')}</Typography.Text>{' '}
-                {inputKeys.map((k) => (
-                  <Tag key={k}>{k}</Tag>
-                ))}
-                <Button type="link" size="small" onClick={() => downloadCSV('template.csv', toCSV(inputKeys, []))}>
-                  {t('batch.downloadTemplate')}
+                </div>
+                {target ? (
+                  <BatchRowsEditor
+                    key={`${target.id}:${editorReset}`}
+                    inputs={target.inputs || []}
+                    rows={draftRows}
+                    onChange={setDraftRows}
+                    onValidityChange={setEditorValid}
+                  />
+                ) : (
+                  <div className="rp-batch-editor-empty">
+                    <Typography.Text type="secondary">{t('batch.selectTargetFirst')}</Typography.Text>
+                  </div>
+                )}
+              </section>
+
+              <aside className="rp-batch-compose-settings">
+                <Typography.Title level={5} className="rp-batch-compose-title">
+                  {t('run.settings')}
+                </Typography.Title>
+                <div className="rp-batch-setting-fields">
+                  <label>
+                    <Typography.Text>{t('batch.maxRetries')}</Typography.Text>
+                    <InputNumber min={0} max={5} value={maxRetries} onChange={(v) => setMaxRetries(v ?? 0)} />
+                  </label>
+                  <label>
+                    <Typography.Text>{t('batch.rowConcurrency')}</Typography.Text>
+                    <InputNumber min={1} max={20} value={rowConcurrency} onChange={(v) => setRowConcurrency(v ?? 1)} />
+                  </label>
+                  {admin && (
+                    <label>
+                      <Typography.Text>{t('batch.priorityLabel')}</Typography.Text>
+                      <InputNumber
+                        min={0}
+                        max={BASE_MAX}
+                        value={basePriority}
+                        onChange={(v) => setBasePriority(v ?? 50)}
+                        disabled={schedule.urgent || schedule.idle}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <RunScheduleControls
+                  value={schedule}
+                  onChange={setSchedule}
+                  presets={enabledPresets}
+                  tickets={tickets}
+                  showRule={defaults.showPresetRule}
+                />
+
+                {mailEnabled && email && (
+                  <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>
+                    {t('batch.notifyDone')}
+                  </Checkbox>
+                )}
+
+                <Alert
+                  type={editorValid ? 'success' : 'info'}
+                  showIcon
+                  title={editorValid ? t('batch.editor.submitReady', { n: rows.length }) : t('batch.editor.submitBlocked')}
+                />
+
+                <Button
+                  block
+                  type="primary"
+                  size="large"
+                  icon={<PlayCircleOutlined />}
+                  loading={submitting}
+                  disabled={!targetId || !editorValid}
+                  onClick={run}
+                >
+                  {schedule.mode === 'now' ? t('batch.run') : t('run.schedule')}
                 </Button>
-              </div>
-            )}
-            <Input.TextArea
-              rows={6}
-              value={csvText}
-              onChange={(e) => setCsvText(e.target.value)}
-              placeholder={inputKeys.length ? t('batch.csvPlaceholder', { keys: inputKeys.join(',') }) : t('batch.selectTargetFirst')}
-            />
-            <Space wrap>
-              <Upload accept=".csv,.txt" showUploadList={false} beforeUpload={readFile}>
-                <Button icon={<UploadOutlined />}>{t('batch.uploadCsv')}</Button>
-              </Upload>
-              <Typography.Text type="secondary">{t('batch.parsedRows', { n: rows.length })}</Typography.Text>
-            </Space>
-            <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} showRule={defaults.showPresetRule} />
-            <Space wrap>
-              {mailEnabled && email && (
-                <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>
-                  {t('batch.notifyDone')}
-                </Checkbox>
-              )}
-              <Button
-                type="primary"
-                icon={<PlayCircleOutlined />}
-                loading={submitting}
-                disabled={!targetId || rows.length === 0}
-                onClick={run}
-              >
-                {schedule.mode === 'now' ? t('batch.run') : t('run.schedule')}
-              </Button>
-            </Space>
-          </Space>
-        )}
+              </aside>
+            </div>
+          )}
         </LoadGate>
       </Card>
 
