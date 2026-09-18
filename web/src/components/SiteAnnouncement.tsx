@@ -83,7 +83,7 @@ export function AnnouncementAlert({
       className="rp-announcement"
       showIcon
       type={announcementAlertType(announcement.level)}
-      message={message || description}
+      title={message || description}
       description={message ? description : undefined}
       closable={announcement.dismissible ? { closeIcon: true } : undefined}
       onClose={onClose}
@@ -131,7 +131,7 @@ export default function SiteAnnouncement({ style, compact = false }: { style?: C
   const hidden = open.length - shown.length
 
   return (
-    <Space direction="vertical" size={8} style={{ width: '100%', ...style }}>
+    <Space orientation="vertical" size={8} style={{ width: '100%', ...style }}>
       {shown.map((a) => (
         <AnnouncementAlert key={a.id} announcement={a} onClose={() => close(a)} />
       ))}

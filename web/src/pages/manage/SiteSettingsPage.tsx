@@ -121,7 +121,7 @@ export default function SiteSettingsPage() {
   }
 
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 720 }}>
+    <Space orientation="vertical" size={12} style={{ width: '100%', maxWidth: 720 }}>
       <LoadGate loading={loading} error={loadErr} onRetry={load}>
       <Form form={form} layout="vertical">
         <Form.Item

@@ -58,7 +58,7 @@ export default function RunScheduleControls({
         onChange={(d) => set({ runAt: d })}
         disabled={disabled}
         format="YYYY-MM-DD HH:mm"
-        popupClassName="rp-picker-popup"
+        classNames={{ popup: { root: 'rp-picker-popup' } }}
         placeholder={t('run.pickTime')}
         style={{ width: mobile ? '100%' : undefined }}
       />
@@ -110,7 +110,7 @@ export default function RunScheduleControls({
   const ticketSuffix = tickets && !tickets.unlimited ? ` ${tickets.remaining ?? 0}/${tickets.allocation ?? 0}` : ''
 
   return (
-    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <Radio.Group
           value={value.mode}
@@ -166,7 +166,7 @@ export default function RunScheduleControls({
 function PresetRule({ preset }: { preset: RunPreset }) {
   const { t } = useTranslation()
   return (
-    <Space direction="vertical" size={2} style={{ maxWidth: 300 }}>
+    <Space orientation="vertical" size={2} style={{ maxWidth: 300 }}>
       <Typography.Text type="secondary">
         {t('preset.freq')}: {t('run.freq.' + preset.freq)}
       </Typography.Text>

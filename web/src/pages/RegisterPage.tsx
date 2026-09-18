@@ -55,7 +55,7 @@ export default function RegisterPage() {
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24,
       background: token.colorBgLayout }}>
       <Card style={{ width: 420, maxWidth: '100%' }}>
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
           <Space>
             <SiteLogo />
             <Typography.Title level={4} style={{ margin: 0 }}>
@@ -122,7 +122,7 @@ export default function RegisterPage() {
         </Typography.Text>
       )}
       {config?.requires_verification && (
-        <Alert type="info" showIcon message={t('register.willVerify')} style={{ marginBottom: 12 }} />
+        <Alert type="info" showIcon title={t('register.willVerify')} style={{ marginBottom: 12 }} />
       )}
       <Button type="primary" size="large" htmlType="submit" block loading={busy}>
         {t('register.submit')}

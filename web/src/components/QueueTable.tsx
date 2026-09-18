@@ -188,7 +188,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
   return (
     <Drawer
       title={detail ? t('batch.jobTitle', { id: detail.job.id }) : t('batch.jobDetail')}
-      width={fullWidth ? '100%' : 680}
+      size={fullWidth ? '100%' : 680}
       open={open}
       onClose={onClose}
       destroyOnHidden
@@ -213,7 +213,7 @@ function DetailDrawer({ jobId, admin, user, onClose }: { jobId: number | null; a
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message={t('queue.notInProcess')}
+          title={t('queue.notInProcess')}
           description={t('queue.notInProcessHint')}
         />
       )}
@@ -570,7 +570,7 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
   )
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       {showStats && (
         // A responsive grid (not Space wrap): auto-fit + 1fr keeps every tile the same size
         // and stretched to fill its row, so the stats never leave a lone half-empty card.
@@ -655,9 +655,9 @@ export default function QueueTable({ showStats = false }: { showStats?: boolean 
         onCancel={() => setReschedId(null)}
         destroyOnHidden
       >
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('queue.rescheduleHint')}</Typography.Text>
-          <DatePicker showTime={{ format: 'HH:mm' }} value={reschedAt} onChange={setReschedAt} format="YYYY-MM-DD HH:mm" popupClassName="rp-picker-popup" style={{ width: '100%' }} placeholder={t('run.pickTime')} />
+          <DatePicker showTime={{ format: 'HH:mm' }} value={reschedAt} onChange={setReschedAt} format="YYYY-MM-DD HH:mm" classNames={{ popup: { root: 'rp-picker-popup' } }} style={{ width: '100%' }} placeholder={t('run.pickTime')} />
         </Space>
       </Modal>
     </Space>

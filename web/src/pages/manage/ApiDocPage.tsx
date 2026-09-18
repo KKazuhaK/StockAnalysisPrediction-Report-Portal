@@ -28,7 +28,7 @@ function EndpointCard({ e }: { e: ApiEndpoint }) {
   const { t } = useTranslation()
   return (
     <Card size="small">
-      <Space direction="vertical" size={10} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={10} style={{ width: '100%' }}>
         <Space wrap align="center">
           <Tag color={METHOD_COLORS[e.method] || 'default'} style={{ fontFamily: 'monospace', fontWeight: 600, margin: 0 }}>
             {e.method}
@@ -129,7 +129,7 @@ export default function ApiDocPage() {
   if (!doc) return <Spin />
 
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
       <Space wrap>
         <Tag color="geekblue">OpenAPI 3.1</Tag>
         <Button size="small" href={apiDocURL} target="_blank" rel="noreferrer">

@@ -33,6 +33,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { api, errText } from '../../api/client'
 import OrgUnitPicker, { subtreeOf } from './OrgUnitPicker'
+import CompactNumberInput from '../../components/CompactNumberInput'
 import OrgUnitDetail from './OrgUnitDetail'
 import LoadGate from '../../components/LoadGate'
 import type { BatchConfig, Role, UserGroupRow, UserRow, UsersResp } from '../../api/types'
@@ -347,7 +348,7 @@ export default function UsersPage() {
   }
 
   const accountList = (
-    <Space direction="vertical" size={16} style={{ width: '100%', minWidth: 0 }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%', minWidth: 0 }}>
       <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
         <Space wrap>
           <Input
@@ -594,11 +595,11 @@ function GroupsPanel({ groups, groupsLoading, onChanged }: { groups: UserGroupRo
   )
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%', maxWidth: 720 }}>
       {/* Global urgent lane + ticket config (moved off the run-queue settings page). */}
       <Card size="small" title={t('users.urgentTitle')}>
         <LoadGate loading={!cfgReady && !cfgErr} error={cfgReady ? undefined : cfgErr} onRetry={loadCfg} minHeight={140}>
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           {cfgRow(
             t('batch.admin.urgentEnabled'),
             t('batch.admin.urgentEnabledHint'),
@@ -614,12 +615,12 @@ function GroupsPanel({ groups, groupsLoading, onChanged }: { groups: UserGroupRo
               {cfgRow(
                 t('batch.admin.ticketPeriod'),
                 t('batch.admin.ticketPeriodHint'),
-                <InputNumber
+                <CompactNumberInput
                   min={1}
                   max={365}
                   value={ticketPeriod}
                   onChange={(v) => setTicketPeriod(v || 7)}
-                  addonAfter={t('batch.admin.days')}
+                  after={t('batch.admin.days')}
                   disabled={!cfgReady}
                 />,
               )}

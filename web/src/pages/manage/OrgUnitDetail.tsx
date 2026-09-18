@@ -186,7 +186,7 @@ export default function OrgUnitDetail({
   }
 
   return (
-    <Space direction="vertical" size={16} style={{ flex: 1, minWidth: 0, maxWidth: 760 }}>
+    <Space orientation="vertical" size={16} style={{ flex: 1, minWidth: 0, maxWidth: 760 }}>
       <Card
         size="small"
         title={
@@ -366,9 +366,9 @@ export default function OrgUnitDetail({
         onOk={() => doRemove(orphanChoice)}
         destroyOnHidden
       >
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text>{t('ou.announcementImpactDesc', { name: group.name })}</Typography.Text>
-          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={4} style={{ width: '100%' }}>
             {(impact ?? []).map((a) => (
               <Space key={a.id} size={6}>
                 <Typography.Text>{a.title || t('announcementAdmin.untitled')}</Typography.Text>
@@ -512,7 +512,7 @@ function TargetsSection({ group }: { group: UserGroupRow }) {
               const on = governed.filter((tg) => (granted[tg.id] ?? []).includes(sf))
               return {
               title: (
-                <Space direction="vertical" size={2} align="center">
+                <Space orientation="vertical" size={2} align="center">
                   <span>{t(`users.surface.${sf}`)}</span>
                   {/* Column-wide toggle: with a dozen workflows, "everyone may use 批量" is one
                       click rather than a dozen. Only offered to targets that allow the surface. */}

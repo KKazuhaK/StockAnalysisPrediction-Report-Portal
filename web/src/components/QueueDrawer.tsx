@@ -97,7 +97,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
   return (
     <Drawer
       title={t('queue.title')}
-      width={420}
+      size={420}
       open={open}
       onClose={onClose}
       extra={
@@ -106,7 +106,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
         </Button>
       }
     >
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <Space style={{ width: '100%', justifyContent: 'space-around' }} split={<span style={{ color: 'var(--rp-border)' }}>|</span>}>
           {stat(t('queue.running'), summary?.running ?? null)}
           {stat(t('queue.waiting'), summary?.waiting ?? null)}
@@ -124,7 +124,7 @@ export default function QueueDrawer({ open, onClose }: { open: boolean; onClose:
         {active.length === 0 ? (
           <Empty description={t('queue.empty')} />
         ) : (
-          <Space direction="vertical" size={0} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={0} style={{ width: '100%' }}>
             {active.map((j) => {
               const progress = jobProgressPresentation(j)
               return (

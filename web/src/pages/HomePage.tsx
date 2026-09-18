@@ -314,7 +314,7 @@ export default function HomePage() {
   )
 
   return (
-    <Space direction="vertical" size={24} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={24} style={{ width: '100%' }}>
       {/* Hero: main search */}
       <div style={{ textAlign: 'center', paddingTop: 24 }}>
         <Typography.Title
@@ -362,7 +362,7 @@ export default function HomePage() {
           own mode (own row / inline expand / floating popover / modal dialog). */}
       {(topLinks.length > 0 || linkGroups.length > 0) && (
         <div style={{ textAlign: 'center' }}>
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={12} style={{ width: '100%' }}>
             {/* Row 1: the ungrouped top-level entry buttons. */}
             {topLinks.length > 0 && (
               <Space size={[8, 8]} wrap style={{ justifyContent: 'center' }}>
@@ -450,7 +450,7 @@ export default function HomePage() {
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            message={t('common.loadFailedContent')}
+            title={t('common.loadFailedContent')}
             description={loadErr}
             action={<Button size="small" onClick={load}>{t('common.retry')}</Button>}
           />

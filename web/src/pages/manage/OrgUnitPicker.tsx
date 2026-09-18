@@ -186,13 +186,13 @@ export default function OrgUnitPicker({
         </Tooltip>
       </Space>
 
-      <Space direction="vertical" size={10} style={{ padding: 12, width: '100%' }}>
+      <Space orientation="vertical" size={10} style={{ padding: 12, width: '100%' }}>
         {mode === 'filter' && (
         <Radio.Group
           value={scoped ? 'scoped' : 'all'}
           onChange={(e) => onScopedChange(e.target.value === 'scoped')}
         >
-          <Space direction="vertical" size={4}>
+          <Space orientation="vertical" size={4}>
             <Radio value="all">{t('ou.scopeAll')}</Radio>
             <Radio value="scoped">{t('ou.scopeSelected')}</Radio>
           </Space>

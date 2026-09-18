@@ -77,15 +77,13 @@ describe('controls have an accessible name', () => {
     expect(offenders, 'spread {...clickable(fn)} — a bare onClick is unreachable without a mouse').toEqual([])
   })
 
-  // Two antd components render markup that is NOT keyboard-operable, which the capitalised-tag
-  // exemption above would otherwise wave through. Both were verified by rendering them, and
-  // antdKeyboardBehaviour below pins that verification so an antd upgrade that fixes either one
-  // makes a test fail rather than leaving a rule here that is quietly obsolete.
+  // Typography.Link renders markup that is NOT keyboard-operable, which the capitalised-tag
+  // exemption above would otherwise wave through. Its behaviour is verified by rendering it in
+  // antdKeyboard.test.tsx so an antd upgrade cannot make this rule quietly obsolete.
   //
   //   Typography.Link  — an <a> with no href: focusable (antd sets tabIndex=0), but Enter does
   //                      nothing, because an anchor's activation behaviour requires an href.
-  //   List.Item        — rendered with tabIndex=-1, so it is not reachable by Tab at all.
-  const UNSAFE_ANTD = ['Typography.Link', 'List.Item']
+  const UNSAFE_ANTD = ['Typography.Link']
 
   it('every clickable antd component that is not keyboard-operable goes through clickable()', () => {
     const offenders: string[] = []

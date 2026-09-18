@@ -30,7 +30,7 @@ export default function ReaderControls() {
 
   const content = (
     <div style={{ width: 244 }}>
-      <Space direction="vertical" size={14} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={14} style={{ width: '100%' }}>
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
             <Typography.Text type="secondary">{t('reader.fontSize')}</Typography.Text>

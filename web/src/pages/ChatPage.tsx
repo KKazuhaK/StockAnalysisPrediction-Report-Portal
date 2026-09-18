@@ -855,7 +855,7 @@ export default function ChatPage() {
           open={navOpen}
           onClose={() => setNavOpen(false)}
           placement="left"
-          width={280}
+          size={280}
           title={t('chat.conversations')}
           styles={{ body: { padding: 12 } }}
         >

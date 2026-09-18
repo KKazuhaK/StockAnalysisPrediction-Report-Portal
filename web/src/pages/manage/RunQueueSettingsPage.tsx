@@ -8,6 +8,7 @@ import RunPresetsEditor from './RunPresetsEditor'
 import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
 import { GAP_FIELD } from './tokens'
+import CompactNumberInput from '../../components/CompactNumberInput'
 
 // Standalone run-queue settings (docs/adr/0007 + 0008): the queue concurrency budget,
 // the default base priority, the Dify end-user template, and the Slurm-style multifactor
@@ -123,7 +124,7 @@ export default function RunQueueSettingsPage() {
               key: 'advanced',
               label: t('common.advanced'),
               children: (
-                <Space direction="vertical" size={GAP_FIELD} style={{ width: '100%' }}>
+                <Space orientation="vertical" size={GAP_FIELD} style={{ width: '100%' }}>
                   <Divider titlePlacement="left" plain style={{ marginTop: 0 }}>
                     {t('batch.admin.difyTitle')}
                   </Divider>
@@ -135,12 +136,12 @@ export default function RunQueueSettingsPage() {
                   {row(
                     t('batch.admin.difyPoll'),
                     t('batch.admin.difyPollHint'),
-                    <InputNumber min={0} max={600} value={difyPollSeconds} onChange={(v) => setDifyPollSeconds(v ?? 0)} addonAfter={t('batch.admin.seconds')} />,
+                    <CompactNumberInput min={0} max={600} value={difyPollSeconds} onChange={(v) => setDifyPollSeconds(v ?? 0)} after={t('batch.admin.seconds')} />,
                   )}
                   {row(
                     t('batch.admin.difyRunTimeout'),
                     t('batch.admin.difyRunTimeoutHint'),
-                    <InputNumber min={1} max={720} value={difyRunTimeout} onChange={(v) => setDifyRunTimeout(v || 180)} addonAfter={t('batch.admin.minutes')} />,
+                    <CompactNumberInput min={1} max={720} value={difyRunTimeout} onChange={(v) => setDifyRunTimeout(v || 180)} after={t('batch.admin.minutes')} />,
                   )}
                   <Divider titlePlacement="left" plain>
                     {t('batch.admin.prioWeightsTitle')}
@@ -164,12 +165,12 @@ export default function RunQueueSettingsPage() {
                   {row(
                     t('batch.admin.ageHours'),
                     t('batch.admin.ageHoursHint'),
-                    <InputNumber min={1} max={8760} value={ageHours} onChange={(v) => setAgeHours(v || 24)} addonAfter={t('batch.admin.hours')} />,
+                    <CompactNumberInput min={1} max={8760} value={ageHours} onChange={(v) => setAgeHours(v || 24)} after={t('batch.admin.hours')} />,
                   )}
                   {row(
                     t('batch.admin.fairHalflife'),
                     t('batch.admin.fairHalflifeHint'),
-                    <InputNumber min={1} max={8760} value={fairHalflife} onChange={(v) => setFairHalflife(v || 168)} addonAfter={t('batch.admin.hours')} />,
+                    <CompactNumberInput min={1} max={8760} value={fairHalflife} onChange={(v) => setFairHalflife(v || 168)} after={t('batch.admin.hours')} />,
                   )}
                 </Space>
               ),

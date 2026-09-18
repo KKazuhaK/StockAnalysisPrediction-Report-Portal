@@ -161,7 +161,7 @@ export default function AppsAdminPage() {
     {
       title: t('common.name'),
       render: (_: unknown, e: AppMarketEntry) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Space>
             {e.icon && <span>{e.icon}</span>}
             <span>{e.name}</span>
@@ -191,7 +191,7 @@ export default function AppsAdminPage() {
   ]
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Card
         title={
           <Space>
@@ -214,7 +214,7 @@ export default function AppsAdminPage() {
           </Upload>
         }
       >
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('apps.adminHint')}</Typography.Text>
           <Table
             rowKey="id"
@@ -243,7 +243,7 @@ export default function AppsAdminPage() {
           </Button>
         }
       >
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text type="secondary">{t('apps.marketHint')}</Typography.Text>
           <Space.Compact style={{ width: '100%', maxWidth: 720 }}>
             <Input

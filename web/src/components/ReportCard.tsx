@@ -199,7 +199,7 @@ export default function ReportCard({
         styles={{ body: { padding: 16 } }}
         style={{ height: '100%' }}
       >
-        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={10} style={{ width: '100%' }}>
           <Space style={{ justifyContent: 'space-between', width: '100%' }} align="start">
             <div style={{ minWidth: 0, flex: 1 }}>
               <Typography.Paragraph

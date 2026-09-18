@@ -55,7 +55,7 @@ export default function TokensPage() {
       // anyway, the field scrolls and Copy still yields the whole secret — it degrades, not breaks.
       width: 640,
       content: (
-        <Space direction="vertical" size={12} style={{ width: '100%', marginTop: 8 }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%', marginTop: 8 }}>
           <Space.Compact style={{ width: '100%' }}>
             <Input readOnly value={result.token} onFocus={(e) => e.currentTarget.select()} style={{ fontFamily: MONO }} />
             <Button icon={<CopyOutlined />} onClick={() => copyToken(result.token)}>
@@ -95,7 +95,7 @@ export default function TokensPage() {
   }
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Space wrap>
         <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
           {t('common.add')}

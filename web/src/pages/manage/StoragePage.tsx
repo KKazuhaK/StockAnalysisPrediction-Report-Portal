@@ -7,6 +7,7 @@ import { api, errText } from '../../api/client'
 import type { CleanupConfig, CleanupResult, CleanupRun, CleanupUsage, CleanupUsageCategory } from '../../api/types'
 import LoadGate from '../../components/LoadGate'
 import StickyActionBar from '../../components/StickyActionBar'
+import CompactNumberInput from '../../components/CompactNumberInput'
 
 // Storage management console (docs/adr/0017-storage-cleanup.md): a per-category usage dashboard (icon
 // cards + a proportion bar), a self-explanatory manual cleanup (the button names what and how old),
@@ -328,7 +329,7 @@ export default function StoragePage() {
     <LoadGate loading={loading && !loaded} error={loaded ? undefined : loadErr} onRetry={load}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card title={t('storage.usageTitle')}>
-        <Space direction="vertical" size={14} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={14} style={{ width: '100%' }}>
           {/* Total + proportion bar: which category takes the space, at a glance. */}
           <Space align="center" size={8}>
             <DatabaseOutlined style={{ fontSize: 18, color: token.colorTextSecondary }} />
@@ -396,7 +397,7 @@ export default function StoragePage() {
             t('storage.batchTarget'),
             <Space>
               <Switch checked={batchEnabled} onChange={setBatchEnabled} />
-              <InputNumber min={batchFloor} value={batchDays} onChange={(v) => setBatchDays(v ?? batchFloor)} addonAfter={t('batch.admin.days')} />
+              <CompactNumberInput min={batchFloor} value={batchDays} onChange={(v) => setBatchDays(v ?? batchFloor)} after={t('batch.admin.days')} />
             </Space>,
             t('storage.batchHint'),
           )}
@@ -404,7 +405,7 @@ export default function StoragePage() {
             t('storage.tokensTarget'),
             <Space>
               <Switch checked={tokensEnabled} onChange={setTokensEnabled} />
-              <InputNumber min={0} value={tokensGraceDays} onChange={(v) => setTokensGraceDays(v ?? 0)} addonAfter={t('batch.admin.days')} />
+              <CompactNumberInput min={0} value={tokensGraceDays} onChange={(v) => setTokensGraceDays(v ?? 0)} after={t('batch.admin.days')} />
             </Space>,
             t('storage.tokensHint'),
           )}
@@ -413,7 +414,7 @@ export default function StoragePage() {
             t('storage.auditTarget'),
             <Space>
               <Switch checked={auditEnabled} onChange={setAuditEnabled} />
-              <InputNumber min={auditFloor} value={auditDays} onChange={(v) => setAuditDays(v ?? auditFloor)} addonAfter={t('batch.admin.days')} />
+              <CompactNumberInput min={auditFloor} value={auditDays} onChange={(v) => setAuditDays(v ?? auditFloor)} after={t('batch.admin.days')} />
             </Space>,
             // Off means never delete, which is a real choice for an audit trail in a way it is not
             // for batch history — so the hint says so rather than only naming the floor.
@@ -424,11 +425,11 @@ export default function StoragePage() {
             t('storage.revisionsTarget'),
             <Space>
               <Switch checked={revisionsEnabled} onChange={setRevisionsEnabled} />
-              <InputNumber
+              <CompactNumberInput
                 min={revisionsFloor}
                 value={revisionsDays}
                 onChange={(v) => setRevisionsDays(v ?? revisionsFloor)}
-                addonAfter={t('batch.admin.days')}
+                after={t('batch.admin.days')}
               />
             </Space>,
             t('storage.revisionsHint', { n: revisionsFloor }),
@@ -451,12 +452,12 @@ export default function StoragePage() {
           <Divider style={{ margin: '4px 0' }} titlePlacement="left" plain>
             {t('storage.reportsTarget')}
           </Divider>
-          <Alert type="warning" showIcon message={t('storage.reportsDanger')} description={t('storage.reportsWarn')} />
+          <Alert type="warning" showIcon title={t('storage.reportsDanger')} description={t('storage.reportsWarn')} />
           {row(
             t('storage.enable'),
             <Space>
               <Switch checked={reportsEnabled} onChange={onToggleReports} />
-              <InputNumber min={reportsFloor} value={reportsDays} onChange={(v) => setReportsDays(v ?? reportsFloor)} addonAfter={t('batch.admin.days')} />
+              <CompactNumberInput min={reportsFloor} value={reportsDays} onChange={(v) => setReportsDays(v ?? reportsFloor)} after={t('batch.admin.days')} />
             </Space>,
             t('storage.floorHint', { n: reportsFloor }),
           )}

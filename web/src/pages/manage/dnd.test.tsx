@@ -61,7 +61,7 @@ describe('SortableWrapper', () => {
   // above matters is written down rather than remembered.
   it('is defeated by a per-child spacing wrapper, which is why one is never used', () => {
     const { container } = renderList(
-      <Space direction="vertical">
+      <Space orientation="vertical">
         {rows.map((id) => (
           <SortableItem key={id} id={id}>
             <div>{id}</div>

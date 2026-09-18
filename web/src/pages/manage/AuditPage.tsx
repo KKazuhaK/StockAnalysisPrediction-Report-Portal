@@ -162,7 +162,7 @@ export default function AuditPage() {
       render: (v: string) => {
         const at = auditTime(v, data?.timezone ?? '')
         return (
-          <Space direction="vertical" size={0}>
+          <Space orientation="vertical" size={0}>
             <Typography.Text style={{ fontSize: 12 }}>{at.text}</Typography.Text>
             {at.local && (
               <Typography.Text type="secondary" style={{ fontSize: 11 }}>
@@ -184,7 +184,7 @@ export default function AuditPage() {
       title: t('audit.actor'),
       width: 210,
       render: (_, r) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           {/* A machine caller has no username. Saying so beats an empty cell, which reads as a bug. */}
           <Typography.Text>{r.actor || t('audit.machine')}</Typography.Text>
           {r.actor_ou > 0 && (
@@ -431,7 +431,7 @@ export default function AuditPage() {
       }
       styles={{ body: { paddingTop: 12 } }}
     >
-      {err && <Alert type="error" showIcon message={err} style={{ marginBottom: 12 }} />}
+      {err && <Alert type="error" showIcon title={err} style={{ marginBottom: 12 }} />}
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         {t('audit.intro')}
       </Typography.Paragraph>
@@ -489,7 +489,7 @@ export default function AuditPage() {
           type="warning"
           showIcon
           style={{ marginTop: 16 }}
-          message={t('audit.proxyHintTitle')}
+          title={t('audit.proxyHintTitle')}
           description={t('audit.proxyHintBody')}
         />
       )}

@@ -62,8 +62,8 @@ export default function DifyRefreshModal({
       cancelText={t('common.cancel')}
       width={640}
     >
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        {changedCount === 0 && <Alert type="success" showIcon message={t('batch.refresh.noChanges')} />}
+      <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+        {changedCount === 0 && <Alert type="success" showIcon title={t('batch.refresh.noChanges')} />}
         {results.map((r) => (
           <Row key={r.id} r={r} disabled={!applicable(r)} checked={applicable(r) && !off[r.id]} onToggle={(v) => setOff({ ...off, [r.id]: !v })} />
         ))}
@@ -145,7 +145,7 @@ function Row({
             type="warning"
             showIcon
             style={{ marginTop: 6 }}
-            message={t('batch.refresh.symbolLost', { name: r.symbol_input_lost })}
+            title={t('batch.refresh.symbolLost', { name: r.symbol_input_lost })}
           />
         )}
       </div>

@@ -211,7 +211,7 @@ export default function LoginPage() {
     >
       <div style={{ width: '100%', maxWidth: 560 }}>
         <Card style={{ width: '100%', maxWidth: 380, margin: '0 auto', boxShadow: token.boxShadowSecondary }}>
-          <Space direction="vertical" size={20} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={20} style={{ width: '100%' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <Typography.Title
                 level={4}
@@ -241,7 +241,7 @@ export default function LoginPage() {
               </Space>
               {/* Landing here because a session ran out is not the same as arriving at the login
                   page, and being dropped without a word reads as the app losing its place. */}
-              {expired && <Alert type="info" showIcon message={t('login.expired')} />}
+              {expired && <Alert type="info" showIcon title={t('login.expired')} />}
             </div>
 
             {totpToken ? (
@@ -314,7 +314,7 @@ export default function LoginPage() {
               </Typography.Text>
             )}
             {!totpToken && offers.sso && providers.length > 0 && (
-              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              <Space orientation="vertical" size={8} style={{ width: '100%' }}>
                 <Typography.Text type="secondary" style={{ textAlign: 'center', display: 'block' }}>
                   {t('login.ssoDivider')}
                 </Typography.Text>

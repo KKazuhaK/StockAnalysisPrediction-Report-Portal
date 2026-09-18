@@ -91,7 +91,7 @@ export default function RunPage() {
           page's, so the two readers match). */}
       <div className={`rp-reader${wide ? ' rp-reader--wide' : ''}`} style={{ '--rp-doc-max': `${docMax}px` } as CSSProperties}>
         <div className="rp-reader__doc">
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <Space style={{ justifyContent: 'space-between', width: '100%' }} wrap>
           <Space size={12} wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>

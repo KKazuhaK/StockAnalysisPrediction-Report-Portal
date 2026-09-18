@@ -6,7 +6,6 @@ import {
   Card,
   Form,
   Input,
-  List,
   Modal,
   Popconfirm,
   Space,
@@ -52,7 +51,7 @@ export default function AccountPage() {
   useEffect(loadPasskeys, [loadPasskeys])
 
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%', maxWidth: 760 }}>
+    <Space orientation="vertical" size="large" style={{ width: '100%', maxWidth: 760 }}>
       <div>
         <Typography.Title level={3} style={{ marginBottom: 4 }}>
           {t('account.title')}
@@ -60,7 +59,7 @@ export default function AccountPage() {
         <Typography.Text type="secondary">{name || user}</Typography.Text>
       </div>
 
-      {federated && <Alert type="info" showIcon message={t('account.federatedNotice')} />}
+      {federated && <Alert type="info" showIcon title={t('account.federatedNotice')} />}
 
       {!federated && <PasswordCard />}
       {!federated && <TwoFactorCard enabled={totpEnabled} onChange={refresh} />}
@@ -264,7 +263,7 @@ function TwoFactorCard({ enabled, onChange }: { enabled: boolean; onChange: () =
         onCancel={() => setRecovery([])}
         cancelButtonProps={{ style: { display: 'none' } }}
       >
-        <Alert type="warning" showIcon message={t('account.recoveryWarn')} style={{ marginBottom: 12 }} />
+        <Alert type="warning" showIcon title={t('account.recoveryWarn')} style={{ marginBottom: 12 }} />
         <Typography.Paragraph copyable={{ text: recovery.join('\n') }}>
           {recovery.map((c) => (
             <div key={c}>
@@ -349,38 +348,28 @@ function PasskeyCard({
       // Saying so is kinder than a 403 on submit.
     >
       <Typography.Paragraph type="secondary">{t('account.passkeyHint')}</Typography.Paragraph>
-      {!supported && <Alert type="warning" showIcon message={t('account.passkeyUnsupported')} />}
-      {federated && <Alert type="info" showIcon message={t('account.passkeyFederated')} />}
+      {!supported && <Alert type="warning" showIcon title={t('account.passkeyUnsupported')} />}
+      {federated && <Alert type="info" showIcon title={t('account.passkeyFederated')} />}
       {passkeys.length > 0 && (
-        <List
-          size="small"
-          dataSource={passkeys}
-          style={{ marginBottom: 12 }}
-          renderItem={(k) => (
-            <List.Item
-              actions={[
-                <Popconfirm
-                  key="del"
-                  title={t('account.passkeyRevokeConfirm')}
-                  onConfirm={() => setProofFor(k.id)}
-                >
-                  <Button type="text" danger size="small">
-                    {t('account.passkeyRevoke')}
-                  </Button>
-                </Popconfirm>,
-              ]}
-            >
-              <List.Item.Meta
-                title={k.label}
-                description={
-                  k.last_used_at
+        <div className="rp-plain-list" role="list" style={{ marginBottom: 12 }}>
+          {passkeys.map((k) => (
+            <div className="rp-plain-list__item" role="listitem" key={k.id}>
+              <span className="rp-plain-list__content">
+                <Typography.Text strong>{k.label}</Typography.Text>
+                <Typography.Text type="secondary">
+                  {k.last_used_at
                     ? t('account.passkeyLastUsed', { when: formatReportDateTime(k.last_used_at) })
-                    : t('account.passkeyNeverUsed')
-                }
-              />
-            </List.Item>
-          )}
-        />
+                    : t('account.passkeyNeverUsed')}
+                </Typography.Text>
+              </span>
+              <Popconfirm title={t('account.passkeyRevokeConfirm')} onConfirm={() => setProofFor(k.id)}>
+                <Button type="text" danger size="small">
+                  {t('account.passkeyRevoke')}
+                </Button>
+              </Popconfirm>
+            </div>
+          ))}
+        </div>
       )}
       <Button
         type="primary"

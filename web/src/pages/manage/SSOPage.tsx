@@ -147,7 +147,7 @@ function LastSeenClaims({ slug }: { slug: string }) {
   if (seen === null) return null
   if (!seen || !claims?.length) {
     return (
-      <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('sso.claimsNoneYet')} />
+      <Alert type="info" showIcon style={{ marginBottom: 16 }} title={t('sso.claimsNoneYet')} />
     )
   }
   return (
@@ -281,7 +281,7 @@ function ProviderForm({
 
   return (
     <Form form={form} layout="vertical" style={{ maxWidth: 720 }}>
-      {!publicUrl && <Alert type="warning" showIcon style={{ marginBottom: 16 }} message={t('sso.needPublicUrl')} />}
+      {!publicUrl && <Alert type="warning" showIcon style={{ marginBottom: 16 }} title={t('sso.needPublicUrl')} />}
 
       {/* Above everything, because the first question an admin has on this page is not "what is my
           ACS URL" — the page already answered that — but "which of the IdP's boxes does it go in". */}

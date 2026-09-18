@@ -13,6 +13,14 @@ afterEach(cleanup)
 // holds) and only lengthens a genuine failure.
 configure({ asyncUtilTimeout: 5000 })
 
+// Ant Design asks for pseudo-element styles when measuring overlays. jsdom deliberately does not
+// implement them and logs one warning per call; using the element's ordinary computed style is the
+// closest layout-free substitute and keeps test output useful.
+if (typeof window !== 'undefined') {
+  const getComputedStyle = window.getComputedStyle.bind(window)
+  window.getComputedStyle = ((element: Element) => getComputedStyle(element)) as typeof window.getComputedStyle
+}
+
 // jsdom in this runtime ships without Web Storage; install a minimal in-memory
 // localStorage so modules that persist prefs (reader / prefs) work under test.
 if (typeof window !== 'undefined' && !window.localStorage) {

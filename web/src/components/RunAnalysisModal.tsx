@@ -397,10 +397,10 @@ export default function RunAnalysisModal({
           <Typography.Text type="secondary">{t('run.loading')}</Typography.Text>
         </div>
       ) : !targetsOk && loadErr ? (
-        <Alert type="error" showIcon message={t('common.loadFailedContent')} description={loadErr} />
+        <Alert type="error" showIcon title={t('common.loadFailedContent')} description={loadErr} />
       ) : (
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          {runnable.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}
+          {runnable.length === 0 && <Alert type="info" showIcon title={t('run.noTargets')} />}
 
           <div className="rp-run-analysis-layout">
             <section className="rp-run-analysis-panel rp-run-analysis-inputs">
@@ -489,7 +489,7 @@ export default function RunAnalysisModal({
                 {/* Nothing at all if the depth never arrived: the banner exists to describe the
                     queue, and with no answer it has nothing to describe. */}
                 {(queue || !queueSettled) && (
-                  <Alert type={!queue ? 'info' : busy ? 'warning' : 'success'} showIcon message={queueMsg} />
+                  <Alert type={!queue ? 'info' : busy ? 'warning' : 'success'} showIcon title={queueMsg} />
                 )}
               </Space>
             </aside>

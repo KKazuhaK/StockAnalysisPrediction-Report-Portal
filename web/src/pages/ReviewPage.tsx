@@ -76,7 +76,7 @@ export default function ReviewPage() {
     {
       title: t('review.item'),
       render: (_, r) => (
-        <Space direction="vertical" size={2}>
+        <Space orientation="vertical" size={2}>
           <Typography.Text>{r.content}</Typography.Text>
           <Space size={6} wrap>
             {r.itype && <Tag>{r.itype}</Tag>}
@@ -96,7 +96,7 @@ export default function ReviewPage() {
         r.due ? (
           // A parsed date is shown as one; the raw text stays visible because it usually says
           // WHAT to check, not only when.
-          <Space direction="vertical" size={0}>
+          <Space orientation="vertical" size={0}>
             <Typography.Text style={{ color: token.colorWarning }}>{r.due}</Typography.Text>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {r.review_point}
@@ -177,12 +177,12 @@ export default function ReviewPage() {
         extra={total > 0 ? filters : undefined}
         styles={{ body: { paddingTop: 12 } }}
       >
-        {err && <Alert type="error" showIcon message={err} style={{ marginBottom: 12 }} />}
+        {err && <Alert type="error" showIcon title={err} style={{ marginBottom: 12 }} />}
 
         {!loading && total === 0 && !err ? (
           // Empty is the expected state until the workflow emits any. Say what is missing and
           // exactly what to send, so nobody has to read the API docs to find out.
-          <Space direction="vertical" size={12} style={{ maxWidth: 720 }}>
+          <Space orientation="vertical" size={12} style={{ maxWidth: 720 }}>
             <Typography.Title level={5} style={{ margin: 0 }}>
               {t('review.emptyTitle')}
             </Typography.Title>

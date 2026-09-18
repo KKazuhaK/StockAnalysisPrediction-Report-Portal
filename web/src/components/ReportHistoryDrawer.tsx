@@ -5,7 +5,6 @@ import {
   Button,
   Drawer,
   Empty,
-  List,
   Popconfirm,
   Segmented,
   Space,
@@ -156,9 +155,9 @@ export default function ReportHistoryDrawer({
   const author = (name: string) => name || t('reportHistory.unknownAuthor')
 
   return (
-    <Drawer title={t('reportHistory.title')} open={open} onClose={onClose} width={720} destroyOnHidden>
+    <Drawer title={t('reportHistory.title')} open={open} onClose={onClose} size={720} destroyOnHidden>
       <Spin spinning={loading}>
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
           {current && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('reportHistory.currentLine', {
@@ -171,53 +170,39 @@ export default function ReportHistoryDrawer({
           {list && list.length === 0 ? (
             <Empty description={t('reportHistory.empty')} />
           ) : (
-            <List
-              size="small"
-              bordered
-              dataSource={list ?? []}
-              renderItem={(v) => (
-                // antd gives List.Item tabIndex=-1, so a clickable row was unreachable without a
-                // mouse. role="button" costs the listitem semantics and buys operability, which is
-                // the better trade for a row whose whole purpose is to be picked.
-                <List.Item
+            <div className="rp-plain-list rp-plain-list--bordered">
+              {(list ?? []).map((v) => (
+                <div
+                  key={v.id}
+                  className="rp-plain-list__item"
                   {...clickable(() => pick(v.id))}
                   style={{
                     cursor: 'pointer',
                     background: v.id === picked ? theme_.controlItemBgActive : undefined,
                   }}
-                  actions={[
-                    <Popconfirm
-                      key="restore"
-                      title={t('reportHistory.restoreConfirm')}
-                      onConfirm={() => restore(v.id)}
-                    >
-                      <Button
-                        size="small"
-                        icon={<RollbackOutlined />}
-                        loading={restoring}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {t('reportHistory.restore')}
-                      </Button>
-                    </Popconfirm>,
-                  ]}
                 >
-                  <List.Item.Meta
-                    title={
-                      <Space size={8} wrap>
-                        <span>{formatReportDateTime(v.savedAt)}</span>
-                        <Tag>{author(v.author)}</Tag>
-                      </Space>
-                    }
-                    description={
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        {v.title} · {t('reportHistory.bytes', { count: v.bytes })}
-                      </Typography.Text>
-                    }
-                  />
-                </List.Item>
-              )}
-            />
+                  <span className="rp-plain-list__content">
+                    <Space size={8} wrap>
+                      <span>{formatReportDateTime(v.savedAt)}</span>
+                      <Tag>{author(v.author)}</Tag>
+                    </Space>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {v.title} · {t('reportHistory.bytes', { count: v.bytes })}
+                    </Typography.Text>
+                  </span>
+                  <Popconfirm title={t('reportHistory.restoreConfirm')} onConfirm={() => restore(v.id)}>
+                    <Button
+                      size="small"
+                      icon={<RollbackOutlined />}
+                      loading={restoring}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {t('reportHistory.restore')}
+                    </Button>
+                  </Popconfirm>
+                </div>
+              ))}
+            </div>
           )}
 
           {keep > 0 && (
@@ -227,7 +212,7 @@ export default function ReportHistoryDrawer({
           )}
 
           {picked !== null && (
-            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            <Space orientation="vertical" size={8} style={{ width: '100%' }}>
               <Segmented
                 size="small"
                 value={view}
@@ -238,7 +223,7 @@ export default function ReportHistoryDrawer({
                 ]}
               />
               {detailErr ? (
-                <Alert type="error" showIcon message={detailErr} />
+                <Alert type="error" showIcon title={detailErr} />
               ) : !detail ? (
                 <Spin />
               ) : view === 'diff' ? (

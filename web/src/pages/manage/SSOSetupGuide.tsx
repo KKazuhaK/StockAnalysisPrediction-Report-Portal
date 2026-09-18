@@ -133,7 +133,7 @@ export default function SSOSetupGuide({
   const usable = Object.values(values).every((v) => /^https?:\/\//i.test(v ?? ''))
 
   const body = !usable ? (
-    <Alert type="warning" showIcon message={t('sso.guide.needPublicUrl')} />
+    <Alert type="warning" showIcon title={t('sso.guide.needPublicUrl')} />
   ) : (
     <>
       <Space style={{ marginBottom: 12 }}>
@@ -141,16 +141,16 @@ export default function SSOSetupGuide({
         <Select value={vendor} onChange={setVendor} options={VENDORS} style={{ width: 200 }} size="small" />
       </Space>
       <Steps
-        direction="vertical"
+        orientation="vertical"
         size="small"
         current={-1}
         items={
           kind === 'saml'
             ? [
-                { title: t('sso.guide.saml.step1'), description: t(`sso.guide.saml.step1.${vendor}`) },
+                { title: t('sso.guide.saml.step1'), content: t(`sso.guide.saml.step1.${vendor}`) },
                 {
                   title: t('sso.guide.saml.step2'),
-                  description: (
+                  content: (
                     <>
                       <div>{t('sso.guide.saml.step2.body')}</div>
                       <FieldTable
@@ -165,10 +165,10 @@ export default function SSOSetupGuide({
                     </>
                   ),
                 },
-                { title: t('sso.guide.saml.step3'), description: t('sso.guide.saml.step3.body') },
+                { title: t('sso.guide.saml.step3'), content: t('sso.guide.saml.step3.body') },
                 {
                   title: t('sso.guide.saml.step4'),
-                  description: (
+                  content: (
                     <>
                       <div>{t('sso.guide.saml.step4.body')}</div>
                       {IDP_SOURCE[vendor] && (
@@ -179,13 +179,13 @@ export default function SSOSetupGuide({
                     </>
                   ),
                 },
-                { title: t('sso.guide.step5'), description: t('sso.guide.step5.body') },
+                { title: t('sso.guide.step5'), content: t('sso.guide.step5.body') },
               ]
             : [
-                { title: t('sso.guide.oidc.step1'), description: t(`sso.guide.oidc.step1.${vendor}`) },
+                { title: t('sso.guide.oidc.step1'), content: t(`sso.guide.oidc.step1.${vendor}`) },
                 {
                   title: t('sso.guide.oidc.step2'),
-                  description: (
+                  content: (
                     <>
                       <div>{t('sso.guide.oidc.step2.body')}</div>
                       <FieldTable rows={[{ field: OIDC_FIELDS.redirect[vendor], value: values.redirect ?? '' }]} />
@@ -194,7 +194,7 @@ export default function SSOSetupGuide({
                 },
                 {
                   title: t('sso.guide.oidc.step3'),
-                  description: (
+                  content: (
                     <>
                       <div>{t('sso.guide.oidc.step3.body')}</div>
                       {IDP_ISSUER[vendor] && (
@@ -205,8 +205,8 @@ export default function SSOSetupGuide({
                     </>
                   ),
                 },
-                { title: t('sso.guide.oidc.step4'), description: t('sso.guide.oidc.step4.body') },
-                { title: t('sso.guide.step5'), description: t('sso.guide.step5.body') },
+                { title: t('sso.guide.oidc.step4'), content: t('sso.guide.oidc.step4.body') },
+                { title: t('sso.guide.step5'), content: t('sso.guide.step5.body') },
               ]
         }
       />

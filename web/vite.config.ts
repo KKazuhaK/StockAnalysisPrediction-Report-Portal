@@ -43,6 +43,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: false,
     setupFiles: ['src/test/setup.ts'],
+    // Node 24+ exposes an experimental process-wide localStorage. jsdom supplies the browser
+    // storage used by tests; disabling Node's copy in workers avoids one warning per test file.
+    execArgv: process.allowedNodeEnvironmentFlags.has('--no-experimental-webstorage')
+      ? ['--no-experimental-webstorage']
+      : [],
     include: ['src/**/*.test.{ts,tsx}'],
     // Cap the worker pool. Left uncapped, vitest runs as many test files at once as there are
     // cores, and the suite then competes with itself: assertions that wait for a React effect or a

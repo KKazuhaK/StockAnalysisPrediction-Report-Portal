@@ -497,7 +497,7 @@ export default function BatchAdminPage() {
             key: 'targets',
             label: t('batch.admin.targets'),
             children: (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Space orientation="vertical" size={12} style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                   <Button icon={<CloudDownloadOutlined />} loading={refreshing} onClick={() => pullUpdate()}>
                     {t('batch.refresh.all')}
@@ -535,7 +535,7 @@ export default function BatchAdminPage() {
             key: 'plugins',
             label: t('batch.admin.advancedPlugins'),
             children: (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Space orientation="vertical" size={12} style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <Upload accept=".json" showUploadList={false} beforeUpload={importFile}>
                     <Button icon={<UploadOutlined />}>{t('batch.admin.importManifest')}</Button>
@@ -597,14 +597,14 @@ export default function BatchAdminPage() {
                 <Alert
                   type={probed.inputsError ? 'warning' : 'success'}
                   showIcon
-                  message={probed.inputsError ? t('batch.dify.connectedNoInputs', { name: probed.name }) : t('batch.dify.connected', { name: probed.name })}
+                  title={probed.inputsError ? t('batch.dify.connectedNoInputs', { name: probed.name }) : t('batch.dify.connected', { name: probed.name })}
                 />
               )}
               <Form.Item name="name" label={t('batch.admin.targetName')} rules={[{ required: true }]} style={{ marginTop: 14 }}>
                 <Input placeholder={t('batch.admin.targetNamePlaceholder')} />
               </Form.Item>
               {isChat && (
-                <Alert type="info" showIcon style={{ marginBottom: 10 }} message={<>{difyModeTag(t, mode)}{t('batch.dify.chatHint')}</>} />
+                <Alert type="info" showIcon style={{ marginBottom: 10 }} title={<>{difyModeTag(t, mode)}{t('batch.dify.chatHint')}</>} />
               )}
               <div style={{ marginBottom: 6 }}>
                 <Typography.Text type="secondary">{t('batch.dify.inputsLabel')}</Typography.Text>

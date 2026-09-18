@@ -333,7 +333,7 @@ export default function ReportEditorPage() {
       : t('reportEditor.titleNew')
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Space size={12} wrap>
         <Button icon={<ArrowLeftOutlined />} onClick={() => leave(() => navigate(-1))}>
           {t('common.back')}
@@ -399,7 +399,7 @@ export default function ReportEditorPage() {
           </Col>
 
           <Col xs={24} lg={10}>
-            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Space orientation="vertical" size={16} style={{ width: '100%' }}>
               <Card size="small" title={t('reportEditor.identity')}>
                 <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
                   {t('reportEditor.identityNote')}

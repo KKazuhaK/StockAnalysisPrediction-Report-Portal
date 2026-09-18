@@ -157,7 +157,7 @@ export default function GeoSection() {
   return (
     <>
       <Divider titlePlacement="left">{t('audit.geoTitle')}</Divider>
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <Space align="start">
           <Switch checked={d.enabled} onChange={(v) => setD({ ...d, enabled: v })} />
           <div>
@@ -272,9 +272,9 @@ export default function GeoSection() {
         </Space>
 
         {upd?.last_error ? (
-          <Alert type="error" showIcon message={t('audit.geoUpdateFailed')} description={upd.last_error} />
+          <Alert type="error" showIcon title={t('audit.geoUpdateFailed')} description={upd.last_error} />
         ) : upd?.last_file ? (
-          <Alert type="success" showIcon message={t('audit.geoLastUpdate', { file: upd.last_file })} />
+          <Alert type="success" showIcon title={t('audit.geoLastUpdate', { file: upd.last_file })} />
         ) : null}
 
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>

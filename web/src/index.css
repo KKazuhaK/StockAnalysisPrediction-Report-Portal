@@ -19,6 +19,39 @@ body {
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
+.rp-number-input-addon.ant-btn:disabled {
+  background: var(--ant-color-fill-quaternary);
+  color: var(--ant-color-text-secondary);
+  white-space: nowrap;
+}
+.rp-plain-list {
+  width: 100%;
+}
+.rp-plain-list--bordered {
+  overflow: hidden;
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: var(--ant-border-radius);
+}
+.rp-plain-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+}
+.rp-plain-list__item:last-child {
+  border-bottom: 0;
+}
+.rp-plain-list__content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
 /* Keep workflow inputs to one compact preview row. The final count button opens the complete,
    wrapping list without letting either view contribute an unbounded intrinsic table width. */
 .rp-batch-target-inputs {

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { List, Typography } from 'antd'
+import { Typography } from 'antd'
 import { clickable } from './clickable'
 
-// Why two antd components are on a11y.test.ts's UNSAFE_ANTD list.
+// Why Typography.Link is on a11y.test.ts's UNSAFE_ANTD list.
 //
 // A rule about a third-party library's behaviour rots silently: the library gets fixed, the rule
 // stays, and nobody knows whether it is still needed. These pin the behaviour the rule rests on, so
@@ -27,29 +27,15 @@ describe('antd components that are not keyboard-operable on their own', () => {
     expect(fired).not.toHaveBeenCalled()
   })
 
-  it('List.Item is given tabIndex=-1, so Tab cannot reach it', () => {
-    render(<List dataSource={['a']} renderItem={() => <List.Item onClick={vi.fn()}>row</List.Item>} />)
-    expect((screen.getByText('row') as HTMLElement).tabIndex).toBe(-1)
-  })
-
-  it('clickable() fixes both', async () => {
+  it('clickable() gives it native-like keyboard activation', async () => {
     const link = vi.fn()
-    const row = vi.fn()
     render(
-      <>
-        <Typography.Link {...clickable(link)}>retry</Typography.Link>
-        <List dataSource={['a']} renderItem={() => <List.Item {...clickable(row)}>row</List.Item>} />
-      </>,
+      <Typography.Link {...clickable(link)}>retry</Typography.Link>,
     )
     const a = screen.getByRole('button', { name: 'retry' })
     a.focus()
     await userEvent.keyboard('{Enter}')
     expect(link).toHaveBeenCalledTimes(1)
 
-    const li = screen.getByRole('button', { name: 'row' })
-    expect((li as HTMLElement).tabIndex).toBe(0)
-    li.focus()
-    await userEvent.keyboard(' ')
-    expect(row).toHaveBeenCalledTimes(1)
   })
 })
