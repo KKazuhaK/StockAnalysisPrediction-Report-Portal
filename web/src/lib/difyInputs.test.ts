@@ -6,17 +6,41 @@ import type { PluginInput } from '../api/types'
 const decl = (key: string, type?: string): PluginInput => ({ key, type })
 
 describe('inputDisplayMeta', () => {
-  it('never infers help text by parsing a field label', () => {
+  it('uses a trailing parenthetical note as a compatibility fallback', () => {
     expect(inputDisplayMeta({ key: 'date', label: 'Report date (optional, parent supplied)' })).toEqual({
-      title: 'Report date (optional, parent supplied)',
-      detail: '',
+      title: 'Report date',
+      detail: 'parent supplied',
     })
   })
 
-  it('uses only the explicit description as help text', () => {
-    expect(inputDisplayMeta({ key: 'date', label: 'Report date', description: 'Parent supplied' })).toEqual({
-      title: 'Report date',
+  it('supports full-width parentheses without depending on a field key', () => {
+    expect(inputDisplayMeta({ key: 'cutoff', label: 'Cutoff \uFF08ISO 8601\uFF09' })).toEqual({
+      title: 'Cutoff',
+      detail: 'ISO 8601',
+    })
+  })
+
+  it('removes a localized optional marker while retaining the actual legacy help', () => {
+    expect(inputDisplayMeta({
+      key: 'policy',
+      label: 'Policy JSON \uFF08\u53EF\u9009\uFF0Cuse defaults when empty\uFF09',
+    })).toEqual({
+      title: 'Policy JSON',
+      detail: 'use defaults when empty',
+    })
+  })
+
+  it('keeps an explicit description authoritative', () => {
+    expect(inputDisplayMeta({ key: 'date', label: 'Report date (source label)', description: 'Parent supplied' })).toEqual({
+      title: 'Report date (source label)',
       detail: 'Parent supplied',
+    })
+  })
+
+  it('shortens a note that only repeats optional state without inventing help', () => {
+    expect(inputDisplayMeta({ key: 'context', label: 'Execution context (optional)' })).toEqual({
+      title: 'Execution context',
+      detail: '',
     })
   })
 })
