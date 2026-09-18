@@ -46,6 +46,39 @@ function InputChip({ input, wrap = false }: { input: PluginInput; wrap?: boolean
   )
 }
 
+export function TargetInputsPreview({ inputs }: { inputs: PluginInput[] }) {
+  const { t } = useTranslation()
+  if (!inputs.length) return <Typography.Text type="secondary">—</Typography.Text>
+  const preview = inputs.slice(0, INPUT_PREVIEW_LIMIT)
+  const hidden = inputs.length - preview.length
+  return (
+    <div className="rp-batch-target-inputs">
+      {preview.map((input) => <InputChip key={input.key} input={input} />)}
+      {hidden > 0 && (
+        <Popover
+          trigger="click"
+          placement="bottomLeft"
+          title={t('batch.admin.inputs')}
+          content={
+            <div className="rp-batch-target-inputs rp-batch-target-inputs--all">
+              {inputs.map((input) => <InputChip key={input.key} input={input} wrap />)}
+            </div>
+          }
+        >
+          <Button
+            type="text"
+            size="small"
+            className="rp-batch-target-inputs__more"
+            aria-label={t('batch.admin.inputsMore', { n: hidden })}
+          >
+            +{hidden}
+          </Button>
+        </Popover>
+      )}
+    </div>
+  )
+}
+
 export default function BatchAdminPage() {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -345,38 +378,7 @@ export default function BatchAdminPage() {
       // The API already sends label + required for every input; rendering only `key` threw
       // both away and left a row of identical grey chips. `symbol` reads fine, but `n`,
       // `query` and `rumor` do not — and nothing said which ones the run form will demand.
-      render: (_: unknown, tg: BatchTarget) => {
-        const inputs = tg.inputs || []
-        if (!inputs.length) return <Typography.Text type="secondary">—</Typography.Text>
-        const preview = inputs.slice(0, INPUT_PREVIEW_LIMIT)
-        const hidden = inputs.length - preview.length
-        return (
-          <div className="rp-batch-target-inputs">
-            {preview.map((input) => <InputChip key={input.key} input={input} />)}
-            {hidden > 0 && (
-              <Popover
-                trigger="click"
-                placement="bottomLeft"
-                title={t('batch.admin.inputs')}
-                content={
-                  <div className="rp-batch-target-inputs rp-batch-target-inputs--all">
-                    {inputs.map((input) => <InputChip key={input.key} input={input} wrap />)}
-                  </div>
-                }
-              >
-                <Button
-                  type="text"
-                  size="small"
-                  className="rp-batch-target-inputs__more"
-                  aria-label={t('batch.admin.inputsMore', { n: hidden })}
-                >
-                  +{hidden}
-                </Button>
-              </Popover>
-            )}
-          </div>
-        )
-      },
+      render: (_: unknown, tg: BatchTarget) => <TargetInputsPreview inputs={tg.inputs || []} />,
     },
     {
       title: t('batch.admin.surfaces'),

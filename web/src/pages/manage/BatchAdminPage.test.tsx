@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { App } from 'antd'
-import BatchAdminPage from './BatchAdminPage'
+import BatchAdminPage, { TargetInputsPreview } from './BatchAdminPage'
 
 const putSpy = vi.fn((_url: string, _body: unknown) => Promise.resolve({ ok: true }))
 
@@ -70,10 +70,17 @@ describe('BatchAdminPage — targets / plugins sub-tabs', () => {
   it('opens the complete input list from the final overflow chip', async () => {
     render(
       <App>
-        <BatchAdminPage />
+        <TargetInputsPreview
+          inputs={[
+            { key: 'symbol' },
+            { key: 'report_date' },
+            { key: 'information_cutoff' },
+            { key: 'policy_config_json' },
+            { key: 'portfolio_context_json' },
+          ]}
+        />
       </App>,
     )
-    await screen.findByText('My workflow')
 
     // The row stays compact: only the preview is mounted until the explicit last chip opens it.
     expect(screen.queryByText('policy_config_json')).toBeNull()
