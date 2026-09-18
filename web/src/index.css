@@ -52,19 +52,29 @@ body {
 }
 
 /* Run analysis is a desktop work surface: inputs use the wide side while scheduling stays in a
-   stable rail. The modal body scrolls as one unit when an expanded workflow still needs height. */
+   stable rail. Each rail owns its overflow so a long input list never scrolls the settings away. */
 .rp-run-analysis-modal .ant-modal-body {
-  max-height: min(720px, calc(100dvh - 190px));
-  overflow-y: auto;
+  max-height: min(720px, calc(100dvh - 240px));
+  overflow: hidden;
 }
 .rp-run-analysis-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
+  max-height: min(720px, calc(100dvh - 240px));
+  overflow: hidden;
 }
 .rp-run-analysis-panel {
   min-width: 0;
+  min-height: 0;
+  max-height: inherit;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.rp-run-analysis-inputs {
+  padding-inline-end: 8px;
 }
 .rp-run-analysis-panel__title.ant-typography {
   margin: 0 0 16px;
@@ -84,9 +94,47 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 14px;
 }
-.rp-run-input-grid > .ant-form-item {
+.rp-run-input-grid > .rp-run-input-field {
+  position: relative;
   min-width: 0;
+}
+.rp-run-input-field > .ant-form-item {
   margin-bottom: 16px;
+}
+.rp-run-input-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.rp-run-input-label__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-run-input-label__optional {
+  flex: none;
+  color: var(--ant-color-text-secondary);
+  font-weight: 400;
+}
+.rp-run-input-field--has-help > .ant-form-item > .ant-form-item-row > .ant-form-item-label {
+  padding-inline-end: 26px;
+}
+.rp-run-input-help.ant-btn {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--ant-color-text-secondary);
+}
+.rp-run-input-help__content {
+  max-width: min(360px, calc(100vw - 64px));
 }
 .rp-run-input--wide,
 .rp-run-optional-section {
@@ -119,10 +167,20 @@ body {
 @media (max-width: 767px) {
   .rp-run-analysis-modal .ant-modal-body {
     max-height: calc(100dvh - 180px);
+    overflow-y: auto;
   }
   .rp-run-analysis-layout {
     grid-template-columns: minmax(0, 1fr);
     gap: 22px;
+    max-height: none;
+    overflow: visible;
+  }
+  .rp-run-analysis-panel {
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+  .rp-run-analysis-inputs {
+    padding-inline-end: 0;
   }
   .rp-run-analysis-settings {
     padding-block-start: 22px;
