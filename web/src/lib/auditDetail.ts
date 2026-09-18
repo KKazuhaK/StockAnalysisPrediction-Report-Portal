@@ -144,15 +144,22 @@ const PAIR_NAME_FIELD = 'field'
 export const listSeparator = '、'
 
 // Fields that carry no information when they hold these values, and which are what made the raw
-// column unreadable: an unset schedule, a flag that did not fire, the numeric id of something the
-// line already names in words, and a row count of one on a single-row run.
+// column unreadable: an unset schedule, the numeric id of something the line already names in words,
+// and a row count of one on a single-row run.
+//
+// A false boolean is NOT in this list. Whether its false says anything depends on the vocabulary —
+// "enabled: false" is the sentence "this is now off" — so that call is made where the lookup is.
 function informative(key: string, value: unknown, d: Detail): boolean {
   if (value === '' || value === null || value === undefined) return false
-  if (value === false) return false
   if (key === 'target_id' && d.target) return false
   if (key === 'rows' && value === 1) return false
   return true
 }
+
+// Ops that name the MECHANISM rather than the change. "toggle" says a flag was flipped; the flag it
+// flipped is the sentence, and printing both repeats the change in a vaguer word — which is how a
+// row that turned an announcement off came to read "开关" and nothing else.
+const SILENT_OPS = new Set(['toggle'])
 
 // "000909 重组舆情分析" already opens with the symbol, so prefixing it again would read as two
 // different things. Only prefix when the title does not carry it.
@@ -254,9 +261,32 @@ export function auditDetail(action: string, raw: string, t: TFunction, ctx?: Det
 
   for (const [k, v] of Object.entries(d)) {
     if (used.has(k) || !informative(k, v, d)) continue
-    // A true flag is a two-valued vocabulary: the flag itself is the sentence where one is written,
-    // and the fact itself where one is not.
-    if (v === true && vocab(k, 'true')) continue
+    if (k === 'op' && SILENT_OPS.has(String(v))) {
+      used.add(k)
+      continue
+    }
+    // A boolean is a two-valued vocabulary, and WHICH kind of flag it is decides how it reads.
+    //
+    // Taught on BOTH sides, it is a STATE of the object, and it keeps its key: "enabled 停用",
+    // because 停用 alone does not say which of an object's several flags was turned off.
+    //
+    // Taught on its true side only, it is a STATEMENT about what somebody asked for, and the words
+    // stand on their own — "加急未生效（无票）" needs no "downgraded" in front of it. Its false is the
+    // default nobody asked about, so it goes unprinted.
+    //
+    // Taught on neither, the value states itself and a false is dropped for that same reason.
+    if (typeof v === 'boolean') {
+      const word = t(`audit.v.${k}.${v}`, '')
+      if (word) {
+        // Only a state is taught both sides, so a false that has a word is always a state.
+        const isState = v === false || !!t(`audit.v.${k}.false`, '')
+        parts.push(isState ? { kind: 'field', key: k, value: word } : { kind: 'phrase', text: word })
+        continue
+      }
+      if (!v) continue
+      parts.push({ kind: 'field', key: k, value: 'true' })
+      continue
+    }
     if (ENUM_FIELDS.has(k) && vocab(k, v)) continue
     parts.push({ kind: 'field', key: k, value: OU_ID_FIELDS.has(k) ? ouLabel(v, ctx) : render(v, t, ctx) })
   }

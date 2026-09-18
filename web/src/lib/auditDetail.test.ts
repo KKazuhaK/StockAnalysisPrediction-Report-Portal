@@ -15,6 +15,11 @@ const VOCAB = new Set([
   'audit.v.field.role',
   'audit.v.visibility.owner',
   'audit.v.visibility.all',
+  'audit.v.op.toggle',
+  'audit.v.enabled.true',
+  'audit.v.enabled.false',
+  'audit.v.popup.true',
+  'audit.v.popup.false',
 ])
 
 // Stands in for the console's t(): echoes the key and shows what was interpolated. The second
@@ -121,6 +126,32 @@ describe('auditDetail', () => {
     expect(auditDetail('run.submit', '{"target":"x","notify":true}', t)).toContainEqual(phrase('audit.v.notify.true'))
     // There is nothing to say about "weird=true", but the fact must not vanish either.
     expect(auditDetail('run.submit', '{"target":"x","weird":true}', t)).toContainEqual(field('weird', 'true'))
+  })
+
+  // "op: toggle" names the MECHANISM, not the change: a flag was flipped, and the flag itself says
+  // what became what. Printing both repeats the change in a vaguer word — which is how a row that
+  // turned an announcement off came to read "开关" and nothing else.
+  //
+  // The flag keeps its key, because 停用 alone does not say which of the object's several flags moved.
+  it('says what a toggle set, including when it turned the thing off', () => {
+    expect(auditDetail('policy.change', '{"op":"toggle","enabled":false}', t)).toEqual([
+      field('enabled', 'audit.v.enabled.false'),
+    ])
+    expect(auditDetail('policy.change', '{"op":"toggle","enabled":true,"popup":false}', t)).toEqual([
+      field('enabled', 'audit.v.enabled.true'),
+      field('popup', 'audit.v.popup.false'),
+    ])
+  })
+
+  // A flag taught only on its true side is a STATEMENT, and its words stand on their own: the
+  // sentence needs no "downgraded" in front of it. Only a flag taught both ways is a state.
+  it('leaves a one-sided flag as a sentence and gives a two-sided one its key', () => {
+    expect(auditDetail('run.submit', '{"target":"x","downgraded":true}', t)).toContainEqual(
+      phrase('audit.v.downgraded.true'),
+    )
+    expect(auditDetail('run.submit', '{"target":"x","enabled":true}', t)).toContainEqual(
+      field('enabled', 'audit.v.enabled.true'),
+    )
   })
 
   it('shows every other field as an identifier beside its value', () => {
