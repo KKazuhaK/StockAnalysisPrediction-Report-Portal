@@ -35,7 +35,7 @@ import {
   type BatchDraftRow,
 } from '../lib/batchRows'
 import { csvToRows, downloadCSV, toCSV } from '../lib/csv'
-import { compactInputLabel } from '../lib/difyInputs'
+import { inputDisplayMeta } from '../lib/difyInputs'
 
 type EditorMode = 'grid' | 'csv'
 type TableRow = { values: BatchDraftRow; rowIndex: number }
@@ -118,7 +118,7 @@ export default function BatchRowsEditor({
     mode === 'csv' ? rawCSV : toCSV(keys, readyRows.map((row) => keys.map((key) => row[key] ?? '')))
 
   const fieldControl = (input: PluginInput, rowIndex: number, columnIndex: number) => {
-    const { title } = compactInputLabel(input)
+    const { title } = inputDisplayMeta(input)
     const value = displayedRows[rowIndex]?.[input.key] ?? ''
     const status = missingCellSet.has(`${rowIndex}:${input.key}`) ? 'error' : undefined
     const label = t('batch.editor.cellLabel', { row: rowIndex + 1, field: title })
@@ -173,7 +173,7 @@ export default function BatchRowsEditor({
       render: (rowIndex: number) => <Typography.Text type="secondary">{rowIndex + 1}</Typography.Text>,
     },
     ...inputs.map((input, columnIndex) => {
-      const { title, detail } = compactInputLabel(input)
+      const { title, detail } = inputDisplayMeta(input)
       return {
         title: (
           <div className="rp-batch-grid-heading">

@@ -86,7 +86,7 @@ func TestDifyProviderErrorClassification(t *testing.T) {
 func TestBuildDifyProviderAndInputs(t *testing.T) {
 	cfg, _ := json.Marshal(difyTargetConfig{
 		BaseURL: "https://dify.example/v1", APIKey: "app-key",
-		Inputs: []dify.Input{{Variable: "symbol", Label: "上市公司代码", Type: "text-input", Required: true}},
+		Inputs: []dify.Input{{Variable: "symbol", Label: "上市公司代码（交易所格式）", DisplayLabel: "上市公司代码", Description: "六位交易所代码", Type: "text-input", Required: true}},
 	})
 	if _, err := buildDifyProvider(string(cfg), "report-portal", false, 0, 0, nil, nil); err != nil {
 		t.Fatalf("buildDifyProvider: %v", err)
@@ -95,9 +95,9 @@ func TestBuildDifyProviderAndInputs(t *testing.T) {
 		t.Fatal("expected error for missing base_url/api_key")
 	}
 
-	// The run form gets {key,label,required} from the stored inputs.
+	// The run form gets explicit presentation metadata from the stored inputs.
 	got := difyInputsJSON(string(cfg))
-	if len(got) != 1 || got[0]["key"] != "symbol" || got[0]["required"] != true {
+	if len(got) != 1 || got[0]["key"] != "symbol" || got[0]["label"] != "上市公司代码" || got[0]["required"] != true || got[0]["description"] != "六位交易所代码" {
 		t.Fatalf("difyInputsJSON = %v", got)
 	}
 }

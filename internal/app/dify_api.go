@@ -30,12 +30,14 @@ func (s *Server) apiBatchDifyProbe(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 	base, key := strings.TrimSpace(in.BaseURL), strings.TrimSpace(in.APIKey)
+	var localInputs []dify.Input
 	// Re-probing an existing target: fall back to its stored key (and base) so refreshing
 	// inputs doesn't force re-pasting the secret we already hold.
-	if in.TargetID != 0 && (key == "" || base == "") {
+	if in.TargetID != 0 {
 		if tgt, ok := s.st.GetTarget(in.TargetID); ok && tgt.PluginSlug == difyPluginSlug {
 			var cfg difyTargetConfig
 			json.Unmarshal([]byte(tgt.Config), &cfg)
+			localInputs = cfg.Inputs
 			if key == "" {
 				key = cfg.APIKey
 			}
@@ -66,6 +68,7 @@ func (s *Server) apiBatchDifyProbe(w http.ResponseWriter, r *http.Request, user 
 	if difyModeChat(info.Mode) {
 		inputs = ensureQueryInput(inputs)
 	}
+	inputs = preserveInputPresentation(localInputs, inputs)
 	out := map[string]any{"name": info.Name, "mode": info.Mode, "inputs": inputs}
 	if perr != nil {
 		out["inputs_error"] = perr.Error()
@@ -209,14 +212,21 @@ func ensureQueryInput(inputs []dify.Input) []dify.Input {
 	return append([]dify.Input{{Variable: "query", Label: "query", Type: "paragraph", Required: true}}, inputs...)
 }
 
-// difyInputsJSON maps a Dify target's stored inputs to the {key,label,type,required}
+// difyInputsJSON maps a Dify target's stored inputs to the {key,label,description,type,required}
 // shape the run form expects (same as a manifest plugin's InputDecl). type is Dify's own
 // field type, which is what tells the form to render a file picker instead of a text box.
 func difyInputsJSON(configJSON string) []map[string]any {
 	ins := difyTargetInputs(configJSON)
 	out := make([]map[string]any, 0, len(ins))
 	for _, in := range ins {
-		row := map[string]any{"key": in.Variable, "label": in.Label, "type": in.Type, "required": in.Required}
+		label := in.Label
+		if strings.TrimSpace(in.DisplayLabel) != "" {
+			label = in.DisplayLabel
+		}
+		row := map[string]any{"key": in.Variable, "label": label, "type": in.Type, "required": in.Required}
+		if strings.TrimSpace(in.Description) != "" {
+			row["description"] = in.Description
+		}
 		if len(in.Options) > 0 {
 			row["options"] = in.Options // a select without its choices renders as a text box, which is not the field the workflow declared
 		}

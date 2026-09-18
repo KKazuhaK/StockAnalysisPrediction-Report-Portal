@@ -22,7 +22,7 @@ import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
 import { formatReportDateTime } from '../lib/datetime'
-import { buildRow, compactInputLabel, isFileInput } from '../lib/difyInputs'
+import { buildRow, inputDisplayMeta, isFileInput } from '../lib/difyInputs'
 import { readPrefetched } from '../lib/prefetch'
 import {
   noRunDefaults,
@@ -321,7 +321,7 @@ export default function RunAnalysisModal({
         : t('run.queueFree', { n: budget - running })
 
   const renderInput = (i: PluginInput) => {
-    const { title, detail } = compactInputLabel(i)
+    const { title, detail } = inputDisplayMeta(i)
     const wide = i.type === 'paragraph' || isFileInput(i.type)
     return (
       <div

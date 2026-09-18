@@ -15,7 +15,7 @@ const difySpec = `{
   "id": "dify-workflow",
   "name": "Dify Workflow",
   "version": "1.0.0",
-  "inputs": [{"key": "code", "required": true}, {"key": "rumor"}],
+  "inputs": [{"key": "code", "description": "Exchange code", "required": true}, {"key": "rumor"}],
   "config": [{"key": "base_url"}, {"key": "api_key", "secret": true}],
   "request": {
     "method": "POST",
@@ -39,6 +39,16 @@ func newProvider(t *testing.T, baseURL string, client *http.Client) Provider {
 		t.Fatalf("Compile: %v", err)
 	}
 	return m.NewProvider(map[string]string{"base_url": baseURL, "api_key": "sk-test"}, client)
+}
+
+func TestManifestCarriesStructuredInputDescription(t *testing.T) {
+	m, err := Compile([]byte(difySpec))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if got := m.Inputs()[0].Description; got != "Exchange code" {
+		t.Fatalf("description = %q, want Exchange code", got)
+	}
 }
 
 // The interpreter must render {{config.*}} into URL/headers and expand the special

@@ -31,7 +31,7 @@ vi.mock('../../api/client', () => ({
           id: 7,
           name: 'My workflow',
           base_url: 'https://dify.example/v1',
-          inputs: [{ variable: 'symbol', required: true }],
+          inputs: [{ variable: 'symbol', label: 'Stock code (exchange format)', display_label: 'Stock code', description: 'Current help', required: true }],
           has_key: true,
           collapse_optional_inputs: true,
         })
@@ -103,6 +103,12 @@ describe('BatchAdminPage — targets / plugins sub-tabs', () => {
     await screen.findByText('batch.dify.editTarget')
     expect(await screen.findByDisplayValue('My workflow')).toBeTruthy()
     expect(screen.getByDisplayValue('https://dify.example/v1')).toBeTruthy()
+    const displayLabel = screen.getByLabelText(/batch\.dify\.inputDisplayLabelFor/) as HTMLInputElement
+    expect(displayLabel.value).toBe('Stock code')
+    fireEvent.change(displayLabel, { target: { value: 'Ticker' } })
+    const description = screen.getByLabelText(/batch\.dify\.inputDescriptionFor/) as HTMLInputElement
+    expect(description.value).toBe('Current help')
+    fireEvent.change(description, { target: { value: 'Six-digit exchange code' } })
 
     // Typing a new key rotates it: the PUT body must carry the freshly-entered key,
     // not the blank "keep existing" sentinel.
@@ -117,6 +123,8 @@ describe('BatchAdminPage — targets / plugins sub-tabs', () => {
     expect(body.base_url).toBe('https://dify.example/v1')
     expect(body.api_key).toBe('app-newkey')
     expect(Array.isArray(body.inputs)).toBe(true)
+    expect((body.inputs as Array<Record<string, unknown>>)[0].display_label).toBe('Ticker')
+    expect((body.inputs as Array<Record<string, unknown>>)[0].description).toBe('Six-digit exchange code')
     expect(body.collapse_optional_inputs).toBe(true)
   })
 })

@@ -185,6 +185,32 @@ body {
 .rp-batch-setting-fields .ant-input-number {
   width: 104px;
 }
+.rp-dify-input-descriptions {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.rp-dify-input-descriptions > .ant-typography {
+  margin: 0;
+}
+.rp-dify-input-description {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px;
+  align-items: start;
+}
+.rp-dify-input-description > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.rp-dify-input-description .ant-typography {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 @media (max-width: 1000px) {
   .rp-batch-compose-layout {
@@ -207,6 +233,9 @@ body {
   .rp-batch-editor-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .rp-dify-input-description {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

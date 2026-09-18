@@ -39,6 +39,10 @@ auto-discovers the name and inputs. No manifest.**
 - **Inputs move onto the target.** Today inputs live on the plugin; each Dify
   workflow has its own inputs, so a target stores `base_url`, `api_key` (secret),
   and the discovered `inputs[]`. The batch CSV columns come from the target.
+- **Presentation metadata is explicit.** A target input may carry a portal-owned
+  `display_label` and `description` alongside Dify's original label. Run forms
+  never derive help text or optional state by parsing label punctuation. Re-probe
+  and bulk refresh preserve this local presentation metadata by variable name.
 - **Manual fallback.** If probe fails (e.g. a Dify that can't reach `/parameters`),
   the admin types the input variable names by hand — the target still works.
 - **The generic plugin/manifest stays as a hidden "advanced" path**, not the

@@ -260,6 +260,10 @@ export default function BatchAdminPage() {
     setNewVar('')
   }
 
+  const setInputPresentation = (index: number, patch: Pick<DifyInput, 'display_label'> | Pick<DifyInput, 'description'>) => {
+    setInputs((current) => current.map((input, i) => (i === index ? { ...input, ...patch } : input)))
+  }
+
   const saveTarget = async () => {
     // api_key is always read back: in create mode its rule makes it required; in edit mode
     // the rule is optional, so a blank keeps the stored key while a typed value rotates it.
@@ -618,6 +622,41 @@ export default function BatchAdminPage() {
                 <Input placeholder={t('batch.dify.addInputPlaceholder')} value={newVar} onChange={(e) => setNewVar(e.target.value)} onPressEnter={addInput} />
                 <Button onClick={addInput}>{t('common.add')}</Button>
               </Space.Compact>
+
+              {inputs.length > 0 && (
+                <div className="rp-dify-input-descriptions">
+                  <Typography.Text strong>{t('batch.dify.inputDescriptions')}</Typography.Text>
+                  <Typography.Paragraph type="secondary">
+                    {t('batch.dify.inputDescriptionsHint')}
+                  </Typography.Paragraph>
+                  {inputs.map((input, index) => {
+                    const field = input.label || input.variable
+                    return (
+                      <label key={input.variable} className="rp-dify-input-description">
+                        <span>
+                          <Typography.Text>{field}</Typography.Text>
+                          {field !== input.variable && <Typography.Text code>{input.variable}</Typography.Text>}
+                        </span>
+                        <Space orientation="vertical" size={6} style={{ width: '100%' }}>
+                          <Input
+                            value={input.display_label || ''}
+                            aria-label={t('batch.dify.inputDisplayLabelFor', { field })}
+                            placeholder={t('batch.dify.inputDisplayLabelPlaceholder', { field })}
+                            onChange={(event) => setInputPresentation(index, { display_label: event.target.value })}
+                          />
+                          <Input.TextArea
+                            autoSize={{ minRows: 1, maxRows: 3 }}
+                            value={input.description || ''}
+                            aria-label={t('batch.dify.inputDescriptionFor', { field })}
+                            placeholder={t('batch.dify.inputDescriptionPlaceholder')}
+                            onChange={(event) => setInputPresentation(index, { description: event.target.value })}
+                          />
+                        </Space>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
 
               <Form.Item
                 name="collapse_optional_inputs"
