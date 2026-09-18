@@ -15,12 +15,33 @@ export const MAX_FILE_MB = 15
 export const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
 export const MAX_FILES = 10
 
-// Presentation metadata is declarative. A label may legitimately contain parentheses, dates,
-// units, or the word "optional", so deriving help from its punctuation corrupts source data.
+// New targets carry explicit presentation metadata. Older targets predate that contract and often
+// keep guidance in trailing parentheses, so use a key-agnostic compatibility fallback only when no
+// explicit description exists. An administrator-supplied description is always authoritative.
+const trailingInputDetail = /\s*[\uFF08(]([^\uFF08\uFF09()]*)[\uFF09)]\s*$/
+const optionalDetailPrefix = /^(?:optional|\u53ef\u9009|\u53ef\u9078)\s*(?:[,\uFF0C;\uFF1B:\uFF1A]\s*)?/i
+
 export function inputDisplayMeta(input: PluginInput): { title: string; detail: string } {
+  const raw = (input.label || input.key).trim()
+  const explicitDetail = (input.description || '').trim()
+  if (explicitDetail) return { title: raw, detail: explicitDetail }
+
+  let title = raw
+  const details: string[] = []
+  let match = title.match(trailingInputDetail)
+  while (match?.index != null) {
+    details.unshift(match[1].trim())
+    title = title.slice(0, match.index).trim()
+    match = title.match(trailingInputDetail)
+  }
+  if (!title) return { title: raw, detail: '' }
+
   return {
-    title: (input.label || input.key).trim(),
-    detail: (input.description || '').trim(),
+    title,
+    detail: details
+      .map((detail) => detail.replace(optionalDetailPrefix, '').trim())
+      .filter(Boolean)
+      .join(' · '),
   }
 }
 

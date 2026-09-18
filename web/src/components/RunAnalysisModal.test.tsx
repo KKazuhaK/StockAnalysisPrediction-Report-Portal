@@ -211,6 +211,25 @@ describe('RunAnalysisModal draws each input as its declared type', () => {
     expect(document.body.querySelector('.rp-run-input-help .anticon-question-circle')).toBeNull()
   })
 
+  it('keeps legacy trailing label guidance behind the same help button', async () => {
+    const user = userEvent.setup()
+    await open([
+      {
+        key: 'report_date',
+        label: 'Report date (optional, parent supplied)',
+      },
+    ])
+
+    const label = document.body.querySelector('.rp-run-input-label')
+    expect(label?.querySelector('.rp-run-input-label__name')?.textContent).toBe('Report date')
+    expect(label?.querySelector('.rp-run-input-label__optional')?.textContent).toBe('run.optionalMark')
+    expect(screen.queryByText('parent supplied')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'run.inputHelp:{"field":"Report date"}' }))
+    expect(await screen.findByText('parent supplied')).toBeTruthy()
+    expect(document.body.querySelector('.rp-run-input-help .anticon-info-circle')).toBeTruthy()
+  })
+
   it('gives a paragraph a textarea, a number a spinner and a select its options', async () => {
     await open([
       { key: 'note', label: 'Note', type: 'paragraph' },

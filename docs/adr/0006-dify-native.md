@@ -41,8 +41,12 @@ auto-discovers the name and inputs. No manifest.**
   and the discovered `inputs[]`. The batch CSV columns come from the target.
 - **Presentation metadata is explicit.** A target input may carry a portal-owned
   `display_label` and `description` alongside Dify's original label. Run forms
-  never derive help text or optional state by parsing label punctuation. Re-probe
-  and bulk refresh preserve this local presentation metadata by variable name.
+  prefer that metadata and never derive optional state from label text. Re-probe
+  and bulk refresh preserve local presentation metadata by variable name. For
+  targets saved before these fields existed, the run form has a key-agnostic
+  compatibility fallback: trailing parenthetical label text becomes help copy
+  only when no explicit description exists. This fallback does not inspect or
+  special-case workflow variable names.
 - **Manual fallback.** If probe fails (e.g. a Dify that can't reach `/parameters`),
   the admin types the input variable names by hand — the target still works.
 - **The generic plugin/manifest stays as a hidden "advanced" path**, not the
