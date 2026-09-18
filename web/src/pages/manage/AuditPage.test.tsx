@@ -14,9 +14,26 @@ vi.mock('../../api/client', () => ({
   ApiError: class extends Error {},
   errText: (e: unknown) => String(e),
 }))
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (k: string, fb?: unknown) => (typeof fb === 'string' ? fb : k) }),
-}))
+// The values this fake bundle has been taught. Everything else falls back — which is the behaviour
+// the enum rendering turns on, and which a stub that answered every lookup could not exercise.
+const vocab = vi.hoisted(
+  () => new Set(['audit.v.reason.bad_password', 'audit.v.field.primary_group', 'audit.t.batch_job']),
+)
+vi.mock('react-i18next', () => {
+  // One `t`, handed back from one object, because that is what the real hook does.
+  //
+  // A fresh `t` per call made every render produce a new `load` callback on the page, so its effect
+  // re-ran and re-fetched on EVERY render: the table never stopped spinning (antd sets
+  // pointer-events: none on a spinning table), and clicking a row became a race. A laptop won it and
+  // CI lost it, which is how this shipped red.
+  //
+  // A STRING second argument is i18next's default-value form, not interpolation: it is what comes
+  // back when the bundle has no such key. Honouring the distinction is what makes the stub usable
+  // for a renderer whose whole point is telling "known vocabulary" from "not taught yet".
+  const t = (k: string, fb?: unknown) => (typeof fb === 'string' ? (vocab.has(k) ? k : fb) : k)
+  const api = { t }
+  return { useTranslation: () => api }
+})
 
 const RESP = {
   total: 2,
@@ -44,6 +61,12 @@ const reachable = (el: Element | null): boolean => {
   }
   return true
 }
+
+// The detail renders as parts, not as one string: an identifier and its value are separate elements
+// so the value can carry the weight and the field name can be dimmed (see lib/auditDetail.ts). The
+// reader sees one line, so the test reads the row back as one line.
+const detailText = (container: HTMLElement) =>
+  [...container.querySelectorAll('.rp-audit-detail')].map((d) => d.textContent).join('\n')
 
 const mount = () =>
   render(
@@ -76,12 +99,114 @@ describe('AuditPage', () => {
   })
 
   it('shows the object and the detail, so a line is readable on its own', async () => {
-    mount()
+    const { container } = mount()
     expect(await screen.findByText(/对外版/)).toBeTruthy()
-    expect(screen.getByText(/600519/)).toBeTruthy()
+    expect(screen.getByText('600519')).toBeTruthy()
     // A grant change carries both sides — the current state cannot answer "when did they gain it".
-    // Rendered rather than dumped as JSON, but with the empty side still saying it was empty.
-    expect(screen.getByText(/before=— · after=u:client@corp\.example/)).toBeTruthy()
+    // Rendered as a change rather than as two fields, so the empty side is what a "+" means.
+    expect(detailText(container)).toContain('audit.diff.added audit.t.user client@corp.example')
+  })
+
+  // The pair arrives alphabetically ("after" first) because the server stores it in a map. Rendered
+  // as a change, the order it was written in stops mattering and the membership is explicit.
+  it('marks what a change added and what it removed', async () => {
+    apiMock.get.mockResolvedValue({
+      ...RESP,
+      items: [
+        { id: 1, at: '2026-08-01 08:00:00', actor: 'admin', actor_ou: 0, action: 'grant.change',
+          target_type: 'group', target_id: '12',
+          detail: '{"after":["u:b@corp.example","u:c@corp.example"],"before":["u:a@corp.example"]}' },
+      ],
+    })
+    const { container } = mount()
+    await screen.findByText('group 12')
+    // One line: every member named with its kind, under a word that says which way it moved. The
+    // t() stub returns the key, so what shows is the wording the renderer chose.
+    const text = detailText(container)
+    expect(text).toBe(
+      'audit.diff.added audit.t.user b@corp.example、audit.t.user c@corp.example' +
+        ' · audit.diff.removed audit.t.user a@corp.example',
+    )
+    // The fields the pair replaced must not also print.
+    expect(text).not.toContain('before')
+    expect(text).not.toContain('after')
+  })
+
+  // A value from a closed vocabulary the server defines is a word, not a field: it is worth
+  // translating, and it is part of the sentence rather than a parameter hanging off it.
+  it('renders a value from a closed vocabulary as a word, not as a field', async () => {
+    apiMock.get.mockResolvedValue({
+      ...RESP,
+      items: [
+        { id: 1, at: '2026-08-01 08:00:00', actor: '', actor_ou: 0, action: 'auth.login_failed',
+          target_type: 'user', target_id: 'alice', detail: '{"reason":"bad_password"}' },
+      ],
+    })
+    const { container } = mount()
+    await screen.findByText(/alice/)
+    // The t() stub returns the key, so what shows is the vocabulary key the renderer chose — which
+    // is the part under test. The field it replaced is gone.
+    const column = detailText(container)
+    expect(column).toContain('audit.v.reason.bad_password')
+    expect(column).not.toContain('reason=')
+  })
+
+  // A change whose sides are not lists has no membership to report, so it is the two values under
+  // the field that named them. The label is part of the same line — which is why testing the group
+  // list for emptiness swallowed both values and left a bare field label.
+  it('shows both values of a change that is not a list', async () => {
+    apiMock.get.mockResolvedValue({
+      ...RESP,
+      ou_names: { '2': 'Default', '9': 'ext-demo' },
+      items: [
+        { id: 1, at: '2026-08-01 08:00:00', actor: 'admin', actor_ou: 0, action: 'user.change',
+          target_type: 'user', target_id: 'extuser',
+          detail: '{"field":"primary_group","from":2,"to":9}' },
+      ],
+    })
+    const { container } = mount()
+    await screen.findByText('user extuser') // the object column; its kind word is not in the fake bundle
+    // The ids are OU ids, so they are resolved the same way the actor column resolves one.
+    expect(detailText(container)).toBe('audit.v.field.primary_group Default → ext-demo')
+  })
+
+  // A row that says what happened shows just that. Everything the submission carried — its inputs,
+  // its priority, whether it asked for urgent — is behind the full-record button, because a page of
+  // rows holding every parameter of every run reads as one wall of key=value.
+  it('keeps a run’s parameters out of the column and in the record', async () => {
+    apiMock.get.mockResolvedValue({
+      ...RESP,
+      items: [
+        { id: 1, at: '2026-08-01 08:00:00', actor: 'admin', actor_ou: 0, action: 'run.submit',
+          target_type: 'batch_job', target_id: '782',
+          detail: '{"target":"Deep Research","priority":"30","retries":2,"inputs":"query=x"}' },
+      ],
+    })
+    const { container } = mount()
+    await screen.findByText('audit.t.batch_job 782')
+    expect(detailText(container)).toContain('audit.d.run')
+    expect(detailText(container)).not.toContain('priority')
+    expect(detailText(container)).not.toContain('query=x')
+
+    await userEvent.click(screen.getAllByTitle('audit.details')[0])
+    const record = detailText(await screen.findByRole('dialog'))
+    expect(record).toContain('priority 30')
+    expect(record).toContain('retries 2')
+    expect(record).toContain('inputs query=x')
+  })
+
+  // The target column used to read "version <name>" only because target_type happened to be spelled
+  // the same in English. It is our own closed vocabulary, so it gets a name.
+  it('names the kind of object a row acted on rather than printing its raw type', async () => {
+    apiMock.get.mockResolvedValue({
+      ...RESP,
+      items: [
+        { id: 1, at: '2026-08-01 08:00:00', actor: 'admin', actor_ou: 0, action: 'run.submit',
+          target_type: 'batch_job', target_id: '782', detail: '{}' },
+      ],
+    })
+    mount()
+    expect(await screen.findByText('audit.t.batch_job 782')).toBeTruthy()
   })
 
   // The detail column is a sentence now, which is what somebody scanning the log wants. Somebody
@@ -126,7 +251,7 @@ describe('AuditPage', () => {
       expect(container.querySelectorAll('.rp-audit-row').length).toBe(2)
       // Same facts as the table row, so nothing is lost by dropping the columns.
       expect(screen.getByText('客户A')).toBeTruthy()
-      expect(screen.getByText(/before=— · after=u:client@corp\.example/)).toBeTruthy()
+      expect(detailText(container)).toContain('audit.diff.added audit.t.user client@corp.example')
     })
 
     it('opens the full record when a card is tapped', async () => {
@@ -153,5 +278,11 @@ describe('AuditPage', () => {
     mount()
     await waitFor(() => expect(apiMock.get).toHaveBeenCalled())
     expect(String(apiMock.get.mock.calls[0][0])).toContain('limit=50')
+    // Exactly once, and this is load-bearing rather than tidiness. A mock that handed back a fresh
+    // `t` on every call made the page's effect re-run and re-fetch on every render: ten calls in
+    // 400ms and climbing, the table spinning the whole time (antd sets pointer-events: none on a
+    // spinning table), and every click on a row a race. A laptop won that race; CI lost it.
+    await new Promise((r) => setTimeout(r, 400))
+    expect(apiMock.get.mock.calls.length).toBe(1)
   })
 })

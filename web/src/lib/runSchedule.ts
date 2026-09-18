@@ -221,3 +221,55 @@ export function presetSummary(p: RunPreset, t: TFunc): string {
   const windows = p.invert ? `${t('preset.summaryExcept')} ${parts.join('、')}` : parts.join('、')
   return `${t('run.freq.' + p.freq)} ${windows}`
 }
+
+// ---------------------------------------------------------------------------
+// A job's snapshotted window rule, as it is stored and as the audit log carries it
+// ---------------------------------------------------------------------------
+
+// windowSnapshotSummary describes a stored window SNAPSHOT the way the picker describes a configured
+// preset, so one window reads the same wherever it turns up — the audit log copies the rule into
+// the job's detail, and a reader there wants "Mon–Fri 09:00–12:00", not the rule's bytes.
+//
+// null for anything that is not a window rule, INCLUDING a rule this build cannot describe. A
+// caller that gets null falls back to its own rendering rather than printing half a sentence, which
+// is what keeps an unrecognised shape readable instead of mangled.
+export function windowSnapshotSummary(raw: string, t: TFunc): string | null {
+  const text = raw.trim()
+  if (!text.startsWith('{')) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const snap = parsed as Record<string, unknown>
+  const freq = snap.freq
+  if (freq !== 'daily' && freq !== 'weekly' && freq !== 'monthly' && freq !== 'yearly') return null
+  // Not an array means the rule was elided — the audit log summarises a rule too large to store
+  // whole, and "intervals: …" is not a window anybody can be shown.
+  if (!Array.isArray(snap.intervals) || snap.intervals.length === 0) return null
+  if (!snap.intervals.every(isWindowInterval)) return null
+  const p: RunPreset = {
+    id: 0,
+    label: '',
+    freq,
+    intervals: snap.intervals,
+    on_overrun: 'next',
+    enabled: true,
+    invert: snap.invert === true,
+    ord: 0,
+  }
+  const base = presetSummary(p, t)
+  const until = typeof snap.until === 'string' ? snap.until : ''
+  return until ? `${base} · ${t('preset.until', { at: until })}` : base
+}
+
+// isWindowInterval checks the one thing a window cannot be described without. An edge carrying
+// fields this build has no wording for still reads — the times are what a reader needs — but an
+// edge with no time is not a window at all.
+function isWindowInterval(v: unknown): v is RunPresetInterval {
+  if (!v || typeof v !== 'object') return false
+  const iv = v as RunPresetInterval
+  return !!iv.start?.time && !!iv.stop?.time
+}

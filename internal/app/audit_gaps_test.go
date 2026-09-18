@@ -98,3 +98,57 @@ func TestARunSubmissionRecordsWhatWasSubmitted(t *testing.T) {
 		t.Errorf("a clamped value should say so: %s", detail)
 	}
 }
+
+// A submitted input that is itself structured data — a time window, a JSON parameter — used to be
+// clamped like any other string, which stored the first 120 characters of a serialised object and
+// left a reader with half an object and no way to tell. The SHAPE is what they can use.
+func TestARunSubmissionSummarisesAStructuredInput(t *testing.T) {
+	detail := runSubmitDetail(runSubmitAudit{
+		Rows: []map[string]string{{
+			"symbol": "603587",
+			"window": `{"freq":"weekly","intervals":[{"start":{"weekday":1,"time":"09:00"}}],"on_overrun":"next"}`,
+			"note":   "",
+		}},
+	})
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(detail), &got); err != nil {
+		t.Fatalf("detail is not JSON: %v (%s)", err, detail)
+	}
+	inputs, _ := got["inputs"].(string)
+	// The scalars survive, the nesting is elided rather than expanded, and the elision is visible.
+	if !strings.Contains(inputs, `freq: weekly`) || !strings.Contains(inputs, `on_overrun: next`) {
+		t.Errorf("the top-level scalars should survive: %q", inputs)
+	}
+	if !strings.Contains(inputs, `intervals: …`) {
+		t.Errorf("a nested value should be elided, visibly: %q", inputs)
+	}
+	if strings.Contains(inputs, "weekday") {
+		t.Errorf("nothing below the top level belongs in the summary: %q", inputs)
+	}
+	// Nothing is quoted: the summary is read, not parsed, and the quotes are the noise that made
+	// the raw column unreadable in the first place.
+	if strings.Contains(inputs, `"`) {
+		t.Errorf("a summary is not JSON and should not pretend to be: %q", inputs)
+	}
+	// A value that was never JSON is still clamped the way it always was.
+	if !strings.Contains(inputs, "symbol=603587") {
+		t.Errorf("a plain value must read as itself: %q", inputs)
+	}
+}
+
+// The summary is bounded by how many members a value has, not by how large the value was, so one
+// submission with a big nested parameter cannot outweigh a month of ordinary lines.
+func TestAStructuredInputSummaryStaysSmall(t *testing.T) {
+	big := `{` + strings.Repeat(`"key","value",`, 400) + `"last":"x"}`
+	// Malformed JSON is the point of the second half: a value that only LOOKS structured must still
+	// be clamped rather than mis-summarised.
+	truncated := `{"freq":"weekly","intervals":[{"start":{"weekday":1,"time":"09:00"},`
+
+	for _, in := range []string{big, truncated} {
+		got := auditInputValue(in)
+		if len(got) > auditInputValueMax+8 {
+			t.Errorf("summary of %d bytes is %d bytes, over the bound: %q", len(in), len(got), got)
+		}
+	}
+}
