@@ -8,6 +8,7 @@ import {
   parseWeeklyRows,
   weeklyIntervals,
   readRunDefaults,
+  windowSnapshotSummary,
   type RunSchedule,
 } from './runSchedule'
 import type { RunPreset, RunPresetInterval, RunPresetsResp } from '../api/types'
@@ -209,5 +210,60 @@ describe('readRunDefaults', () => {
 
   it('leaves the rule out when the portal has never been configured', () => {
     expect(readRunDefaults(resp()).showPresetRule).toBe(false)
+  })
+})
+
+// The audit log copies a job's window rule into the row's detail, so a reader there meets the rule
+// as STORED — the resolver's JSON — rather than as the picker's summary. Describing it the same way
+// in both places is the point: one window, one wording.
+describe('windowSnapshotSummary', () => {
+  const tkAt = (k: string, o?: Record<string, unknown>) => (o ? `${k}(${o.at})` : k)
+  const snap = (v: unknown) => JSON.stringify(v)
+
+  it('describes a weekly rule the way the picker does', () => {
+    const raw = snap({
+      freq: 'weekly',
+      intervals: [
+        { start: { weekday: 1, time: '09:00' }, stop: { weekday: 1, time: '12:00' } },
+        { start: { weekday: 2, time: '09:00' }, stop: { weekday: 2, time: '12:00' } },
+      ],
+      on_overrun: 'next',
+    })
+    expect(windowSnapshotSummary(raw, tkAt)).toBe('run.freq.weekly run.weekday.1/run.weekday.2 09:00–12:00')
+  })
+
+  it('says when the window closes, which is the fact the row is scheduled against', () => {
+    const raw = snap({
+      freq: 'daily',
+      intervals: [{ start: { time: '09:00' }, stop: { time: '12:00' } }],
+      on_overrun: 'next',
+      until: '2026-09-09 18:00:00',
+    })
+    expect(windowSnapshotSummary(raw, tkAt)).toBe(
+      'run.freq.daily 09:00–12:00 · preset.until(2026-09-09 18:00:00)',
+    )
+  })
+
+  it('reads an inverted rule as time to avoid, not as time to run', () => {
+    const raw = snap({
+      freq: 'daily',
+      intervals: [{ start: { time: '09:00' }, stop: { time: '12:00' } }],
+      on_overrun: 'next',
+      invert: true,
+    })
+    expect(windowSnapshotSummary(raw, tkAt)).toBe('run.freq.daily preset.summaryExcept 09:00–12:00')
+  })
+
+  // Anything this build cannot describe returns null so the caller renders the value its own way.
+  // Returning half a sentence — or inventing one for a rule whose windows were elided — would be
+  // worse than showing the bytes.
+  it('refuses what it cannot describe rather than guessing', () => {
+    expect(windowSnapshotSummary('not json', tkAt)).toBeNull()
+    expect(windowSnapshotSummary('{"freq":"weekly"}', tkAt)).toBeNull() // no windows at all
+    expect(windowSnapshotSummary('{"freq":"hourly","intervals":[]}', tkAt)).toBeNull() // a freq we have no word for
+    const elided = snap({ freq: 'weekly', intervals: '…', on_overrun: 'next' })
+    expect(windowSnapshotSummary(elided, tkAt)).toBeNull() // a rule the log summarised away
+    const noTime = snap({ freq: 'weekly', intervals: [{ start: { weekday: 1 }, stop: { weekday: 1 } }] })
+    expect(windowSnapshotSummary(noTime, tkAt)).toBeNull()
   })
 })

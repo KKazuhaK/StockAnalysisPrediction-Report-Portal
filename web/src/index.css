@@ -1289,7 +1289,63 @@ body {
 .rp-audit-row__detail {
   font-size: 12px;
   line-height: 1.5;
-  word-break: break-word;
+}
+/* The detail renders as parts: a lead reads as prose, a value from the server's closed vocabulary
+   as a phrase, and every other field as an identifier beside its value (see lib/auditDetail.ts).
+   Clamped, because a detail can carry a machine snapshot — a run window, a nested input — and one
+   such row used to print thousands of characters and stretch its cell until the neighbouring
+   columns, vertically centred, sat inside it. The full text is one click away. */
+.rp-audit-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  /* `anywhere`, not `break-word`: only this reduces the cell's MIN-content width, and a run window
+     or a nested input is one very long token. Without it the token sets a floor the column cannot
+     go under. */
+  overflow-wrap: anywhere;
+}
+/* The modal is the opposite view: the whole detail, and no line clamp — but bounded and scrollable,
+   the same shape as the raw payload beside it. Left to grow, the renderable form became the longest
+   wall in a dialog whose one bounded field was the unreadable one. */
+.rp-audit-detail--full {
+  display: block;
+  max-height: 260px;
+  overflow: auto;
+}
+/* A card is the view that exists because nothing has to fit in a narrow column, so it gets more
+   than the table's two lines — but still a bound, for the same reason. */
+.rp-audit-row__detail .rp-audit-detail {
+  -webkit-line-clamp: 4;
+}
+.rp-audit-detail__text {
+  color: var(--ant-color-text-secondary, rgba(0, 0, 0, 0.65));
+}
+.rp-audit-detail__sep {
+  color: var(--ant-color-text-quaternary, rgba(0, 0, 0, 0.25));
+}
+.rp-audit-detail__field {
+  /* Deliberately wrapable. Keeping "key value" on one line reads better, but a value can be a whole
+     run window, and a nowrap run of that length is clipped by the cell with no ellipsis to say so. */
+  overflow-wrap: anywhere;
+}
+/* Dim and monospace: an identifier, not a word. The eye lands on the value, and a field name this
+   build has never seen costs the reader nothing — which is why it needs no translation. */
+.rp-audit-detail__field code {
+  margin-right: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--ant-color-text-tertiary, rgba(0, 0, 0, 0.45));
+}
+/* What appeared and what went, in a change whose sides are lists. The markers say which is which;
+   the colour is what a reader scanning a page of rows actually picks up. */
+.rp-audit-detail__add {
+  color: var(--ant-color-success-text, #52c41a);
+}
+.rp-audit-detail__del {
+  color: var(--ant-color-error-text, #ff4d4f);
 }
 .rp-audit-row__target {
   font-size: 11px;

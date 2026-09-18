@@ -433,9 +433,101 @@ func auditInputs(row map[string]string) string {
 		}
 		b.WriteString(k)
 		b.WriteString("=")
-		b.WriteString(clampAuditText(row[k], auditInputValueMax))
+		b.WriteString(auditInputValue(row[k]))
 	}
 	return b.String()
+}
+
+// auditInputValue renders one submitted input.
+//
+// A value that is itself structured data — a time window, a JSON parameter — is SUMMARISED rather
+// than clamped. Clamping a serialised object mid-token stores half an object, which tells a reader
+// less than its shape does, and it is what put a truncated blob of JSON in the console's detail
+// column. Nothing is lost by summarising that was not already lost by clamping.
+//
+// A value that is not JSON, or only looks like it, falls through to the plain clamp — a prompt that
+// happens to start with "{" is prose, and an unparseable one must not be guessed at.
+func auditInputValue(v string) string {
+	t := strings.Join(strings.Fields(v), " ") // collapsed once here so the check sees a single line
+	if len(t) > 1 && (t[0] == '{' || t[0] == '[') {
+		var parsed any
+		if json.Unmarshal([]byte(t), &parsed) == nil {
+			if summary, ok := auditValueSummary(parsed); ok {
+				return clampAuditText(summary, auditInputValueMax)
+			}
+		}
+	}
+	return clampAuditText(v, auditInputValueMax)
+}
+
+// auditElision marks a part of a value that was left out. Kept rather than dropped, because a
+// reader has to be able to see that there was more.
+const auditElision = "…"
+
+// auditValueSummary renders the TOP LEVEL of a decoded JSON value and elides whatever is nested, so
+// the result is bounded by how many members a value has rather than by how large it was.
+//
+// ok=false when there is nothing a summary can usefully say — a top-level array of structures has
+// no scalars to show, and its length alone would read as a value rather than as a summary. The
+// caller then falls back to the plain clamp, which at least keeps the value's own spelling.
+func auditValueSummary(v any) (string, bool) {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k, e := range x {
+			if e == nil || e == "" {
+				continue // the same rule the detail line follows: a field with nothing in it says nothing
+			}
+			keys = append(keys, k)
+		}
+		if len(keys) == 0 {
+			return "", false
+		}
+		sort.Strings(keys) // a map ranges in random order; the log must not differ run to run
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+": "+auditScalar(x[k]))
+		}
+		return "{" + strings.Join(parts, ", ") + "}", true
+	case []any:
+		if len(x) == 0 {
+			return "", false
+		}
+		parts := make([]string, 0, len(x))
+		for _, e := range x {
+			switch e.(type) {
+			case map[string]any, []any:
+				return "", false // an array of structures: a bare count would read as a value, not a summary
+			}
+			parts = append(parts, auditScalar(e))
+		}
+		return "[" + strings.Join(parts, ", ") + "]", true
+	}
+	return "", false
+}
+
+// auditScalar renders one member of a summary: the elision marker for anything nested, and the
+// value itself otherwise.
+//
+// Deliberately not JSON. The summary is READ, not parsed — it goes into the detail's "key=value"
+// input line, which was never JSON to begin with — and a quote around every string is exactly the
+// noise that made the raw column unreadable.
+func auditScalar(v any) string {
+	switch x := v.(type) {
+	case map[string]any, []any:
+		return auditElision
+	case string:
+		return clampAuditText(x, auditInputValueMax/2)
+	case bool:
+		if x {
+			return "true"
+		}
+		return "false"
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	default:
+		return fmt.Sprint(x)
+	}
 }
 
 // clampAuditText collapses whitespace (a multi-line prompt is one value, not a shape) and cuts to

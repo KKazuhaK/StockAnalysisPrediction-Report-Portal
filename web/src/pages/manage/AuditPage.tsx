@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { auditTime } from '../../lib/auditTime'
 import { formatRegion } from '../../lib/geo'
 import {
@@ -26,9 +26,100 @@ import { FilterOutlined, InfoCircleOutlined, SearchOutlined } from '@ant-design/
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import { api, errText } from '../../api/client'
-import { auditDetail } from '../../lib/auditDetail'
+import { auditDetail, headline, listSeparator, type ChangeMember, type DetailPart } from '../../lib/auditDetail'
 import type { AuditEntry, AuditResp } from '../../api/types'
 import { clickable } from '../../lib/clickable'
+
+// The subset of i18next's t() the detail helpers use. i18next's own type is overloaded in ways that
+// make it awkward to pass down; this is the shape it is assignable to, and the shape both need —
+// the same one runSchedule's summary helpers take.
+type TFunc = (key: string, opts?: Record<string, unknown>) => string
+
+// A pair of fields that is one change. Read as two fields it has to be diffed by eye — and the
+// server stores them in a map, so they arrive alphabetically and "after" comes first.
+//
+// The direction is a WORD, not a sign. Every admin console worth copying labels it — Google's admin
+// log pairs "Old value"/"New value", Entra names the modified property's old and new values — and a
+// bare "+extuser" leaves the reader to work out both what changed and which way. The member's kind
+// is named with it, because dropping the store's `u:`/`g:` prefix otherwise throws away the only
+// thing that said whether "ext-demo" was an account or a unit.
+function Change({ part, t }: { part: Extract<DetailPart, { kind: 'change' }>; t: TFunc }) {
+  const members = (list: ChangeMember[]) =>
+    list.map((m) => (m.type ? `${t(`audit.t.${m.type}`)} ${m.name}` : m.name)).join(listSeparator)
+  const groups: ReactNode[] = []
+  // Whether either direction was reported. Tracked separately from the group list, because the
+  // label is a group too — testing the list for emptiness swallowed the two VALUES of every scalar
+  // change and left a bare field label on the line.
+  let diffed = false
+  if (part.added.length) {
+    diffed = true
+    groups.push(
+      <span>
+        <span className="rp-audit-detail__add">{t('audit.diff.added')}</span> {members(part.added)}
+      </span>,
+    )
+  }
+  if (part.removed.length) {
+    diffed = true
+    groups.push(
+      <span>
+        <span className="rp-audit-detail__del">{t('audit.diff.removed')}</span> {members(part.removed)}
+      </span>,
+    )
+  }
+  // Sides that are not lists have no membership to report, so the change is the two values.
+  if (!diffed) groups.push(<span>{`${part.from} → ${part.to}`}</span>)
+  return (
+    <>
+      {/* The label names the change, so it is a PREFIX of the line rather than another thing on it —
+          "label · was → is" reads as two facts where there is one. */}
+      {part.key ? (
+        <>
+          <code>{part.key}</code>{' '}
+        </>
+      ) : null}
+      {groups.map((g, i) => (
+        <Fragment key={i}>
+          {i > 0 && ' · '}
+          {g}
+        </Fragment>
+      ))}
+    </>
+  )
+}
+
+// A detail is rendered as parts, not as one sentence: the lead reads as prose, a value from the
+// server's closed vocabularies as a phrase, and every other field as an identifier beside its
+// value. See lib/auditDetail.ts for why the distinction is the whole point.
+//
+// The identifier is monospace and dim, the value is not, so a reader's eye lands on the value and
+// an unfamiliar field name costs nothing — which is what lets a field the server adds tomorrow be
+// readable in every language without a translation table nobody would keep up.
+function DetailParts({ parts, full, t }: { parts: DetailPart[]; full?: boolean; t: TFunc }) {
+  if (parts.length === 0) return <>{'—'}</>
+  return (
+    <div className={full ? 'rp-audit-detail rp-audit-detail--full' : 'rp-audit-detail'}>
+      {parts.map((p, i) => (
+        <Fragment key={i}>
+          {/* Spaces rather than margins: this text is also what a copy-and-paste out of the column
+              carries, and "before —" glued into "before—" is not what anybody meant to copy. */}
+          {i > 0 && <span className="rp-audit-detail__sep"> · </span>}
+          {p.kind === 'change' ? (
+            <span className="rp-audit-detail__field">
+              <Change part={p} t={t} />
+            </span>
+          ) : p.kind === 'field' ? (
+            <span className="rp-audit-detail__field">
+              <code>{p.key}</code> {p.value}
+            </span>
+          ) : (
+            <span className="rp-audit-detail__text">{p.text}</span>
+          )}
+        </Fragment>
+      ))}
+    </div>
+  )
+}
 
 // The audit log: who read what, and who changed who can read it.
 //
@@ -224,24 +315,25 @@ export default function AuditPage() {
       render: (_, r) => <Tag color={ACTION_COLOR[r.action]}>{t(`audit.a.${r.action}`, r.action)}</Tag>,
     },
     {
+      // A target_type is a closed vocabulary of our own writing, so it is NAMED rather than shown as
+      // the identifier the table happens to store. An unknown one stays as it is, which is how a
+      // type this build has not been taught still reads.
       title: t('audit.target'),
       width: 200,
       render: (_, r) => (
         <Typography.Text type="secondary">
-          {r.target_type} {r.target_id}
+          {t(`audit.t.${r.target_type}`, r.target_type)} {r.target_id}
         </Typography.Text>
       ),
     },
     {
       title: t('audit.detail'),
       // Rendered, not dumped: somebody reading this column wants "who read what", not the field
-      // list a serialiser produced. auditDetail keeps every field that carries information — see
-      // lib/auditDetail.ts — so nothing is hidden by making it legible.
-      render: (_, r) => (
-        <Typography.Text type="secondary" style={{ fontSize: 12, wordBreak: 'break-word' }}>
-          {auditDetail(r.action, r.detail, t)}
-        </Typography.Text>
-      ),
+      // list a serialiser produced. And it is the HEADLINE only — a run's parameters, a token's
+      // expiry and everything else an identifier carries are behind the full-record button, because
+      // a page of rows holding every parameter of every submission is a wall nobody reads. The cell
+      // is clamped to two lines as well, so one long line cannot stretch its row either.
+      render: (_, r) => <DetailParts t={t} parts={headline(auditDetail(r.action, r.detail, t, { ouNames }))} />,
     },
     {
       // Scanning and investigating want opposite things from this table. The column above serves
@@ -349,7 +441,9 @@ export default function AuditPage() {
   const rowCard = (r: AuditEntry) => {
     const at = auditTime(r.at, data?.timezone ?? '')
     const region = formatRegion(r.geo)
-    const detail = auditDetail(r.action, r.detail, t)
+    // The card is a bigger target than a table cell, not a bigger view: it shows the same headline
+    // and opens the same record, so the two layouts cannot drift into telling different stories.
+    const detail = headline(auditDetail(r.action, r.detail, t, { ouNames }))
     return (
       <div
         key={r.id}
@@ -400,9 +494,13 @@ export default function AuditPage() {
             </Typography.Text>
           )}
         </div>
-        {detail && <div className="rp-audit-row__detail">{detail}</div>}
+        {detail.length > 0 && (
+          <div className="rp-audit-row__detail">
+            <DetailParts t={t} parts={detail} />
+          </div>
+        )}
         <Typography.Text type="secondary" className="rp-audit-row__target">
-          {r.target_type} {r.target_id}
+          {t(`audit.t.${r.target_type}`, r.target_type)} {r.target_id}
         </Typography.Text>
         {at.local && (
           <Typography.Text type="secondary" style={{ fontSize: 11 }}>
@@ -466,10 +564,16 @@ export default function AuditPage() {
           loading={loading}
           dataSource={items}
           columns={columns}
+          // `fixed` is load-bearing, not a preference. Left on auto, the browser sizes the detail
+          // column to its content — so ONE row carrying a machine snapshot (a run window, a nested
+          // input) widened the column to thousands of pixels, squeezed every other column to its
+          // minimum and turned the page into a horizontal scroller showing a wall of JSON. That is
+          // the shape the raw column was already failing in.
+          tableLayout="fixed"
           // The fixed column widths add up to more than a small laptop or a portrait tablet has.
           // Scrolling the table is the honest answer; squeezing the columns is what produced the
-          // one-character-per-line wrap this page used to show.
-          scroll={{ x: 1040 }}
+          // one-character-per-line wrap this page used to show. The detail column takes what is left.
+          scroll={{ x: 1200 }}
           pagination={{
             current: page,
             pageSize,
@@ -544,9 +648,13 @@ export default function AuditPage() {
               </Typography.Text>
             </Descriptions.Item>
             <Descriptions.Item label={t('audit.target')}>
-              {row.target_type} {row.target_id}
+              {t(`audit.t.${row.target_type}`, row.target_type)} {row.target_id}
             </Descriptions.Item>
-            <Descriptions.Item label={t('audit.detail')}>{auditDetail(row.action, row.detail, t) || '—'}</Descriptions.Item>
+            <Descriptions.Item label={t('audit.detail')}>
+              {/* Unclamped here: this is the place the clamped column sends somebody who needs the
+                  whole thing. Still bounded, so the dialog does not grow past the window. */}
+              <DetailParts t={t} parts={auditDetail(row.action, row.detail, t, { ouNames })} full />
+            </Descriptions.Item>
             <Descriptions.Item
               // Copy sits on the label rather than on the payload: antd puts the icon after its
               // child, and after a block of JSON that is a stray glyph on a line of its own.
