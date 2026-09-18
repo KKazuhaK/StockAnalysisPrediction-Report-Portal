@@ -1,13 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, App, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Spin, Tooltip, Typography } from 'antd'
-import { DownOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import {
+  Alert,
+  App,
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popover,
+  Select,
+  Space,
+  Spin,
+  Tooltip,
+  Typography,
+} from 'antd'
+import { DownOutlined, PlayCircleOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
 import { useAuth } from '../auth'
 import { visibleOn } from '../lib/batchUi'
 import { formatReportDateTime } from '../lib/datetime'
-import { buildRow, isFileInput } from '../lib/difyInputs'
+import { buildRow, compactInputLabel, isFileInput } from '../lib/difyInputs'
 import { readPrefetched } from '../lib/prefetch'
 import {
   noRunDefaults,
@@ -35,8 +50,7 @@ const quotaPeriod = (p?: string) => (p === 'week' || p === 'month' || p === 'tot
 // the form drew for every input before the declaration carried a type at all. `select` needs its
 // allowed values to be a Select at all, so a select that arrives without options falls back too,
 // leaving the field fillable instead of offering an empty menu.
-function inputControl(i: PluginInput, targetId: number) {
-  const hint = i.label || i.key
+function inputControl(i: PluginInput, targetId: number, hint = i.label || i.key) {
   switch (i.type) {
     case 'paragraph':
       return <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder={hint} />
@@ -306,27 +320,55 @@ export default function RunAnalysisModal({
         ? t('run.queueIdle')
         : t('run.queueFree', { n: budget - running })
 
-  const renderInput = (i: PluginInput) => (
-    <Form.Item
-      className={i.type === 'paragraph' || isFileInput(i.type) ? 'rp-run-input--wide' : undefined}
-      key={i.key}
-      name={i.key}
-      label={i.label || i.key}
-      rules={
-        i.required
-          ? [
-              {
-                required: true,
-                type: isFileInput(i.type) ? 'array' : undefined,
-                message: t('run.required', { field: i.label || i.key }),
-              },
-            ]
-          : []
-      }
-    >
-      {inputControl(i, target?.id ?? 0)}
-    </Form.Item>
-  )
+  const renderInput = (i: PluginInput) => {
+    const { title, detail } = compactInputLabel(i)
+    const wide = i.type === 'paragraph' || isFileInput(i.type)
+    return (
+      <div
+        className={[
+          'rp-run-input-field',
+          wide ? 'rp-run-input--wide' : '',
+          detail ? 'rp-run-input-field--has-help' : '',
+        ].filter(Boolean).join(' ')}
+        key={i.key}
+      >
+        <Form.Item
+          name={i.key}
+          label={
+            <span className="rp-run-input-label">
+              <span className="rp-run-input-label__name" title={title}>{title}</span>
+              {!i.required && <span className="rp-run-input-label__optional">{t('run.optionalMark')}</span>}
+            </span>
+          }
+          rules={
+            i.required
+              ? [
+                  {
+                    required: true,
+                    type: isFileInput(i.type) ? 'array' : undefined,
+                    message: t('run.required', { field: title }),
+                  },
+                ]
+              : []
+          }
+        >
+          {inputControl(i, target?.id ?? 0, title)}
+        </Form.Item>
+        {detail && (
+          <Popover title={title} content={<div className="rp-run-input-help__content">{detail}</div>} trigger="click">
+            <Button
+              type="text"
+              size="small"
+              shape="circle"
+              className="rp-run-input-help"
+              icon={<QuestionCircleOutlined />}
+              aria-label={t('run.inputHelp', { field: title })}
+            />
+          </Popover>
+        )}
+      </div>
+    )
+  }
 
   return (
     <Modal
@@ -361,7 +403,7 @@ export default function RunAnalysisModal({
           {runnable.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}
 
           <div className="rp-run-analysis-layout">
-            <section className="rp-run-analysis-panel">
+            <section className="rp-run-analysis-panel rp-run-analysis-inputs">
               <Typography.Title level={5} className="rp-run-analysis-panel__title">
                 {t('run.inputs')}
               </Typography.Title>

@@ -51,20 +51,189 @@ body {
   overflow: visible;
 }
 
-/* Run analysis is a desktop work surface: inputs use the wide side while scheduling stays in a
-   stable rail. The modal body scrolls as one unit when an expanded workflow still needs height. */
-.rp-run-analysis-modal .ant-modal-body {
-  max-height: min(720px, calc(100dvh - 190px));
-  overflow-y: auto;
-}
-.rp-run-analysis-layout {
+/* Batch entry is a bounded spreadsheet on the wide side and a stable run-settings rail on the
+   right. The table owns horizontal and vertical overflow, so a large workflow never widens the
+   page and a large batch never pushes the submit controls out of reach. */
+.rp-batch-compose-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   gap: 24px;
   align-items: start;
 }
+.rp-batch-compose-data {
+  min-width: 0;
+}
+.rp-batch-compose-settings {
+  position: sticky;
+  top: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding-inline-start: 24px;
+  border-inline-start: 1px solid var(--ant-color-border-secondary);
+}
+.rp-batch-compose-title.ant-typography {
+  margin: 0 0 16px;
+}
+.rp-batch-target-picker {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 440px);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.rp-batch-target-picker .ant-select {
+  width: 100%;
+}
+.rp-batch-editor-empty {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  border: 1px dashed var(--ant-color-border);
+  border-radius: var(--ant-border-radius-lg);
+  background: var(--ant-color-fill-quaternary);
+}
+.rp-batch-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.rp-batch-editor-hint.ant-typography {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+.rp-batch-grid {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: var(--ant-border-radius-lg);
+}
+.rp-batch-grid .ant-table-cell {
+  vertical-align: top;
+}
+.rp-batch-grid .ant-input,
+.rp-batch-grid .ant-input-number,
+.rp-batch-grid .ant-select {
+  width: 100%;
+}
+.rp-batch-grid-heading {
+  min-width: 0;
+}
+.rp-batch-grid-heading__title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.rp-batch-grid-heading__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-batch-grid-heading__required {
+  flex: none;
+  color: var(--ant-color-error);
+}
+.rp-batch-grid-heading__optional {
+  flex: none;
+  color: var(--ant-color-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+.rp-batch-grid-heading__help.ant-btn {
+  flex: none;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--ant-color-text-secondary);
+}
+.rp-batch-grid-heading .ant-typography code {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--ant-color-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-batch-editor-add.ant-btn {
+  margin-top: 10px;
+}
+.rp-batch-csv-editor.ant-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.rp-batch-rows-editor > .ant-alert {
+  margin-top: 12px;
+}
+.rp-batch-setting-fields {
+  display: grid;
+  gap: 12px;
+}
+.rp-batch-setting-fields > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.rp-batch-setting-fields .ant-input-number {
+  width: 104px;
+}
+
+@media (max-width: 1000px) {
+  .rp-batch-compose-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rp-batch-compose-settings {
+    position: static;
+    padding-block-start: 24px;
+    padding-inline-start: 0;
+    border-block-start: 1px solid var(--ant-color-border-secondary);
+    border-inline-start: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .rp-batch-target-picker {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .rp-batch-editor-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* Run analysis is a desktop work surface: inputs use the wide side while scheduling stays in a
+   stable rail. Each rail owns its overflow so a long input list never scrolls the settings away. */
+.rp-run-analysis-modal .ant-modal-body {
+  max-height: min(720px, calc(100dvh - 240px));
+  overflow: hidden;
+}
+.rp-run-analysis-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  gap: 24px;
+  align-items: stretch;
+  max-height: min(720px, calc(100dvh - 240px));
+  overflow: hidden;
+}
 .rp-run-analysis-panel {
   min-width: 0;
+  min-height: 0;
+  max-height: inherit;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.rp-run-analysis-inputs {
+  padding-inline-end: 8px;
 }
 .rp-run-analysis-panel__title.ant-typography {
   margin: 0 0 16px;
@@ -84,9 +253,47 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 14px;
 }
-.rp-run-input-grid > .ant-form-item {
+.rp-run-input-grid > .rp-run-input-field {
+  position: relative;
   min-width: 0;
+}
+.rp-run-input-field > .ant-form-item {
   margin-bottom: 16px;
+}
+.rp-run-input-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.rp-run-input-label__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-run-input-label__optional {
+  flex: none;
+  color: var(--ant-color-text-secondary);
+  font-weight: 400;
+}
+.rp-run-input-field--has-help > .ant-form-item > .ant-form-item-row > .ant-form-item-label {
+  padding-inline-end: 26px;
+}
+.rp-run-input-help.ant-btn {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--ant-color-text-secondary);
+}
+.rp-run-input-help__content {
+  max-width: min(360px, calc(100vw - 64px));
 }
 .rp-run-input--wide,
 .rp-run-optional-section {
@@ -119,10 +326,20 @@ body {
 @media (max-width: 767px) {
   .rp-run-analysis-modal .ant-modal-body {
     max-height: calc(100dvh - 180px);
+    overflow-y: auto;
   }
   .rp-run-analysis-layout {
     grid-template-columns: minmax(0, 1fr);
     gap: 22px;
+    max-height: none;
+    overflow: visible;
+  }
+  .rp-run-analysis-panel {
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+  .rp-run-analysis-inputs {
+    padding-inline-end: 0;
   }
   .rp-run-analysis-settings {
     padding-block-start: 22px;
