@@ -245,6 +245,7 @@ func (s *Server) targetJSON(t BatchTarget) map[string]any {
 		m["dify"] = true
 		m["mode"] = difyTargetMode(t.Config) // "" / "workflow" / "chat"
 		m["inputs"] = difyInputsJSON(t.Config)
+		m["collapse_optional_inputs"] = difyTargetCollapseOptionalInputs(t.Config)
 		return m
 	}
 	if p, ok := s.st.GetPlugin(t.PluginSlug); ok {

@@ -43,6 +43,10 @@ type difyTargetConfig struct {
 	// them and disable reuse.
 	OutputSubtype string `json:"output_subtype,omitempty"`
 	SymbolInput   string `json:"symbol_input,omitempty"`
+	// CollapseOptionalInputs is a target-level presentation default for the one-run form. It is
+	// stored with the rest of the target definition so it round-trips without changing the DB
+	// shape; it never changes what is sent to Dify.
+	CollapseOptionalInputs bool `json:"collapse_optional_inputs,omitempty"`
 }
 
 // difyModeChat reports whether a probed app mode is a chat/agent app (anything that
@@ -455,4 +459,10 @@ func difyTargetMode(configJSON string) string {
 	var cfg difyTargetConfig
 	json.Unmarshal([]byte(configJSON), &cfg)
 	return cfg.Mode
+}
+
+func difyTargetCollapseOptionalInputs(configJSON string) bool {
+	var cfg difyTargetConfig
+	json.Unmarshal([]byte(configJSON), &cfg)
+	return cfg.CollapseOptionalInputs
 }

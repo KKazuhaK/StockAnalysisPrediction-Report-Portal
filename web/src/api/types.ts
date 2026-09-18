@@ -71,6 +71,7 @@ export interface BatchTarget {
   created_at: string
   mode?: string // Dify app mode: "" / "workflow" / "chat"
   inputs?: PluginInput[]
+  collapse_optional_inputs?: boolean // one-run form starts with non-required inputs folded
   // Surfaces an admin allows this target on. The API always sends the resolved list, so an
   // unset target arrives as all four rather than as an empty array the UI would have to
   // special-case.
@@ -119,6 +120,7 @@ export interface DifyTargetEdit {
   // input key carries the stock code. Both are required for same-day reuse to apply.
   output_subtype?: string
   symbol_input?: string
+  collapse_optional_inputs?: boolean
 }
 
 // Queue summary for the home banner + drawer (docs/adr/0007-run-analysis-and-scheduling.md).

@@ -231,7 +231,8 @@ func (s *Server) apiBatchDifyRefreshApply(w http.ResponseWriter, r *http.Request
 			cfg.Mode = it.Mode
 		}
 		// Everything else on the struct rides through untouched: name is not even in scope here,
-		// and BaseURL / APIKey / OutputSubtype / SymbolInput are re-marshalled as they were read.
+		// and BaseURL / APIKey / OutputSubtype / SymbolInput / the run-form presentation default
+		// are re-marshalled as they were read.
 		b, err := json.Marshal(cfg)
 		if err != nil {
 			continue

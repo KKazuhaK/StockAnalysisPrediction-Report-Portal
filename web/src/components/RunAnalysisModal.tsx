@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, App, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Spin, Tooltip, Typography } from 'antd'
-import { PlayCircleOutlined } from '@ant-design/icons'
+import { Alert, App, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Spin, Tooltip, Typography } from 'antd'
+import { DownOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
 import { api, errText } from '../api/client'
@@ -91,6 +91,7 @@ export default function RunAnalysisModal({
   const [targetsOk, setTargetsOk] = useState(false) // …and a failed list is not an empty one
   const [queueSettled, setQueueSettled] = useState(false) // the ungated queue-depth call has come back
   const [loadErr, setLoadErr] = useState('')
+  const [optionalExpanded, setOptionalExpanded] = useState(true)
 
   // Presets carry the admin's run-form defaults with them, so reading them warm and reading them
   // live must apply the same rules — hence one function, used by both. The workflow default is
@@ -173,6 +174,13 @@ export default function RunAnalysisModal({
   const enabledPresets = useMemo(() => presets.filter((p) => p.enabled), [presets])
   const target = useMemo(() => targets.find((tg) => tg.id === targetId), [targets, targetId])
   const inputs = target?.inputs || []
+  const requiredInputs = inputs.filter((i) => i.required)
+  const optionalInputs = inputs.filter((i) => !i.required)
+
+  useEffect(() => {
+    if (!open) return
+    setOptionalExpanded(!target?.collapse_optional_inputs)
+  }, [open, target?.id, target?.collapse_optional_inputs])
 
   // A pinned entry-button shortcut opens the modal with a specific workflow already chosen.
   useEffect(() => {
@@ -223,7 +231,8 @@ export default function RunAnalysisModal({
     }
     let vals: Record<string, unknown>
     try {
-      vals = await form.validateFields()
+      const visibleVals = await form.validateFields()
+      vals = { ...form.getFieldsValue(true), ...visibleVals }
     } catch {
       return
     }
@@ -297,6 +306,28 @@ export default function RunAnalysisModal({
         ? t('run.queueIdle')
         : t('run.queueFree', { n: budget - running })
 
+  const renderInput = (i: PluginInput) => (
+    <Form.Item
+      className={i.type === 'paragraph' || isFileInput(i.type) ? 'rp-run-input--wide' : undefined}
+      key={i.key}
+      name={i.key}
+      label={i.label || i.key}
+      rules={
+        i.required
+          ? [
+              {
+                required: true,
+                type: isFileInput(i.type) ? 'array' : undefined,
+                message: t('run.required', { field: i.label || i.key }),
+              },
+            ]
+          : []
+      }
+    >
+      {inputControl(i, target?.id ?? 0)}
+    </Form.Item>
+  )
+
   return (
     <Modal
       title={
@@ -312,6 +343,8 @@ export default function RunAnalysisModal({
       cancelText={t('common.cancel')}
       onCancel={onClose}
       destroyOnHidden
+      width={980}
+      className="rp-run-analysis-modal"
     >
       {loading ? (
         // A spinner is the honest answer while the workflow list is on the wire. What used to be
@@ -324,86 +357,102 @@ export default function RunAnalysisModal({
       ) : !targetsOk && loadErr ? (
         <Alert type="error" showIcon message={t('common.loadFailedContent')} description={loadErr} />
       ) : (
-      <Space direction="vertical" size={14} style={{ width: '100%' }}>
-        {runnable.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          {runnable.length === 0 && <Alert type="info" showIcon message={t('run.noTargets')} />}
 
-        <div>
-          <Typography.Text type="secondary">{t('run.workflow')}</Typography.Text>
-          <Select
-            showSearch
-            optionFilterProp="label"
-            style={{ width: '100%', marginTop: 4 }}
-            placeholder={t('run.selectWorkflow')}
-            value={targetId}
-            onChange={pickTarget}
-            options={runnable.map((tg) => ({ value: tg.id, label: tg.name }))}
-          />
-        </div>
+          <div className="rp-run-analysis-layout">
+            <section className="rp-run-analysis-panel">
+              <Typography.Title level={5} className="rp-run-analysis-panel__title">
+                {t('run.inputs')}
+              </Typography.Title>
 
-        {target && (
-          <Form form={form} layout="vertical" requiredMark style={{ marginBottom: -8 }}>
-            {inputs.map((i) => (
-              <Form.Item
-                key={i.key}
-                name={i.key}
-                label={i.label || i.key}
-                // A file field holds a list of uploaded files, and the rule has to say so: a rule
-                // with no type validates as a string, which rejects the list outright — a required
-                // file input would then refuse every value, uploaded file included.
-                rules={
-                  i.required
-                    ? [
-                        {
-                          required: true,
-                          type: isFileInput(i.type) ? 'array' : undefined,
-                          message: t('run.required', { field: i.label || i.key }),
-                        },
-                      ]
-                    : []
-                }
-              >
-                {inputControl(i, target.id)}
-              </Form.Item>
-            ))}
-            {inputs.length === 0 && <Typography.Text type="secondary">{t('run.noInputs')}</Typography.Text>}
-          </Form>
-        )}
+              <div className="rp-run-analysis-workflow">
+                <Typography.Text type="secondary">{t('run.workflow')}</Typography.Text>
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  style={{ width: '100%', marginTop: 4 }}
+                  placeholder={t('run.selectWorkflow')}
+                  value={targetId}
+                  onChange={pickTarget}
+                  options={runnable.map((tg) => ({ value: tg.id, label: tg.name }))}
+                />
+              </div>
 
-        {/* Run quota (ADR 0022 R2): shown only to a capped (external) member, so internal users
-            and admins see the form exactly as before. The window is part of the sentence — "2 of 5
-            left" is a different fact depending on whether it refills tomorrow or never. */}
-        {quota?.limited && (
-          // The exact refill moment sits in a tooltip rather than in the line. "2 of 5 left today"
-          // is what somebody about to run needs; WHEN the 0 becomes a 5 is what they need only once
-          // they have hit it, and the server has always sent it — nothing rendered it, so the answer
-          // to "when can I run again" was in the payload and on no screen.
-          <Tooltip title={quota.resets_at ? t('run.quotaResetsAt', { when: formatReportDateTime(quota.resets_at) }) : undefined}>
-            <Typography.Text type={(quota.remaining ?? 0) <= 0 ? 'danger' : 'secondary'}>
-              {t(`run.quotaRemaining.${quotaPeriod(quota.period)}`, {
-                remaining: quota.remaining ?? 0,
-                limit: quota.limit ?? 0,
-              })}
-            </Typography.Text>
-          </Tooltip>
-        )}
+              {target && (
+                <Form form={form} layout="vertical" requiredMark className="rp-run-input-form">
+                  <div className="rp-run-input-grid">
+                    {target.collapse_optional_inputs ? requiredInputs.map(renderInput) : inputs.map(renderInput)}
 
-        <RunScheduleControls value={schedule} onChange={setSchedule} presets={enabledPresets} tickets={tickets} showRule={defaults.showPresetRule} />
+                    {target.collapse_optional_inputs && optionalInputs.length > 0 && (
+                      <div className="rp-run-optional-section">
+                        <Button
+                          type="text"
+                          block
+                          className="rp-run-optional-toggle"
+                          aria-expanded={optionalExpanded}
+                          aria-label={t('run.optionalInputs', { n: optionalInputs.length })}
+                          onClick={() => setOptionalExpanded((expanded) => !expanded)}
+                        >
+                          <span>{t('run.optionalInputs', { n: optionalInputs.length })}</span>
+                          <DownOutlined rotate={optionalExpanded ? 180 : 0} />
+                        </Button>
+                        {optionalExpanded && <div className="rp-run-input-grid">{optionalInputs.map(renderInput)}</div>}
+                      </div>
+                    )}
+                  </div>
+                  {inputs.length === 0 && <Typography.Text type="secondary">{t('run.noInputs')}</Typography.Text>}
+                </Form>
+              )}
+            </section>
 
-        <div>
-          <span style={{ marginRight: 8 }}>{t('batch.maxRetries')}：</span>
-          <InputNumber min={0} max={5} value={retries} onChange={(v) => setRetries(v ?? 0)} />
-        </div>
+            <aside className="rp-run-analysis-panel rp-run-analysis-settings">
+              <Typography.Title level={5} className="rp-run-analysis-panel__title">
+                {t('run.settings')}
+              </Typography.Title>
 
-        {mailEnabled && email && (
-          <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>
-            {t('batch.notifyDone')}
-          </Checkbox>
-        )}
+              <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+                {/* Run quota (ADR 0022 R2): shown only to a capped member. The exact refill
+                    moment stays in a tooltip so the primary line remains easy to scan. */}
+                {quota?.limited && (
+                  <Tooltip title={quota.resets_at ? t('run.quotaResetsAt', { when: formatReportDateTime(quota.resets_at) }) : undefined}>
+                    <Typography.Text type={(quota.remaining ?? 0) <= 0 ? 'danger' : 'secondary'}>
+                      {t(`run.quotaRemaining.${quotaPeriod(quota.period)}`, {
+                        remaining: quota.remaining ?? 0,
+                        limit: quota.limit ?? 0,
+                      })}
+                    </Typography.Text>
+                  </Tooltip>
+                )}
 
-        {/* Nothing at all if the depth never arrived: the banner exists to describe the queue,
-            and with no answer it has nothing to describe. */}
-        {(queue || !queueSettled) && <Alert type={!queue ? 'info' : busy ? 'warning' : 'success'} showIcon message={queueMsg} />}
-      </Space>
+                <RunScheduleControls
+                  value={schedule}
+                  onChange={setSchedule}
+                  presets={enabledPresets}
+                  tickets={tickets}
+                  showRule={defaults.showPresetRule}
+                />
+
+                <div className="rp-run-analysis-retries">
+                  <Typography.Text>{t('batch.maxRetries')}：</Typography.Text>
+                  <InputNumber min={0} max={5} value={retries} onChange={(v) => setRetries(v ?? 0)} />
+                </div>
+
+                {mailEnabled && email && (
+                  <Checkbox checked={notify} onChange={(e) => setNotify(e.target.checked)}>
+                    {t('batch.notifyDone')}
+                  </Checkbox>
+                )}
+
+                {/* Nothing at all if the depth never arrived: the banner exists to describe the
+                    queue, and with no answer it has nothing to describe. */}
+                {(queue || !queueSettled) && (
+                  <Alert type={!queue ? 'info' : busy ? 'warning' : 'success'} showIcon message={queueMsg} />
+                )}
+              </Space>
+            </aside>
+          </div>
+        </Space>
       )}
     </Modal>
   )

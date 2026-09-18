@@ -74,7 +74,8 @@ func TestDifyTargetEditRoundTrip(t *testing.T) {
 
 	// PUT with a blank api_key updates name + inputs and preserves the stored key.
 	body := `{"name":"New name","base_url":"https://dify.example/v1","api_key":"",` +
-		`"inputs":[{"variable":"symbol","required":true},{"variable":"rumor"}]}`
+		`"inputs":[{"variable":"symbol","required":true},{"variable":"rumor"}],` +
+		`"collapse_optional_inputs":true}`
 	if code := putTarget(t, s.apiBatchDifyTargetUpdate, id, body); code != http.StatusOK {
 		t.Fatalf("PUT → %d", code)
 	}
@@ -90,8 +91,15 @@ func TestDifyTargetEditRoundTrip(t *testing.T) {
 	if len(after.Inputs) != 2 || after.Inputs[1].Variable != "rumor" {
 		t.Errorf("inputs = %+v", after.Inputs)
 	}
+	if !after.CollapseOptionalInputs {
+		t.Error("collapse_optional_inputs was not stored")
+	}
+	if code, got = getTarget(t, s.apiBatchDifyTargetGet, id); code != http.StatusOK || got["collapse_optional_inputs"] != true {
+		t.Fatalf("GET collapse_optional_inputs = %v (status %d), want true", got["collapse_optional_inputs"], code)
+	}
 
-	// A fresh api_key rotates the stored one.
+	// A fresh api_key rotates the stored one. Omitting the presentation preference preserves it,
+	// just as omitting output_subtype/symbol_input preserves those independently-edited fields.
 	if code := putTarget(t, s.apiBatchDifyTargetUpdate, id,
 		`{"name":"New name","base_url":"https://dify.example/v1","api_key":"app-rotated","inputs":[{"variable":"symbol"}]}`); code != http.StatusOK {
 		t.Fatalf("PUT2 → %d", code)
@@ -100,6 +108,30 @@ func TestDifyTargetEditRoundTrip(t *testing.T) {
 	json.Unmarshal([]byte(tgt.Config), &after)
 	if after.APIKey != "app-rotated" {
 		t.Errorf("api_key = %q, want app-rotated", after.APIKey)
+	}
+	if !after.CollapseOptionalInputs {
+		t.Error("an update that omitted collapse_optional_inputs cleared it")
+	}
+	if got := s.targetJSON(tgt)["collapse_optional_inputs"]; got != true {
+		t.Errorf("target list collapse_optional_inputs = %v, want true", got)
+	}
+}
+
+func TestDifyTargetAddStoresCollapseOptionalInputs(t *testing.T) {
+	s := batchServer(t)
+	if err := s.st.UpsertPlugin(difyPluginSlug, "Dify", "1.0.0", "{}", "bundled"); err != nil {
+		t.Fatalf("UpsertPlugin: %v", err)
+	}
+	added := post(t, s.apiBatchDifyTargetAdd,
+		`{"name":"New workflow","base_url":"https://dify.example/v1","api_key":"app-secret",`+
+			`"inputs":[{"variable":"symbol","required":true}],"collapse_optional_inputs":true}`)
+	id := int64(added["id"].(float64))
+	tgt, ok := s.st.GetTarget(id)
+	if !ok {
+		t.Fatalf("created target %d not found", id)
+	}
+	if got := s.targetJSON(tgt)["collapse_optional_inputs"]; got != true {
+		t.Errorf("collapse_optional_inputs = %v, want true", got)
 	}
 }
 

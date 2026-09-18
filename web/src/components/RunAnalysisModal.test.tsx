@@ -36,7 +36,15 @@ vi.mock('../lib/prefetch', () => ({
       ? url.endsWith('/targets')
         ? {
             targets: [
-              { id: 1, name: 'Daily', plugin_slug: 'dify', created_at: '', mode: 'workflow', inputs: warm.inputs },
+              {
+                id: 1,
+                name: 'Daily',
+                plugin_slug: 'dify',
+                created_at: '',
+                mode: 'workflow',
+                inputs: warm.inputs,
+                collapse_optional_inputs: warm.collapseOptional,
+              },
               ...warm.extraTargets,
             ],
           }
@@ -50,6 +58,7 @@ const warm = vi.hoisted(() => ({
   extraTargets: [] as Array<Record<string, unknown>>,
   presets: [] as Array<Record<string, unknown>>,
   defaults: {} as Record<string, unknown>,
+  collapseOptional: false,
 }))
 
 describe('RunAnalysisModal with the shell-warmed answers already in hand', () => {
@@ -157,6 +166,27 @@ describe('RunAnalysisModal draws each input as its declared type', () => {
     await screen.findByText('run.workflow')
     warm.on = false
   }
+
+  afterEach(() => {
+    warm.collapseOptional = false
+  })
+
+  it('uses the split layout and opens target-configured optional inputs on demand', async () => {
+    const user = userEvent.setup()
+    warm.collapseOptional = true
+    await open([
+      { key: 'symbol', label: 'Symbol', required: true },
+      { key: 'context', label: 'Context' },
+      { key: 'policy', label: 'Policy' },
+    ])
+
+    expect(document.body.querySelector('.rp-run-analysis-layout')).toBeTruthy()
+    expect(screen.getByLabelText('Symbol')).toBeTruthy()
+    expect(screen.queryByLabelText('Context')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'run.optionalInputs:{"n":2}' }))
+    expect(await screen.findByLabelText('Context')).toBeTruthy()
+    expect(screen.getByLabelText('Policy')).toBeTruthy()
+  })
 
   it('gives a paragraph a textarea, a number a spinner and a select its options', async () => {
     await open([
