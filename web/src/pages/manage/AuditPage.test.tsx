@@ -92,6 +92,31 @@ describe('AuditPage', () => {
     expect(await screen.findByText('客户A')).toBeTruthy()
   })
 
+  // An empty actor means two different things and the column used to say "API token" for both. A
+  // refused sign-in has no actor AT ALL: nobody authenticated, and the attempted account — the name
+  // somebody scanning for attacks is looking for — is in the target column.
+  it('names the attempted account on a refused sign-in, rather than claiming a token', async () => {
+    apiMock.get.mockResolvedValue({
+      ...RESP,
+      items: [
+        { id: 1, at: '2026-08-01 08:00:00', actor: '', actor_ou: 0, action: 'auth.login_failed',
+          target_type: 'user', target_id: 'attacker', detail: '{"reason":"bad_password"}' },
+        { id: 2, at: '2026-08-01 07:00:00', actor: '', actor_ou: 0, action: 'auth.lockout',
+          target_type: 'user', target_id: 'victim', detail: '{"scope":"login"}' },
+      ],
+    })
+    const { container } = mount()
+    await screen.findAllByText(/attacker/) // once as the object, once as the actor
+    // Counted rather than located: the account appears once as the OBJECT and once as the ACTOR,
+    // and the machine label appears nowhere. Before this the account appeared once and every refused
+    // row claimed a token.
+    const table = container.querySelector('table')!
+    const text = table.textContent ?? ''
+    expect(text.match(/attacker/g)).toHaveLength(2)
+    expect(text.match(/victim/g)).toHaveLength(2)
+    expect(text).not.toContain('audit.machine')
+  })
+
   it('says a machine acted instead of leaving the actor blank', async () => {
     mount()
     // An empty cell reads as a bug; "(API token)" reads as a fact.
@@ -143,7 +168,8 @@ describe('AuditPage', () => {
       ],
     })
     const { container } = mount()
-    await screen.findByText(/alice/)
+    // Twice, since the attempted account is now both the object and the actor.
+    await screen.findAllByText(/alice/)
     // The t() stub returns the key, so what shows is the vocabulary key the renderer chose — which
     // is the part under test. The field it replaced is gone.
     const column = detailText(container)

@@ -35,6 +35,23 @@ import { clickable } from '../../lib/clickable'
 // the same one runSchedule's summary helpers take.
 type TFunc = (key: string, opts?: Record<string, unknown>) => string
 
+// Actions recorded BEFORE anybody has authenticated.
+//
+// An empty actor means two different things, and the column must not fold them together. A token
+// holder has no username — that really is a machine. A refused sign-in has no actor at all: nobody
+// authenticated, so there is nobody to name, and the account that was TRIED is the only name the row
+// carries. Printing "API token" for the second asserts a caller that never existed, and it buries
+// the one thing an operator scanning for attacks is looking for — which account somebody tried.
+const PRE_AUTH_ACTIONS = new Set(['auth.login_failed', 'auth.lockout'])
+
+function actorOf(r: AuditEntry, t: TFunc): string {
+  if (r.actor) return r.actor
+  // The attempted account, which the server records as the target for exactly this reason: an
+  // account's timeline is one target filter whether the actor was its holder or nobody.
+  if (PRE_AUTH_ACTIONS.has(r.action)) return r.target_id || '—'
+  return t('audit.machine')
+}
+
 // A pair of fields that is one change. Read as two fields it has to be diffed by eye — and the
 // server stores them in a map, so they arrive alphabetically and "after" comes first.
 //
@@ -277,7 +294,7 @@ export default function AuditPage() {
       render: (_, r) => (
         <Space orientation="vertical" size={0}>
           {/* A machine caller has no username. Saying so beats an empty cell, which reads as a bug. */}
-          <Typography.Text>{r.actor || t('audit.machine')}</Typography.Text>
+          <Typography.Text>{actorOf(r, t)}</Typography.Text>
           {r.actor_ou > 0 && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {/* The OU they were in AT THE TIME — not where they are now. */}
@@ -468,7 +485,7 @@ export default function AuditPage() {
           </Typography.Text>
         </div>
         <div className="rp-audit-row__meta">
-          <Typography.Text style={{ fontSize: 13 }}>{r.actor || t('audit.machine')}</Typography.Text>
+          <Typography.Text style={{ fontSize: 13 }}>{actorOf(r, t)}</Typography.Text>
           {r.actor_ou > 0 && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {ouNames[String(r.actor_ou)] ?? `OU ${r.actor_ou}`}
@@ -635,7 +652,7 @@ export default function AuditPage() {
           <Descriptions bordered size="small" column={1} layout={mobile ? 'vertical' : 'horizontal'}>
             <Descriptions.Item label={t('audit.at')}>{auditTime(row.at, data?.timezone ?? '').text}</Descriptions.Item>
             <Descriptions.Item label={t('audit.actor')}>
-              {row.actor || t('audit.machine')}
+              {actorOf(row, t)}
               {row.actor_ou > 0 ? ` · ${ouNames[String(row.actor_ou)] ?? `OU ${row.actor_ou}`}` : ''}
             </Descriptions.Item>
             <Descriptions.Item label={t('audit.ipFilter')}>
