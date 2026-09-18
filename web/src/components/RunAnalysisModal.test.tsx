@@ -207,6 +207,8 @@ describe('RunAnalysisModal draws each input as its declared type', () => {
 
     await user.click(screen.getByRole('button', { name: 'run.inputHelp:{"field":"Report date"}' }))
     expect(await screen.findByText('Supplied by the parent caller')).toBeTruthy()
+    expect(document.body.querySelector('.rp-run-input-help .anticon-info-circle')).toBeTruthy()
+    expect(document.body.querySelector('.rp-run-input-help .anticon-question-circle')).toBeNull()
   })
 
   it('gives a paragraph a textarea, a number a spinner and a select its options', async () => {
