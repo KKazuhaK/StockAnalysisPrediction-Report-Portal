@@ -264,7 +264,7 @@ export default function AuditPage() {
     {
       title: t('audit.at'),
       dataIndex: 'at',
-      width: 190,
+      width: 160,
       // The panel timezone, with the reader's own beneath it only when the two differ — an operator
       // abroad reading a log about a business day elsewhere needs both, and everyone else needs one.
       render: (v: string) => {
@@ -290,7 +290,7 @@ export default function AuditPage() {
     },
     {
       title: t('audit.actor'),
-      width: 210,
+      width: 170,
       render: (_, r) => (
         <Space orientation="vertical" size={0}>
           {/* A machine caller has no username. Saying so beats an empty cell, which reads as a bug. */}
@@ -328,7 +328,7 @@ export default function AuditPage() {
     },
     {
       title: t('audit.action'),
-      width: 150,
+      width: 135,
       render: (_, r) => <Tag color={ACTION_COLOR[r.action]}>{t(`audit.a.${r.action}`, r.action)}</Tag>,
     },
     {
@@ -336,7 +336,7 @@ export default function AuditPage() {
       // the identifier the table happens to store. An unknown one stays as it is, which is how a
       // type this build has not been taught still reads.
       title: t('audit.target'),
-      width: 200,
+      width: 150,
       render: (_, r) => (
         <Typography.Text type="secondary">
           {t(`audit.t.${r.target_type}`, r.target_type)} {r.target_id}
@@ -357,7 +357,10 @@ export default function AuditPage() {
       // the scan; this serves the investigation — every field as stored, including the ones the
       // sentence drops for being uninformative, and the payload verbatim for pasting elsewhere.
       title: '',
-      width: 48,
+      width: 44,
+      // Pinned: it is the last thing in the row and the first thing a narrow window pushes off the
+      // right edge, which is exactly the control somebody reaches for when a cell looks wrong.
+      fixed: 'right',
       render: (_, r) => (
         <Button size="small" type="text" icon={<InfoCircleOutlined />} title={t('audit.details')} onClick={() => setRow(r)} />
       ),
@@ -587,10 +590,17 @@ export default function AuditPage() {
           // minimum and turned the page into a horizontal scroller showing a wall of JSON. That is
           // the shape the raw column was already failing in.
           tableLayout="fixed"
-          // The fixed column widths add up to more than a small laptop or a portrait tablet has.
-          // Scrolling the table is the honest answer; squeezing the columns is what produced the
-          // one-character-per-line wrap this page used to show. The detail column takes what is left.
-          scroll={{ x: 1200 }}
+          // The minimum the table may be. Above it the table fills its container and the detail
+          // column takes whatever is left, so a wide screen loses nothing; below it the table
+          // scrolls, which is the honest answer — squeezing these columns is what produced the
+          // one-character-per-line wrap this page used to show.
+          //
+          // 1040 because of a 13" laptop. The manage layout keeps a ~200px sidebar, and a MacBook
+          // Air at a larger-text resolution leaves the content about 1080px. The widths above add to
+          // 704, so the detail column still gets 336 — and the full-record button, which is the last
+          // thing in the row and the first thing a wider minimum pushed off the right edge, stays on
+          // screen. It was 1200, which scrolled on exactly that machine.
+          scroll={{ x: 940 }}
           pagination={{
             current: page,
             pageSize,
