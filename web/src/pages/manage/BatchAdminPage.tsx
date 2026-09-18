@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
+import { Alert, App, Button, Checkbox, Form, Input, Modal, Popconfirm, Popover, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -8,9 +8,76 @@ import { difyModeTag, surfaceSupportsMode } from '../../lib/batchUi'
 import { ALL_SURFACES } from '../../api/types'
 import type { Surface } from '../../api/types'
 import { DragHandle, SortableWrapper, sortableTableComponents } from './dnd'
-import type { BatchPlugin, BatchTarget, DifyInput, DifyRefreshResult, DifyTargetEdit } from '../../api/types'
+import type { BatchPlugin, BatchTarget, DifyInput, DifyRefreshResult, DifyTargetEdit, PluginInput } from '../../api/types'
 import DifyRefreshModal from './DifyRefreshModal'
 import LoadGate from '../../components/LoadGate'
+
+const INPUT_PREVIEW_LIMIT = 3
+
+function InputChip({ input, wrap = false }: { input: PluginInput; wrap?: boolean }) {
+  return (
+    <Tooltip title={input.label && input.label !== input.key ? input.label : undefined}>
+      <Tag
+        color={input.required ? 'blue' : undefined}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          marginInlineEnd: 0,
+          maxWidth: '100%',
+          overflow: wrap ? undefined : 'hidden',
+          whiteSpace: wrap ? 'normal' : 'nowrap',
+        }}
+      >
+        <code
+          style={{
+            display: wrap ? undefined : 'block',
+            minWidth: 0,
+            fontSize: 12,
+            overflow: wrap ? undefined : 'hidden',
+            overflowWrap: wrap ? 'anywhere' : undefined,
+            textOverflow: wrap ? undefined : 'ellipsis',
+          }}
+        >
+          {input.key}
+        </code>
+        {input.required && <span style={{ marginLeft: 3 }}>*</span>}
+      </Tag>
+    </Tooltip>
+  )
+}
+
+export function TargetInputsPreview({ inputs }: { inputs: PluginInput[] }) {
+  const { t } = useTranslation()
+  if (!inputs.length) return <Typography.Text type="secondary">—</Typography.Text>
+  const preview = inputs.slice(0, INPUT_PREVIEW_LIMIT)
+  const hidden = inputs.length - preview.length
+  return (
+    <div className="rp-batch-target-inputs">
+      {preview.map((input) => <InputChip key={input.key} input={input} />)}
+      {hidden > 0 && (
+        <Popover
+          trigger="click"
+          placement="bottomLeft"
+          title={t('batch.admin.inputs')}
+          content={
+            <div className="rp-batch-target-inputs rp-batch-target-inputs--all">
+              {inputs.map((input) => <InputChip key={input.key} input={input} wrap />)}
+            </div>
+          }
+        >
+          <Button
+            type="text"
+            size="small"
+            className="rp-batch-target-inputs__more"
+            aria-label={t('batch.admin.inputsMore', { n: hidden })}
+          >
+            +{hidden}
+          </Button>
+        </Popover>
+      )}
+    </div>
+  )
+}
 
 export default function BatchAdminPage() {
   const { t } = useTranslation()
@@ -116,6 +183,7 @@ export default function BatchAdminPage() {
         api_key: '',
         output_subtype: d.output_subtype || '',
         symbol_input: d.symbol_input || '',
+        collapse_optional_inputs: !!d.collapse_optional_inputs,
       })
       setInputs(d.inputs || [])
       setMode(d.mode || '')
@@ -197,7 +265,7 @@ export default function BatchAdminPage() {
     // the rule is optional, so a blank keeps the stored key while a typed value rotates it.
     let v
     try {
-      v = await form.validateFields(['name', 'base_url', 'api_key', 'output_subtype', 'symbol_input'])
+      v = await form.validateFields(['name', 'base_url', 'api_key', 'output_subtype', 'symbol_input', 'collapse_optional_inputs'])
     } catch {
       return
     }
@@ -215,6 +283,7 @@ export default function BatchAdminPage() {
         inputs,
         output_subtype: v.output_subtype || '',
         symbol_input: v.symbol_input || '',
+        collapse_optional_inputs: !!v.collapse_optional_inputs,
       }
       if (editing) {
         await api.put(`/api/admin/batch/dify/targets/${editingId}`, body)
@@ -296,6 +365,7 @@ export default function BatchAdminPage() {
     { key: 'sort', width: 44, align: 'center', render: () => <DragHandle label={t('common.reorder')} /> },
     {
       title: t('common.name'),
+      width: 220,
       render: (_: unknown, tg: BatchTarget) => (
         <Space size={6}>
           {tg.name}
@@ -308,22 +378,7 @@ export default function BatchAdminPage() {
       // The API already sends label + required for every input; rendering only `key` threw
       // both away and left a row of identical grey chips. `symbol` reads fine, but `n`,
       // `query` and `rumor` do not — and nothing said which ones the run form will demand.
-      render: (_: unknown, tg: BatchTarget) => {
-        const inputs = tg.inputs || []
-        if (!inputs.length) return <Typography.Text type="secondary">—</Typography.Text>
-        return (
-          <Space size={4} wrap>
-            {inputs.map((i) => (
-              <Tooltip key={i.key} title={i.label && i.label !== i.key ? i.label : undefined}>
-                <Tag color={i.required ? 'blue' : undefined} style={{ marginInlineEnd: 0 }}>
-                  <code style={{ fontSize: 12 }}>{i.key}</code>
-                  {i.required && <span style={{ marginLeft: 3 }}>*</span>}
-                </Tag>
-              </Tooltip>
-            ))}
-          </Space>
-        )
-      },
+      render: (_: unknown, tg: BatchTarget) => <TargetInputsPreview inputs={tg.inputs || []} />,
     },
     {
       title: t('batch.admin.surfaces'),
@@ -457,13 +512,15 @@ export default function BatchAdminPage() {
                 {targets.length === 0 && <Typography.Text type="secondary">{t('batch.dify.targetsHint')}</Typography.Text>}
                 <SortableWrapper ids={targets.map((tg) => String(tg.id))} onReorder={reorderTargets}>
                   <Table
+                    className="rp-batch-targets-table"
                     rowKey="id"
                     size="small"
                     dataSource={targets}
                     columns={targetCols}
                     pagination={false}
                     components={sortableTableComponents}
-                    scroll={{ x: 'max-content' }}
+                    tableLayout="fixed"
+                    scroll={{ x: 1100 }}
                   />
                 </SortableWrapper>
                 </LoadGate>
@@ -561,6 +618,16 @@ export default function BatchAdminPage() {
                 <Input placeholder={t('batch.dify.addInputPlaceholder')} value={newVar} onChange={(e) => setNewVar(e.target.value)} onPressEnter={addInput} />
                 <Button onClick={addInput}>{t('common.add')}</Button>
               </Space.Compact>
+
+              <Form.Item
+                name="collapse_optional_inputs"
+                label={t('batch.dify.collapseOptionalInputs')}
+                extra={t('batch.dify.collapseOptionalInputsHint')}
+                valuePropName="checked"
+                style={{ marginTop: 14, marginBottom: 12 }}
+              >
+                <Switch aria-label={t('batch.dify.collapseOptionalInputs')} />
+              </Form.Item>
 
               {/* External-tenancy declarations (ADR 0022). Both are needed before the portal will
                   reuse an existing same-day report instead of running this workflow again. */}

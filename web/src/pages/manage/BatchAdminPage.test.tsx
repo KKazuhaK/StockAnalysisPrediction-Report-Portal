@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { App } from 'antd'
-import BatchAdminPage from './BatchAdminPage'
+import BatchAdminPage, { TargetInputsPreview } from './BatchAdminPage'
 
 const putSpy = vi.fn((_url: string, _body: unknown) => Promise.resolve({ ok: true }))
 
@@ -12,10 +12,29 @@ vi.mock('../../api/client', () => ({
     get: (url: string) => {
       if (url === '/api/admin/batch/targets')
         return Promise.resolve({
-          targets: [{ id: 7, plugin_slug: 'dify', name: 'My workflow', created_at: '2026-07-06 09:00:00', inputs: [{ key: 'symbol' }] }],
+          targets: [{
+            id: 7,
+            plugin_slug: 'dify',
+            name: 'My workflow',
+            created_at: '2026-07-06 09:00:00',
+            inputs: [
+              { key: 'symbol' },
+              { key: 'report_date' },
+              { key: 'information_cutoff' },
+              { key: 'policy_config_json' },
+              { key: 'portfolio_context_json' },
+            ],
+          }],
         })
       if (url === '/api/admin/batch/dify/targets/7')
-        return Promise.resolve({ id: 7, name: 'My workflow', base_url: 'https://dify.example/v1', inputs: [{ variable: 'symbol', required: true }], has_key: true })
+        return Promise.resolve({
+          id: 7,
+          name: 'My workflow',
+          base_url: 'https://dify.example/v1',
+          inputs: [{ variable: 'symbol', required: true }],
+          has_key: true,
+          collapse_optional_inputs: true,
+        })
       return Promise.resolve({ plugins: [] })
     },
     post: () => Promise.resolve({}),
@@ -32,13 +51,42 @@ describe('BatchAdminPage — targets / plugins sub-tabs', () => {
   beforeEach(() => putSpy.mockClear())
 
   it('renders both sub-tabs', async () => {
-    render(
+    const { container } = render(
       <App>
         <BatchAdminPage />
       </App>,
     )
     expect(await screen.findByText('batch.admin.targets')).toBeTruthy()
     expect(await screen.findByText('batch.admin.advancedPlugins')).toBeTruthy()
+
+    // Input chips must share the available inputs column instead of contributing their
+    // combined max-content width to the table. A bounded fixed-layout table lets the compact
+    // preview stay inside that column while retaining table-local scrolling on narrow screens.
+    const table = container.querySelector<HTMLTableElement>('.rp-batch-targets-table table')
+    expect(table?.style.tableLayout).toBe('fixed')
+    expect(table?.style.width).not.toBe('max-content')
+  })
+
+  it('opens the complete input list from the final overflow chip', async () => {
+    render(
+      <App>
+        <TargetInputsPreview
+          inputs={[
+            { key: 'symbol' },
+            { key: 'report_date' },
+            { key: 'information_cutoff' },
+            { key: 'policy_config_json' },
+            { key: 'portfolio_context_json' },
+          ]}
+        />
+      </App>,
+    )
+
+    // The row stays compact: only the preview is mounted until the explicit last chip opens it.
+    expect(screen.queryByText('policy_config_json')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'batch.admin.inputsMore:{"n":2}' }))
+    expect(await screen.findByText('policy_config_json')).toBeTruthy()
+    expect(screen.getByText('portfolio_context_json')).toBeTruthy()
   })
 
   it('edits a Dify target through the modal and saves via PUT', async () => {
@@ -69,5 +117,6 @@ describe('BatchAdminPage — targets / plugins sub-tabs', () => {
     expect(body.base_url).toBe('https://dify.example/v1')
     expect(body.api_key).toBe('app-newkey')
     expect(Array.isArray(body.inputs)).toBe(true)
+    expect(body.collapse_optional_inputs).toBe(true)
   })
 })

@@ -19,6 +19,126 @@ body {
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
+/* Keep workflow inputs to one compact preview row. The final count button opens the complete,
+   wrapping list without letting either view contribute an unbounded intrinsic table width. */
+.rp-batch-target-inputs {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.rp-batch-target-inputs > .ant-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.rp-batch-target-inputs__more.ant-btn {
+  flex: none;
+  height: 22px;
+  padding-inline: 7px;
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: 4px;
+  background: var(--ant-color-fill-quaternary);
+  color: var(--ant-color-text-secondary);
+  line-height: 20px;
+}
+.rp-batch-target-inputs--all {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  width: min(520px, calc(100vw - 64px));
+  overflow: visible;
+}
+
+/* Run analysis is a desktop work surface: inputs use the wide side while scheduling stays in a
+   stable rail. The modal body scrolls as one unit when an expanded workflow still needs height. */
+.rp-run-analysis-modal .ant-modal-body {
+  max-height: min(720px, calc(100dvh - 190px));
+  overflow-y: auto;
+}
+.rp-run-analysis-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  gap: 24px;
+  align-items: start;
+}
+.rp-run-analysis-panel {
+  min-width: 0;
+}
+.rp-run-analysis-panel__title.ant-typography {
+  margin: 0 0 16px;
+}
+.rp-run-analysis-settings {
+  padding-inline-start: 24px;
+  border-inline-start: 1px solid var(--ant-color-border-secondary);
+}
+.rp-run-analysis-workflow {
+  margin-bottom: 18px;
+}
+.rp-run-input-form.ant-form {
+  margin-bottom: -16px;
+}
+.rp-run-input-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 14px;
+}
+.rp-run-input-grid > .ant-form-item {
+  min-width: 0;
+  margin-bottom: 16px;
+}
+.rp-run-input--wide,
+.rp-run-optional-section {
+  grid-column: 1 / -1;
+}
+.rp-run-optional-section {
+  min-width: 0;
+}
+.rp-run-optional-toggle.ant-btn {
+  display: flex;
+  justify-content: space-between;
+  height: 38px;
+  margin-bottom: 12px;
+  padding-inline: 12px;
+  border: 1px solid var(--ant-color-border-secondary);
+  background: var(--ant-color-fill-quaternary);
+  color: var(--ant-color-text-secondary);
+  font-weight: 500;
+}
+.rp-run-optional-toggle .anticon {
+  transition: transform 160ms ease;
+}
+.rp-run-analysis-retries {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 767px) {
+  .rp-run-analysis-modal .ant-modal-body {
+    max-height: calc(100dvh - 180px);
+  }
+  .rp-run-analysis-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
+  .rp-run-analysis-settings {
+    padding-block-start: 22px;
+    padding-inline-start: 0;
+    border-block-start: 1px solid var(--ant-color-border-secondary);
+    border-inline-start: 0;
+  }
+  .rp-run-input-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rp-run-input--wide,
+  .rp-run-optional-section {
+    grid-column: auto;
+  }
+}
+
 .rp-home-search-row {
   width: min(780px, 100%);
   margin: 0 auto;

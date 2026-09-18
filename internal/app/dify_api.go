@@ -76,11 +76,12 @@ func (s *Server) apiBatchDifyProbe(w http.ResponseWriter, r *http.Request, user 
 // apiBatchDifyTargetAdd creates a Dify target from a (probed or hand-entered) config.
 func (s *Server) apiBatchDifyTargetAdd(w http.ResponseWriter, r *http.Request, user string) {
 	var in struct {
-		Name    string       `json:"name"`
-		BaseURL string       `json:"base_url"`
-		APIKey  string       `json:"api_key"`
-		Mode    string       `json:"mode"`
-		Inputs  []dify.Input `json:"inputs"`
+		Name                   string       `json:"name"`
+		BaseURL                string       `json:"base_url"`
+		APIKey                 string       `json:"api_key"`
+		Mode                   string       `json:"mode"`
+		Inputs                 []dify.Input `json:"inputs"`
+		CollapseOptionalInputs bool         `json:"collapse_optional_inputs"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		jsonError(w, http.StatusBadRequest, "bad json")
@@ -91,7 +92,8 @@ func (s *Server) apiBatchDifyTargetAdd(w http.ResponseWriter, r *http.Request, u
 		jsonError(w, http.StatusBadRequest, "name, base_url and api_key are required")
 		return
 	}
-	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Mode: in.Mode, Inputs: in.Inputs})
+	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Mode: in.Mode, Inputs: in.Inputs,
+		CollapseOptionalInputs: in.CollapseOptionalInputs})
 	id, err := s.st.CreateTarget(difyPluginSlug, name, string(cfg))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -124,6 +126,7 @@ func (s *Server) apiBatchDifyTargetGet(w http.ResponseWriter, r *http.Request, u
 		"id": tgt.ID, "name": tgt.Name, "base_url": cfg.BaseURL, "mode": cfg.Mode,
 		"inputs": inputs, "has_key": cfg.APIKey != "",
 		"output_subtype": cfg.OutputSubtype, "symbol_input": cfg.SymbolInput,
+		"collapse_optional_inputs": cfg.CollapseOptionalInputs,
 	})
 }
 
@@ -137,11 +140,12 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var in struct {
-		Name    string       `json:"name"`
-		BaseURL string       `json:"base_url"`
-		APIKey  string       `json:"api_key"`
-		Mode    string       `json:"mode"`
-		Inputs  []dify.Input `json:"inputs"`
+		Name                   string       `json:"name"`
+		BaseURL                string       `json:"base_url"`
+		APIKey                 string       `json:"api_key"`
+		Mode                   string       `json:"mode"`
+		Inputs                 []dify.Input `json:"inputs"`
+		CollapseOptionalInputs *bool        `json:"collapse_optional_inputs"`
 		// Pointers so an omitted field keeps the stored value (an ordinary rename must never wipe
 		// them and silently disable same-day reuse), while an explicit "" clears it.
 		OutputSubtype *string `json:"output_subtype"`
@@ -159,11 +163,15 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 	var cur difyTargetConfig
 	json.Unmarshal([]byte(tgt.Config), &cur)
 	subtype, symbolInput := cur.OutputSubtype, cur.SymbolInput
+	collapseOptionalInputs := cur.CollapseOptionalInputs
 	if in.OutputSubtype != nil {
 		subtype = strings.TrimSpace(*in.OutputSubtype)
 	}
 	if in.SymbolInput != nil {
 		symbolInput = strings.TrimSpace(*in.SymbolInput)
+	}
+	if in.CollapseOptionalInputs != nil {
+		collapseOptionalInputs = *in.CollapseOptionalInputs
 	}
 	if key == "" {
 		key = cur.APIKey // blank → keep the stored key
@@ -177,7 +185,7 @@ func (s *Server) apiBatchDifyTargetUpdate(w http.ResponseWriter, r *http.Request
 		mode = cur.Mode // blank → keep the stored mode
 	}
 	cfg, _ := json.Marshal(difyTargetConfig{BaseURL: base, APIKey: key, Mode: mode, Inputs: in.Inputs,
-		OutputSubtype: subtype, SymbolInput: symbolInput})
+		OutputSubtype: subtype, SymbolInput: symbolInput, CollapseOptionalInputs: collapseOptionalInputs})
 	if err := s.st.UpdateTarget(tgt.ID, name, string(cfg)); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
