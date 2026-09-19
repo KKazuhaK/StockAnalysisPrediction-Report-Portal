@@ -4,12 +4,24 @@ One file per release, the same text as the annotated git tag (`git tag -n99 <tag
 still where a release is cut; these exist so the notes are readable in the repo and in a diff,
 which a tag message is not.
 
-Cutting one — the commit argument is optional and defaults to HEAD:
+Cutting one — the version and the commit are both optional:
 
 ```sh
-scripts/tag-release.sh v2026.38
+scripts/tag-release.sh --next     # print the number it would use, change nothing
+scripts/tag-release.sh            # derive that number, tag HEAD
 git push origin v2026.38
 ```
+
+Without a version, the script derives one: **the week comes from the clock** (the current UTC ISO
+week) and **the revision from what this checkout has** — it cuts the highest release note written for
+this week that has no tag on it yet, so the note you just wrote is the release you get. With every
+note for the week already tagged, the week is continuing rather than starting and it takes the next
+revision. It reads local tags and the working tree only, so a clone that has not fetched cannot see a
+tag cut elsewhere; naming the version explicitly is the escape hatch, and it is validated the same
+way.
+
+The tag's message is the release note, so a number with no `docs/releases/<tag>.md` in the tagged
+commit cannot be cut — the script names the file to write and stops.
 
 The push is a separate, deliberate command because it is the irreversible step; the script never
 pushes. It refuses a version with no note, a tag that already exists, a tag that is not CalVer, and —

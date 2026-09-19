@@ -9,8 +9,10 @@
 # Until now that lived in whoever cut the last one's memory, which is why v0.4.42 and v0.4.43 sat on
 # main untagged.
 #
-#   scripts/tag-release.sh v2026.38 dacc4328       tags that commit
-#   scripts/tag-release.sh v2026.38                tags HEAD
+#   scripts/tag-release.sh                 derives this week's number and tags HEAD
+#   scripts/tag-release.sh dacc4328        the same, on that commit
+#   scripts/tag-release.sh --next          prints the number it would derive, and changes nothing
+#   scripts/tag-release.sh v2026.38.2      that exact number, without deriving anything
 #
 # The examples carry no trailing '#' comment on purpose: zsh does not enable INTERACTIVE_COMMENTS,
 # so a line copied out of documentation with an explanation after it hands the '#' to this script as
@@ -30,14 +32,32 @@ here=$(dirname -- "$0")
 . "$here/lib/calver.sh"
 
 usage() {
-    echo "usage: $0 <version> [commit]" >&2
-    echo "  e.g. $0 v$(calver_current_week).1 dacc4328   (commit defaults to HEAD)" >&2
+    echo "usage: $0 [--next] [version] [commit]" >&2
+    echo "  version is optional: without it the number is derived from this week and the tags and" >&2
+    echo "  release notes this checkout already has. This week is $(calver_current_week)." >&2
+    echo "  e.g. $0            # derive, tag HEAD" >&2
+    echo "       $0 dacc4328   # derive, tag that commit" >&2
+    echo "       $0 --next     # just print the number" >&2
     exit 2
 }
 
-[ $# -ge 1 ] || usage
-version=$1
-commit=${2:-HEAD}
+next_only=0
+explicit=0
+version=""
+commit="HEAD"
+
+for arg in "$@"; do
+    case "$arg" in
+        --next) next_only=1 ;;
+        -h | --help) usage ;;
+        # A version is the only argument that starts with a v; anything else is a revision.
+        v*)
+            version=$arg
+            explicit=1
+            ;;
+        *) commit=$arg ;;
+    esac
+done
 
 # See the note above: '#' reaching here means a copied comment, not a revision. Without this the
 # failure is `git rev-parse` saying "Needed a single revision", which names neither the argument
@@ -66,11 +86,73 @@ semver_like() {
     }'
 }
 
-if semver_like "$version"; then
+if [ "$explicit" = 1 ] && semver_like "$version"; then
     echo "error: '$version' is a SemVer tag. The v0.x line ended at v0.4.72, which is the" >&2
     echo "       database bridge and is not a CalVer release. New tags are vYYYY.W[.R]:" >&2
-    echo "       this week is $(calver_current_week), so e.g. v$(calver_current_week).1" >&2
+    echo "       this week is $(calver_current_week), so e.g. v$(calver_current_week)" >&2
     exit 1
+fi
+
+root=$(git rev-parse --show-toplevel)
+
+# in_list NEEDLE HAYSTACK — the haystack is newline-separated words.
+in_list() {
+    for _x in $2; do
+        if [ "$_x" = "$1" ]; then return 0; fi
+    done
+    return 1
+}
+
+# derive_version — the number a maintainer would pick by hand, from the clock and this checkout.
+#
+# Only the WEEK is computed: the clock knows it and nothing else decides it. The revision comes from
+# what is already here — release notes written for this week, and tags already cut for it — and the
+# rule is the first one a person would apply: cut the note you just wrote. That is the highest
+# release note for this week with no tag on it yet. With every note already tagged, the week is
+# continuing rather than starting, so it is the revision after everything this week already has.
+#
+# It reads local tags and the working tree only. A clone that has not fetched cannot see a tag cut
+# elsewhere, which is why naming the version explicitly still works and stays the escape hatch.
+derive_version() {
+    _week=$(calver_current_week)
+
+    _notes=""
+    for _f in "$root"/docs/releases/v"$_week"*.md; do
+        [ -f "$_f" ] || continue # an unmatched glob arrives here as its own literal text
+        _t=$(basename "$_f" .md)
+        if calver_valid "$_t"; then _notes="$_notes$_t
+"; fi
+    done
+
+    _tags=""
+    for _t in $(git tag -l "v${_week}*"); do
+        if calver_valid "$_t"; then _tags="$_tags$_t
+"; fi
+    done
+
+    _pending=""
+    for _t in $_notes; do
+        if ! in_list "$_t" "$_tags"; then
+            _pending="$_pending$_t
+"
+        fi
+    done
+    _pick=$(printf '%s' "$_pending" | calver_sort | tail -n 1)
+    if [ -n "$_pick" ]; then
+        printf '%s\n' "$_pick"
+        return 0
+    fi
+
+    _max=$(printf '%s%s' "$_notes" "$_tags" | calver_sort | tail -n 1)
+    if [ -z "$_max" ]; then
+        printf 'v%s\n' "$_week" # nothing this week yet: no revision needed
+        return 0
+    fi
+    printf 'v%s.%d\n' "$_week" "$(( $(calver_tuple "$_max" | awk '{print $3}') + 1 ))"
+}
+
+if [ -z "$version" ]; then
+    version=$(derive_version)
 fi
 
 if ! calver_valid "$version"; then
@@ -83,10 +165,18 @@ if ! calver_valid "$version"; then
     exit 1
 fi
 
-root=$(git rev-parse --show-toplevel)
+if [ "$next_only" = 1 ]; then
+    printf '%s\n' "$version"
+    exit 0
+fi
+
 note="$root/docs/releases/$version.md"
 
-[ -f "$note" ] || { echo "error: no release note at docs/releases/$version.md" >&2; exit 1; }
+[ -f "$note" ] || {
+    echo "error: no release note at docs/releases/$version.md" >&2
+    echo "       write it, commit it, then run this again — the tag's message is that file" >&2
+    exit 1
+}
 
 if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
     echo "error: tag $version already exists locally" >&2
