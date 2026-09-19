@@ -7,25 +7,91 @@ which a tag message is not.
 Cutting one — the commit argument is optional and defaults to HEAD:
 
 ```sh
-scripts/tag-release.sh v0.4.42
-git push origin v0.4.42
+scripts/tag-release.sh v2026.38.1
+git push origin v2026.38.1
 ```
 
 The push is a separate, deliberate command because it is the irreversible step; the script never
-pushes. It refuses a version with no note, a tag that already exists, and — the mistake worth
-catching — a commit that does not contain its own release note, which is how a tag ends up
-describing a release the commit predates.
+pushes. It refuses a version with no note, a tag that already exists, a tag that is not CalVer, and —
+the mistake worth catching — a commit that does not contain its own release note, which is how a tag
+ends up describing a release the commit predates. The tag's annotation is taken from that commit, not
+from the working tree.
 
 No trailing `#` comments in that block, on purpose. zsh does not treat `#` as a comment in an
 interactive shell unless `INTERACTIVE_COMMENTS` is set, so a copied line with an explanation after it
 passes the `#` as the commit argument and the script dies on `fatal: Needed a single revision`.
 
-The 0.4 line is where external users, SSO and report versions landed. Read the upgrade section of
-whichever release you are moving TO — the portal is pre-1.0, so per semver each `0.y` bump is a
-major boundary, and a database has to reach the last release of a line before crossing one.
+Releases are CalVer: `vYYYY.W.R`, where `YYYY` is the ISO week-numbering year, `W` the UTC ISO week
+the series starts in, and `R` a revision that starts at 1 and rises for every changed set of
+artifacts. There is no `-beta`: whether a release is a pre-release or a full release is GitHub Release
+metadata, set when the draft is published, and it is what moves `:latest`. See
+[ADR 0034](../adr/0034-calver-baseline-and-database-compatibility-reset.md).
+
+The tag push prepares a **draft** release. Publish it from the GitHub UI as a pre-release or a full
+release; the reconciliation workflow then updates the rolling image channels, promoting the bytes that
+were already published by digest rather than rebuilding them. To re-run that by hand after a missed
+event, dispatch the **Release channels** workflow (with `dry_run` to see the decision first).
+
+## The v2026.38.1 database boundary
+
+The first CalVer release reads exactly one database shape — the **v0.4.72** schema — and converts
+nothing. It is not a compatible numbering cutover:
+
+- **A database at the v0.4.72 shape starts as it always did**, with no migration and no writes.
+- **Anything older is refused before any statement runs.** It must be started once by the v0.4.72
+  binary first, which carries every migration the earlier lines accumulated.
+- Existing release-note files are never back-filled. `v0.4.72` has no note file because the note
+  convention post-dates some of the tags it was cut under; the bridge requirement for it lives here
+  instead.
+
+### Transition runbook
+
+Rehearsed stop-writers → backup → bridge → verify → switch → rollback. `v0.4.72`'s binary and its
+`ghcr.io` image tag are the bridge and must stay retrievable for as long as a rollback must be
+possible.
+
+```sh
+# 1. Stop the portal so nothing is writing, and keep the old config.yaml and secret_key.
+docker compose stop report-portal
+
+# 2. Take a consistent backup with the product's own tool. A raw copy of a live SQLite file is NOT
+#    adequate — it can miss the write-ahead log — and `backup` opens the database through the driver,
+#    so it does not.
+report-portal backup /backup/pre-cutover.jsonl        # 0600; carries password hashes
+
+# 3. Bridge: start the database ONCE with v0.4.72. That release runs the accumulated migrations and
+#    leaves the database at the shape the new one accepts.
+docker run --rm -v /path/to/config:/app/config ghcr.io/kazuhahub/stockanalysisprediction-report-portal:v0.4.72
+#    It is a normal start — let it come up, confirm the portal serves, then stop it.
+
+# 4. Verify before switching: report count and a report reads back; an account signs in; an SSO
+#    connection still decrypts (it needs the same secret_key); the fallback group exists.
+report-portal backup /backup/post-bridge.jsonl
+
+# 5. Switch to the new release. It verifies the shape and writes nothing.
+docker compose pull && docker compose up -d
+```
+
+**Rollback** is the old binary plus the retained pre-cutover database and configuration:
+
+```sh
+docker compose stop report-portal
+cp /backup/pre-cutover.jsonl /backup/rollback.jsonl
+report-portal restore --force /backup/rollback.jsonl     # the v0.4.72 binary, not the new one
+# start the v0.4.72 image again against that database
+```
+
+Do **not** open the post-bridge database with an older binary, and do not restore a dump taken by an
+older release into the new one — restore refuses it, because the dump's columns do not cover the
+current schema. The release that wrote a dump is the release that has to load it.
+
+For a Postgres deployment, `pg_dump -Fc` and `pg_restore` are the equivalents of steps 2 and 5, and
+the same ordering applies: dump before the bridge, restore before reverting the image.
+
 
 | Release | Date | Headline |
 | --- | --- | --- |
+| [v2026.38.1](v2026.38.1.md) | 2026-09-19 | CalVer numbering, and a database compatibility reset |
 | [v0.4.59](v0.4.59.md) | 2026-09-09 | An empty workflow result is not a report |
 | [v0.4.50](v0.4.50.md) | 2026-09-08 | Execution modes and preset-window waiting in the queue |
 | [v0.4.49](v0.4.49.md) | 2026-09-08 | Pick your own dates |
@@ -86,7 +152,13 @@ major boundary, and a database has to reach the last release of a line before cr
 
 ## Upgrade paths that are NOT supported
 
+- **Any database older than v0.4.72, opened directly by a CalVer release.** The first CalVer release
+  reads only the v0.4.72 shape, so the database has to be started once by v0.4.72 first — there is no
+  direct route from v0.3.x or from an earlier v0.4.x to a CalVer release.
 - **v0.4.1 → anything later.** Its adoption steps were removed in v0.4.3, so the portal refuses to
   start rather than mint a second data key and silently lose every sealed secret. Recreate the
-  database, or run v0.4.2 once to migrate it first.
-- **Skipping a 0.y boundary.** A v0.3.x database must reach v0.3.10 before moving to the 0.4 line.
+  database, or run v0.4.2 once to migrate it first, then continue up the line to v0.4.72.
+- **Restoring a dump taken by a release older than the running one.** The fix is the same: take the
+  database up through the release line, then back it up again.
+- **Opening a post-bridge database with an old binary**, or the reverse. Each side reads one shape;
+  the rollback route is the old binary with its retained pre-cutover database.

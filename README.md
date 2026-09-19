@@ -39,7 +39,9 @@ To update an installation:
 docker compose pull && docker compose up -d
 ~~~
 
-The image tags are `:latest` for the stable release, `:beta` for the latest prerelease, and `:vX.Y.Z` for a pinned version. The first startup creates `./config/config.yaml`; normally only `secret_key` needs to be set manually. Generate one with `openssl rand -hex 32`.
+The image tags are `:latest` for the recommended full release, `:beta` for the newest published release including pre-releases, and `:vYYYY.W.R` for a pinned release. The first startup creates `./config/config.yaml`; normally only `secret_key` needs to be set manually. Generate one with `openssl rand -hex 32`.
+
+Before upgrading a deployment that predates the CalVer line, read [docs/releases/README.md](docs/releases/README.md). The first CalVer release reads only the **v0.4.72** database schema and converts nothing: a database older than that has to be started once by v0.4.72 first, and one that is older is refused rather than half-upgraded.
 
 ## Configuration
 
@@ -160,14 +162,14 @@ go run ./cmd/report-portal version
 
 ## Release process
 
-Push a `v*` tag to trigger CI:
+Releases are CalVer: `vYYYY.W.R`, where `YYYY` is the ISO week-numbering year, `W` the UTC ISO week the series starts in, and `R` a revision that rises for every changed set of artifacts. Cut the tag from its release note and push it:
 
 ~~~bash
-git tag v1.0.0
-git push origin v1.0.0
+scripts/tag-release.sh v2026.38.1
+git push origin v2026.38.1
 ~~~
 
-The release workflow cross-compiles six platforms, publishes GitHub Release archives with SHA256 checksums, and pushes multi-architecture images to `ghcr.io`. Tags with a hyphen, such as `v1.0.0-beta`, are prereleases: they update `:beta` only and leave `:latest` unchanged.
+The tag push validates the tag, cross-compiles six platforms, pushes the fixed `ghcr.io` image tag, and prepares a **draft** GitHub Release carrying the archives, `SHA256SUMS.txt` and the image digest. Maturity is GitHub Release metadata and never the tag: publishing the draft as a pre-release or a full release — and the `:latest` / `:beta` channel updates that follow — belongs to the release-channels workflow, which re-points a channel at bytes that are already published and never rebuilds. An identical artifact set keeps its number; a changed one needs a new number. See [ADR 0034](docs/adr/0034-calver-baseline-and-database-compatibility-reset.md).
 
 After the first image push, set the GitHub Container Registry package to public if unauthenticated `docker compose pull` is required.
 

@@ -45,10 +45,10 @@ services:
           memory: 512M
 
   report-portal:
-    # Three image channels:
-    #   :latest → newest stable (recommended, default)
-    #   :beta   → newest build (incl. pre-releases), always bleeding edge
-    #   :vX.Y.Z → pin a specific version
+    # Three image channels. Maturity comes from GitHub Release metadata, never from a tag name:
+    #   :latest   → the recommended full release (set by .github/workflows/release-channels.yml)
+    #   :beta     → the newest published release, pre-releases included
+    #   :vYYYY.W.R → pin a specific release
     image: ghcr.io/kazuhahub/stockanalysisprediction-report-portal:latest
     container_name: report-portal
     restart: unless-stopped

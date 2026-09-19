@@ -33,7 +33,9 @@ docker compose logs            # 查看首次启动生成的管理员初始密�
 
 在浏览器中访问 `http://<host>:8790`。Compose 默认监听 `127.0.0.1:8790`；外部访问应通过反向代理提供 TLS。使用启动日志中的初始密码登录，并在“账号管理”中修改密码。
 
-**更新**：`docker compose pull && docker compose up -d`（镜像标签：`:latest` 稳定版、`:beta` 预发布版、`:vX.Y.Z` 固定版本）。
+**更新**：`docker compose pull && docker compose up -d`（镜像标签：`:latest` 推荐正式版、`:beta` 最新已发布版（含预发布）、`:vYYYY.W.R` 固定版本）。
+
+升级 CalVer 之前的部署前，请先阅读 [docs/releases/README.md](docs/releases/README.md)：首个 CalVer 版本只读取 **v0.4.72** 的数据库结构、不做任何转换，更旧的库必须先用 v0.4.72 启动一次，否则会被直接拒绝而不是半途升级。
 
 首次启动会在 `./config/config.yaml` 生成默认配置。通常只需设置 `secret_key`，可使用 `openssl rand -hex 32` 生成随机值。
 
@@ -155,7 +157,14 @@ go run ./cmd/report-portal           # 访问 :8790，SPA 由二进制内嵌服�
 
 ## 发布
 
-推送 `v*` 标签（`git tag v1.0.0 && git push origin v1.0.0`）会触发 CI：执行跨平台编译、发布包含二进制归档和 SHA256 校验文件的 GitHub Release，并将多架构镜像推送至 `ghcr.io`。包含连字符的版本（如 `v1.0.0-beta`）标记为预发布，仅更新 `:beta`，不更新 `:latest`。
+版本号采用 CalVer：`vYYYY.W.R`，`YYYY` 为 ISO 周历年份，`W` 为该版本系列起始的 UTC ISO 周，`R` 为每次产物变更递增的修订号。从 release note 生成标签并推送：
+
+```bash
+scripts/tag-release.sh v2026.38.1
+git push origin v2026.38.1
+```
+
+推送标签会校验标签、执行六平台交叉编译、推送固定的 `ghcr.io` 镜像标签，并创建一个**草稿** Release（含归档、`SHA256SUMS.txt` 与镜像 digest）。是否预发布由 GitHub Release 元数据决定，与标签名无关：把草稿发布为预发布或正式版、以及随后的 `:latest` / `:beta` 通道更新，都由 release-channels 工作流完成，它只把通道指向已发布的字节，不会重新构建。产物未变则沿用原版本号，产物有变必须新开版本号。详见 [ADR 0034](docs/adr/0034-calver-baseline-and-database-compatibility-reset.md)。
 
 > 首次推送镜像后，如需支持未登录的 `docker compose pull`，请在仓库 Packages 设置中将对应 GHCR 包设为公开。
 
