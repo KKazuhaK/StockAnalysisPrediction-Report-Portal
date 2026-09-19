@@ -209,12 +209,24 @@ jobs:
           # what makes the two agree. Doing it unconditionally is also what makes a transient failure
           # self-healing — a version whose channel already moved would otherwise never be re-aligned.
           #
-          # PATCH takes a release ID. There is no update-by-tag endpoint, and asking for one returns
-          # 404 after the channel has already moved, which is how the rehearsal found this.
+          # PATCH takes a release ID. There is no update-by-tag endpoint.
+          #
+          # It is sent ONLY when the field would actually change. A PATCH fires a `release edited`
+          # event, that event starts this workflow, and this step would PATCH again — the run that
+          # published v2026.38 fed itself 31 times in six minutes. "Align it on every run" and
+          # "aligning emits the event that starts a run" are the same statement, which is the part
+          # that was missed. Reading the current Latest first keeps the self-healing property (a
+          # stale field is still corrected, on the next run that was going to happen anyway) and
+          # makes a run with nothing to do stay silent.
           if [ -n "$LATEST_TARGET" ]; then
-            id=$(gh api "repos/${REPO}/releases/tags/${LATEST_TARGET}" --jq '.id')
-            gh api -X PATCH "repos/${REPO}/releases/${id}" -f make_latest=true >/dev/null
-            echo "GitHub Latest aligned with ${LATEST_TARGET}"
+            current=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
+            if [ "$current" = "$LATEST_TARGET" ]; then
+              echo "GitHub Latest is already ${LATEST_TARGET}"
+            else
+              id=$(gh api "repos/${REPO}/releases/tags/${LATEST_TARGET}" --jq '.id')
+              gh api -X PATCH "repos/${REPO}/releases/${id}" -f make_latest=true >/dev/null
+              echo "GitHub Latest aligned with ${LATEST_TARGET}"
+            fi
           fi
 
       - name: Summary
