@@ -85,6 +85,10 @@ jobs:
             echo "current_beta=$(read_var CHANNEL_BETA_TAG)"
             echo "latest_override=$(read_var CHANNEL_LATEST_OVERRIDE)"
             echo "beta_override=$(read_var CHANNEL_BETA_OVERRIDE)"
+            # ghcr.io rejects an uppercase path, and release.yml pushes with the lowercased owner, so
+            # every registry lookup has to use the same string the push did. github.repository keeps
+            # the case it was typed with, which is why this is computed rather than interpolated.
+            echo "image=ghcr.io/$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
           } >> "$GITHUB_OUTPUT"
 
       - name: Collect the published releases
@@ -140,7 +144,7 @@ jobs:
         if: steps.decide.outputs.LATEST_ACTION == 'set' || steps.decide.outputs.BETA_ACTION == 'set'
         shell: bash
         env:
-          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE: ${{ steps.state.outputs.image }}
           LATEST: ${{ steps.decide.outputs.LATEST }}
           BETA: ${{ steps.decide.outputs.BETA }}
           SKIPPED: ${{ steps.decide.outputs.SKIPPED_INCOMPLETE }}
@@ -168,7 +172,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           REPO: ${{ github.repository }}
-          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE: ${{ steps.state.outputs.image }}
           DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
           LATEST_ACTION: ${{ steps.decide.outputs.LATEST_ACTION }}
           LATEST: ${{ steps.decide.outputs.LATEST }}
