@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -102,7 +103,7 @@ func OpenStore(driver, source string) (*Store, error) {
 		return nil, fmt.Errorf("connect database (%s): %w", driver, err)
 	}
 	s := &Store{db: db, driver: driver}
-	return s, s.init()
+	return s, s.initSerialized()
 }
 
 // Close closes the underlying database connection.
@@ -188,45 +189,85 @@ func (s *Store) groupConcatDistinct(col string) string {
 // init opens the database, enforces the current release-line baseline, lays down the complete
 // base schema, reconciles pure-additive columns, then guarantees the fallback group.
 //
-// The three schema steps are ordered, and the order is the whole point: tables, THEN columns,
-// THEN indexes. An index may cover a column introduced after the table (idx_track_id over
-// tracking_items.report_id), and CREATE TABLE IF NOT EXISTS is a no-op on a database that
-// already has the table — so on every upgrade that column arrives from ensureColumns, not from
-// the CREATE TABLE. Building indexes last means baseSchemaStmts can declare EVERY index next to
-// its table without anyone having to know which release each column landed in.
-func (s *Store) init() error {
-	fresh, err := s.requireSchemaBaseline()
+// initLockNamespace/initLockID name the advisory lock that serializes initialization on Postgres. Two
+// int4s rather than one int8 so the constant stays readable in the query. The values are arbitrary;
+// what matters is that only this function takes them.
+const (
+	initLockNamespace = 0x5250 // "RP"
+	initLockID        = 1
+)
+
+// initSerialized runs init under a lock, so two processes starting against one database cannot both
+// decide it is empty and both start building it.
+//
+// SQLite needs nothing here: OpenStore caps the pool at one connection and the database file is its
+// own lock, so a second process waits on the writer rather than interleaving DDL. Postgres does need
+// it — "is this database empty" and "create the schema" are separate statements, and two instances
+// rolling out at once would both answer yes. The lock is taken on a pinned connection on purpose: a
+// session-level advisory lock taken through the pool could be unlocked on a different connection than
+// the one holding it, which is a lock that never releases.
+func (s *Store) initSerialized() error {
+	if s.driver != "postgres" {
+		return s.init()
+	}
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	if err := s.createBaseTables(); err != nil {
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1,$2)", initLockNamespace, initLockID); err != nil {
+		return fmt.Errorf("take the initialization lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1,$2)", initLockNamespace, initLockID)
+	}()
+	return s.init()
+}
+
+// init opens the database, enforces the compatibility boundary, and prepares it for use.
+//
+// The order is the whole safety argument (ADR 0034). classifySchema runs FIRST and is read-only, so a
+// database this release cannot read is refused before a single statement runs; only then does a path
+// that the verdict allows execute. The create path used to run before the checks, which meant a
+// database that was about to be rejected had already had this release's tables added to it.
+//
+// A database already at the baseline is verified and started, and nothing else: no DDL, no re-stamp.
+// The base schema is the migration now — baseSchemaStmts is what a database must already satisfy, so
+// adding a column to it is a decision about which databases this release accepts, not a routine edit
+// that quietly back-fills itself everywhere.
+func (s *Store) init() error {
+	state, err := s.classifySchema()
+	if err != nil {
 		return err
 	}
-	// Additive columns need no versioned migration — they are auto-reconciled here (guarded, so a
-	// no-op once present). A major-boundary release never carries old data-move/drop steps.
-	if err := s.ensureColumns(); err != nil {
-		return err
-	}
-	// Ordered, and the order is the whole safety argument (ADR 0024). The identity index gained a
-	// `version` component, so every existing row must carry a value BEFORE the unique index is
-	// rebuilt: NULLs compare distinct in a unique index on both drivers, so building it first would
-	// admit exactly the duplicate rows the index exists to forbid.
-	if err := s.reconcileReportVersions(); err != nil {
-		return err
-	}
-	if err := s.createBaseIndexes(); err != nil {
-		return err
-	}
-	// Release-line adoption steps, all of them, in one file that gets deleted at the next major
-	// boundary. Runs after the schema exists (a step reads and writes real tables) and before
-	// anything serves from it. See upgrade_v04.go.
-	if err := s.upgradeV04(); err != nil {
-		return err
-	}
-	if fresh {
+	if state == schemaCurrent {
+		if err := s.verifyBaseSchema(); err != nil {
+			return err
+		}
+	} else {
+		// A new database, or a first run that died partway through creating one. Every statement here
+		// is IF NOT EXISTS, so finishing a half-created schema is the same operation as creating an
+		// empty one — which is why classifySchema only resumes a database nobody has written to.
+		if err := s.createBaseTables(); err != nil {
+			return err
+		}
+		if err := s.createBaseIndexes(); err != nil {
+			return err
+		}
 		if err := s.setSchemaVersion(schemaBaseline); err != nil {
 			return err
 		}
+	}
+	// Current operations, on both paths: they seed rows the application reads, and neither overwrites
+	// one that already exists (the version registry is ON CONFLICT DO NOTHING, the group is looked up
+	// first). They were previously reached only through the report-version reconciliation, which is
+	// gone — a version-less ingest and the manual-report editor would break without them.
+	if err := s.ensureDefaultVersion(); err != nil {
+		return err
+	}
+	if err := s.ensureManualVersion(); err != nil {
+		return err
 	}
 	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
 	return nil
@@ -254,9 +295,11 @@ const reportIdentExpr = `symbol, rdate, rtype, title, version`
 const reportIdentIndex = `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_ident ON reports(` + reportIdentExpr + `)`
 
 // baseSchemaStmts returns the full current-generation schema as CREATE statements — the single
-// source of truth for the DB shape. createBaseSchema execs it on a fresh database; ensureColumns
-// (migrate.go) reads the SAME statements to auto-add any column an older database lacks, so a new
-// additive column is declared here ONCE and picked up everywhere without a hand-written migration.
+// source of truth for the DB shape, read twice for two different jobs: createBaseTables /
+// createBaseIndexes exec it to build a fresh database, and the shape check in migrate.go reads the
+// SAME statements to decide whether an existing database may be opened at all. Declaring a column
+// here is therefore not a routine edit — it changes which databases this release accepts, and a
+// database that predates it is refused rather than reconciled (ADR 0034).
 // Per the squash contract (CLAUDE.md hard rules), this base schema equals the fully-migrated final
 // state of the previous release line: the six former 1:1 side tables are folded into parent
 // columns, the dead user_group_members table and links.collapsed column are gone, and `id` is the
@@ -274,7 +317,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// owner_group (ADR 0022): the OU that generated this report, stamped once at ingest
 		// (first-writer-wins). NULL = internal/legacy/unattributed. NOT part of report identity
 		// (idx_reports_ident below), so two OUs requesting the same symbol|date|subtype|title still
-		// share one upserted row. Additive nullable column; picked up on existing DBs by ensureColumns.
+		// share one upserted row. Nullable, declared here ONCE; the shape check requires it.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS reports(
 			id %s,
 			title TEXT, symbol TEXT, name TEXT, rtype TEXT, rdate TEXT,
@@ -323,7 +366,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// rendered in the panel timezone; a civil-time string here would shift meaning with the setting.
 		// scope/audience/starts_at/ends_at are declared from the first release that has this table even
 		// though the release line that ships it only writes the defaults: a column costs nothing here and
-		// arrives on existing databases through ensureColumns anyway.
+		// is required of every database by the shape check anyway.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS announcements(
 			id %s, level TEXT DEFAULT 'notice', title TEXT DEFAULT '', content TEXT DEFAULT '',
 			ord INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1, popup INTEGER DEFAULT 0,
@@ -363,7 +406,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// immutable object id and the SSO<->SCIM join key — it must be recorded during the SSO era
 		// because it cannot be reconstructed later. The SCIM-only columns (uid, login_name,
 		// deactivated_at, deleted_at, last_sync_at) are deliberately deferred to the SCIM change:
-		// ensureColumns adds columns for free here, so reserving them early buys nothing.
+		// a column declared here is required of every database anyway, so reserving them early buys nothing.
 		// totp_* / recovery_codes back TOTP 2FA; the secret is sealed (never plaintext) and the
 		// recovery codes are stored HASHED and single-use, because they are password-equivalents.
 		`CREATE TABLE IF NOT EXISTS users(
@@ -472,7 +515,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// targets keep behaving exactly as before. This is portal POLICY and deliberately
 		// not part of `config`, which holds the Dify connection (base_url/api_key) — mixing
 		// the two would leave no answer to "where does the next setting go?". Existing
-		// databases pick the column up via ensureColumns; no migration step.
+		// databases must already carry the column; one that does not is refused (ADR 0034).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_targets(
 			id %s, plugin_slug TEXT, name TEXT, config TEXT, created_at TEXT, ord INTEGER,
 			surfaces TEXT DEFAULT '')`, pk),
@@ -482,7 +525,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// '' = none) is a JSON snapshot of a chosen preset low-peak window (rule + on_overrun +
 		// the occurrence end) so a run stays in its window and rolls/continues/cancels if it closes
 		// before starting — see docs/adr/0014-idle-lane-and-preset-windows.md; picked up on existing
-		// databases by ensureColumns (no migration step).
+		// databases by the shape check, which requires it (ADR 0034).
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS batch_jobs(
 			id %s, target_id BIGINT, status TEXT, concurrency INTEGER DEFAULT 1, max_retries INTEGER DEFAULT 0,
 			total INTEGER DEFAULT 0, succeeded INTEGER DEFAULT 0, partial INTEGER DEFAULT 0, failed INTEGER DEFAULT 0,
@@ -494,7 +537,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// reconcile-not-retry money invariant (ADR 0015). They co-exist and are independent:
 		// a workflow/chatflow run has run_id (+task_id); a pure agent/basic chat has only
 		// conversation_id (+task_id). conversation_id/task_id are pure-additive (nullable, no
-		// backfill), so existing databases pick them up via ensureColumns — no migration step.
+		// backfill), so the shape check simply requires them (ADR 0034).
 		// dify_started_at is stamped the instant the Dify stream opens (2xx), BEFORE any id is
 		// emitted: it is the persisted "this run reached Dify and started" signal, so a crash in
 		// the tiny window before the first id can still tell a started run (→ untracked, never
@@ -512,7 +555,7 @@ func (s *Store) baseSchemaStmts() []string {
 		// a whole period's sub-windows are all missed. invert (0/1, default 0) flips the polarity:
 		// a normal preset runs a job INSIDE the intervals, an inverted one runs it OUTSIDE them (the
 		// intervals become "do not run" / peak hours). invert is a plain additive column, so existing
-		// databases pick it up via ensureColumns — no migration step. The job snapshots the rule, so
+		// databases are required to carry it by the shape check (ADR 0034). The job snapshots the rule, so
 		// this row is never referenced by a job (no FK); id is a plain surrogate for CRUD/reorder/pick.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS run_presets(
 			id %s, label TEXT, freq TEXT, intervals TEXT,
@@ -560,13 +603,13 @@ func (s *Store) baseSchemaStmts() []string {
 		// run_quota_period is the window daily_run_quota is measured over: day | week | month |
 		// total. NULL/"" means day, which is what every row written before the column meant, so an
 		// existing deployment keeps its behaviour with no backfill. It is declared with no SQL
-		// comment beside it on purpose — ensureColumns parses column names out of this very string
-		// and would try to ALTER TABLE ADD COLUMN "--".
+		// comment beside it on purpose — the schema parser reads column names out of this very string,
+		// and a SQL comment here would become one of them.
 		//
 		// parent_id/restricted/daily_run_quota (ADR 0022) promote the group into the OU tree:
 		// parent_id (NULL = root) builds the tenant hierarchy; restricted flags an external OU
 		// (inherited down the tree); daily_run_quota is the R2 per-day run cap (NULL = inherit,
-		// 0 = unlimited). Additive nullable/defaulted columns; picked up on existing DBs by ensureColumns.
+		// 0 = unlimited). Nullable/defaulted columns; the shape check requires them.
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS user_groups(
 			id %s, name TEXT UNIQUE, description TEXT, created_at TEXT, weight INTEGER,
 			urgent_unlimited INTEGER, is_default INTEGER DEFAULT 0,
@@ -704,16 +747,16 @@ func (s *Store) baseSchemaStmts() []string {
 	}
 }
 
-// isIndexDDL reports whether a base-schema statement creates an index rather than a table.
-// It is what lets init apply the two kinds in separate passes with ensureColumns between them.
+// isIndexDDL reports whether a base-schema statement creates an index rather than a table. It is what
+// lets init apply the two kinds in separate passes, and the shape check verify them separately.
 func isIndexDDL(stmt string) bool {
 	u := strings.ToUpper(strings.TrimSpace(stmt))
 	return strings.HasPrefix(u, "CREATE INDEX") || strings.HasPrefix(u, "CREATE UNIQUE INDEX")
 }
 
 // createBaseTables applies every CREATE TABLE in the base schema; createBaseIndexes applies every
-// index, and must run after ensureColumns (see init). Both are CREATE ... IF NOT EXISTS, so an
-// existing database is left untouched and a re-run is a no-op.
+// index. Both are CREATE ... IF NOT EXISTS, so they only ever run against an empty database or one a
+// died-partway first run left behind, and a re-run is a no-op.
 func (s *Store) createBaseTables() error  { return s.execBaseSchema(false) }
 func (s *Store) createBaseIndexes() error { return s.execBaseSchema(true) }
 

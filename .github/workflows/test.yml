@@ -180,6 +180,14 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Release script tests
+        # The CalVer rules and the rolling-channel decision are pure shell, and they are tested as
+        # shell: YAML parsing cannot check whether a year carries an ISO week 53, whether v2026.9.2
+        # sorts before v2026.10.1, or whether an old-series patch loses the race for :latest.
+        run: |
+          sh scripts/calver_test.sh
+          sh scripts/channel_targets_test.sh
+          sh scripts/tag_release_test.sh
 
   web-build:
     name: web typecheck + build

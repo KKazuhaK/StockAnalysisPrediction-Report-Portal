@@ -206,62 +206,6 @@ func (s *Store) resolveVersion(name string) string {
 	return name
 }
 
-// reconcileReportVersions prepares the reports table for the five-column identity index (ADR 0024).
-// It runs between ensureColumns and createBaseIndexes, and the ordering is load-bearing:
-//
-//  1. seed the registry, so the default version exists to point rows at;
-//  2. give every row a version — a NULL or empty one would compare DISTINCT inside the unique
-//     index on both SQLite and Postgres, so the index would silently admit the duplicates it
-//     exists to forbid;
-//  3. drop the old four-column index, so the new definition can take its name.
-//
-// Every pre-version row resolves to the same default, so the five-column tuple is unique exactly
-// where the four-column one was: the rebuild cannot merge two reports or fork one. That is the
-// property that makes ADDING a component safe where removing one (v0.3.0, 626 reports merged) was
-// not, and the tests assert it rather than leaving it as an argument.
-func (s *Store) reconcileReportVersions() error {
-	if err := s.ensureDefaultVersion(); err != nil {
-		return err
-	}
-	// Seeded beside the default and before the early return below, so a portal that has already
-	// rebuilt the identity index — i.e. every portal upgrading to this release — still gets it.
-	if err := s.ensureManualVersion(); err != nil {
-		return err
-	}
-	// The index already covering version means step 2 ran to completion in an earlier boot — the
-	// index could not have been built otherwise. Returning here keeps startup off a full-table scan
-	// of reports forever after: measured at 200k rows, the unguarded backfill cost ~700ms on EVERY
-	// start, which is a migration quietly billing itself to every restart.
-	if s.identIndexCoversVersion() {
-		return nil
-	}
-	if _, err := s.exec(`UPDATE reports SET version=? WHERE version IS NULL OR version=''`,
-		defaultVersionName); err != nil {
-		return err
-	}
-	// The index is recreated from reportIdentIndex moments later, so dropping it here costs one
-	// rebuild on the upgrade run and nothing on any run after it.
-	if _, err := s.exec(`DROP INDEX IF EXISTS idx_reports_ident`); err != nil {
-		return err
-	}
-	return nil
-}
-
-// identIndexCoversVersion reports whether the identity index already includes the version column,
-// so a steady-state startup does not drop and rebuild a unique index over the whole reports table
-// on every boot.
-func (s *Store) identIndexCoversVersion() bool {
-	var def string
-	if s.driver == "postgres" {
-		s.queryRow(`SELECT COALESCE(indexdef,'') FROM pg_indexes
-			WHERE schemaname='public' AND indexname='idx_reports_ident'`).Scan(&def)
-	} else {
-		s.queryRow(`SELECT COALESCE(sql,'') FROM sqlite_master
-			WHERE type='index' AND name='idx_reports_ident'`).Scan(&def)
-	}
-	return def != "" && strings.Contains(def, "version")
-}
-
 // ---------- who may read which version ----------
 
 // A grant names a PRINCIPAL, and one column holds both kinds: an OU ("g:<id>") or a single account

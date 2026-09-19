@@ -1,15 +1,21 @@
 name: Release
 
-# One pipeline produces both the GitHub Release archives and the ghcr.io multi-arch image from one
-# batch of binaries. Pattern borrowed from KazuhaHub/Passwall-Sub-Panel:
+# One pipeline produces the release archives, the fixed ghcr.io image tag, and a DRAFT GitHub
+# Release from one batch of binaries:
 #
-#   web     → build the SPA (Vite) once and reuse it as an artifact (the old shape rebuilt it inside
-#             every matrix leg = wasted work)
-#   build   → matrix cross-compiles 6 platforms, downloads the web bundle into web/dist and
+#   setup   → resolve the tag, refuse anything that is not a CalVer tag, resolve the peeled commit
+#   web     → build the SPA (Vite) once and reuse it as an artifact (rebuilding it inside every
+#             matrix leg would be wasted work)
+#   build   → matrix cross-compiles 6 platforms, downloads the web bundle into web/internal/dist and
 #             //go:embed-s it into the binary
-#   release → tar/zip + SHA256, publishes the GitHub Release
-#   docker  → reuses the linux amd64/arm64 binaries to push a multi-arch image (no in-container
-#             build, so no QEMU)
+#   release → tar/zip + SHA256SUMS, then create or update the DRAFT GitHub Release
+#   docker  → reuse the linux amd64/arm64 binaries to push the FIXED multi-arch image tag, then
+#             attach the durable identity (commit + image digest) to the draft
+#
+# Nothing here decides maturity, and nothing here moves a rolling channel. Whether this release is a
+# pre-release or a full release is GitHub Release metadata chosen at publication, and :latest / :beta
+# are owned by release-channels.yml, which promotes the already-published bytes by digest and never
+# rebuilds. Tag spelling selects nothing. See docs/adr/0034.
 #
 # A binary verified from the Release is byte-for-byte the one in the image (the same artifact).
 
@@ -19,9 +25,17 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, e.g. v1.0.0"
+        description: "Release tag, e.g. v2026.38"
         required: true
         type: string
+      maturity:
+        # Optional, and only an initializer: the maintainer sets the real value when publishing the
+        # draft. This exists so a rehearsal can exercise the pre-release path without clicking.
+        description: "Initial GitHub Release maturity"
+        required: false
+        type: choice
+        default: "unset"
+        options: ["unset", "prerelease", "release"]
 
 # Least privilege by default; the two jobs that write override it (release -> GitHub Release,
 # docker -> ghcr.io). Everything else inherits contents: read, so a compromised build step cannot
@@ -34,15 +48,16 @@ env:
   GOWORK: "off"
   GOTOOLCHAIN: "local"
 
-# Serialize releases, and never cancel one in flight: two overlapping runs would race the rolling
-# :latest/:beta tags and the release page. (Pattern from Passwall-Sub-Panel.)
+# Serialize releases, and never cancel one in flight: two overlapping runs would race the release
+# page and the fixed image tag. The rolling channels have their own serialization in
+# release-channels.yml, because an event there is independent of this pipeline.
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   setup:
-    name: Resolve tag
+    name: Resolve and validate tag
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -51,6 +66,12 @@ jobs:
       owner_lc: ${{ steps.t.outputs.owner_lc }}
       repo_lc: ${{ steps.t.outputs.repo_lc }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          # The validator is a repository file, so the tag is judged by exactly the rules
+          # scripts/tag-release.sh applies — one implementation, not two that can drift.
+          fetch-depth: 0
+          fetch-tags: true
       - id: t
         shell: bash
         # Passed through env rather than interpolated into the script: a workflow_dispatch input is
@@ -66,7 +87,7 @@ jobs:
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             tag="$INPUT_TAG"
             # A dispatch from main would build main's code and label it with the tag. Require the
-            # selected ref to be the tag itself, so GITHUB_SHA below is the tagged commit.
+            # selected ref to be the tag itself, so the checkout below is the tagged commit.
             if [ "$GITHUB_REF" != "refs/tags/${tag}" ]; then
               echo "::error::select the ${tag} tag as the workflow ref when dispatching"
               exit 1
@@ -74,11 +95,39 @@ jobs:
           else
             tag="$GITHUB_REF_NAME"
           fi
+
+          echo "::group::Validate the tag"
+          . scripts/lib/calver.sh
+          if ! calver_valid "$tag"; then
+            echo "::error::$tag is not a CalVer release tag. Expected vYYYY.W[.R] — the ISO"
+            echo "::error::week-numbering year, the UTC ISO week the series starts in, and an optional"
+            echo "::error::revision. No leading zeroes, no maturity suffix, no extra components."
+            exit 1
+          fi
+          echo "$tag is a well-formed CalVer tag"
+          echo "::endgroup::"
+
+          if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            git fetch --force --no-tags origin "refs/tags/${tag}:refs/tags/${tag}" || {
+              echo "::error::no tag ${tag} on origin"; exit 1; }
+          fi
+          # Annotated tags only: the annotation carries the release note, and a lightweight tag
+          # carries no identity of its own to check the build against.
+          obj=$(git rev-parse --verify "refs/tags/${tag}")
+          if [ "$(git cat-file -t "$obj")" != "tag" ]; then
+            echo "::error::${tag} is a lightweight tag; release tags are annotated (scripts/tag-release.sh)"
+            exit 1
+          fi
+          # Peel to the commit: the tag object's own sha is not what the build must be checked out
+          # at or verified against, and conflating the two is how a binary ends up labelled with a
+          # revision it was not built from.
+          sha=$(git rev-parse --verify "refs/tags/${tag}^{commit}")
+
           owner_lc="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
           repo_lc="$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
           {
             echo "tag=${tag}"
-            echo "sha=${GITHUB_SHA}"
+            echo "sha=${sha}"
             echo "owner_lc=${owner_lc}"
             echo "repo_lc=${repo_lc}"
           } >> "$GITHUB_OUTPUT"
@@ -173,23 +222,12 @@ jobs:
           retention-days: 1
 
   release:
-    name: Publish GitHub Release
+    name: Prepare the draft Release
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
-    # Waits on docker, not just build, for two reasons. A gate can only gate what it precedes: run
-    # the two in parallel and either failure below lands after the Release is already public and its
-    # archives are downloadable.
-    #   1. The image build runs the glyph gate (scripts/probe-font-coverage.sh, in the runtime-base
-    #      stage of Dockerfile.release) on both arches. test.yml's docker-image job gates amd64
-    #      pre-merge, so by tag time this is re-verification — except on arm64, first checked here.
-    #   2. The release body advertises `docker pull ghcr.io/...:${VERSION}` (generated below).
-    #      Publishing ahead of the push means a Release page pointing at a tag ghcr.io lacks.
-    # Costs the release job the image build's wall clock. Note the scope: an archive ships neither
-    # fonts nor wkhtmltopdf, so a tarball's glyph coverage is whatever its host provides
-    # (internal/app/pdf.go resolves the binary from PATH). The gate is a property of the image.
-    needs: [setup, build, docker]
+    needs: [setup, build]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -198,6 +236,32 @@ jobs:
         with:
           path: artifacts
           pattern: report-portal-*
+      - name: Refuse a tag whose release is already published
+        shell: bash
+        env:
+          VERSION: ${{ needs.setup.outputs.tag }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Published artifacts are never replaced. A draft is still open for revision — that is
+          # exactly what "draft" means — but a published release is finished, so re-running this
+          # pipeline over it is a mistake, not a repair. Changed artifacts need a new revision.
+          #
+          # The existence test is the exit status, never the captured output: `gh api` writes the 404
+          # body to STDOUT, so `$(gh api ... || echo absent)` yields the error JSON concatenated with
+          # the fallback, matching no branch and refusing every first attempt. That is not a theory —
+          # it is what the first run of this workflow did, and the rehearsal it broke is why the
+          # guard is written this way.
+          if ! body=$(gh api "repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null); then
+            echo "no release yet for ${VERSION}; preparing a draft"
+          elif [ "$(printf '%s' "$body" | jq -r '.draft')" = "true" ]; then
+            echo "an existing draft for ${VERSION} will be updated in place"
+          else
+            echo "::error::${VERSION} is already published; published artifacts are never replaced."
+            echo "::error::Cut the next revision instead (scripts/tag-release.sh vYYYY.W[.R])."
+            exit 1
+          fi
       - name: Package archives
         shell: bash
         env:
@@ -242,22 +306,19 @@ jobs:
           else
             : > release_notes.md
           fi
-          # :latest only ever points at a stable release (see the metadata rules). A pre-release
-          # advertising it would hand the reader a command that silently installs the previous
-          # stable instead of the build they are looking at, so a pre-release names its own tag.
-          if [ "${VERSION#*-}" != "$VERSION" ]; then
-            pull_lines="docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:${VERSION}"
-          else
-            pull_lines="docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:latest
-          # or pin a version
-          docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:${VERSION}"
-          fi
+          # The fixed tag only. This body cannot promise :latest, because at draft time nobody has
+          # decided whether this is a pre-release or a full release — that decision moves the
+          # channel, and it happens at publication, not here.
           cat <<EOF >> release_notes.md
           ### Container image (ghcr.io)
 
           \`\`\`shell
-          ${pull_lines}
+          docker pull ghcr.io/${OWNER_LC}/${REPO_LC}:${VERSION}
           \`\`\`
+
+          This fixed tag is this artifact set and is never repointed. Whether it also becomes
+          \`:latest\` is decided when this release is published as a full release; \`:beta\` follows
+          the newest published release.
 
           ### Verify
 
@@ -287,24 +348,36 @@ jobs:
           tag_name: ${{ needs.setup.outputs.tag }}
           target_commitish: ${{ needs.setup.outputs.sha }}
           name: ${{ needs.setup.outputs.tag }}
-          # A "-" suffix (e.g. v1.0.0-beta) marks a pre-release; /releases/latest excludes it.
-          prerelease: ${{ contains(needs.setup.outputs.tag, '-') }}
+          # Always a draft. Maturity is chosen by the maintainer when publishing, and release-channels
+          # reacts to that. Tag spelling never decides it, which is why there is no contains("-") here.
+          draft: true
+          prerelease: ${{ inputs.maturity == 'prerelease' }}
+          # Deliberate: the note above is the changelog a maintainer writes, and GitHub's own
+          # "What's Changed" list follows it — the action pre-pends the body we pass to the notes it
+          # generates, so the order is our note, the container/verify blocks, then the PR list.
           generate_release_notes: true
           body_path: release_notes.md
-          append_body: true
+          # Replace rather than append, so a re-run of a failed pipeline converges on one body instead
+          # of stacking a second copy of the notes onto the draft.
+          append_body: false
           fail_on_unmatched_files: true
           files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
   docker:
-    name: Publish container image
+    name: Publish the fixed image tag
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
       packages: write
-    needs: [setup, build]
+    # Runs after the draft exists: the draft is invisible until a human publishes it, while a pushed
+    # image tag is public immediately, so the irreversible step goes second. The image build also
+    # runs the glyph gate (scripts/probe-font-coverage.sh, in the runtime-base stage of
+    # Dockerfile.release) on both arches — test.yml's docker-image job gates amd64 pre-merge, so by
+    # tag time this is re-verification except on arm64, which is first checked here.
+    needs: [setup, build, release]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -333,23 +406,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}
-          # Two rolling channels:
-          #   :latest -> tracks only the newest stable release (pre-releases excluded)
-          #   :beta   -> tracks the newest release including pre-releases, always "current"
-          tags: |
-            type=raw,value=${{ needs.setup.outputs.tag }}
-            type=raw,value=latest,enable=${{ startsWith(needs.setup.outputs.tag, 'v') && !contains(needs.setup.outputs.tag, '-') }}
-            type=raw,value=beta,enable=${{ startsWith(needs.setup.outputs.tag, 'v') }}
-          labels: |
-            org.opencontainers.image.title=report-portal
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ needs.setup.outputs.sha }}
-            org.opencontainers.image.version=${{ needs.setup.outputs.tag }}
-      - name: Build and push multi-arch image
+      - name: Refuse to replace an already-published fixed tag
+        shell: bash
+        env:
+          IMAGE: ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}
+          VERSION: ${{ needs.setup.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # The fixed tag is the published artifact set. A draft GitHub Release does NOT make it
+          # private, so once it exists the bytes are out and re-pushing a rebuild — which differs,
+          # because the build date is baked in — would silently change what that number means.
+          if docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "::error::${IMAGE}:${VERSION} already exists and published bytes are never replaced."
+            echo "::error::Cut the next revision, or finish the existing release from its draft."
+            exit 1
+          fi
+          echo "no existing ${IMAGE}:${VERSION}; safe to publish"
+      - name: Build and push the fixed multi-arch image
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -358,8 +432,12 @@ jobs:
           # image itself is multi-arch.
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}:${{ needs.setup.outputs.tag }}
+          labels: |
+            org.opencontainers.image.title=report-portal
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.setup.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.setup.outputs.tag }}
           provenance: false
           # Registry cache, not the per-branch GitHub cache: every tag is a new ref, so type=gha
           # would start cold on each release and re-download ~35 MB of fonts plus the wkhtmltopdf
@@ -368,3 +446,25 @@ jobs:
           # only rebuild the COPY layers.
           cache-from: type=registry,ref=ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}:buildcache,mode=max
+      - name: Record the durable release identity on the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.setup.outputs.tag }}
+          COMMIT: ${{ needs.setup.outputs.sha }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}
+        run: |
+          set -euo pipefail
+          # Durable, because a one-day Actions artifact cannot carry an artifact identity to a
+          # promotion that happens days later, and reconciliation needs the digest without pulling
+          # the image back. `recorded_at` is when this identity was written; the artifact's own build
+          # date is baked into the binary by the -ldflags above and is the authoritative one.
+          jq -n --arg tag "$VERSION" --arg commit "$COMMIT" --arg image "$IMAGE" \
+                --arg digest "$DIGEST" --arg recorded "$(date -u +%FT%TZ)" \
+            '{tag: $tag, commit: $commit, image: $image, digest: $digest, recorded_at: $recorded}' \
+            > release-metadata.json
+          cat release-metadata.json
+          # --clobber so a retry of this step converges instead of failing on the file it wrote.
+          gh release upload "$VERSION" release-metadata.json --clobber

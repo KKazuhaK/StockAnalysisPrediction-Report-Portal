@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"sort"
-	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -112,9 +111,6 @@ func printRestore(rep *app.RestoreReport, force bool) {
 		line := fmt.Sprintf("  %-24s %8d", t, rep.Rows[t])
 		if n := rep.Existing[t]; n > 0 {
 			line += fmt.Sprintf("   (replaces %d)", n)
-		}
-		if cols := rep.SkipCols[t]; len(cols) > 0 {
-			line += "   [not in the backup, left at default: " + strings.Join(cols, ", ") + "]"
 		}
 		fmt.Println(line)
 	}

@@ -1,13 +1,12 @@
 package app
 
 import (
-	"database/sql"
 	"testing"
 )
 
-// TestAuthSchemaBaseline locks the additive schema for ADR 0023 (SSO + TOTP 2FA + passkeys). Every
-// object is declared once in baseSchemaStmts, so it exists on a fresh store here and — because
-// ensureColumns reads the same statements — is auto-added to an older database with no migration.
+// TestAuthSchemaBaseline locks the schema for ADR 0023 (SSO + TOTP 2FA + passkeys). Every object is
+// declared once in baseSchemaStmts, which is now also the acceptance contract for an existing
+// database: an older one is refused rather than reconciled (ADR 0034).
 func TestAuthSchemaBaseline(t *testing.T) {
 	st := newTestStore(t)
 
@@ -78,51 +77,5 @@ func TestAuthSchemaBaseline(t *testing.T) {
 		if n == 0 {
 			t.Errorf("missing index %s", idx)
 		}
-	}
-}
-
-// TestAuthSchemaReconcilesOnOldUsers proves an existing users row survives the new columns:
-// ensureColumns adds them with no backfill, the account keeps working, and the defaults are the
-// safe ones (source 'local', 2FA off) so nobody is locked out or silently treated as federated.
-func TestAuthSchemaReconcilesOnOldUsers(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
-	// users in the pre-ADR-0023 shape, already holding an account.
-	if _, err := db.Exec(`CREATE TABLE users(username TEXT PRIMARY KEY, password_hash TEXT,
-		role TEXT DEFAULT 'user', display_name TEXT, email TEXT, active INTEGER DEFAULT 1,
-		last_login TEXT, group_id BIGINT, session_rev BIGINT DEFAULT 0, expires_at TEXT)`); err != nil {
-		t.Fatalf("seed users: %v", err)
-	}
-	if _, err := db.Exec(`CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT)`); err != nil {
-		t.Fatalf("seed meta: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO meta(k,v) VALUES('schema_version','2')`); err != nil {
-		t.Fatalf("seed baseline: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO users(username,password_hash,role) VALUES('legacy','h','admin')`); err != nil {
-		t.Fatalf("seed row: %v", err)
-	}
-
-	st := &Store{db: db, driver: "sqlite"}
-	if err := st.init(); err != nil {
-		t.Fatalf("init (should auto-reconcile the auth columns): %v", err)
-	}
-	u := st.GetUser("legacy")
-	if u == nil {
-		t.Fatal("the pre-existing account disappeared after reconcile")
-	}
-	if u.Role != "admin" || !u.Active {
-		t.Errorf("row not preserved: %+v", u)
-	}
-	if u.Source != "local" {
-		t.Errorf("source = %q, want 'local' — a pre-existing account must never read as federated", u.Source)
-	}
-	if u.TOTPEnabled {
-		t.Error("2FA must default to off for a pre-existing account")
 	}
 }

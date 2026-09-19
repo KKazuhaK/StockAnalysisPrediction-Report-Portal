@@ -292,7 +292,6 @@ type RestoreReport struct {
 	Total    int64
 	Replaced int64
 	Applied  bool
-	SkipCols map[string][]string // columns the target has and the dump does not: left at their default
 }
 
 // Restore loads a dump into the configured database, replacing everything in it.
@@ -348,7 +347,6 @@ func (s *Store) restoreFrom(r io.Reader, force bool) (*RestoreReport, error) {
 	rep := &RestoreReport{
 		Rows:     map[string]int64{},
 		Existing: existing,
-		SkipCols: map[string][]string{},
 	}
 	for _, n := range existing {
 		rep.Replaced += n
@@ -449,6 +447,11 @@ func (s *Store) restoreStream(dec *json.Decoder, tx *sql.Tx, known map[string]ma
 						table, c, firstNonEmpty(rep.Header.AppVersion, "the version that wrote the backup"))
 				}
 			}
+			// Every column the current schema declares has to be in the dump. This used to tolerate
+			// a missing one — the column kept its default and the restore said so afterwards — but a
+			// restore that succeeds while silently producing rows that never had the data is worse
+			// than one that refuses, and the database it produced would be refused at the next
+			// startup anyway. Failing here moves that from after the destructive step to before it.
 			var missing []string
 			for c := range cset {
 				if !containsString(cols, c) {
@@ -457,7 +460,9 @@ func (s *Store) restoreStream(dec *json.Decoder, tx *sql.Tx, known map[string]ma
 			}
 			if len(missing) > 0 {
 				sort.Strings(missing)
-				rep.SkipCols[table] = missing // older dump, newer schema: these keep their defaults
+				return fmt.Errorf("the backup's %s is missing %s, so it was written by an older schema: "+
+					"restore it with the release that wrote it, then back it up again",
+					table, strings.Join(missing, ", "))
 			}
 			values = make([]any, len(cols))
 			if tx != nil {
@@ -590,22 +595,27 @@ func (s *Store) rowCounts(tables []string) (map[string]int64, error) {
 //
 // Without it a cross-generation restore "succeeds": the tables were created by the running binary in
 // its own shape, the rows arrive from an older or newer one, and the dump's schema_version lands in
-// `meta`. Nothing complains until the NEXT boot, where requireSchemaBaseline finally refuses — a
-// delayed failure after a destructive operation, and the worst possible order for the two.
-// requireSchemaBaseline itself cannot catch this: it runs at open time against the TARGET database,
-// which at that moment is empty or current, and it never sees the dump at all.
+// `meta`. Nothing complains until the NEXT boot, where the startup boundary refuses — a delayed
+// failure after a destructive operation, and the worst possible order for the two. That boundary
+// cannot catch this itself: it runs at open time against the TARGET database, which at that moment is
+// empty or current, and it never sees the dump at all.
 //
-// 0 means a dump written before the header carried the field. Allowed rather than refused: the
-// alternative is rejecting a backup over a question it cannot answer, and this format has not shipped
-// outside the branch that introduced it.
+// The dump has to carry the current baseline. A missing field, an older value and a newer one are
+// all refusals: the field shipped with the format itself, so a dump without it was not written by any
+// release of this feature. Accepting one was the permissive branch that existed only to keep legacy
+// dumps loading, and a database from an older line is taken through that line's last release instead
+// — see the boundary in migrate.go.
 func checkSchemaGeneration(dump int) error {
 	switch {
-	case dump == 0 || dump == schemaBaseline:
+	case dump == schemaBaseline:
 		return nil
+	case dump == 0:
+		return fmt.Errorf("this backup records no schema generation, so this build cannot tell which " +
+			"release wrote it: restore it with the release that wrote it and back it up again")
 	case dump < schemaBaseline:
 		return fmt.Errorf("this backup is from schema generation %d and the portal now requires %d: "+
-			"restore it with the release that wrote it and let that release upgrade the database, "+
-			"then back it up again", dump, schemaBaseline)
+			"restore it with the release that wrote it, take the database up to %s, then back it up "+
+			"again", dump, schemaBaseline, legacyBridge)
 	default:
 		return fmt.Errorf("this backup is from schema generation %d, which is newer than this build's %d: "+
 			"upgrade the portal before restoring", dump, schemaBaseline)

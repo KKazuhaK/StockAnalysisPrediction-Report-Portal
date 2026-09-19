@@ -30,13 +30,12 @@
 //
 // Store & schema (dual-driver SQLite/Postgres, no ORM)
 //   - store.go   the Store type, base schema (baseSchemaStmts), dialect helpers
-//   - upgrade_v04.go EVERY v0.4-line adoption step, in one file named for the release line it
-//     belongs to. Deleted whole at the v0.5 boundary, along with its single call in Store.init;
-//     requireSchemaBaseline then refuses databases that never ran a v0.4 release. Nothing else
-//     goes in it, and nothing in it is called from anywhere but init.
-//   - migrate.go schemaBaseline + requireSchemaBaseline (the major-boundary upgrade gate)
-//     and ensureColumns (additive-column reconcile). The v0.1→v0.2 fold step that used to
-//     sit beside it was folded into the base schema at the v0.3 boundary, per CLAUDE.md.
+//   - migrate.go the database compatibility boundary (ADR 0034): classifySchema decides, read-only,
+//     whether the database is empty, an interrupted first run, or the accepted v0.4.72 baseline, and
+//     refuses everything older before a single statement runs. The runtime converts nothing — a
+//     database that does not already satisfy baseSchemaStmts is taken through v0.4.72 first. The
+//     additive reconciliation and the per-release-line adoption file that used to live here are gone;
+//     schemaBaseline stays at 2 because bumping it would refuse the very database this accepts.
 //   - backup.go  whole-database dump and restore behind the `backup` / `restore` subcommands
 //     (ADR 0027). One JSON Lines format for both drivers, so a dump is portable between them;
 //     the table list is read from baseSchemaStmts, so a new table is covered the day it is

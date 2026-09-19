@@ -1,0 +1,244 @@
+name: Release channels
+
+# The only thing that moves :latest and :beta.
+#
+# release.yml publishes a draft and the fixed vYYYY.W[.R] image tag; it never touches a rolling
+# channel, because at that moment nobody has said whether the release is a pre-release or a full
+# release. This workflow reacts to that decision, and to edits and deletions, and converges the
+# channels on the releases that actually exist. It never rebuilds: a promotion re-points a channel
+# at bytes that are already published, by digest.
+#
+# Maturity and channel selection come from GitHub's own Release fields (draft / prerelease /
+# Latest), never from the tag spelling. See docs/adr/0034 and section 7 of the release plan.
+#
+# Durable state lives in repository variables, because GitHub and ghcr.io are not one transaction and
+# a retry has to converge from something other than the previous run's memory:
+#   CHANNEL_LATEST_TAG        the tag :latest was last applied as
+#   CHANNEL_BETA_TAG          the tag :beta was last applied as
+#   CHANNEL_LATEST_OVERRIDE   operator pin; while set, :latest must equal it (withdrawal / rollback)
+#   CHANNEL_BETA_OVERRIDE     operator pin for :beta
+# An override is never undone by reconciliation. To release the pin, clear the variable yourself.
+
+on:
+  release:
+    # `published` covers full and pre-release publication, including publishing a draft, which is why
+    # `prereleased` alone would miss the promotion that matters. `released` and `edited` catch the
+    # rest of the UI paths; `deleted`/`unpublished` recompute after a withdrawal.
+    types: [published, released, edited, deleted, unpublished]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report the decision without touching any channel"
+        required: false
+        type: boolean
+        default: false
+      force:
+        description: "Allow a deliberate backward move (rollback or post-withdrawal recovery)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+  GOTOOLCHAIN: "local"
+
+# Serialize every channel writer. Serialization is necessary but not sufficient — two jobs running
+# one after another can still apply an older decision second — so the ordering is rechecked inside
+# scripts/channel_targets.sh against the applied state, not just against run order here.
+concurrency:
+  group: release-channels-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile rolling channels
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read the applied channel state
+        id: state
+        shell: bash
+        # The PAT, not GITHUB_TOKEN: repository variables are not writable by the workflow token at
+        # all, and this is the same credential release.yml already uses to create releases.
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          read_var() { gh variable get "$1" --repo "$REPO" 2>/dev/null || true; }
+          {
+            echo "current_latest=$(read_var CHANNEL_LATEST_TAG)"
+            echo "current_beta=$(read_var CHANNEL_BETA_TAG)"
+            echo "latest_override=$(read_var CHANNEL_LATEST_OVERRIDE)"
+            echo "beta_override=$(read_var CHANNEL_BETA_OVERRIDE)"
+            # ghcr.io rejects an uppercase path, and release.yml pushes with the lowercased owner, so
+            # every registry lookup has to use the same string the push did. github.repository keeps
+            # the case it was typed with, which is why this is computed rather than interpolated.
+            echo "image=ghcr.io/$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Collect the published releases
+        id: collect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Re-read the current state rather than trusting the event payload: an edit or a deletion
+          # that arrived while an earlier run was in flight is exactly the case this has to survive.
+          gh api "repos/${REPO}/releases?per_page=100" --paginate > releases.json
+          printf 'collected %s releases\n' "$(jq 'length' releases.json)"
+
+      - name: Decide
+        id: decide
+        shell: bash
+        env:
+          CURRENT_LATEST: ${{ steps.state.outputs.current_latest }}
+          CURRENT_BETA: ${{ steps.state.outputs.current_beta }}
+          LATEST_OVERRIDE: ${{ steps.state.outputs.latest_override }}
+          BETA_OVERRIDE: ${{ steps.state.outputs.beta_override }}
+          FORCE: ${{ inputs.force == true && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          sh scripts/channel_targets.sh < releases.json > decision.txt
+          cat decision.txt
+          cat decision.txt >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to act on a decision that would regress a channel
+        shell: bash
+        env:
+          LATEST_ACTION: ${{ steps.decide.outputs.LATEST_ACTION }}
+          BETA_ACTION: ${{ steps.decide.outputs.BETA_ACTION }}
+          LATEST_REASON: ${{ steps.decide.outputs.LATEST_REASON }}
+          BETA_REASON: ${{ steps.decide.outputs.BETA_REASON }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [ "$LATEST_ACTION" = "refuse" ]; then
+            echo "::warning:::latest not updated — ${LATEST_REASON}"
+            failed=1
+          fi
+          if [ "$BETA_ACTION" = "refuse" ]; then
+            echo "::warning:::beta not updated — ${BETA_REASON}"
+            failed=1
+          fi
+          exit "$failed"
+
+      - name: Verify every target exists before touching anything
+        id: verify
+        # Runs whenever a channel has a target, not only when one is about to move: a `keep` still
+        # has to have its bytes, or the channel is pointing somewhere that does not exist.
+        if: steps.decide.outputs.LATEST_TARGET != '' || steps.decide.outputs.BETA_TARGET != ''
+        shell: bash
+        env:
+          IMAGE: ${{ steps.state.outputs.image }}
+          LATEST_TARGET: ${{ steps.decide.outputs.LATEST_TARGET }}
+          BETA_TARGET: ${{ steps.decide.outputs.BETA_TARGET }}
+          SKIPPED: ${{ steps.decide.outputs.SKIPPED_INCOMPLETE }}
+        run: |
+          set -euo pipefail
+          # An incomplete release must never be adopted as a channel target. The decision already
+          # skipped it; if a skip is what blocked a channel from moving, say so rather than leaving
+          # a channel silently stale.
+          if [ -n "$SKIPPED" ]; then
+            echo "::warning::releases with incomplete assets were ignored: $SKIPPED"
+          fi
+          for tag in $LATEST_TARGET $BETA_TARGET; do
+            # The tag comes from a release the decision already validated; the width of the check is
+            # that the bytes are actually in the registry, which the API cannot tell us.
+            if ! docker buildx imagetools inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
+              echo "::error::${IMAGE}:${tag} is not in the registry; refusing to move any channel"
+              exit 1
+            fi
+            echo "verified ${IMAGE}:${tag}"
+          done
+
+      - name: Apply the channels
+        if: steps.decide.outputs.LATEST_TARGET != '' || steps.decide.outputs.BETA_TARGET != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          REPO: ${{ github.repository }}
+          IMAGE: ${{ steps.state.outputs.image }}
+          DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
+          LATEST_ACTION: ${{ steps.decide.outputs.LATEST_ACTION }}
+          LATEST: ${{ steps.decide.outputs.LATEST }}
+          LATEST_TARGET: ${{ steps.decide.outputs.LATEST_TARGET }}
+          BETA_ACTION: ${{ steps.decide.outputs.BETA_ACTION }}
+          BETA: ${{ steps.decide.outputs.BETA }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "1" ]; then
+            echo "dry run: would set :latest=$LATEST :beta=$BETA"
+            if [ -n "$LATEST_TARGET" ]; then
+              echo "dry run: would align GitHub Latest with $LATEST_TARGET"
+            fi
+            exit 0
+          fi
+
+          point() { # channel tag
+            # imagetools create resolves the source tag to its digest and writes a new manifest
+            # pointing at the same layers: the promoted bytes are the published ones, not a rebuild.
+            docker buildx imagetools create -t "${IMAGE}:$1" "${IMAGE}:$2"
+            echo "moved ${IMAGE}:$1 -> $2"
+          }
+
+          if [ "$LATEST_ACTION" = "set" ]; then
+            point latest "$LATEST"
+            gh variable set CHANNEL_LATEST_TAG --repo "$REPO" --body "$LATEST"
+          fi
+          if [ "$BETA_ACTION" = "set" ]; then
+            point beta "$BETA"
+            gh variable set CHANNEL_BETA_TAG --repo "$REPO" --body "$BETA"
+          fi
+
+          # Keep GitHub's own Latest field agreeing with :latest, on EVERY run rather than only when
+          # the channel moves. An older series' patch is published later but must not displace a
+          # newer recommended version, and GitHub's automatic Latest would let it; aligning here is
+          # what makes the two agree. Doing it unconditionally is also what makes a transient failure
+          # self-healing — a version whose channel already moved would otherwise never be re-aligned.
+          #
+          # PATCH takes a release ID. There is no update-by-tag endpoint, and asking for one returns
+          # 404 after the channel has already moved, which is how the rehearsal found this.
+          if [ -n "$LATEST_TARGET" ]; then
+            id=$(gh api "repos/${REPO}/releases/tags/${LATEST_TARGET}" --jq '.id')
+            gh api -X PATCH "repos/${REPO}/releases/${id}" -f make_latest=true >/dev/null
+            echo "GitHub Latest aligned with ${LATEST_TARGET}"
+          fi
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          LATEST_ACTION: ${{ steps.decide.outputs.LATEST_ACTION }}
+          LATEST: ${{ steps.decide.outputs.LATEST }}
+          LATEST_REASON: ${{ steps.decide.outputs.LATEST_REASON }}
+          BETA_ACTION: ${{ steps.decide.outputs.BETA_ACTION }}
+          BETA: ${{ steps.decide.outputs.BETA }}
+          BETA_REASON: ${{ steps.decide.outputs.BETA_REASON }}
+          DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
+        run: |
+          {
+            echo "### Rolling channels"
+            echo
+            if [ "$DRY_RUN" = "1" ]; then echo "_dry run — nothing was changed_"; echo; fi
+            echo "| channel | action | tag | reason |"
+            echo "| --- | --- | --- | --- |"
+            echo "| \`:latest\` | ${LATEST_ACTION:-unknown} | ${LATEST:-—} | ${LATEST_REASON:-—} |"
+            echo "| \`:beta\` | ${BETA_ACTION:-unknown} | ${BETA:-—} | ${BETA_REASON:-—} |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -205,35 +205,6 @@ func TestUpsertReportThematicDedupsOnTitle(t *testing.T) {
 	})
 }
 
-// Upgrade path. init() runs createBaseSchema (CREATE ... IF NOT EXISTS) BEFORE ensureColumns,
-// so a base-schema index over a column that only ensureColumns back-fills onto an existing
-// database can never resolve there: CREATE TABLE IF NOT EXISTS is a no-op once the table
-// exists, so the column is still missing when the index statement runs. Declaring idx_track_id
-// in the base schema did exactly that and left every pre-existing database unable to start —
-// a fresh DB hid it, because CREATE TABLE brought the column with it. Simulate the old shape
-// and assert the upgrade completes.
-func TestInitUpgradesDatabaseMissingReportID(t *testing.T) {
-	st := newTestStore(t)
-
-	// Roll tracking_items back to its pre-report_id shape.
-	if _, err := st.exec(`DROP INDEX IF EXISTS idx_track_id`); err != nil {
-		t.Fatalf("drop idx_track_id: %v", err)
-	}
-	if _, err := st.exec(`ALTER TABLE tracking_items DROP COLUMN report_id`); err != nil {
-		t.Fatalf("drop report_id: %v", err)
-	}
-	if st.columnExists("tracking_items", "report_id") {
-		t.Fatal("setup failed: report_id still present")
-	}
-
-	if err := st.init(); err != nil {
-		t.Fatalf("init on a database predating report_id: %v", err)
-	}
-	if !st.columnExists("tracking_items", "report_id") {
-		t.Error("report_id was not restored by ensureColumns")
-	}
-}
-
 // The id UpsertReport returns is the row it actually wrote, on both the insert and
 // the overwrite path — tracking items, the webhook payload and the API response all
 // key off it, so a wrong id silently attaches data to the wrong report.

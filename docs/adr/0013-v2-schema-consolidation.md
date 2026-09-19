@@ -6,6 +6,13 @@ Accepted — 2026-07-08. Targets the next release, **v0.2.0**. The project is pr
 per semver each `0.y` bump (v0.1 → v0.2) is the breaking boundary that squashes migrations —
 "major boundary" throughout this ADR means the `0.y` bump, not a `1.0`/`2.0` bump.
 
+> **Superseded in part — 2026-09-19.** The squash-at-every-major-boundary policy described here is
+> replaced by [ADR 0034](0034-calver-baseline-and-database-compatibility-reset.md), which fixes one
+> database baseline (the v0.4.72 shape) and retires migrations deliberately rather than on a release
+> numbering boundary. The rest of this ADR — the side-table folds, the dropped dead tables, the
+> `rowid → id` rename — still describes the schema as it is, and its reasoning is preserved
+> unchanged below.
+
 Owner acceptance bar (2026-07-08): proceed only if **(a)** external callers are unaffected and
 **(b)** the structure gets simpler, not more complex. Both verified:
 

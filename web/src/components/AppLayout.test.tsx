@@ -31,7 +31,7 @@ vi.mock('../auth', () => ({
   useAuth: () => ({ user: 'alice', name: 'Alice', admin: true, can: () => true, logout: vi.fn() }),
 }))
 vi.mock('../api/client', () => ({
-  api: { get: () => Promise.resolve({ version: 'v9.9.9', commit: 'abc1234', buildDate: '2026-08-10' }) },
+  api: { get: () => Promise.resolve({ version: 'v2026.38.1', commit: 'abc1234', buildDate: '2026-08-10' }) },
 }))
 vi.mock('../lib/useVersionCheck', () => ({ useVersionCheck: () => updateState.available }))
 vi.mock('../lib/conditionalGet', () => ({
@@ -226,7 +226,8 @@ describe('AppLayout mobile chat focus mode', () => {
     vi.spyOn(Grid, 'useBreakpoint').mockReturnValue({ md: true } as ReturnType<typeof Grid.useBreakpoint>)
     const { container } = renderAt('/queue')
 
-    const footer = await screen.findByText('v9.9.9').then((el) => el.closest('.ant-layout-footer'))
+    // The footer shows the product version, not the git tag: 2026.38.1, not v2026.38.1 (ADR 0034).
+    const footer = await screen.findByText('2026.38.1').then((el) => el.closest('.ant-layout-footer'))
     expect(footer).not.toBeNull()
     expect(footer!.querySelector('.ant-space'), 'a flex row re-splits the baselines').toBeNull()
     const flexed = [...footer!.querySelectorAll<HTMLElement>('*')].filter((el) => el.style.display.includes('flex'))
