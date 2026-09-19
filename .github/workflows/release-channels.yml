@@ -79,12 +79,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          read_var() { gh variable get "$1" --repo "$REPO" 2>/dev/null || true; }
+          python3 scripts/release_guard.py state --repo "$REPO" > channel-state.txt
+          cat channel-state.txt >> "$GITHUB_OUTPUT"
           {
-            echo "current_latest=$(read_var CHANNEL_LATEST_TAG)"
-            echo "current_beta=$(read_var CHANNEL_BETA_TAG)"
-            echo "latest_override=$(read_var CHANNEL_LATEST_OVERRIDE)"
-            echo "beta_override=$(read_var CHANNEL_BETA_OVERRIDE)"
             # ghcr.io rejects an uppercase path, and release.yml pushes with the lowercased owner, so
             # every registry lookup has to use the same string the push did. github.repository keeps
             # the case it was typed with, which is why this is computed rather than interpolated.
@@ -150,6 +147,8 @@ jobs:
           LATEST_TARGET: ${{ steps.decide.outputs.LATEST_TARGET }}
           BETA_TARGET: ${{ steps.decide.outputs.BETA_TARGET }}
           SKIPPED: ${{ steps.decide.outputs.SKIPPED_INCOMPLETE }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # An incomplete release must never be adopted as a channel target. The decision already
@@ -159,13 +158,9 @@ jobs:
             echo "::warning::releases with incomplete assets were ignored: $SKIPPED"
           fi
           for tag in $LATEST_TARGET $BETA_TARGET; do
-            # The tag comes from a release the decision already validated; the width of the check is
-            # that the bytes are actually in the registry, which the API cannot tell us.
-            if ! docker buildx imagetools inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
-              echo "::error::${IMAGE}:${tag} is not in the registry; refusing to move any channel"
-              exit 1
-            fi
-            echo "verified ${IMAGE}:${tag}"
+            digest=$(python3 scripts/release_guard.py verify-target "$tag" --repo "$REPO" --image "$IMAGE")
+            printf '%s %s\n' "$tag" "$digest" >> verified-targets.txt
+            echo "verified ${IMAGE}:${tag}@${digest}"
           done
 
       - name: Apply the channels
@@ -192,9 +187,10 @@ jobs:
           fi
 
           point() { # channel tag
-            # imagetools create resolves the source tag to its digest and writes a new manifest
-            # pointing at the same layers: the promoted bytes are the published ones, not a rebuild.
-            docker buildx imagetools create -t "${IMAGE}:$1" "${IMAGE}:$2"
+            # Use only the digest verified against release metadata, never re-resolve a tag.
+            digest=$(awk -v tag="$2" '$1 == tag {print $2; exit}' verified-targets.txt)
+            test -n "$digest"
+            docker buildx imagetools create -t "${IMAGE}:$1" "${IMAGE}@${digest}"
             echo "moved ${IMAGE}:$1 -> $2"
           }
 

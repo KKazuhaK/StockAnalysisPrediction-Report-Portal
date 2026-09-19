@@ -47,20 +47,19 @@ tab=$(printf '\t')
 assets_complete() {
     _tag=$1
     _assets=$2
-    case ",${_assets}," in
-        *",SHA256SUMS.txt,"*) ;;
-        *) return 1 ;;
-    esac
-    _n=0
-    _ifs=$IFS
-    IFS=,
-    for _a in $_assets; do
-        case "$_a" in
-            "report-portal_${_tag}_"*.tar.gz | "report-portal_${_tag}_"*.zip) _n=$((_n + 1)) ;;
+    for _name in "SHA256SUMS.txt" "release-metadata.json" \
+        "report-portal_${_tag}_linux_amd64.tar.gz" \
+        "report-portal_${_tag}_linux_arm64.tar.gz" \
+        "report-portal_${_tag}_darwin_amd64.tar.gz" \
+        "report-portal_${_tag}_darwin_arm64.tar.gz" \
+        "report-portal_${_tag}_windows_amd64.zip" \
+        "report-portal_${_tag}_windows_arm64.zip"; do
+        case ",${_assets}," in
+            *",${_name},"*) ;;
+            *) return 1 ;;
         esac
     done
-    IFS=$_ifs
-    [ "$_n" -eq 6 ]
+
 }
 
 # resolve NAME CANDIDATE CURRENT OVERRIDE FORCE — prints "action|tag|reason". `tag` is what to

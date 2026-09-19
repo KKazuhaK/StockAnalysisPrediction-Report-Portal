@@ -4,6 +4,10 @@
     ./scripts/e2e_check.py <admin-password>
     E2E_BASE=http://localhost:8791 E2E_DB=/path/to/portal.db ./scripts/e2e_check.py <pw>
 
+For Docker, set E2E_CONTAINER to the container name and E2E_DB to its bind-mounted
+SQLite file. E2E_ADMIN_PASSWORD can supply the password without a command-line argument.
+The caller needs database write access and permission to restart that container.
+
 This exists because the Go and vitest suites cannot catch a whole class of defect: they call store
 methods directly, so a feature can be fully correct and still be unreachable through the API an
 admin actually uses. That is not hypothetical — it is how the OU tree shipped with SetGroupParent
@@ -19,6 +23,8 @@ Layers under test:
   D  ADR 0023 — password change, 2FA, recovery codes, step-up, SSO gating
   E  state survives a restart, and the schema reconcile is idempotent
 """
+from e2e_runtime import check_spa, restart_container, unused_totp_step
+
 import base64, hashlib, hmac, json, os, sqlite3, struct, subprocess, sys, time, urllib.error, urllib.request
 
 BASE = os.environ.get("E2E_BASE", "http://localhost:8791")
@@ -93,9 +99,9 @@ def sql(q, *a):
         c.close()
 
 
-def totp_code(secret, offset=0):
+def totp_code(secret, offset=0, step=None):
     key = base64.b32decode(secret + "=" * ((8 - len(secret) % 8) % 8))
-    counter = int(time.time()) // 30 + offset
+    counter = int(time.time()) // 30 + offset if step is None else step
     h = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
     o = h[19] & 15
     return "%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000)
@@ -104,6 +110,9 @@ def totp_code(secret, offset=0):
 def restart():
     """Restart the e2e server only. Targeted by PORT, never `pkill -f report-portal`, which would
     also take down whatever else the developer has running."""
+    if os.environ.get("E2E_CONTAINER"):
+        restart_container(os.environ["E2E_CONTAINER"], BASE)
+        return
     port = BASE.rsplit(":", 1)[1]
     pids = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True).stdout.split()
     for pid in pids:
@@ -120,7 +129,9 @@ def restart():
     raise SystemExit("server did not come back")
 
 
-ADMIN_PW = sys.argv[1]
+ADMIN_PW = os.environ.get("E2E_ADMIN_PASSWORD") or sys.argv[1]
+if os.environ.get("E2E_CONTAINER"):
+    check_spa(BASE)
 admin = Session()
 
 # ---------------------------------------------------------------- A. core
@@ -283,7 +294,8 @@ sc, setup = ext.req("POST", "/api/me/2fa/setup", headers={"X-Step-Up-Proof": "ex
 check("D", "两步验证：正确凭证可开始配置", sc == 200 and setup.get("secret"), f"{sc}")
 SECRET = setup.get("secret", "")
 if SECRET:
-    sc, en = ext.req("POST", "/api/me/2fa/enable", {"code": totp_code(SECRET)})
+    enabled_step = int(time.time()) // 30
+    sc, en = ext.req("POST", "/api/me/2fa/enable", {"code": totp_code(SECRET, step=enabled_step)})
     check("D", "两步验证：确认后启用并发放恢复码",
           sc == 200 and len(en.get("recovery_codes", [])) == 10, f"{sc}")
     RECOVERY = en.get("recovery_codes", [])
@@ -294,9 +306,9 @@ if SECRET:
     pending = r1.get("token")
     sc, _ = leg1.req("GET", "/api/me")
     check("D", "开启后：仅密码不能访问", sc == 401, f"{sc}")
-    # enable() burned the current time step, so use the previous one — inside the +/-1 tolerance
-    # window and not yet spent. Avoids a 31-second wait without weakening what is being tested.
-    sc, r2 = leg1.req("POST", "/api/login/2fa", {"token": pending, "code": totp_code(SECRET, -1)})
+    # Track the consumed step explicitly: a boundary may pass during password verification.
+    login_step = unused_totp_step({enabled_step})
+    sc, r2 = leg1.req("POST", "/api/login/2fa", {"token": pending, "code": totp_code(SECRET, step=login_step)})
     check("D", "第二腿：验证码完成登录", sc == 200 and r2.get("user") == "ext", f"{sc} {r2}")
 
     leg2 = Session()
@@ -310,7 +322,7 @@ if SECRET:
 
     leg4 = Session()
     _, r6 = leg4.login("ext", "external-pass-1234")
-    sc, _ = leg4.req("POST", "/api/login/2fa", {"token": r6.get("token"), "code": "000000"})
+    sc, _ = leg4.req("POST", "/api/login/2fa", {"token": r6.get("token"), "code": "not-a-code"})
     check("D", "错误验证码被拒", sc != 200, f"{sc}")
     sc, _ = leg4.req("POST", "/api/login/2fa", {"token": r6.get("token"), "code": totp_code(SECRET, -1)})
     check("D", "待验令牌一次性（错一次即作废）", sc != 200, f"{sc}")

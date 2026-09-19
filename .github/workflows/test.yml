@@ -190,7 +190,7 @@ jobs:
           sh scripts/tag_release_test.sh
           sh scripts/release_derive_test.sh
       - name: E2E harness tests
-        run: python3 -m unittest discover -s scripts -p e2e_runtime_test.py
+        run: python3 -B -m unittest discover -s scripts -p '*_test.py'
 
   web-build:
     name: web typecheck + build
@@ -260,8 +260,9 @@ jobs:
           push: false
           load: true
           tags: report-portal:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=report-portal-image
+          # PRs reuse main's cache without exporting a large disposable per-PR copy.
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'type=gha,scope=report-portal-image,mode=max' || '' }}
       - name: Run the image and probe it
         run: |
           set -euo pipefail

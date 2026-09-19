@@ -188,3 +188,26 @@ the same ordering applies: dump before the bridge, restore before reverting the 
   database up through the release line, then back it up again.
 - **Opening a post-bridge database with an old binary**, or the reverse. Each side reads one shape;
   the rollback route is the old binary with its retained pre-cutover database.
+
+## Recovering an interrupted image publication
+
+Release preparation requires successful full CI for the exact commit. If no push run exists
+(for example on a maintenance branch), dispatch `test.yml` on that branch and wait for it.
+Different release tags may build concurrently; attempts for the same tag are serialized.
+
+Once the fixed image exists, rebuilding or replacing draft archives is refused before publication.
+If the image push succeeded but uploading `release-metadata.json` failed, recover only that file:
+
+```sh
+python3 scripts/recover-release-metadata.py OWNER/REPO vYYYY.W.R
+```
+
+The recovery tool requires authenticated `gh` and Docker access. It verifies archive checksums,
+compares both Linux binaries byte for byte with their image counterparts, and checks the image
+revision against the annotated tag before uploading metadata. It never rebuilds or replaces an
+archive or image. A mismatch requires a new version. Channel promotion requires all six named
+archives, checksums, and matching metadata, and promotes the recorded immutable digest.
+
+The Debian image index is pinned in `Dockerfile.release`; weekly Docker dependency updates keep
+it moving through review. PR image builds read the main cache but do not export their own cache.
+Only main pushes refresh the shared Actions image cache; release builds use the registry cache.
