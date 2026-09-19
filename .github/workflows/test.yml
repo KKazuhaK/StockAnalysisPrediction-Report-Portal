@@ -6,11 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
-# One run per ref: a newer push to the same PR cancels the previous run instead of queueing a
-# second full pass over superseded code.
+# Superseded PR runs may be cancelled. Every main push and manual run gets its own
+# group so neither running nor pending full-race backstops can be replaced.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -188,6 +188,9 @@ jobs:
           sh scripts/calver_test.sh
           sh scripts/channel_targets_test.sh
           sh scripts/tag_release_test.sh
+          sh scripts/release_derive_test.sh
+      - name: E2E harness tests
+        run: python3 -m unittest discover -s scripts -p e2e_runtime_test.py
 
   web-build:
     name: web typecheck + build
@@ -226,6 +229,16 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build SPA for the embedded binary
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
       - name: Build the linux/amd64 binary
         env:
           CGO_ENABLED: "0"
@@ -252,7 +265,9 @@ jobs:
       - name: Run the image and probe it
         run: |
           set -euo pipefail
-          docker run -d --name rp-smoke -p 18790:8790 report-portal:ci
+          mkdir -p "$RUNNER_TEMP/rp-e2e-data"
+          docker run -d --name rp-smoke -p 127.0.0.1:18790:8790 \
+            -v "$RUNNER_TEMP/rp-e2e-data:/app/data" report-portal:ci
           healthy=0
           for _ in $(seq 1 60); do
             if curl -fsS -o /dev/null http://127.0.0.1:18790/healthz; then
@@ -285,3 +300,21 @@ jobs:
             *ci*) ;;
             *) echo "::error::version output is missing the injected build id"; exit 1 ;;
           esac
+      - name: End-to-end checks against the release image
+        run: |
+          set -euo pipefail
+          admin_password=$(docker logs rp-smoke 2>&1 | sed -n 's/^    password: //p' | head -n 1)
+          test -n "$admin_password" || { echo "::error::bootstrap password not found"; exit 1; }
+          echo "::add-mask::$admin_password"
+          # The image owns its database as UID 10001. Root on the disposable runner can
+          # access the bind mount without changing the production image's permissions.
+          sudo env E2E_BASE=http://127.0.0.1:18790 \
+            E2E_DB="$RUNNER_TEMP/rp-e2e-data/portal.db" E2E_CONTAINER=rp-smoke \
+            E2E_ADMIN_PASSWORD="$admin_password" \
+            python3 scripts/e2e_check.py
+      - name: Container diagnostics
+        if: failure()
+        run: docker logs rp-smoke
+      - name: Remove test container
+        if: always()
+        run: docker rm -f rp-smoke || true
