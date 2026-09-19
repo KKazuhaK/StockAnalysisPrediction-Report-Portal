@@ -154,8 +154,13 @@ beta=$(resolve BETA "$cand_beta" "${CURRENT_BETA:-}" "${BETA_OVERRIDE:-}" "${FOR
 # either way.
 target_of() { # action override candidate
     case "$1" in
-        set) printf '%s\n' "$2" ;;
-        keep) if [ -n "$2" ]; then printf '%s\n' "$2"; else printf '%s\n' "$3"; fi ;;
+        # `set` and `keep` differ in what they APPLY, not in where the channel ends up: both end at
+        # the operator's pin when there is one and at the computed candidate otherwise. Reporting an
+        # empty target for a plain `set` is how the workflow skipped its own verification and write
+        # steps while still reporting success.
+        set | keep)
+            if [ -n "$2" ]; then printf '%s\n' "$2"; else printf '%s\n' "$3"; fi
+            ;;
         *) printf '\n' ;;
     esac
 }

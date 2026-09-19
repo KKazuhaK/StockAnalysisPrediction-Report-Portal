@@ -195,6 +195,15 @@ run '[]'
 expect LATEST_TARGET "" "no eligible release means no target"
 expect LATEST_TARGET "" "and nothing to align"
 
+# A plain `set` has a target too. Reporting none is not cosmetic: the workflow gates its registry
+# check and its channel write on the target being non-empty, so an empty one skips both and still
+# reports success — the channel silently never moves.
+clear_env
+run "$(fixture v2026.38.1 no no yes)"
+expect LATEST_ACTION set "the channel has somewhere to go"
+expect LATEST_TARGET v2026.38.1 "and a target to verify and apply"
+expect BETA_TARGET v2026.38.1 "for :beta as well"
+
 export CURRENT_LATEST=v2026.39.1
 run "$(fixture v2026.38.2 no no yes)"
 expect LATEST_ACTION refuse "a backward move is still refused"
