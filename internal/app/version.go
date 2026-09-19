@@ -206,6 +206,49 @@ func (s *Store) resolveVersion(name string) string {
 	return name
 }
 
+// reconcileReportVersions is the derived-data step of the upgrade ladder: the place a release writes
+// the work that adding a column cannot express — a value every existing row needs, an index that has
+// to be rebuilt in a particular order because NULLs compare distinct in a unique index.
+//
+// What remains here is the part that was never an upgrade: seeding the version registry, which both
+// startup paths need, and asserting the property the five-column identity index depends on. The
+// backfill and the index rebuild that used to be a step are gone with the rest of the conversion
+// code, and a database that has not had them is refused rather than carried forward.
+func (s *Store) reconcileReportVersions() error {
+	// Seeded before anything reads a report: a version-less ingest lands on the default, and a
+	// hand-written report lands on the manual one. Both are ON CONFLICT DO NOTHING, so an admin's
+	// own label is never overwritten.
+	if err := s.ensureDefaultVersion(); err != nil {
+		return err
+	}
+	if err := s.ensureManualVersion(); err != nil {
+		return err
+	}
+	// The index has to cover version, or the tuple UpsertReport resolves its conflict against is not
+	// the one the database enforces, and two editions of one analysis collapse into each other. The
+	// shape check can only see that an index of the right name exists, so the property itself is
+	// asserted here.
+	if !s.identIndexCoversVersion() {
+		return fmt.Errorf("idx_reports_ident does not cover version: report identity would not " +
+			"match the tuple UpsertReport conflicts on")
+	}
+	return nil
+}
+
+// identIndexCoversVersion reports whether the identity index's own definition includes the version
+// column — a stricter question than the shape check's "is there an index with this name".
+func (s *Store) identIndexCoversVersion() bool {
+	var def string
+	if s.driver == "postgres" {
+		s.queryRow(`SELECT COALESCE(indexdef,'') FROM pg_indexes
+			WHERE schemaname='public' AND indexname='idx_reports_ident'`).Scan(&def)
+	} else {
+		s.queryRow(`SELECT COALESCE(sql,'') FROM sqlite_master
+			WHERE type='index' AND name='idx_reports_ident'`).Scan(&def)
+	}
+	return def != "" && strings.Contains(def, "version")
+}
+
 // ---------- who may read which version ----------
 
 // A grant names a PRINCIPAL, and one column holds both kinds: an OU ("g:<id>") or a single account

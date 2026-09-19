@@ -259,14 +259,14 @@ func (s *Store) init() error {
 			return err
 		}
 	}
-	// Current operations, on both paths: they seed rows the application reads, and neither overwrites
-	// one that already exists (the version registry is ON CONFLICT DO NOTHING, the group is looked up
-	// first). They were previously reached only through the report-version reconciliation, which is
-	// gone — a version-less ingest and the manual-report editor would break without them.
-	if err := s.ensureDefaultVersion(); err != nil {
+	// The upgrade ladder, on both paths: the entry points a release writes a conversion step into and
+	// clears again at the next baseline. Every step is empty in this release, which is what a reset
+	// means — what they still do is the part that was never a conversion (seeding the version
+	// registry, asserting the identity index covers version).
+	if err := s.ensureColumns(); err != nil {
 		return err
 	}
-	if err := s.ensureManualVersion(); err != nil {
+	if err := s.reconcileReportVersions(); err != nil {
 		return err
 	}
 	s.EnsureDefaultGroup() // group model B: guarantee the fallback group exists
