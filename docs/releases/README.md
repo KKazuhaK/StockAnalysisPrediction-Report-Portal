@@ -29,6 +29,13 @@ way.
 The tag's message is the release note, so a number with no `docs/releases/<tag>.md` in the tagged
 commit cannot be cut — the script names the file to write and stops.
 
+**The tag must go on a commit that main CI has already passed**, and the release workflow refuses to
+publish otherwise: it looks for a completed `test` run against that exact commit and requires the
+whole suite, race lane included — and the race lane only runs on a push to `main`. So the note belongs
+in the pull request, not in a commit made after the merge: the squash merge that lands the work is the
+commit to tag, and a follow-up commit that only adds or edits the note has no run of its own and
+cannot be released from.
+
 The push is a separate, deliberate command because it is the irreversible step; the script never
 pushes. It refuses a version with no note, a tag that already exists, a tag that is not CalVer, and —
 the mistake worth catching — a commit that does not contain its own release note, which is how a tag
