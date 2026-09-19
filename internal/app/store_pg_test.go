@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -170,11 +171,6 @@ func TestPostgresVersionIdentity(t *testing.T) {
 	if r, _ := st.GetNew(other, nil); r == nil || r.MD != "revised" || r.Version != "对外版" {
 		t.Errorf("read back = %+v", r)
 	}
-	// The migration guard must recognise the index on this driver too, or every start would drop
-	// and rebuild a unique index over the whole reports table.
-	if !st.identIndexCoversVersion() {
-		t.Error("identIndexCoversVersion must see the Postgres index")
-	}
 }
 
 // TestPostgresScopedReads covers the ADR 0024 read predicate on Postgres: an EXISTS subquery and up
@@ -256,53 +252,28 @@ func TestPostgresScopedReads(t *testing.T) {
 	}
 }
 
-// TestPostgresUpgradeRebuildsIdentityIndex is the migration itself on Postgres, from the shape a
-// v0.3.10 database has. The DROP/CREATE is the one piece of hand-written migration in the project,
-// and a driver difference here corrupts report identity rather than erroring.
-func TestPostgresUpgradeRebuildsIdentityIndex(t *testing.T) {
-	st := pgStore(t, "reports")
-	// Put the table back into the four-column shape and re-run init over it.
-	if _, err := st.exec(`DROP INDEX IF EXISTS idx_reports_ident`); err != nil {
+// TestPostgresRejectsAnOlderShape is the boundary on the driver production actually runs. The shape
+// check reads information_schema here and sqlite_master on SQLite, so the refusal — the thing every
+// existing deployment meets first — has to be exercised on Postgres rather than assumed portable.
+func TestPostgresRejectsAnOlderShape(t *testing.T) {
+	st := pgStore(t)
+	if _, err := st.exec(`ALTER TABLE cleanup_runs RENAME COLUMN bytes_reclaimed TO bytes_reclaimed_old`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.exec(`CREATE UNIQUE INDEX idx_reports_ident ON reports(symbol, rdate, rtype, title)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.exec(`UPDATE reports SET version=''`); err != nil {
-		t.Fatal(err)
-	}
-	rows := [][]string{
-		{"600519", "2026-07-01", "投资决策", "茅台投资决策"},
-		{"", "2026-07-01", "主题研究", "白酒行业展望"},
-		{"", "2026-07-01", "主题研究", "新能源行业展望"}, // told apart by title alone
-	}
-	for _, r := range rows {
-		if _, err := st.exec(`INSERT INTO reports(symbol,rdate,rtype,title,version) VALUES(?,?,?,?,'')`,
-			r[0], r[1], r[2], r[3]); err != nil {
-			t.Fatal(err)
+	// Restore before anything else runs: one DSN is shared by every Postgres test in this package,
+	// so a renamed column left behind would fail the tests after this one instead of this one.
+	t.Cleanup(func() {
+		if _, err := st.exec(`ALTER TABLE cleanup_runs RENAME COLUMN bytes_reclaimed_old TO bytes_reclaimed`); err != nil {
+			t.Errorf("restoring cleanup_runs.bytes_reclaimed: %v", err)
 		}
+	})
+
+	err := st.init()
+	if err == nil {
+		t.Fatal("init accepted an older Postgres shape")
 	}
-	if st.identIndexCoversVersion() {
-		t.Fatal("the four-column index must not be reported as covering version")
-	}
-	if err := st.init(); err != nil {
-		t.Fatalf("re-running init over a pre-version shape: %v", err)
-	}
-	if !st.identIndexCoversVersion() {
-		t.Error("the identity index was not rebuilt to cover version")
-	}
-	var n, offDefault int
-	st.queryRow("SELECT COUNT(*) FROM reports").Scan(&n)
-	st.queryRow("SELECT COUNT(*) FROM reports WHERE version <> ?", st.DefaultVersion()).Scan(&offDefault)
-	if n != len(rows) {
-		t.Errorf("row count = %d after the rebuild, want %d — identity changes must never merge reports", n, len(rows))
-	}
-	if offDefault != 0 {
-		t.Errorf("%d rows are off the default version after the backfill", offDefault)
-	}
-	// A second init is a no-op rather than another full-table rebuild.
-	if err := st.init(); err != nil {
-		t.Fatalf("second init: %v", err)
+	if !strings.Contains(err.Error(), "bytes_reclaimed") || !strings.Contains(err.Error(), "v0.4.72") {
+		t.Errorf("error %q should name the missing column and the bridge release", err)
 	}
 }
 

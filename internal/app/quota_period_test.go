@@ -132,7 +132,7 @@ func TestLegacyQuotaRowDoesNotBorrowAnAncestorsWindow(t *testing.T) {
 	st.UpsertUser(User{Username: "c", PasswordHash: "h", Role: "user"})
 	st.SetPrimaryGroup("c", child)
 
-	// Exactly what ensureColumns leaves behind: the cap the old binary wrote, no period.
+	// The shape an older binary left behind: a cap written with no period.
 	st.exec("UPDATE user_groups SET daily_run_quota=5, run_quota_period=NULL WHERE id=?", child)
 
 	eff := st.EffectiveGroupSettings("c")

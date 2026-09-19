@@ -51,8 +51,8 @@ func scanAnnouncement(sc interface{ Scan(...any) error }) (Announcement, error) 
 	var enabled, popup, dismissible sql.NullInt64
 	err := sc.Scan(&a.ID, &a.Level, &a.Title, &a.Content, &a.Ord, &enabled, &popup, &dismissible,
 		&a.Scope, &a.Audience, &a.StartsAt, &a.EndsAt, &a.CreatedAt, &a.CreatedBy, &a.UpdatedAt)
-	// NULL reads as the permissive default for enabled and the restrictive one for the rest, which
-	// is what a row written before ensureColumns added the column should mean.
+	// NULL reads as the permissive default for enabled and the restrictive one for the rest, which is
+	// what a row written before the column existed should mean.
 	a.Enabled = !enabled.Valid || enabled.Int64 != 0
 	a.Popup = popup.Valid && popup.Int64 != 0
 	a.Dismissible = dismissible.Valid && dismissible.Int64 != 0

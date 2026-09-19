@@ -224,31 +224,29 @@ func TestRestoreRejectsForeignFiles(t *testing.T) {
 	}
 }
 
-// TestRestoreAcceptsAnOlderDump is the upgrade path: a dump written before a column existed must
-// still load, with the new column left at its default, and the restore must say which columns those
-// were rather than leaving the operator to guess.
-func TestRestoreAcceptsAnOlderDump(t *testing.T) {
+// A dump whose rows predate a column is a dump of an older shape, and it is refused rather than
+// loaded with the missing columns left at their defaults. Failing here rather than after the
+// destructive step is the point: the release that wrote the dump is the one that has to load it.
+func TestRestoreRefusesADumpFromAnOlderShape(t *testing.T) {
 	src := newTestStore(t)
 	seedForBackup(t, src)
 	dump := string(dumpOf(t, src))
 
-	// Drop `author` from the reports section and from every reports row: exactly the shape of a dump
-	// taken by a build from before ADR 0026 added the column.
+	// `author` dropped from the reports section and from every reports row: exactly the shape of a
+	// dump taken by a build from before ADR 0026 added the column.
 	older := dropColumn(t, dump, "reports", "author")
 
 	dst := newTestStore(t)
-	rep, err := dst.restoreFrom(strings.NewReader(older), true)
-	if err != nil {
-		t.Fatalf("an older dump must still restore: %v", err)
+	before := dumpOf(t, dst)
+	_, err := dst.restoreFrom(strings.NewReader(older), true)
+	if err == nil {
+		t.Fatal("a dump from an older shape must be refused")
 	}
-	if rep.Rows["reports"] != 2 {
-		t.Fatalf("reports rows = %d; want 2", rep.Rows["reports"])
+	if !strings.Contains(err.Error(), "author") {
+		t.Errorf("the error must name the missing column; got: %v", err)
 	}
-	if !containsString(rep.SkipCols["reports"], "author") {
-		t.Errorf("the restore must report author as left-at-default; got %v", rep.SkipCols["reports"])
-	}
-	if got := scalar[string](t, dst, `SELECT COALESCE(author,'') FROM reports WHERE id=2`); got != "" {
-		t.Errorf("a column the dump lacks must take its default; author = %q", got)
+	if !bytes.Equal(stripHeader(before), stripHeader(dumpOf(t, dst))) {
+		t.Error("a refused restore must leave the target exactly as it was")
 	}
 }
 
@@ -274,7 +272,7 @@ func TestBackupCoversEveryTable(t *testing.T) {
 	}
 }
 
-// dropColumn rewrites a dump as if `col` had never existed on `table`, which is how an older
+// dropColumn rewrites a dump as if `col` had never existed on `table`, producing the shape an older
 // build's dump differs from this one's.
 func dropColumn(t *testing.T, dump, table, col string) string {
 	t.Helper()
@@ -372,9 +370,9 @@ func TestTruncatedRestoreLeavesNothingBehind(t *testing.T) {
 	}
 }
 
-// TestRestoreRefusesAnotherSchemaGeneration is the failure the ADR claimed requireSchemaBaseline
-// already handled, and it did not: that guard runs at open time against the TARGET database — empty
-// or current at that moment — and never sees the dump. So a cross-generation backup restored
+// TestRestoreRefusesAnotherSchemaGeneration is the failure the ADR claimed the startup guard already
+// handled, and it did not: that guard runs at open time against the TARGET database — empty or
+// current at that moment — and never sees the dump. So a cross-generation backup restored
 // "successfully" and only broke on the NEXT boot, which is a delayed failure after a destructive
 // operation, in the worst possible order.
 func TestRestoreRefusesAnotherSchemaGeneration(t *testing.T) {
@@ -419,19 +417,25 @@ func TestRestoreRefusesAnotherSchemaGeneration(t *testing.T) {
 	}
 }
 
-// TestRestoreAcceptsADumpWithoutTheField keeps the check from rejecting a backup over a question it
-// cannot answer: a dump written before the header carried the generation.
-func TestRestoreAcceptsADumpWithoutTheField(t *testing.T) {
+// TestRestoreRefusesADumpWithoutTheGenerationField: the field shipped with the format itself, so a
+// dump without it was not written by any release of this feature and there is nothing to check it
+// against. Accepting it was the permissive branch that existed for legacy dumps.
+func TestRestoreRefusesADumpWithoutTheGenerationField(t *testing.T) {
 	src := newTestStore(t)
 	seedForBackup(t, src)
 	dump := strings.Replace(string(dumpOf(t, src)), `"schema_version":2,`, "", 1)
 
 	dst := newTestStore(t)
-	if _, err := dst.restoreFrom(strings.NewReader(dump), true); err != nil {
-		t.Fatalf("a dump with no recorded generation must still restore: %v", err)
+	before := dumpOf(t, dst)
+	_, err := dst.restoreFrom(strings.NewReader(dump), true)
+	if err == nil {
+		t.Fatal("a dump with no recorded generation must be refused")
 	}
-	if n := scalar[int](t, dst, `SELECT COUNT(*) FROM reports`); n != 2 {
-		t.Errorf("reports = %d; want 2", n)
+	if !strings.Contains(err.Error(), "restore it with the release that wrote it") {
+		t.Errorf("the error must name the remedy; got: %v", err)
+	}
+	if !bytes.Equal(stripHeader(before), stripHeader(dumpOf(t, dst))) {
+		t.Error("a refused restore must leave the target exactly as it was")
 	}
 }
 

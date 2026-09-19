@@ -1,7 +1,6 @@
 package app
 
 import (
-	"database/sql"
 	"reflect"
 	"testing"
 )
@@ -14,7 +13,8 @@ func colNames(cols []schemaCol) []string {
 	return out
 }
 
-// TestParseCreateTable locks the base-schema column extractor that drives ensureColumns: it pulls
+// TestParseCreateTable locks the base-schema column extractor. It drives the shape check and the
+// backup table walk, so a column it quietly drops is a column neither of them can refuse: it pulls
 // plain columns, skips the primary-key column and table-level constraints, is paren-aware for a
 // composite key, and ignores non-table statements.
 func TestParseCreateTable(t *testing.T) {
@@ -44,41 +44,45 @@ func TestParseCreateTable(t *testing.T) {
 	}
 }
 
-// TestEnsureColumnsBackfillsAdditive proves the reconciler adds a base-schema column an existing
-// table is missing (link_groups.icon) with no hand-written migration, preserving existing rows —
-// the mechanism that lets a new additive column be declared once in createBaseSchema.
-func TestEnsureColumnsBackfillsAdditive(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+// TestParseIndexName covers the other half of the shape check: the name a CREATE INDEX declares is
+// what has to exist, and a name the parser gets wrong is an index the boundary silently stops
+// checking — which is how an index quietly goes missing and takes a uniqueness guarantee with it.
+func TestParseIndexName(t *testing.T) {
+	cases := []struct {
+		stmt string
+		want string
+		ok   bool
+	}{
+		{"CREATE INDEX IF NOT EXISTS idx_batch_jobs_run_at ON batch_jobs(run_at)", "idx_batch_jobs_run_at", true},
+		{"CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_ident ON reports(symbol, rdate)", "idx_reports_ident", true},
+		{"CREATE INDEX idx_plain ON t(a)", "idx_plain", true},
+		{"CREATE UNIQUE INDEX idx_u ON t(a)", "idx_u", true},
+		{"CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY)", "", false},
+		{"CREATE VIEW v AS SELECT 1", "", false},
 	}
-	db.SetMaxOpenConns(1) // share the one in-memory connection (matches OpenStore)
-	t.Cleanup(func() { _ = db.Close() })
+	for _, tc := range cases {
+		if tc.stmt[0:6] != "CREATE" {
+			t.Fatalf("unusable case %q", tc.stmt)
+		}
+		got, ok := parseIndexName(tc.stmt)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("parseIndexName(%q) = (%q, %v), want (%q, %v)", tc.stmt, got, ok, tc.want, tc.ok)
+		}
+	}
 
-	// link_groups in the pre-icon shape, already holding a row.
-	if _, err := db.Exec(`CREATE TABLE link_groups(id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT DEFAULT '', mode TEXT DEFAULT 'row', show_label INTEGER DEFAULT 1, ord INTEGER DEFAULT 0)`); err != nil {
-		t.Fatalf("seed link_groups: %v", err)
+	// Every index the base schema declares must be parsed, or checkBaseShape skips it: the two
+	// halves of this test have to agree about which statements are indexes at all.
+	declared := 0
+	for _, stmt := range (&Store{driver: "sqlite"}).baseSchemaStmts() {
+		if !isIndexDDL(stmt) {
+			continue
+		}
+		declared++
+		if name, ok := parseIndexName(stmt); !ok || name == "" {
+			t.Errorf("isIndexDDL accepts a statement parseIndexName cannot read: %q", stmt)
+		}
 	}
-	if _, err := db.Exec(`CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT)`); err != nil {
-		t.Fatalf("seed meta: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO meta(k,v) VALUES('schema_version','2')`); err != nil {
-		t.Fatalf("seed schema baseline: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO link_groups(name,mode) VALUES('legacy','popover')`); err != nil {
-		t.Fatalf("seed row: %v", err)
-	}
-
-	st := &Store{db: db, driver: "sqlite"}
-	if err := st.init(); err != nil {
-		t.Fatalf("init (should auto-reconcile the missing column): %v", err)
-	}
-	if !st.columnExists("link_groups", "icon") {
-		t.Fatal("ensureColumns did not add link_groups.icon")
-	}
-	gs := st.LinkGroups()
-	if len(gs) != 1 || gs[0].Name != "legacy" || gs[0].Icon != "" {
-		t.Fatalf("row after reconcile = %+v, want the legacy row preserved with empty icon", gs)
+	if declared == 0 {
+		t.Fatal("the base schema declares no indexes — the check above proved nothing")
 	}
 }

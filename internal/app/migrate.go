@@ -7,22 +7,60 @@ import (
 	"strings"
 )
 
-// Schema-reconciliation machinery lives outside the core store. Versioned data-move/drop steps
-// are intentionally absent at the v0.3 boundary; the complete v0.2 result is now the base schema.
-// See docs/adr/0013-v2-schema-consolidation.md.
+// The database compatibility boundary. This release reads exactly one shape — the v0.4.72 schema,
+// which is what baseSchemaStmts declares — and converts nothing: no ADD COLUMN, no backfill, no
+// adoption step, no stamping of a database that already exists. A database that does not already
+// satisfy the baseline is refused before any statement runs, with the release it has to be taken
+// through named in the message.
+// See docs/adr/0034-calver-baseline-and-database-compatibility-reset.md.
 
 const schemaBaseline = 2
 
-// schemaVersion reads the internal schema-generation marker from meta. Absent (or unparseable)
-// means generation 1 — the pre-v0.2 shape that predates this marker. The generation is
-// decoupled from the release tag: generation 2 ships in release v0.2.0.
+// legacyBridge is the last release of the pre-CalVer line. It accumulated every migration the older
+// lines had, so it is the single step a database below the baseline has to take before this release
+// will read it. Nothing in this binary performs that step: the bridge is that release's binary.
+const legacyBridge = "v0.4.72"
+
+// schemaState is the read-only verdict on the database in front of us. A refused database is
+// reported as an error, so the state is only meaningful when classifySchema returns nil.
+type schemaState int
+
+const (
+	// schemaEmpty — nothing here yet: a database this binary creates from scratch.
+	schemaEmpty schemaState = iota
+	// schemaResume — an interrupted first run of this binary. Every create statement is
+	// IF NOT EXISTS, so finishing it is safe.
+	schemaResume
+	// schemaCurrent — the accepted baseline. Verify and start; write nothing.
+	schemaCurrent
+)
+
+// schemaVersion reads the generation marker. Absent (or unparseable) reads as generation 1, the
+// pre-v0.2 shape that predates the marker. The generation is decoupled from the release tag:
+// generation 2 shipped in release v0.2.0.
 func (s *Store) schemaVersion() int {
-	var v sql.NullString
-	s.queryRow("SELECT v FROM meta WHERE k='schema_version'").Scan(&v)
-	if n, err := strconv.Atoi(v.String); err == nil && n > 0 {
+	raw, ok := s.rawSchemaVersion()
+	if !ok {
+		return 1
+	}
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 		return n
 	}
 	return 1
+}
+
+// rawSchemaVersion returns the marker verbatim, and whether it is present and non-empty. The
+// distinction is load-bearing: an absent marker is a state this release can resume, while a marker
+// that is present and nonsense is one it refuses rather than interprets.
+func (s *Store) rawSchemaVersion() (string, bool) {
+	var v sql.NullString
+	if err := s.queryRow("SELECT v FROM meta WHERE k='schema_version'").Scan(&v); err != nil {
+		return "", false
+	}
+	if !v.Valid || strings.TrimSpace(v.String) == "" {
+		return "", false
+	}
+	return v.String, true
 }
 
 func (s *Store) setSchemaVersion(n int) error {
@@ -31,34 +69,179 @@ func (s *Store) setSchemaVersion(n int) error {
 	return err
 }
 
-// requireSchemaBaseline enforces the major-boundary upgrade contract before any schema DDL runs.
-// An empty database is allowed and stamped after creation. A v0.1 database must first run the last
-// v0.2 release, which owns the now-squashed data movement; v0.3 never guesses or rewrites that data.
-func (s *Store) requireSchemaBaseline() (fresh bool, err error) {
+// classifySchema decides what the database is, and refuses everything that is not the accepted
+// baseline. It is read-only, and init calls it before any DDL: a refused database is therefore never
+// partially created, partially altered or partially seeded. That ordering is the fix, not a detail —
+// the create path used to run first, so a database that was about to be rejected had already had
+// this release's tables added to it by the time anything complained.
+//
+// The generation marker narrows the field; the SHAPE decides. A marker alone never certifies a
+// database, which is exactly the case it would otherwise wave through: generation 2 carrying an
+// older release's tables.
+func (s *Store) classifySchema() (schemaState, error) {
+	// Generation 1 predates the meta table entirely, so "no meta" is either an empty database or a
+	// pre-v0.2 one — and the marker tables are what tell them apart.
 	if !s.tableExists("meta") {
 		for _, table := range []string{"reports", "users", "links", "batch_jobs"} {
 			if s.tableExists(table) {
-				return false, fmt.Errorf("unsupported pre-v0.2 database: first run v0.2.26 successfully, then upgrade to v0.3.0")
+				return schemaEmpty, fmt.Errorf("unsupported pre-v0.2 database (found table %q): take it "+
+					"through the legacy releases — v0.2.26 first, then each line's last release — until "+
+					"%s has started it once, then start this release. This release reads only the %s "+
+					"schema and converts nothing", table, legacyBridge, legacyBridge)
 			}
 		}
-		return true, nil
+		return schemaEmpty, nil
 	}
-	if version := s.schemaVersion(); version < schemaBaseline {
-		return false, fmt.Errorf("unsupported schema generation %d: first run v0.2.26 successfully, then upgrade to v0.3.0", version)
-	}
-	// v0.4.1 is the only released line that created these, and its adoption steps were removed in
-	// v0.4.3. Booting anyway is the dangerous outcome, not a merciful one: the keyring is now read
-	// from `meta`, so the portal would mint a SECOND data key and every secret sealed under the
-	// first — SSO client secrets, the SAML SP key — becomes undecryptable at runtime with no error;
-	// and the group rules would read as empty, silently re-placing every federated user into their
-	// provider's default OU at the next login. Refusing turns silent loss into a message.
+
+	// v0.4.1's tables. Its adoption steps were removed in v0.4.3, and booting anyway is the
+	// dangerous outcome, not a merciful one: the keyring is now read from `meta`, so the portal
+	// would mint a SECOND data key and every secret sealed under the first — SSO client secrets,
+	// the SAML SP key — becomes undecryptable at runtime with no error; and the group rules would
+	// read as empty, silently re-placing every federated user into their provider's default OU at
+	// the next login. Refusing turns silent loss into a message.
 	for _, table := range []string{"sso_keyring", "sso_group_rules", "sso_auth_requests"} {
 		if s.tableExists(table) {
-			return false, fmt.Errorf("this database was written by v0.4.1, whose upgrade path is no "+
-				"longer supported (found table %q): recreate it, or run v0.4.2 once to migrate it first", table)
+			return schemaEmpty, fmt.Errorf("this database was written by v0.4.1, whose upgrade path is "+
+				"no longer supported (found table %q): recreate it, or run v0.4.2 once and then take it "+
+				"to %s", table, legacyBridge)
 		}
 	}
-	return false, nil
+
+	raw, ok := s.rawSchemaVersion()
+	if !ok {
+		// No marker and a meta table: a generation-1 database has no meta at all, so this is either a
+		// first run that died between creating `meta` and stamping it, or something this release
+		// cannot name. Resuming is safe only while the database is indistinguishable from one nobody
+		// has written to — so no table may hold a row, and every table that exists must already match
+		// the declared shape. The second half is what separates a half-created current schema from an
+		// older release's empty tables, which look identical by row count alone.
+		empty, err := s.noRowsAnywhere()
+		if err != nil {
+			return schemaEmpty, err
+		}
+		if !empty {
+			return schemaEmpty, fmt.Errorf("unsupported database: it has a meta table but no "+
+				"schema_version marker and it holds data, so this release cannot tell which release "+
+				"wrote it. If that release is older than %s, take the database through %s first",
+				legacyBridge, legacyBridge)
+		}
+		if err := s.checkBaseShape(false); err != nil {
+			return schemaEmpty, err
+		}
+		return schemaResume, nil
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return schemaEmpty, fmt.Errorf("this database has a damaged schema_version marker (%q): "+
+			"refusing to guess what wrote it", raw)
+	}
+	if n > schemaBaseline {
+		return schemaEmpty, fmt.Errorf("this database was written by a newer release (schema generation "+
+			"%d; this build reads %d): upgrade the portal before starting it", n, schemaBaseline)
+	}
+	if n < schemaBaseline {
+		return schemaEmpty, fmt.Errorf("unsupported schema generation %d: take the database through the "+
+			"legacy releases until %s has started it once, then start this release. This release reads "+
+			"only the %s schema and converts nothing", n, legacyBridge, legacyBridge)
+	}
+	return schemaCurrent, nil
+}
+
+// verifyBaseSchema is the accepted-baseline check: every table, every column and every index
+// baseSchemaStmts declares must already exist. It is what replaced the ADD COLUMN reconciliation that
+// used to run at this point, and the name says what it does rather than what it used to do.
+func (s *Store) verifyBaseSchema() error { return s.checkBaseShape(true) }
+
+// checkBaseShape verifies a database against baseSchemaStmts — the same declaration list that
+// creates it, so the two cannot drift. This is where the old reconciliation used to run ADD COLUMN
+// for every column an older database lacked; it now refuses instead, because a column set this
+// release would silently add is a column set the release it replaced might not understand.
+//
+// A superset is accepted: a leftover column from a withdrawn feature is still a v0.4.72 database,
+// and refusing one would reject databases the old binary itself produced.
+//
+// requireEverything distinguishes the two callers. The accepted baseline must have all of it. A
+// mid-create database has only a prefix, so there only what EXISTS has to match.
+func (s *Store) checkBaseShape(requireEverything bool) error {
+	for _, stmt := range s.baseSchemaStmts() {
+		if isIndexDDL(stmt) {
+			name, ok := parseIndexName(stmt)
+			if !ok || s.indexExists(name) || !requireEverything {
+				continue
+			}
+			return s.shapeError("index " + name)
+		}
+		table, cols, ok := parseCreateTable(stmt)
+		if !ok {
+			continue
+		}
+		if !s.tableExists(table) {
+			if !requireEverything {
+				continue
+			}
+			return s.shapeError("table " + table)
+		}
+		for _, c := range cols {
+			if !s.columnExists(table, c.name) {
+				return s.shapeError("column " + table + "." + c.name)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Store) shapeError(what string) error {
+	return fmt.Errorf("unsupported database: this release needs the %s schema and %s is missing, so the "+
+		"database predates %s. Start it once with %s to finish its upgrades, back it up, then start this "+
+		"release — this release converts nothing itself", legacyBridge, what, legacyBridge, legacyBridge)
+}
+
+// noRowsAnywhere reports whether every table in the database is empty.
+func (s *Store) noRowsAnywhere() (bool, error) {
+	tables, err := s.allTables()
+	if err != nil {
+		return false, err
+	}
+	for _, table := range tables {
+		var n int
+		if err := s.queryRow("SELECT COUNT(*) FROM " + quoteIdent(table)).Scan(&n); err != nil {
+			return false, fmt.Errorf("counting rows in %s: %w", table, err)
+		}
+		if n > 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (s *Store) allTables() ([]string, error) {
+	q := `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`
+	if s.driver == "postgres" {
+		q = `SELECT table_name FROM information_schema.tables
+			WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name`
+	}
+	rows, err := s.query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+// quoteIdent quotes a SQL identifier for both drivers. Every name that reaches it comes from the
+// database's own catalog, but it is quoted rather than trusted: a database can hold a table somebody
+// else created, and this is the one place a name is pasted into a statement instead of bound.
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // tableExists reports whether a table is present.
@@ -71,6 +254,16 @@ func (s *Store) tableExists(name string) bool {
 			WHERE table_schema='public' AND table_name=?`, name).Scan(&n)
 	} else {
 		s.queryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
+	}
+	return n > 0
+}
+
+func (s *Store) indexExists(name string) bool {
+	var n int
+	if s.driver == "postgres" {
+		s.queryRow(`SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname=?`, name).Scan(&n)
+	} else {
+		s.queryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, name).Scan(&n)
 	}
 	return n > 0
 }
@@ -100,52 +293,19 @@ func (s *Store) columnExists(table, col string) bool {
 		}
 	}
 	if rows.Err() != nil {
-		return false // PRAGMA iteration failed; treat the column as absent (the guarded ADD COLUMN is idempotent)
+		return false
 	}
 	return found
 }
 
-// duplicateColumnErr reports whether an ADD COLUMN failed only because the column already exists
-// (the idempotency signal for additive reconciliation, on both SQLite and Postgres).
-func duplicateColumnErr(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists")
-}
-
-// ensureColumns auto-reconciles pure-additive columns: for every column declared in the base
-// schema (baseSchemaStmts — the single source of truth) that an older database is missing, it runs
-// a plain ADD COLUMN. Adding a column carries no data, so it needs no versioned migration step —
-// declare the column in createBaseSchema and existing databases pick it up on the next startup.
-// At a major boundary, databases must already satisfy the release-line baseline before this runs.
-// A column a plain ALTER cannot add (a new PK/UNIQUE, or one needing a backfill) surfaces as a hard
-// error — the signal that it needs an explicit design decision in a later release line.
-func (s *Store) ensureColumns() error {
-	for _, stmt := range s.baseSchemaStmts() {
-		table, cols, ok := parseCreateTable(stmt)
-		if !ok {
-			continue // not a CREATE TABLE (e.g. a CREATE INDEX statement)
-		}
-		for _, c := range cols {
-			if s.columnExists(table, c.name) {
-				continue
-			}
-			ddl := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, c.def)
-			if _, err := s.exec(ddl); err != nil && !duplicateColumnErr(err) {
-				return fmt.Errorf("ensure column %s.%s [%s]: %w", table, c.name, ddl, err)
-			}
-		}
-	}
-	return nil
-}
-
-// schemaCol is one parsed column: its name and its full definition (name + type + constraints),
-// the latter reused verbatim as the ADD COLUMN body.
+// schemaCol is one parsed column: its name and its full definition.
 type schemaCol struct{ name, def string }
 
 // parseCreateTable pulls the table name and its plain column definitions out of a
 // "CREATE TABLE IF NOT EXISTS name(...)" statement. ok=false for anything else (CREATE INDEX).
 // Table-level constraints (PRIMARY KEY(...)/UNIQUE(...)/FOREIGN/CHECK/CONSTRAINT) and the primary
-// -key column itself are skipped: reconcile only ever adds a plain column, never a key.
+// -key column itself are skipped: it is shared with the backup table walk (see backupTables), and
+// neither the walk nor the shape check has anything to say about a key.
 func parseCreateTable(stmt string) (table string, cols []schemaCol, ok bool) {
 	norm := strings.Join(strings.Fields(stmt), " ") // collapse the multi-line literal to one line
 	const prefix = "CREATE TABLE IF NOT EXISTS "
@@ -173,11 +333,36 @@ func parseCreateTable(stmt string) (table string, cols []schemaCol, ok bool) {
 			continue
 		}
 		if strings.Contains(strings.ToUpper(item), "PRIMARY KEY") {
-			continue // the PK column: can't be ALTER-added and is always present
+			continue // the PK column
 		}
 		cols = append(cols, schemaCol{name: name, def: item})
 	}
 	return table, cols, true
+}
+
+// parseIndexName pulls the index name out of a CREATE [UNIQUE] INDEX statement, with or without the
+// IF NOT EXISTS that every index in baseSchemaStmts carries.
+func parseIndexName(stmt string) (string, bool) {
+	norm := strings.Join(strings.Fields(stmt), " ")
+	if !strings.HasPrefix(norm, "CREATE ") {
+		return "", false
+	}
+	rest := norm[len("CREATE "):]
+	for _, opt := range []string{"UNIQUE ", "UNIQUE INDEX "} {
+		if strings.HasPrefix(rest, opt) {
+			rest = rest[len(opt):]
+			break
+		}
+	}
+	if !strings.HasPrefix(rest, "INDEX ") {
+		return "", false
+	}
+	rest = rest[len("INDEX "):]
+	rest = strings.TrimPrefix(rest, "IF NOT EXISTS ")
+	if i := strings.IndexByte(rest, ' '); i > 0 {
+		return rest[:i], true
+	}
+	return rest, rest != ""
 }
 
 // splitTopLevel splits a comma-separated list, ignoring commas nested inside parentheses (e.g. a
