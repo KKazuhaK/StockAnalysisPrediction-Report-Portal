@@ -30,6 +30,8 @@ set -eu
 here=$(dirname -- "$0")
 # shellcheck source=lib/calver.sh
 . "$here/lib/calver.sh"
+# shellcheck source=lib/release.sh
+. "$here/lib/release.sh"
 
 usage() {
     echo "usage: $0 [--next] [version] [commit]" >&2
@@ -95,64 +97,12 @@ fi
 
 root=$(git rev-parse --show-toplevel)
 
-# in_list NEEDLE HAYSTACK — the haystack is newline-separated words.
-in_list() {
-    for _x in $2; do
-        if [ "$_x" = "$1" ]; then return 0; fi
-    done
-    return 1
-}
-
-# derive_version — the number a maintainer would pick by hand, from the clock and this checkout.
-#
-# Only the WEEK is computed: the clock knows it and nothing else decides it. The revision comes from
-# what is already here — release notes written for this week, and tags already cut for it — and the
-# rule is the first one a person would apply: cut the note you just wrote. That is the highest
-# release note for this week with no tag on it yet. With every note already tagged, the week is
-# continuing rather than starting, so it is the revision after everything this week already has.
-#
-# It reads local tags and the working tree only. A clone that has not fetched cannot see a tag cut
-# elsewhere, which is why naming the version explicitly still works and stays the escape hatch.
-derive_version() {
-    _week=$(calver_current_week)
-
-    _notes=""
-    for _f in "$root"/docs/releases/v"$_week"*.md; do
-        [ -f "$_f" ] || continue # an unmatched glob arrives here as its own literal text
-        _t=$(basename "$_f" .md)
-        if calver_valid "$_t"; then _notes="$_notes$_t
-"; fi
-    done
-
-    _tags=""
-    for _t in $(git tag -l "v${_week}*"); do
-        if calver_valid "$_t"; then _tags="$_tags$_t
-"; fi
-    done
-
-    _pending=""
-    for _t in $_notes; do
-        if ! in_list "$_t" "$_tags"; then
-            _pending="$_pending$_t
-"
-        fi
-    done
-    _pick=$(printf '%s' "$_pending" | calver_sort | tail -n 1)
-    if [ -n "$_pick" ]; then
-        printf '%s\n' "$_pick"
-        return 0
-    fi
-
-    _max=$(printf '%s%s' "$_notes" "$_tags" | calver_sort | tail -n 1)
-    if [ -z "$_max" ]; then
-        printf 'v%s\n' "$_week" # nothing this week yet: no revision needed
-        return 0
-    fi
-    printf 'v%s.%d\n' "$_week" "$(( $(calver_tuple "$_max" | awk '{print $3}') + 1 ))"
-}
-
 if [ -z "$version" ]; then
-    version=$(derive_version)
+    # The clock supplies the week; the rules that turn it into a number live in lib/release.sh, where
+    # the tests can name a week instead of waiting for one to come around.
+    if ! version=$(derive_version "$root" "$(calver_current_week)"); then
+        exit 1
+    fi
 fi
 
 if ! calver_valid "$version"; then
