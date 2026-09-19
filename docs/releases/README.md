@@ -34,6 +34,13 @@ release; the reconciliation workflow then updates the rolling image channels, pr
 were already published by digest rather than rebuilding them. To re-run that by hand after a missed
 event, dispatch the **Release channels** workflow (with `dry_run` to see the decision first).
 
+A `release` event runs the workflow **from the tagged commit**, not from the default branch, so a fix
+to `release-channels.yml` takes effect for releases tagged after the fix and reconciliation for an
+already-cut tag keeps running the copy that tag carries. Dispatch that workflow when an existing
+release needs the newer logic. If it moves a channel, `CHANNEL_LATEST_TAG` / `CHANNEL_BETA_TAG` in the
+repository variables record where the channel was last put; an operator override lives in
+`CHANNEL_LATEST_OVERRIDE` / `CHANNEL_BETA_OVERRIDE` beside them, and reconciliation never clears it.
+
 ## The v2026.38.1 database boundary
 
 The first CalVer release reads exactly one database shape — the **v0.4.72** schema — and converts
