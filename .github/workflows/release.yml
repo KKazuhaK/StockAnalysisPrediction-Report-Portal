@@ -352,6 +352,9 @@ jobs:
           # reacts to that. Tag spelling never decides it, which is why there is no contains("-") here.
           draft: true
           prerelease: ${{ inputs.maturity == 'prerelease' }}
+          # Deliberate: the note above is the changelog a maintainer writes, and GitHub's own
+          # "What's Changed" list follows it — the action pre-pends the body we pass to the notes it
+          # generates, so the order is our note, the container/verify blocks, then the PR list.
           generate_release_notes: true
           body_path: release_notes.md
           # Replace rather than append, so a re-run of a failed pipeline converges on one body instead
