@@ -135,12 +135,12 @@ if os.environ.get("E2E_CONTAINER"):
 admin = Session()
 
 # ---------------------------------------------------------------- A. core
-print("\nA. 首启与核心门户")
+print("\nA. First run and the core portal")
 sc, me = admin.login("admin", ADMIN_PW)
-check("A", "管理员登录", sc == 200 and me.get("admin") is True, f"{sc} {me}")
-check("A", "首启种子：27 个报告类型", len(sql("SELECT name FROM type_config")) == 27)
-check("A", "首启种子：默认分组", len(sql("SELECT id FROM user_groups WHERE is_default=1")) == 1)
-check("A", "首启种子：默认与人工版本",
+check("A", "Admin signs in", sc == 200 and me.get("admin") is True, f"{sc} {me}")
+check("A", "First-run seed: 27 report types", len(sql("SELECT name FROM type_config")) == 27)
+check("A", "First-run seed: the default group", len(sql("SELECT id FROM user_groups WHERE is_default=1")) == 1)
+check("A", "First-run seed: the default and manual versions",
       set(sql("SELECT name FROM report_versions")) == {("default",), ("manual",)})
 
 # Tokens are stored hashed (ADR 0019), so the plaintext exists only in the creation response —
@@ -148,42 +148,42 @@ check("A", "首启种子：默认与人工版本",
 # capture it at mint time like any other client.
 sc, mint = admin.req("POST", "/api/admin/tokens", {"name": "e2e", "scope": "all"})
 TOKEN = mint.get("token") or mint.get("value") or ""
-check("A", "创建 API 令牌并返回明文（仅此一次）", sc == 200 and bool(TOKEN), f"{sc} {mint}")
+check("A", "Mint an API token, returned in clear once", sc == 200 and bool(TOKEN), f"{sc} {mint}")
 
 TODAY = sql("SELECT date('now','localtime')")[0][0]
 machine = Session()
 sc, r = machine.req("POST", "/api/v1/reports", {
     "symbol": "600519", "date": TODAY, "subtype": "估值分析", "title": "茅台估值分析",
     "body_md": "## 内部估值\n| 因子 | 权重 |\n| 护城河 | 0.35 |\nPrompt: 资深分析师…"}, token=TOKEN)
-check("A", "机器入库 /api/v1/reports", sc == 200 and r.get("ok"), f"{sc} {r}")
+check("A", "Machine ingest: /api/v1/reports", sc == 200 and r.get("ok"), f"{sc} {r}")
 RID_INTERNAL = r.get("id")
 
 sc, home = admin.req("GET", "/api/home")
-check("A", "首页信息流", sc == 200 and (home.get("total", 0) >= 1 or home.get("groups")), f"{sc}")
+check("A", "Home feed", sc == 200 and (home.get("total", 0) >= 1 or home.get("groups")), f"{sc}")
 sc, stock = admin.req("GET", "/api/stock/600519")
-check("A", "个股页", sc == 200 and stock.get("symbol") == "600519", f"{sc}")
+check("A", "Stock page", sc == 200 and stock.get("symbol") == "600519", f"{sc}")
 sc, syms = admin.req("GET", "/api/symbols?q=600519")
-check("A", "代码自动补全", sc == 200, f"{sc}")
+check("A", "Symbol autocomplete", sc == 200, f"{sc}")
 sc, md = admin.req("GET", f"/report/{RID_INTERNAL}/md")
 # Asserts the CONTENT, not just the status: this replaced a separate /api/repbody check, and the
 # export is the path the product actually serves a body through.
-check("A", "报告正文导出", sc == 200 and "护城河" in md.get("_raw", ""), f"{sc}")
+check("A", "Report body export", sc == 200 and "护城河" in md.get("_raw", ""), f"{sc}")
 sc, ver = admin.req("GET", "/api/version")
-check("A", "版本信息接口", sc in (200, 404), f"{sc}")
+check("A", "Version endpoint", sc in (200, 404), f"{sc}")
 
 # ---------------------------------------------------------------- B. ADR 0022
-print("\nB. ADR 0022 — OU 租户 / 有效期 / 配额 / 运行白名单")
+print("\nB. ADR 0022 — OU tenancy, account validity, quotas, run allow-list")
 root = sql("SELECT id FROM user_groups WHERE is_default=1")[0][0]
 sc, g = admin.req("POST", "/api/admin/groups", {"name": "客户A"})
 OU = g.get("id") or sql("SELECT id FROM user_groups WHERE name='客户A'")[0][0]
 sc, _ = admin.req("PUT", f"/api/admin/groups/{OU}", {"name": "客户A", "restricted": True, "parent_id": root})
-check("B", "建立受限 OU", sc == 200, f"{sc}")
+check("B", "Create a restricted OU", sc == 200, f"{sc}")
 sc, g2 = admin.req("POST", "/api/admin/groups", {"name": "客户A-子部门"})
 SUB = g2.get("id") or sql("SELECT id FROM user_groups WHERE name='客户A-子部门'")[0][0]
 admin.req("PUT", f"/api/admin/groups/{SUB}", {"name": "客户A-子部门", "parent_id": OU})
 sc, groups = admin.req("GET", "/api/admin/groups")
 sub = [x for x in groups.get("groups", []) if x["id"] == SUB]
-check("B", "受限标记沿 OU 树继承", bool(sub) and sub[0].get("restricted_effective") is True,
+check("B", "The restricted flag inherits down the OU tree", bool(sub) and sub[0].get("restricted_effective") is True,
       json.dumps(sub, ensure_ascii=False))
 
 # Created through the admin API, not the adduser CLI: the CLI opens the same SQLite file the
@@ -191,194 +191,194 @@ check("B", "受限标记沿 OU 树继承", bool(sub) and sub[0].get("restricted_
 sc, _ = admin.req("POST", "/api/admin/users",
                   {"username": "ext", "password": "external-pass-1234", "role": "user",
                    "primary_group": OU})
-check("B", "管理端建账号并归入 OU", sc == 200, f"{sc}")
+check("B", "Admin creates an account inside the OU", sc == 200, f"{sc}")
 ext = Session()
 sc, _ = ext.login("ext", "external-pass-1234")
-check("B", "外部账号登录", sc == 200, f"{sc}")
+check("B", "The external account signs in", sc == 200, f"{sc}")
 
 sql("UPDATE users SET expires_at=date('now','localtime','-1 day') WHERE username='ext'")
 expired = Session()
 sc, _ = expired.login("ext", "external-pass-1234")
-check("B", "过期账号无法登录", sc != 200, f"{sc}")
+check("B", "An expired account cannot sign in", sc != 200, f"{sc}")
 sc, _ = ext.req("GET", "/api/me")
-check("B", "过期后既有会话立即失效", sc == 401, f"{sc}")
+check("B", "Expiry ends the existing session immediately", sc == 401, f"{sc}")
 sql("UPDATE users SET expires_at=NULL WHERE username='ext'")
 ext = Session()
 ext.login("ext", "external-pass-1234")
 sc, _ = ext.req("GET", "/api/me")
-check("B", "清除有效期后恢复", sc == 200, f"{sc}")
+check("B", "Clearing the expiry restores access", sc == 200, f"{sc}")
 
 # ---------------------------------------------------------------- C. ADR 0024
-print("\nC. ADR 0024 — 报告版本")
+print("\nC. ADR 0024 — report versions")
 sc, r = machine.req("POST", "/api/v1/reports", {
     "symbol": "600519", "date": TODAY, "subtype": "估值分析", "title": "茅台估值结论",
     "version": "对外版", "body_md": "## 结论\n综合评分 78/100。"}, token=TOKEN)
 RID_PUBLIC = r.get("id")
-check("C", "同代码/日期/小类的另一版本不覆盖", sc == 200 and RID_PUBLIC != RID_INTERNAL, f"{sc} {r}")
-check("C", "两行都在库里",
+check("C", "A second version with the same code/date/subtype does not overwrite", sc == 200 and RID_PUBLIC != RID_INTERNAL, f"{sc} {r}")
+check("C", "Both rows are in the database",
       len(sql("SELECT id FROM reports WHERE symbol='600519' AND rdate=? AND rtype='估值分析'", TODAY)) == 2)
 
 sc, _ = ext.req("GET", f"/api/v1/reports/{RID_INTERNAL}")
-check("C", "外部：未授权版本不可读（内部版）", sc == 404, f"{sc}")
+check("C", "External: an ungranted version is unreadable", sc == 404, f"{sc}")
 sc, _ = ext.req("GET", f"/api/v1/reports/{RID_PUBLIC}")
-check("C", "外部：已授权但非本人申请，不可读", sc == 404, f"{sc}")
+check("C", "External: granted, but not requested by them — unreadable", sc == 404, f"{sc}")
 
 sc, _ = admin.req("POST", "/api/admin/versions", {
     "name": "对外版", "label": "对外版", "ord": 1, "visibility": "owner",
     "grants": [f"g:{OU}"]})
-check("C", "管理端保存版本与授权", sc == 200, f"{sc}")
+check("C", "Admin saves the version and its grants", sc == 200, f"{sc}")
 sql("INSERT OR IGNORE INTO report_viewers(principal,rdate,report_id) VALUES(?,?,?)",
     f"u:ext", TODAY, RID_PUBLIC)
 sc, rep = ext.req("GET", f"/api/v1/reports/{RID_PUBLIC}")
-check("C", "外部：本人申请过 → 可读", sc == 200, f"{sc}")
+check("C", "External: they requested it — readable", sc == 200, f"{sc}")
 if sc == 200:
     md = json.dumps(rep, ensure_ascii=False)
-    check("C", "外部读到的正文不含内部内容", "护城河" not in md and "Prompt" not in md)
+    check("C", "The external reader's body carries no internal content", "护城河" not in md and "Prompt" not in md)
 sc, _ = ext.req("GET", f"/api/v1/reports/{RID_INTERNAL}")
-check("C", "外部：内部版仍不可读", sc == 404, f"{sc}")
+check("C", "External: the internal version stays unreadable", sc == 404, f"{sc}")
 
 sc, sw = ext.req("GET", f"/api/report/{RID_PUBLIC}/versions")
-check("C", "外部切换器只列可读版本", sc == 200 and len(sw.get("versions", [])) == 1, f"{sc} {sw}")
+check("C", "The external switcher lists only readable versions", sc == 200 and len(sw.get("versions", [])) == 1, f"{sc} {sw}")
 sc, sw = admin.req("GET", f"/api/report/{RID_PUBLIC}/versions")
-check("C", "管理员切换器列出两个版本（标题不同也能归组）",
+check("C", "The admin switcher lists both versions, grouped despite different titles",
       sc == 200 and len(sw.get("versions", [])) == 2, f"{sc} {sw}")
 
 sc, lst = ext.req("GET", "/api/home")
 blob = json.dumps(lst, ensure_ascii=False)
-check("C", "外部首页不出现内部报告", "茅台估值分析" not in blob, blob[:200])
+check("C", "The external home feed shows no internal report", "茅台估值分析" not in blob, blob[:200])
 
-# 组可见性：同 OU 同事能看到
+# Group visibility: a colleague in the same OU can see it
 admin.req("POST", "/api/admin/users",
           {"username": "ext2", "password": "external-pass-1234", "role": "user",
            "primary_group": OU})
 ext2 = Session()
 ext2.login("ext2", "external-pass-1234")
 sc, _ = ext2.req("GET", f"/api/v1/reports/{RID_PUBLIC}")
-check("C", "仅本人模式：同事不可读", sc == 404, f"{sc}")
+check("C", "Owner-only: a colleague cannot read it", sc == 404, f"{sc}")
 admin.req("POST", "/api/admin/versions", {"name": "对外版", "label": "对外版", "ord": 1,
                                           "visibility": "group", "grants": [f"g:{OU}"]})
 sql("INSERT OR IGNORE INTO report_viewers(principal,rdate,report_id) VALUES(?,?,?)",
     f"g:{OU}", TODAY, RID_PUBLIC)
 sc, _ = ext2.req("GET", f"/api/v1/reports/{RID_PUBLIC}")
-check("C", "改为本组可见：同事可读", sc == 200, f"{sc}")
+check("C", "Group-visible: the colleague can read it", sc == 200, f"{sc}")
 admin.req("POST", "/api/admin/versions", {"name": "对外版", "label": "对外版", "ord": 1,
                                           "visibility": "owner", "grants": [f"g:{OU}"]})
 sc, _ = ext2.req("GET", f"/api/v1/reports/{RID_PUBLIC}")
-check("C", "改回仅本人：同事立即失去访问", sc == 404, f"{sc}")
+check("C", "Back to owner-only: the colleague loses access immediately", sc == 404, f"{sc}")
 
 admin.req("POST", "/api/admin/versions", {"name": "对外版", "label": "对外版", "ord": 1,
                                           "visibility": "owner", "grants": []})
 sc, _ = ext.req("GET", f"/api/v1/reports/{RID_PUBLIC}")
-check("C", "撤销授权后本人也不可读", sc == 404, f"{sc}")
+check("C", "After the grant is revoked, they cannot read it either", sc == 404, f"{sc}")
 admin.req("POST", "/api/admin/versions", {"name": "对外版", "label": "对外版", "ord": 1,
                                           "visibility": "owner", "grants": [f"g:{OU}"]})
 
 sc, vs = admin.req("GET", "/api/admin/versions")
 names = [v["name"] for v in vs.get("versions", [])]
-check("C", "管理端列出版本注册表", sc == 200 and "default" in names and "对外版" in names, f"{names}")
+check("C", "Admin lists the version registry", sc == 200 and "default" in names and "对外版" in names, f"{names}")
 sc, _ = admin.req("DELETE", "/api/admin/versions/default")
-check("C", "默认版本不可删除", sc != 200, f"{sc}")
+check("C", "The default version cannot be deleted", sc != 200, f"{sc}")
 
 # ---------------------------------------------------------------- D. ADR 0023
-print("\nD. ADR 0023 — 密码 / 两步验证 / 步进验证 / SSO")
+print("\nD. ADR 0023 — passwords, two-factor, step-up, SSO")
 sc, provs = Session().req("GET", "/api/sso/providers")
-check("D", "未配置时 SSO 列表为空", sc == 200 and provs.get("providers") == [], f"{sc} {provs}")
+check("D", "With none configured, the SSO list is empty", sc == 200 and provs.get("providers") == [], f"{sc} {provs}")
 sc, _ = Session().req("GET", "/api/auth/oidc/nope/start")
-check("D", "未配置的 SSO 路由 404", sc == 404, f"{sc}")
+check("D", "An unconfigured SSO route is 404", sc == 404, f"{sc}")
 
 sc, _ = ext.req("POST", "/api/me/2fa/setup")
-check("D", "两步验证：无步进验证被拒", sc == 403, f"{sc}")
+check("D", "Two-factor: refused without step-up", sc == 403, f"{sc}")
 sc, _ = ext.req("POST", "/api/me/2fa/setup", headers={"X-Step-Up-Proof": "wrong"})
-check("D", "两步验证：错误凭证被拒", sc == 403, f"{sc}")
+check("D", "Two-factor: refused with the wrong password", sc == 403, f"{sc}")
 sc, setup = ext.req("POST", "/api/me/2fa/setup", headers={"X-Step-Up-Proof": "external-pass-1234"})
-check("D", "两步验证：正确凭证可开始配置", sc == 200 and setup.get("secret"), f"{sc}")
+check("D", "Two-factor: the right password starts setup", sc == 200 and setup.get("secret"), f"{sc}")
 SECRET = setup.get("secret", "")
 if SECRET:
     enabled_step = int(time.time()) // 30
     sc, en = ext.req("POST", "/api/me/2fa/enable", {"code": totp_code(SECRET, step=enabled_step)})
-    check("D", "两步验证：确认后启用并发放恢复码",
+    check("D", "Two-factor: confirming enables it and issues recovery codes",
           sc == 200 and len(en.get("recovery_codes", [])) == 10, f"{sc}")
     RECOVERY = en.get("recovery_codes", [])
 
     leg1 = Session()
     sc, r1 = leg1.login("ext", "external-pass-1234")
-    check("D", "开启后：密码这一腿不发会话", sc == 200 and r1.get("totp_required") and not r1.get("user"), f"{sc} {r1}")
+    check("D", "Enabled: the password leg issues no session", sc == 200 and r1.get("totp_required") and not r1.get("user"), f"{sc} {r1}")
     pending = r1.get("token")
     sc, _ = leg1.req("GET", "/api/me")
-    check("D", "开启后：仅密码不能访问", sc == 401, f"{sc}")
+    check("D", "Enabled: the password alone cannot reach the API", sc == 401, f"{sc}")
     # Track the consumed step explicitly: a boundary may pass during password verification.
     login_step = unused_totp_step({enabled_step})
     sc, r2 = leg1.req("POST", "/api/login/2fa", {"token": pending, "code": totp_code(SECRET, step=login_step)})
-    check("D", "第二腿：验证码完成登录", sc == 200 and r2.get("user") == "ext", f"{sc} {r2}")
+    check("D", "Second leg: the code completes the sign-in", sc == 200 and r2.get("user") == "ext", f"{sc} {r2}")
 
     leg2 = Session()
     _, r3 = leg2.login("ext", "external-pass-1234")
     sc, r4 = leg2.req("POST", "/api/login/2fa", {"token": r3.get("token"), "code": RECOVERY[0]})
-    check("D", "恢复码可完成登录", sc == 200 and r4.get("user") == "ext", f"{sc}")
+    check("D", "A recovery code completes the sign-in", sc == 200 and r4.get("user") == "ext", f"{sc}")
     leg3 = Session()
     _, r5 = leg3.login("ext", "external-pass-1234")
     sc, _ = leg3.req("POST", "/api/login/2fa", {"token": r5.get("token"), "code": RECOVERY[0]})
-    check("D", "恢复码不可重复使用", sc != 200, f"{sc}")
+    check("D", "A recovery code cannot be reused", sc != 200, f"{sc}")
 
     leg4 = Session()
     _, r6 = leg4.login("ext", "external-pass-1234")
     sc, _ = leg4.req("POST", "/api/login/2fa", {"token": r6.get("token"), "code": "not-a-code"})
-    check("D", "错误验证码被拒", sc != 200, f"{sc}")
+    check("D", "A wrong code is refused", sc != 200, f"{sc}")
     sc, _ = leg4.req("POST", "/api/login/2fa", {"token": r6.get("token"), "code": totp_code(SECRET, -1)})
-    check("D", "待验令牌一次性（错一次即作废）", sc != 200, f"{sc}")
+    check("D", "The pending token is single-use: one wrong code voids it", sc != 200, f"{sc}")
 
 admin2 = Session()
 admin2.login("admin", ADMIN_PW)
 sc, _ = admin2.req("POST", "/api/me/password", {"current": "wrong", "new": "a-brand-new-passphrase"})
-check("D", "改密码：需要当前密码", sc != 200, f"{sc}")
+check("D", "Password change: the current password is required", sc != 200, f"{sc}")
 sc, _ = admin2.req("POST", "/api/me/password", {"current": ADMIN_PW, "new": "a-brand-new-passphrase"})
-check("D", "改密码：成功", sc == 200, f"{sc}")
+check("D", "Password change: succeeds", sc == 200, f"{sc}")
 old = Session()
 sc, _ = old.login("admin", ADMIN_PW)
-check("D", "改密码后旧密码失效", sc != 200, f"{sc}")
+check("D", "The old password stops working after a change", sc != 200, f"{sc}")
 sc, _ = admin.req("GET", "/api/me")
-check("D", "改密码使其他会话下线", sc == 401, f"{sc}")
+check("D", "A password change ends the other sessions", sc == 401, f"{sc}")
 admin = Session()
 admin.login("admin", "a-brand-new-passphrase")
 
 sc, meJSON = admin.req("GET", "/api/me")
-check("D", "/api/me 报告安全状态",
+check("D", "/api/me reports the security state",
       all(k in meJSON for k in ("federated", "totp_enabled", "passkeys")), f"{meJSON}")
 
 # ---------------------------------------------------------------- F. captcha + registration
-print("\nF. 验证码与自助注册")
+print("\nF. Captcha and self-service registration")
 sc, cfg = admin.req("GET", "/api/register/config")
-check("F", "自助注册默认关闭", sc == 200 and cfg.get("enabled") is False, f"{sc} {cfg}")
+check("F", "Self-service registration is off by default", sc == 200 and cfg.get("enabled") is False, f"{sc} {cfg}")
 sc, _ = Session().req("POST", "/api/register",
                       {"email": "x@example.com", "password": "a-long-enough-password"})
-check("F", "关闭时注册路由 404", sc == 404, f"{sc}")
+check("F", "The registration route is 404 while it is off", sc == 404, f"{sc}")
 sc, cap = Session().req("GET", "/api/captcha?ctx=login")
-check("F", "验证码默认不要求", sc == 200 and cap.get("required") is False, f"{sc} {cap}")
+check("F", "The captcha is not required by default", sc == 200 and cap.get("required") is False, f"{sc} {cap}")
 
 sc, _ = admin.req("POST", "/api/admin/security", {
     "captcha": {"provider": "image", "login": True, "forgot": True, "register": True,
                 "trigger": "always", "fail_threshold": 3},
     "registration": {"enabled": True, "require_verify": False, "domains": "",
                      "default_group": "", "expiry_days": ""}})
-check("F", "管理端保存登录保护设置", sc == 200, f"{sc}")
+check("F", "Admin saves the sign-in protection settings", sc == 200, f"{sc}")
 
 sc, cap = Session().req("GET", "/api/captcha?ctx=register")
-check("F", "开启后签发图形验证码",
+check("F", "Turning it on issues a captcha image",
       sc == 200 and cap.get("required") is True and str(cap.get("image", "")).startswith("data:image"),
       f"{sc} {list(cap)}")
-check("F", "验证码接口不泄露答案", "answer" not in json.dumps(cap).lower())
+check("F", "The captcha endpoint does not leak the answer", "answer" not in json.dumps(cap).lower())
 
-for name, path, body in [("登录", "/api/login", {"username": "admin", "password": "x"}),
-                         ("找回密码", "/api/password/forgot", {"account": "admin"}),
-                         ("注册", "/api/register", {"email": "n@example.com",
+for name, path, body in [("sign-in", "/api/login", {"username": "admin", "password": "x"}),
+                         ("password reset", "/api/password/forgot", {"account": "admin"}),
+                         ("registration", "/api/register", {"email": "n@example.com",
                                                     "password": "a-long-enough-password"})]:
     sc, b = Session().req("POST", path, body)
-    check("F", f"{name}：缺验证码被拒且带标记",
+    check("F", f"{name}: refused without a captcha, and flagged",
           sc == 400 and b.get("captcha_required") is True, f"{sc} {b}")
-check("F", "被拒的注册没有留下账号",
+check("F", "A refused registration leaves no account behind",
       not sql("SELECT username FROM users WHERE username='n@example.com'"))
 
-# 配置一个 token 服务但不给密钥 —— 验证失败必须闭合，而不是放行
+# A token service configured without a secret: verification must fail closed, not let through
 admin.req("POST", "/api/admin/security", {
     "captcha": {"provider": "turnstile", "login": False, "forgot": False, "register": True,
                 "trigger": "always", "fail_threshold": 3},
@@ -387,8 +387,8 @@ admin.req("POST", "/api/admin/security", {
 sc, b = Session().req("POST", "/api/register",
                       {"email": "closed@example.com", "password": "a-long-enough-password",
                        "captcha_token": "anything"})
-check("F", "验证器配置错误时闭合（不放行）", sc == 400, f"{sc} {b}")
-check("F", "闭合时同样没有建账号",
+check("F", "A misconfigured verifier fails closed", sc == 400, f"{sc} {b}")
+check("F", "Failing closed creates no account either",
       not sql("SELECT username FROM users WHERE username='closed@example.com'"))
 
 sc, _ = admin.req("POST", "/api/admin/security", {
@@ -398,39 +398,39 @@ sc, _ = admin.req("POST", "/api/admin/security", {
                      "default_group": "", "expiry_days": ""}})
 sc, _ = Session().req("POST", "/api/register",
                       {"email": "outsider@elsewhere.test", "password": "a-long-enough-password"})
-check("F", "域名白名单拒绝表外域名", sc == 400, f"{sc}")
+check("F", "The domain allow-list refuses a domain outside it", sc == 400, f"{sc}")
 sc, b = Session().req("POST", "/api/register",
                       {"email": "newbie@corp.example", "password": "a-long-enough-password"})
-check("F", "允许的域名可以注册", sc == 200, f"{sc} {b}")
+check("F", "An allowed domain can register", sc == 200, f"{sc} {b}")
 row = sql("SELECT active, COALESCE(restricted,0), COALESCE(group_id,0) FROM users WHERE username='newbie@corp.example'")
-check("F", "未分配 OU 的注册账号：启用但受限、无分组",
+check("F", "A registration with no OU: enabled, restricted, no group",
       row == [(1, 1, 0)], f"{row}")
 
 reg = Session()
 sc, _ = reg.login("newbie@corp.example", "a-long-enough-password")
-check("F", "注册账号可以登录", sc == 200, f"{sc}")
+check("F", "The registered account can sign in", sc == 200, f"{sc}")
 sc, home = reg.req("GET", "/api/home")
 blob = json.dumps(home, ensure_ascii=False)
-check("F", "注册账号看不到任何报告", "茅台" not in blob, blob[:160])
+check("F", "The registered account sees no reports", "茅台" not in blob, blob[:160])
 sc, _ = reg.req("GET", f"/api/v1/reports/{RID_INTERNAL}")
-check("F", "注册账号读不到内部报告", sc == 404, f"{sc}")
+check("F", "The registered account cannot read an internal report", sc == 404, f"{sc}")
 
 sc, _ = Session().req("POST", "/api/register",
                       {"email": "newbie@corp.example", "password": "a-long-enough-password"})
-check("F", "重复邮箱明确拒绝", sc == 409, f"{sc}")
+check("F", "A duplicate email is refused explicitly", sc == 409, f"{sc}")
 sc, _ = Session().req("POST", "/api/register/verify", {"token": "forged"})
-check("F", "伪造的确认令牌被拒", sc != 200, f"{sc}")
+check("F", "A forged confirmation token is refused", sc != 200, f"{sc}")
 
 # ---------------------------------------------------------------- restart
-print("\nE. 重启后状态保持")
+print("\nE. State survives a restart")
 restart()
 admin = Session()
 sc, _ = admin.login("admin", "a-brand-new-passphrase")
-check("E", "重启后可登录", sc == 200, f"{sc}")
+check("E", "Sign-in works after the restart", sc == 200, f"{sc}")
 sc, vs = admin.req("GET", "/api/admin/versions")
-check("E", "重启后版本与授权仍在",
+check("E", "Versions and grants survive the restart",
       sc == 200 and any(v["name"] == "对外版" and v["grants"] for v in vs.get("versions", [])), f"{sc}")
-check("E", "重启不重建唯一索引（幂等）",
+check("E", "The restart does not rebuild the unique index",
       "version" in sql("SELECT sql FROM sqlite_master WHERE name='idx_reports_ident'")[0][0])
 
 # ---------------------------------------------------------------- report
@@ -443,9 +443,9 @@ for layer, _, ok, _ in results:
 for layer in sorted(by):
     p, n = by[layer]
     print(f"  {layer}: {p}/{n}")
-print(f"\n  总计 {len(results) - len(bad)}/{len(results)} 通过")
+print(f"\n  {len(results) - len(bad)}/{len(results)} passed")
 if bad:
-    print("\n  失败项：")
+    print("\n  failures:")
     for layer, name, _, detail in bad:
         print(f"    [{layer}] {name}   {detail}")
 sys.exit(1 if bad else 0)
