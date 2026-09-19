@@ -214,6 +214,9 @@ describe('AuditPage', () => {
     expect(detailText(container)).not.toContain('priority')
     expect(detailText(container)).not.toContain('query=x')
 
+    // Same reachability wait as the row below, for the same reason: the table is blurred until it
+    // stops loading, and holding the node from before the wait is the other half of the race.
+    await waitFor(() => expect(reachable(screen.getAllByTitle('audit.details')[0])).toBe(true))
     await userEvent.click(screen.getAllByTitle('audit.details')[0])
     const record = detailText(await screen.findByRole('dialog'))
     expect(record).toContain('priority 30')
@@ -283,8 +286,12 @@ describe('AuditPage', () => {
     it('opens the full record when a card is tapped', async () => {
       const { container } = mount()
       await screen.findByText(/对外版/)
-      const cards = container.querySelectorAll('.rp-audit-row')
-      await userEvent.click(cards[1] as Element)
+      // The same race the wide layout documents above, which this test was left out of: the rows sit
+      // inside antd's Spin, a card appearing is not a card being tappable, and the node has to be
+      // re-queried inside the wait AND for the click — a detached node reports no pointer-events and
+      // so looks reachable. This is the one that failed on a loaded runner.
+      await waitFor(() => expect(reachable(container.querySelectorAll('.rp-audit-row')[1])).toBe(true))
+      await userEvent.click(container.querySelectorAll('.rp-audit-row')[1] as Element)
       const dialog = await screen.findByRole('dialog')
       expect(within(dialog).getByText('{"before":[],"after":["u:client@corp.example"]}')).toBeTruthy()
     })
