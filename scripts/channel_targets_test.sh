@@ -180,6 +180,37 @@ expect BETA_ACTION set "beta honours its own override"
 expect BETA v2026.31.1 "beta applies the override"
 clear_env
 
+# ---------- what each channel should point at, which is not the same as what to change ----------
+# A `keep` still has a target, and the work that keys off the target rather than the channel write —
+# GitHub's own Latest field — has to happen on a keep too, or a transient failure is never retried.
+clear_env
+export CURRENT_LATEST=v2026.38.1
+run "$(fixture v2026.38.1 no no yes)"
+expect LATEST_ACTION keep "the channel is already correct"
+expect LATEST "" "and nothing is applied"
+expect LATEST_TARGET v2026.38.1 "but the target is still known"
+
+clear_env
+run '[]'
+expect LATEST_TARGET "" "no eligible release means no target"
+expect LATEST_TARGET "" "and nothing to align"
+
+export CURRENT_LATEST=v2026.39.1
+run "$(fixture v2026.38.2 no no yes)"
+expect LATEST_ACTION refuse "a backward move is still refused"
+expect LATEST_TARGET "" "a refused channel has no target to align to"
+
+clear_env
+export LATEST_OVERRIDE=v2026.30.1
+run "$(fixture v2026.38.1 no no yes)"
+expect LATEST_TARGET v2026.30.1 "an applied override is the target"
+
+export CURRENT_LATEST=v2026.30.1
+run "$(fixture v2026.38.1 no no yes)"
+expect LATEST_ACTION keep "the override holds"
+expect LATEST_TARGET v2026.30.1 "and the held override is still the target"
+clear_env
+
 # ---------- both channels move in one reconciliation ----------
 run "$(fixture v2026.38.1 no no yes  v2026.38.2 yes no yes)"
 expect LATEST v2026.38.1 "latest takes the full release"

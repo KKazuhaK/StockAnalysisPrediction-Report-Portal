@@ -26,7 +26,12 @@
 #                                  deliberate withdrawal or rollback.
 #   FORCE                          1 to permit a backward move on purpose.
 # Outputs (stdout), for `>> "$GITHUB_OUTPUT"`:
-#   LATEST, LATEST_ACTION (set|keep|none|refuse), LATEST_REASON
+#   LATEST_TARGET / BETA_TARGET  what each channel should point at, whether or not it is already
+#                                there. Alignment work that is not a channel write — GitHub's own
+#                                Latest field — keys off these, so a transient failure is repaired by
+#                                the next reconciliation instead of being skipped because the channel
+#                                was already correct.
+#   LATEST, LATEST_ACTION (set|keep|none|refuse), LATEST_REASON   what to change, now
 #   BETA,   BETA_ACTION,   BETA_REASON
 #   SKIPPED_INCOMPLETE
 set -eu
@@ -144,10 +149,23 @@ cand_beta=$(printf '%s' "$all_candidates" | calver_sort | tail -n 1)
 latest=$(resolve LATEST "$cand_latest" "${CURRENT_LATEST:-}" "${LATEST_OVERRIDE:-}" "${FORCE:-0}")
 beta=$(resolve BETA "$cand_beta" "${CURRENT_BETA:-}" "${BETA_OVERRIDE:-}" "${FORCE:-0}")
 
+# What each channel should point at afterwards, which is not the same question as what to change: a
+# `keep` has a target and nothing to apply, and the work that depends on the target has to happen
+# either way.
+target_of() { # action override candidate
+    case "$1" in
+        set) printf '%s\n' "$2" ;;
+        keep) if [ -n "$2" ]; then printf '%s\n' "$2"; else printf '%s\n' "$3"; fi ;;
+        *) printf '\n' ;;
+    esac
+}
+
 printf 'LATEST=%s\n' "$(printf '%s' "${latest#*|}" | cut -d'|' -f1)"
+printf 'LATEST_TARGET=%s\n' "$(target_of "${latest%%|*}" "${LATEST_OVERRIDE:-}" "$cand_latest")"
 printf 'LATEST_ACTION=%s\n' "${latest%%|*}"
 printf 'LATEST_REASON=%s\n' "$(printf '%s' "${latest##*|}" | tr -d '\n')"
 printf 'BETA=%s\n' "$(printf '%s' "${beta#*|}" | cut -d'|' -f1)"
+printf 'BETA_TARGET=%s\n' "$(target_of "${beta%%|*}" "${BETA_OVERRIDE:-}" "$cand_beta")"
 printf 'BETA_ACTION=%s\n' "${beta%%|*}"
 printf 'BETA_REASON=%s\n' "$(printf '%s' "${beta##*|}" | tr -d '\n')"
 printf 'SKIPPED_INCOMPLETE=%s\n' "$skipped"

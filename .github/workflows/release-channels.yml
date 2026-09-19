@@ -141,12 +141,14 @@ jobs:
 
       - name: Verify every target exists before touching anything
         id: verify
-        if: steps.decide.outputs.LATEST_ACTION == 'set' || steps.decide.outputs.BETA_ACTION == 'set'
+        # Runs whenever a channel has a target, not only when one is about to move: a `keep` still
+        # has to have its bytes, or the channel is pointing somewhere that does not exist.
+        if: steps.decide.outputs.LATEST_TARGET != '' || steps.decide.outputs.BETA_TARGET != ''
         shell: bash
         env:
           IMAGE: ${{ steps.state.outputs.image }}
-          LATEST: ${{ steps.decide.outputs.LATEST }}
-          BETA: ${{ steps.decide.outputs.BETA }}
+          LATEST_TARGET: ${{ steps.decide.outputs.LATEST_TARGET }}
+          BETA_TARGET: ${{ steps.decide.outputs.BETA_TARGET }}
           SKIPPED: ${{ steps.decide.outputs.SKIPPED_INCOMPLETE }}
         run: |
           set -euo pipefail
@@ -156,7 +158,7 @@ jobs:
           if [ -n "$SKIPPED" ]; then
             echo "::warning::releases with incomplete assets were ignored: $SKIPPED"
           fi
-          for tag in $LATEST $BETA; do
+          for tag in $LATEST_TARGET $BETA_TARGET; do
             # The tag comes from a release the decision already validated; the width of the check is
             # that the bytes are actually in the registry, which the API cannot tell us.
             if ! docker buildx imagetools inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
@@ -167,7 +169,7 @@ jobs:
           done
 
       - name: Apply the channels
-        if: steps.decide.outputs.LATEST_ACTION == 'set' || steps.decide.outputs.BETA_ACTION == 'set'
+        if: steps.decide.outputs.LATEST_TARGET != '' || steps.decide.outputs.BETA_TARGET != ''
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
@@ -176,12 +178,16 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
           LATEST_ACTION: ${{ steps.decide.outputs.LATEST_ACTION }}
           LATEST: ${{ steps.decide.outputs.LATEST }}
+          LATEST_TARGET: ${{ steps.decide.outputs.LATEST_TARGET }}
           BETA_ACTION: ${{ steps.decide.outputs.BETA_ACTION }}
           BETA: ${{ steps.decide.outputs.BETA }}
         run: |
           set -euo pipefail
           if [ "$DRY_RUN" = "1" ]; then
             echo "dry run: would set :latest=$LATEST :beta=$BETA"
+            if [ -n "$LATEST_TARGET" ]; then
+              echo "dry run: would align GitHub Latest with $LATEST_TARGET"
+            fi
             exit 0
           fi
 
@@ -195,14 +201,24 @@ jobs:
           if [ "$LATEST_ACTION" = "set" ]; then
             point latest "$LATEST"
             gh variable set CHANNEL_LATEST_TAG --repo "$REPO" --body "$LATEST"
-            # Keep GitHub's own Latest field agreeing with the channel. An older series' patch is
-            # published later but must not displace a newer recommended version, and GitHub's
-            # automatic Latest would; setting it explicitly here is what makes the two agree.
-            gh api -X PATCH "repos/${REPO}/releases/tags/${LATEST}" -f make_latest=true >/dev/null
           fi
           if [ "$BETA_ACTION" = "set" ]; then
             point beta "$BETA"
             gh variable set CHANNEL_BETA_TAG --repo "$REPO" --body "$BETA"
+          fi
+
+          # Keep GitHub's own Latest field agreeing with :latest, on EVERY run rather than only when
+          # the channel moves. An older series' patch is published later but must not displace a
+          # newer recommended version, and GitHub's automatic Latest would let it; aligning here is
+          # what makes the two agree. Doing it unconditionally is also what makes a transient failure
+          # self-healing — a version whose channel already moved would otherwise never be re-aligned.
+          #
+          # PATCH takes a release ID. There is no update-by-tag endpoint, and asking for one returns
+          # 404 after the channel has already moved, which is how the rehearsal found this.
+          if [ -n "$LATEST_TARGET" ]; then
+            id=$(gh api "repos/${REPO}/releases/tags/${LATEST_TARGET}" --jq '.id')
+            gh api -X PATCH "repos/${REPO}/releases/${id}" -f make_latest=true >/dev/null
+            echo "GitHub Latest aligned with ${LATEST_TARGET}"
           fi
 
       - name: Summary
