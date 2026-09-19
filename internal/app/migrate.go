@@ -148,6 +148,31 @@ func (s *Store) classifySchema() (schemaState, error) {
 	return schemaCurrent, nil
 }
 
+// ensureColumns is the additive-column step of the upgrade ladder: the place an ALTER TABLE ADD
+// COLUMN is written when a release adds a column and has to carry an older database forward.
+//
+// The step is EMPTY, and that is the design rather than an oversight. The runtime sits at a database
+// baseline and converts nothing, so there is no column for it to add: a database missing one is
+// refused by verifyBaseSchema above, and the release notes name the version it has to be taken
+// through instead. The ladder below (and upgrade_v04.go's shape, had it survived) is what stays —
+// entry points that a major change writes a step into and clears again, so that adding one is a
+// function body and a call, never a new startup path.
+func (s *Store) ensureColumns() error { return nil }
+
+// duplicateColumnErr reports whether an ADD COLUMN failed only because the column already exists —
+// the idempotency signal an additive step needs, since the same column may be added on a database
+// that already has it.
+//
+// Unused today because every additive step is empty. Kept, with its linter exemption, because it
+// belongs to those steps and not to this release: writing one back is meant to be a body and a call
+// rather than a re-derivation of how to detect a duplicate column on two drivers.
+//
+//lint:ignore U1000 the additive steps of the upgrade ladder are empty for now
+func duplicateColumnErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists")
+}
+
 // verifyBaseSchema is the accepted-baseline check: every table, every column and every index
 // baseSchemaStmts declares must already exist. It is what replaced the ADD COLUMN reconciliation that
 // used to run at this point, and the name says what it does rather than what it used to do.
