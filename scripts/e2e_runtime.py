@@ -45,7 +45,11 @@ def restart_container(container, base):
         try:
             with urllib.request.urlopen(base + '/healthz', timeout=2):
                 return
-        except (urllib.error.URLError, TimeoutError):
+        except OSError:
+            # A container being restarted resets the socket as often as it refuses the connection.
+            # A reset is neither a URLError nor a TimeoutError — both of which are OSErrors — so
+            # catching the family covers all three. Missing the reset failed the smoke test every
+            # time it reached the restart layer, which is deterministic, not flaky.
             time.sleep(1)
     raise RuntimeError('Container did not become ready after restart')
 

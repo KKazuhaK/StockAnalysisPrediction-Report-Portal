@@ -36,4 +36,3 @@ func Display() string {
 	}
 	return Version
 }
-
