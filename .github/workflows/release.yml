@@ -247,16 +247,21 @@ jobs:
           # Published artifacts are never replaced. A draft is still open for revision — that is
           # exactly what "draft" means — but a published release is finished, so re-running this
           # pipeline over it is a mistake, not a repair. Changed artifacts need a new revision.
-          state=$(gh api "repos/${REPO}/releases/tags/${VERSION}" --jq '.draft' 2>/dev/null || echo "absent")
-          case "$state" in
-            absent)   echo "no release yet for ${VERSION}; preparing a draft" ;;
-            true)     echo "an existing draft for ${VERSION} will be updated in place" ;;
-            *)
-              echo "::error::${VERSION} is already published; published artifacts are never replaced."
-              echo "::error::Cut the next revision instead (scripts/tag-release.sh vYYYY.W.R)."
-              exit 1
-              ;;
-          esac
+          #
+          # The existence test is the exit status, never the captured output: `gh api` writes the 404
+          # body to STDOUT, so `$(gh api ... || echo absent)` yields the error JSON concatenated with
+          # the fallback, matching no branch and refusing every first attempt. That is not a theory —
+          # it is what the first run of this workflow did, and the rehearsal it broke is why the
+          # guard is written this way.
+          if ! body=$(gh api "repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null); then
+            echo "no release yet for ${VERSION}; preparing a draft"
+          elif [ "$(printf '%s' "$body" | jq -r '.draft')" = "true" ]; then
+            echo "an existing draft for ${VERSION} will be updated in place"
+          else
+            echo "::error::${VERSION} is already published; published artifacts are never replaced."
+            echo "::error::Cut the next revision instead (scripts/tag-release.sh vYYYY.W.R)."
+            exit 1
+          fi
       - name: Package archives
         shell: bash
         env:
