@@ -48,11 +48,10 @@ env:
   GOWORK: "off"
   GOTOOLCHAIN: "local"
 
-# Serialize releases, and never cancel one in flight: two overlapping runs would race the release
-# page and the fixed image tag. The rolling channels have their own serialization in
-# release-channels.yml, because an event there is independent of this pipeline.
+# Serialize attempts for the same tag without discarding other pending versions.
+# Rolling channel writers have their own repository-wide serialization.
 concurrency:
-  group: release-${{ github.repository }}
+  group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -60,6 +59,9 @@ jobs:
     name: Resolve and validate tag
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
     outputs:
       tag: ${{ steps.t.outputs.tag }}
       sha: ${{ steps.t.outputs.sha }}
@@ -131,6 +133,35 @@ jobs:
             echo "owner_lc=${owner_lc}"
             echo "repo_lc=${repo_lc}"
           } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Refuse rebuilding an existing fixed image
+        env:
+          IMAGE: ghcr.io/${{ steps.t.outputs.owner_lc }}/${{ steps.t.outputs.repo_lc }}:${{ steps.t.outputs.tag }}
+        run: python3 scripts/release_guard.py guard "$IMAGE"
+
+  ci:
+    name: Verify release commit passed full CI
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.setup.outputs.sha }}
+      - name: Require full CI for the exact release commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT: ${{ needs.setup.outputs.sha }}
+        run: python3 scripts/release_guard.py wait-ci "$COMMIT"
 
   web:
     name: Build web assets
@@ -227,7 +258,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
-    needs: [setup, build]
+      packages: read
+    needs: [setup, build, ci]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -244,24 +276,17 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Published artifacts are never replaced. A draft is still open for revision — that is
-          # exactly what "draft" means — but a published release is finished, so re-running this
-          # pipeline over it is a mistake, not a repair. Changed artifacts need a new revision.
-          #
-          # The existence test is the exit status, never the captured output: `gh api` writes the 404
-          # body to STDOUT, so `$(gh api ... || echo absent)` yields the error JSON concatenated with
-          # the fallback, matching no branch and refusing every first attempt. That is not a theory —
-          # it is what the first run of this workflow did, and the rehearsal it broke is why the
-          # guard is written this way.
-          if ! body=$(gh api "repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null); then
-            echo "no release yet for ${VERSION}; preparing a draft"
-          elif [ "$(printf '%s' "$body" | jq -r '.draft')" = "true" ]; then
-            echo "an existing draft for ${VERSION} will be updated in place"
-          else
-            echo "::error::${VERSION} is already published; published artifacts are never replaced."
-            echo "::error::Cut the next revision instead (scripts/tag-release.sh vYYYY.W[.R])."
-            exit 1
-          fi
+          python3 scripts/release_guard.py guard-draft "$VERSION" --repo "$REPO"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Recheck fixed image before replacing draft assets
+        env:
+          IMAGE: ghcr.io/${{ needs.setup.outputs.owner_lc }}/${{ needs.setup.outputs.repo_lc }}:${{ needs.setup.outputs.tag }}
+        run: python3 scripts/release_guard.py guard "$IMAGE"
       - name: Package archives
         shell: bash
         env:
@@ -413,15 +438,7 @@ jobs:
           VERSION: ${{ needs.setup.outputs.tag }}
         run: |
           set -euo pipefail
-          # The fixed tag is the published artifact set. A draft GitHub Release does NOT make it
-          # private, so once it exists the bytes are out and re-pushing a rebuild — which differs,
-          # because the build date is baked in — would silently change what that number means.
-          if docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
-            echo "::error::${IMAGE}:${VERSION} already exists and published bytes are never replaced."
-            echo "::error::Cut the next revision, or finish the existing release from its draft."
-            exit 1
-          fi
-          echo "no existing ${IMAGE}:${VERSION}; safe to publish"
+          python3 scripts/release_guard.py guard "${IMAGE}:${VERSION}"
       - name: Build and push the fixed multi-arch image
         id: push
         uses: docker/build-push-action@v7

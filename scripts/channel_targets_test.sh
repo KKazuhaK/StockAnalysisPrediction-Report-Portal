@@ -32,7 +32,7 @@ mk() {
               "report-portal_\($tag)_darwin_arm64.tar.gz",
               "report-portal_\($tag)_windows_amd64.zip",
               "report-portal_\($tag)_windows_arm64.zip",
-              "SHA256SUMS.txt" ]
+              "SHA256SUMS.txt", "release-metadata.json" ]
             | map({ name: . })
           else
             [ { name: "SHA256SUMS.txt" } ]
@@ -149,6 +149,12 @@ stranger=$(jq -n '{
 run "[$stranger]"
 expect LATEST_ACTION none "a release whose archives belong to another tag is skipped"
 expect SKIPPED_INCOMPLETE v2026.38.1 "and it is reported"
+
+# Six arbitrary archives must not stand in for the six supported platforms.
+run "$(fixture v2026.38.1 no no yes | jq '.[0].assets[0].name = "report-portal_v2026.38.1_bogus.zip"')"
+expect LATEST_ACTION none "wrong platform archive is rejected"
+run "$(fixture v2026.38.1 no no yes | jq '.[0].assets |= map(select(.name != "release-metadata.json"))')"
+expect LATEST_ACTION none "missing durable identity is rejected"
 
 # ---------- operator overrides are applied and never undone ----------
 clear_env

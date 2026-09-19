@@ -33,7 +33,7 @@ ARG NOTO_EMOJI_SHA256=de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608
 # This runs in a builder stage so python3-fonttools never reaches the runtime image, and pinned to
 # BUILDPLATFORM because its output is a font file — identical whichever arch produced it. Left to
 # TARGETPLATFORM the arm64 leg would run Python over a 16 MB font under QEMU for no gain.
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS fonts
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS fonts
 ARG NOTO_CJK_SHA256
 ARG NOTO_EMOJI_SHA256
 COPY scripts/strip-radical-cmap.py /usr/local/bin/strip-radical-cmap.py
@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Stage 2 — the runtime, up to and including the font gate. CI builds this target on every push, so
 # the font chain is exercised before a tag exists rather than for the first time during a release.
-FROM debian:bookworm-slim AS runtime-base
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime-base
 ARG TARGETARCH
 COPY --from=fonts /out/opentype/noto/ /usr/share/fonts/opentype/noto/
 COPY --from=fonts /out/truetype/noto/ /usr/share/fonts/truetype/noto/
