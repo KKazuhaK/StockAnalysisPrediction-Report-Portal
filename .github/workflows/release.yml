@@ -154,9 +154,12 @@ jobs:
       contents: read
       actions: read
     steps:
+      # The default branch, not the release ref: this job runs the guard, and a guard supplied by the
+      # thing it is guarding is not a guard. It also keeps the one job that has no reason to see the
+      # release commit from checking it out.
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.setup.outputs.sha }}
+          ref: ${{ github.event.repository.default_branch }}
       - name: Require full CI for the exact release commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -175,8 +178,12 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          # No shared cache here, for the same reason setup-go below is uncached: this workflow takes
+          # a ref from a dispatch input, and a shared cache that a release job both reads and writes
+          # is a cache an untrusted ref could seed. A release runs a few times a month, so paying for
+          # a cold `npm ci` is cheaper than that surface. (CodeQL flags it as
+          # actions/cache-poisoning/poisonable-step.)
+          cache: ""
       - name: Install deps
         working-directory: web
         run: |
