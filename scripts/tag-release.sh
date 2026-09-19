@@ -204,7 +204,11 @@ fi
 notes=$(mktemp)
 trap 'rm -f "$notes"' EXIT INT TERM
 git show "$sha:docs/releases/$version.md" > "$notes"
-git tag -a "$version" "$sha" -F "$notes"
+# --cleanup=verbatim, not the default. `git tag -a -F` strips every line starting with '#' unless
+# told otherwise, which silently deleted each Markdown heading from the annotation — and any command
+# example with a shell comment in it. The convention is that the annotation IS the note, so the note
+# is what gets stored, unedited.
+git tag -a --cleanup=verbatim "$version" "$sha" -F "$notes"
 
 echo "created $version -> $(git rev-parse --short "$sha")  $(git log -1 --format=%s "$sha")"
 echo

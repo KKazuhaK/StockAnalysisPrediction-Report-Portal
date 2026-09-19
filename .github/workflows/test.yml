@@ -187,6 +187,7 @@ jobs:
         run: |
           sh scripts/calver_test.sh
           sh scripts/channel_targets_test.sh
+          sh scripts/tag_release_test.sh
 
   web-build:
     name: web typecheck + build

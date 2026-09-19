@@ -4,6 +4,12 @@ One file per release, the same text as the annotated git tag (`git tag -n99 <tag
 still where a release is cut; these exist so the notes are readable in the repo and in a diff,
 which a tag message is not.
 
+That equality is enforced by `scripts/tag_release_test.sh` because it used to be false: `git tag -a
+-F` strips every line beginning with `#` unless told not to, so every annotation cut before this
+helper passed `--cleanup=verbatim` lost its Markdown headings — and any shell comment inside a
+command example — while the file kept them. Tags already cut are left as they are; the next one
+onward says what its file says.
+
 Cutting one — the version and the commit are both optional:
 
 ```sh
