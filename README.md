@@ -39,7 +39,7 @@ To update an installation:
 docker compose pull && docker compose up -d
 ~~~
 
-The image tags are `:latest` for the recommended full release, `:beta` for the newest published release including pre-releases, and `:vYYYY.W.R` for a pinned release. The first startup creates `./config/config.yaml`; normally only `secret_key` needs to be set manually. Generate one with `openssl rand -hex 32`.
+The image tags are `:latest` for the recommended full release, `:beta` for the newest published release including pre-releases, and `:vYYYY.W[.R]` for a pinned release. The first startup creates `./config/config.yaml`; normally only `secret_key` needs to be set manually. Generate one with `openssl rand -hex 32`.
 
 Before upgrading a deployment that predates the CalVer line, read [docs/releases/README.md](docs/releases/README.md). The first CalVer release reads only the **v0.4.72** database schema and converts nothing: a database older than that has to be started once by v0.4.72 first, and one that is older is refused rather than half-upgraded.
 
@@ -162,7 +162,7 @@ go run ./cmd/report-portal version
 
 ## Release process
 
-Releases are CalVer: `vYYYY.W.R`, where `YYYY` is the ISO week-numbering year, `W` the UTC ISO week the series starts in, and `R` a revision that rises for every changed set of artifacts. Cut the tag from its release note and push it:
+Releases are CalVer: `vYYYY.W[.R]`, where `YYYY` is the ISO week-numbering year, `W` the UTC ISO week the series starts in, and `R` an optional revision that rises for every changed set of artifacts — `v2026.38` for the week's first release, `v2026.38.2` if that same week needs another one. Cut the tag from its release note and push it:
 
 ~~~bash
 scripts/tag-release.sh v2026.38.1

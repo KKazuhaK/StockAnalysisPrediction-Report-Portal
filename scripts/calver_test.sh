@@ -46,6 +46,9 @@ assert_valid v2026.9.2          # single-digit week, no leading zero
 assert_valid v2026.38.10        # revision past 9
 assert_valid v2026.52.99
 assert_valid v2000.1.1
+assert_valid v2026.38          # no revision: the earliest release of that week
+assert_valid v2026.1
+assert_valid v2020.53          # week 53 still has to exist
 
 # ---------- week 53 ----------
 assert_valid v2020.53.1
@@ -83,8 +86,10 @@ assert_invalid v2026.00.1
 assert_invalid v2026.54.1
 assert_invalid v2026.08.1
 assert_invalid v2026.38.01
-assert_invalid v2026.38
-assert_invalid v2026
+assert_invalid v2026           # a year on its own says nothing about when
+assert_invalid v2026.
+assert_invalid v2026.38.
+assert_invalid v2026.38.0      # an explicit zero revision is not how "no revision" is spelled
 assert_invalid v026.38.1
 assert_invalid v26.38.1
 assert_invalid v2026-38-1
@@ -100,6 +105,13 @@ assert_invalid v2026.38.1-
 # ---------- numeric, not lexical ----------
 assert_eq "tuple" "2026 38 1" "$(calver_tuple v2026.38.1)"
 assert_eq "tuple reformats" "2026 9 2" "$(calver_tuple v2026.9.2)"
+# A tag with no revision is revision 0 — a number of its own, not a spelling of v2026.38.1. If the
+# two were equal, a channel could oscillate between them and one number would mean two releases.
+assert_eq "bare week is revision 0" "2026 38 0" "$(calver_tuple v2026.38)"
+assert_eq "bare week sorts below its first revision" "-1" "$(calver_cmp v2026.38 v2026.38.1)"
+assert_eq "and below a later revision" "-1" "$(calver_cmp v2026.38 v2026.38.9)"
+assert_eq "but above the previous week's last revision" "1" "$(calver_cmp v2026.38 v2026.37.9)"
+assert_eq "two bare weeks order by week" "-1" "$(calver_cmp v2026.37 v2026.38)"
 
 assert_eq "9 < 10 (numeric)" "-1" "$(calver_cmp v2026.9.2 v2026.10.1)"
 assert_eq "r1 < r2" "-1" "$(calver_cmp v2026.38.1 v2026.38.2)"
@@ -126,6 +138,11 @@ v2026.39.1" "$(printf '%s\n' v2026.38.10 v2026.39.1 v2026.9.2 v2026.38.2 v2026.3
 
 assert_eq "sort drops non-CalVer input" "v2026.38.1
 v2026.38.2" "$(printf '%s\n' v2026.38.2 v0.4.72 dev v2026.38.1 ci '' | calver_sort)"
+
+assert_eq "sort mixes the two forms by revision" "v2026.38
+v2026.38.1
+v2026.38.10
+v2026.39" "$(printf '%s\n' v2026.38.10 v2026.39 v2026.38 v2026.38.1 | calver_sort)"
 
 # ---------- legacy / diagnostic tags stay readable ----------
 if calver_legacy v0.4.72; then ok; else bad "v0.4.72 should be treated as a legacy tag"; fi

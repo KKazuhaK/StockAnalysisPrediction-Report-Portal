@@ -21,10 +21,12 @@ No trailing `#` comments in that block, on purpose. zsh does not treat `#` as a 
 interactive shell unless `INTERACTIVE_COMMENTS` is set, so a copied line with an explanation after it
 passes the `#` as the commit argument and the script dies on `fatal: Needed a single revision`.
 
-Releases are CalVer: `vYYYY.W.R`, where `YYYY` is the ISO week-numbering year, `W` the UTC ISO week
-the series starts in, and `R` a revision that starts at 1 and rises for every changed set of
-artifacts. There is no `-beta`: whether a release is a pre-release or a full release is GitHub Release
-metadata, set when the draft is published, and it is what moves `:latest`. See
+Releases are CalVer: `vYYYY.W[.R]`, where `YYYY` is the ISO week-numbering year, `W` the UTC ISO week
+the series starts in, and `R` an optional revision that starts at 1 and rises for every changed set of
+artifacts. Leave the revision off for the first release of a week — `v2026.38` — and add one when a
+second artifact set lands in the same week. They are different numbers, so ordering never ties. There
+is no `-beta`: whether a release is a pre-release or a full release is GitHub Release metadata, set
+when the draft is published, and it is what moves `:latest`. See
 [ADR 0034](../adr/0034-calver-baseline-and-database-compatibility-reset.md).
 
 The tag push prepares a **draft** release. Publish it from the GitHub UI as a pre-release or a full
@@ -87,7 +89,6 @@ current schema. The release that wrote a dump is the release that has to load it
 
 For a Postgres deployment, `pg_dump -Fc` and `pg_restore` are the equivalents of steps 2 and 5, and
 the same ordering applies: dump before the bridge, restore before reverting the image.
-
 
 | Release | Date | Headline |
 | --- | --- | --- |

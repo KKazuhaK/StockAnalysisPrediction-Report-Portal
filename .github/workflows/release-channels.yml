@@ -2,7 +2,7 @@ name: Release channels
 
 # The only thing that moves :latest and :beta.
 #
-# release.yml publishes a draft and the fixed vYYYY.W.R image tag; it never touches a rolling
+# release.yml publishes a draft and the fixed vYYYY.W[.R] image tag; it never touches a rolling
 # channel, because at that moment nobody has said whether the release is a pre-release or a full
 # release. This workflow reacts to that decision, and to edits and deletions, and converges the
 # channels on the releases that actually exist. It never rebuilds: a promotion re-points a channel

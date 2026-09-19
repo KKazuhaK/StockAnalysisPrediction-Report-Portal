@@ -2,7 +2,7 @@
 # Cut an annotated release tag from its release note.
 #
 # The convention this encodes (see docs/releases/README.md): a release tag is ANNOTATED and its
-# message is the release note verbatim, so `git tag -n99 vYYYY.W.R` and the file in docs/releases/
+# message is the release note verbatim, so `git tag -n99 vYYYY.W[.R]` and the file in docs/releases/
 # say the same thing. Placed on the commit where that release's work is complete — usually the merge
 # that brought it into main.
 #
@@ -68,16 +68,18 @@ semver_like() {
 
 if semver_like "$version"; then
     echo "error: '$version' is a SemVer tag. The v0.x line ended at v0.4.72, which is the" >&2
-    echo "       database bridge and is not a CalVer release. New tags are vYYYY.W.R:" >&2
+    echo "       database bridge and is not a CalVer release. New tags are vYYYY.W[.R]:" >&2
     echo "       this week is $(calver_current_week), so e.g. v$(calver_current_week).1" >&2
     exit 1
 fi
 
 if ! calver_valid "$version"; then
-    echo "error: '$version' is not a CalVer tag name. Expected vYYYY.W.R — the ISO week-numbering" >&2
-    echo "       year, the UTC ISO week the series starts in, and a revision starting at 1. No" >&2
-    echo "       leading zeroes, no maturity suffix (-beta/-rc), no extra components:" >&2
-    echo "       this week is $(calver_current_week), so e.g. v$(calver_current_week).1" >&2
+    echo "error: '$version' is not a CalVer tag name. Expected vYYYY.W[.R] — the ISO week-numbering" >&2
+    echo "       year, the UTC ISO week the series starts in, and an optional revision. A tag with no" >&2
+    echo "       revision is the first release of that week; every later artifact set in the same" >&2
+    echo "       week needs its own, starting at 1. No leading zeroes, no maturity suffix (-beta/-rc)," >&2
+    echo "       no extra components. This week is $(calver_current_week): v$(calver_current_week)" >&2
+    echo "       for the first release, v$(calver_current_week).2 for the next one after it." >&2
     exit 1
 fi
 

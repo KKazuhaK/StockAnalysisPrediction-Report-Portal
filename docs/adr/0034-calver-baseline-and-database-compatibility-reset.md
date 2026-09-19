@@ -30,10 +30,15 @@ legacy line as a whole.
 
 ### 1. CalVer release identity
 
-Product display is `YYYY.W.R`; git and fixed image tags are `vYYYY.W.R`.
+Product display is `YYYY.W[.R]`; git and fixed image tags are `vYYYY.W[.R]`.
 
 - `YYYY` is the ISO week-numbering year, `W` the UTC ISO week in which the series starts, `R` a
   counter starting at 1 that increases for every changed published artifact set. No leading zeroes.
+- **The revision is optional.** `v2026.38` is the first release of that week and carries revision 0
+  — deliberately a different number from `v2026.38.1`, not another spelling of it. Two spellings for
+  one number would let a channel oscillate between them and make "one number, one artifact set"
+  untrue; two distinct numbers cannot. This is also how Tesla numbers vehicle software: a year and a
+  week, then builds within that week.
 - **No maturity suffix.** There is no `-beta` / `-rc`. Maturity lives in GitHub Release metadata
   (draft / pre-release / full release / Latest), never in the tag, and never in the binary.
 - Promotion of an identical artifact set keeps its number; changed artifacts require a new number.

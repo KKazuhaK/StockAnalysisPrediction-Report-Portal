@@ -99,9 +99,9 @@ jobs:
           echo "::group::Validate the tag"
           . scripts/lib/calver.sh
           if ! calver_valid "$tag"; then
-            echo "::error::$tag is not a CalVer release tag. Expected vYYYY.W.R — the ISO"
-            echo "::error::week-numbering year, the UTC ISO week the series starts in, and a revision"
-            echo "::error::starting at 1. No leading zeroes, no maturity suffix, no extra components."
+            echo "::error::$tag is not a CalVer release tag. Expected vYYYY.W[.R] — the ISO"
+            echo "::error::week-numbering year, the UTC ISO week the series starts in, and an optional"
+            echo "::error::revision. No leading zeroes, no maturity suffix, no extra components."
             exit 1
           fi
           echo "$tag is a well-formed CalVer tag"
@@ -259,7 +259,7 @@ jobs:
             echo "an existing draft for ${VERSION} will be updated in place"
           else
             echo "::error::${VERSION} is already published; published artifacts are never replaced."
-            echo "::error::Cut the next revision instead (scripts/tag-release.sh vYYYY.W.R)."
+            echo "::error::Cut the next revision instead (scripts/tag-release.sh vYYYY.W[.R])."
             exit 1
           fi
       - name: Package archives

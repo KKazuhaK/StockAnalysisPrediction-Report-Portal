@@ -33,7 +33,7 @@ docker compose logs            # 查看首次启动生成的管理员初始密�
 
 在浏览器中访问 `http://<host>:8790`。Compose 默认监听 `127.0.0.1:8790`；外部访问应通过反向代理提供 TLS。使用启动日志中的初始密码登录，并在“账号管理”中修改密码。
 
-**更新**：`docker compose pull && docker compose up -d`（镜像标签：`:latest` 推荐正式版、`:beta` 最新已发布版（含预发布）、`:vYYYY.W.R` 固定版本）。
+**更新**：`docker compose pull && docker compose up -d`（镜像标签：`:latest` 推荐正式版、`:beta` 最新已发布版（含预发布）、`:vYYYY.W[.R]` 固定版本）。
 
 升级 CalVer 之前的部署前，请先阅读 [docs/releases/README.md](docs/releases/README.md)：首个 CalVer 版本只读取 **v0.4.72** 的数据库结构、不做任何转换，更旧的库必须先用 v0.4.72 启动一次，否则会被直接拒绝而不是半途升级。
 
@@ -157,7 +157,7 @@ go run ./cmd/report-portal           # 访问 :8790，SPA 由二进制内嵌服�
 
 ## 发布
 
-版本号采用 CalVer：`vYYYY.W.R`，`YYYY` 为 ISO 周历年份，`W` 为该版本系列起始的 UTC ISO 周，`R` 为每次产物变更递增的修订号。从 release note 生成标签并推送：
+版本号采用 CalVer：`vYYYY.W[.R]`，`YYYY` 为 ISO 周历年份，`W` 为该版本系列起始的 UTC ISO 周，`R` 为可选的修订号、每次产物变更递增——该周第一次发布写 `v2026.38`，同一周再有产物就写 `v2026.38.2`。从 release note 生成标签并推送：
 
 ```bash
 scripts/tag-release.sh v2026.38.1

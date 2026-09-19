@@ -1,5 +1,5 @@
 #!/bin/sh
-# CalVer (vYYYY.W.R) parsing, validation and ordering for the release scripts.
+# CalVer (vYYYY.W[.R]) parsing, validation and ordering for the release scripts.
 #
 # Sourced, never executed. POSIX shell plus awk only, so scripts/tag-release.sh keeps working
 # with nothing but git in the PATH, and the release workflows call these same functions rather
@@ -7,7 +7,10 @@
 #
 # The contract (docs/adr/0034-calver-baseline-and-database-compatibility-reset.md):
 #   - YYYY is the ISO week-numbering year; W is the UTC ISO week the series starts in.
-#   - R starts at 1 and rises for every changed published artifact set.
+#   - R is optional and starts at 1; every changed published artifact set needs its own.
+#     A tag without it (v2026.38) is the earliest release of that week — revision 0 — and is
+#     deliberately NOT the same number as v2026.38.1, so no two spellings can ever mean one number
+#     and no two releases can tie. Tesla numbers the same way (YEAR.WEEK, then builds within it).
 #   - No leading zeroes, no maturity suffix, no extra components.
 #   - A series keeps its year/week across delayed publication and maintenance, so revision
 #     gaps are legal and published numbers are never recycled.
@@ -37,16 +40,21 @@ function week53(y,   w) {
 }
 # calver_parse(tag) fills _y/_w/_r and returns 1 for a well-formed tag, 0 otherwise.
 function calver_parse(tag) {
-    if (tag !~ /^v[0-9][0-9][0-9][0-9]\.[0-9][0-9]?\.[0-9]+$/) return 0
+    if (tag !~ /^v[0-9][0-9][0-9][0-9]\.[0-9][0-9]?(\.[0-9]+)?$/) return 0
     split(substr(tag, 2), _f, ".")
     if (_f[1] ~ /^0/) return 0
     if (_f[2] ~ /^0/) return 0
-    if (_f[3] ~ /^0/) return 0
-    _y = _f[1] + 0; _w = _f[2] + 0; _r = _f[3] + 0
+    _y = _f[1] + 0; _w = _f[2] + 0
+    if (_f[3] == "") {
+        _r = 0
+    } else {
+        if (_f[3] ~ /^0/) return 0
+        _r = _f[3] + 0
+        if (_r < 1) return 0
+    }
     if (_y < 2000) return 0
     if (_w < 1 || _w > 53) return 0
     if (_w == 53 && !week53(_y)) return 0
-    if (_r < 1) return 0
     return 1
 }
 '
