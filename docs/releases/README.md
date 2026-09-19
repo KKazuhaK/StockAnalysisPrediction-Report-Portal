@@ -7,8 +7,8 @@ which a tag message is not.
 Cutting one — the commit argument is optional and defaults to HEAD:
 
 ```sh
-scripts/tag-release.sh v2026.38.1
-git push origin v2026.38.1
+scripts/tag-release.sh v2026.38
+git push origin v2026.38
 ```
 
 The push is a separate, deliberate command because it is the irreversible step; the script never
@@ -41,7 +41,7 @@ release needs the newer logic. If it moves a channel, `CHANNEL_LATEST_TAG` / `CH
 repository variables record where the channel was last put; an operator override lives in
 `CHANNEL_LATEST_OVERRIDE` / `CHANNEL_BETA_OVERRIDE` beside them, and reconciliation never clears it.
 
-## The v2026.38.1 database boundary
+## The v2026.38 database boundary
 
 The first CalVer release reads exactly one database shape — the **v0.4.72** schema — and converts
 nothing. It is not a compatible numbering cutover:
@@ -99,7 +99,7 @@ the same ordering applies: dump before the bridge, restore before reverting the 
 
 | Release | Date | Headline |
 | --- | --- | --- |
-| [v2026.38.1](v2026.38.1.md) | 2026-09-19 | CalVer numbering, and a database compatibility reset |
+| [v2026.38](v2026.38.md) | 2026-09-19 | CalVer numbering, and a database compatibility reset |
 | [v0.4.59](v0.4.59.md) | 2026-09-09 | An empty workflow result is not a report |
 | [v0.4.50](v0.4.50.md) | 2026-09-08 | Execution modes and preset-window waiting in the queue |
 | [v0.4.49](v0.4.49.md) | 2026-09-08 | Pick your own dates |

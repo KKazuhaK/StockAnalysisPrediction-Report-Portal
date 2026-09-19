@@ -9,8 +9,8 @@
 # Until now that lived in whoever cut the last one's memory, which is why v0.4.42 and v0.4.43 sat on
 # main untagged.
 #
-#   scripts/tag-release.sh v2026.38.1 dacc4328     tags that commit
-#   scripts/tag-release.sh v2026.38.1              tags HEAD
+#   scripts/tag-release.sh v2026.38 dacc4328       tags that commit
+#   scripts/tag-release.sh v2026.38                tags HEAD
 #
 # The examples carry no trailing '#' comment on purpose: zsh does not enable INTERACTIVE_COMMENTS,
 # so a line copied out of documentation with an explanation after it hands the '#' to this script as

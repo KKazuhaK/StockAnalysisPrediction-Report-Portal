@@ -165,8 +165,8 @@ go run ./cmd/report-portal version
 Releases are CalVer: `vYYYY.W[.R]`, where `YYYY` is the ISO week-numbering year, `W` the UTC ISO week the series starts in, and `R` an optional revision that rises for every changed set of artifacts — `v2026.38` for the week's first release, `v2026.38.2` if that same week needs another one. Cut the tag from its release note and push it:
 
 ~~~bash
-scripts/tag-release.sh v2026.38.1
-git push origin v2026.38.1
+scripts/tag-release.sh v2026.38
+git push origin v2026.38
 ~~~
 
 The tag push validates the tag, cross-compiles six platforms, pushes the fixed `ghcr.io` image tag, and prepares a **draft** GitHub Release carrying the archives, `SHA256SUMS.txt` and the image digest. Maturity is GitHub Release metadata and never the tag: publishing the draft as a pre-release or a full release — and the `:latest` / `:beta` channel updates that follow — belongs to the release-channels workflow, which re-points a channel at bytes that are already published and never rebuilds. An identical artifact set keeps its number; a changed one needs a new number. See [ADR 0034](docs/adr/0034-calver-baseline-and-database-compatibility-reset.md).

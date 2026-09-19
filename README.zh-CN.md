@@ -160,8 +160,8 @@ go run ./cmd/report-portal           # 访问 :8790，SPA 由二进制内嵌服�
 版本号采用 CalVer：`vYYYY.W[.R]`，`YYYY` 为 ISO 周历年份，`W` 为该版本系列起始的 UTC ISO 周，`R` 为可选的修订号、每次产物变更递增——该周第一次发布写 `v2026.38`，同一周再有产物就写 `v2026.38.2`。从 release note 生成标签并推送：
 
 ```bash
-scripts/tag-release.sh v2026.38.1
-git push origin v2026.38.1
+scripts/tag-release.sh v2026.38
+git push origin v2026.38
 ```
 
 推送标签会校验标签、执行六平台交叉编译、推送固定的 `ghcr.io` 镜像标签，并创建一个**草稿** Release（含归档、`SHA256SUMS.txt` 与镜像 digest）。是否预发布由 GitHub Release 元数据决定，与标签名无关：把草稿发布为预发布或正式版、以及随后的 `:latest` / `:beta` 通道更新，都由 release-channels 工作流完成，它只把通道指向已发布的字节，不会重新构建。产物未变则沿用原版本号，产物有变必须新开版本号。详见 [ADR 0034](docs/adr/0034-calver-baseline-and-database-compatibility-reset.md)。
