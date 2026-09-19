@@ -29,6 +29,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import { prefetch } from '../../lib/prefetch'
+import { productVersionLabel } from '../../lib/productVersionLabel'
 
 const COLLAPSE_KEY = 'rp.manage.sider.collapsed'
 const NARROW_QUERY = '(max-width: 767px)'
@@ -309,7 +310,7 @@ export default function ManageLayout() {
               <Tooltip
                 title={
                   <div style={{ lineHeight: 1.6, fontWeight: 600 }}>
-                    <div>{ver.version}</div>
+                    <div>{productVersionLabel(ver.version)}</div>
                     <div>commit: {ver.commit}</div>
                     <div>built: {ver.buildDate}</div>
                   </div>
@@ -319,7 +320,7 @@ export default function ManageLayout() {
                   type="secondary"
                   style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', cursor: 'help', paddingInlineEnd: 4 }}
                 >
-                  {ver.version}
+                  {productVersionLabel(ver.version)}
                 </Typography.Text>
               </Tooltip>
             )}

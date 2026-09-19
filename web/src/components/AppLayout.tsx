@@ -14,6 +14,7 @@ import { applyUpdate, useSWUpdateReady } from '../lib/swUpdate'
 import { useVersionCheck } from '../lib/useVersionCheck'
 import { UNCHANGED, forgetTags, getIfChanged } from '../lib/conditionalGet'
 import { prefetch } from '../lib/prefetch'
+import { productVersionLabel } from '../lib/productVersionLabel'
 import { queueOnScreen } from '../lib/queueWatch'
 import { startVisiblePoll } from '../lib/visiblePoll'
 import Omnibox from './Omnibox'
@@ -682,13 +683,15 @@ export default function AppLayout() {
             <Tooltip
               title={
                 <div style={{ lineHeight: 1.6, fontWeight: 600 }}>
-                  <div>{ver.version}</div>
+                  <div>{productVersionLabel(ver.version)}</div>
                   <div>commit: {ver.commit}</div>
                   <div>built: {ver.buildDate}</div>
                 </div>
               }
             >
-              <span style={{ cursor: 'help', fontVariantNumeric: 'tabular-nums' }}>{ver.version}</span>
+              <span style={{ cursor: 'help', fontVariantNumeric: 'tabular-nums' }}>
+                {productVersionLabel(ver.version)}
+              </span>
             </Tooltip>
           )}
         </Footer>
